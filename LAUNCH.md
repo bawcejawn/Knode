@@ -106,6 +106,11 @@ All times are UTC. Eastern time is UTC−4 in summer and UTC−5 in winter. The 
 | Tuesday 12:00 | Winners are final and can collect |
 
 The contract uses each block's own timestamp, so these times are exact every week. They don't drift with block speed.
+The questions themselves are still about real block ranges ("between block A and block B").
+
+**Free play:** anyone can answer and appear on the leaderboard without staking. Rewards are points × stake, so free
+players are never paid. Stakes are whole numbers only (1, 2, 3 VHP …). The pool only pays Mana for staked players;
+free players use their own Mana or Kondor's free Mana.
 
 ## Step 5 — Deploy the contract
 

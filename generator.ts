@@ -429,8 +429,8 @@ async function run() {
         if (pred.some((x) => Math.abs(x - 1 / T.k) > tol)) continue;
         const who = M.names[p], hours = (W * 3) / 3600;
         const text = T.k === 2
-          ? `Will producer ${short(who)} sign more than ${fmt(t[0])} blocks between block ${fmt(lockHeight + 1)} and block ${fmt(lockHeight + W)} (about ${fmt(hours, 0)} hours)?`
-          : `How many blocks will producer ${short(who)} sign between block ${fmt(lockHeight + 1)} and block ${fmt(lockHeight + W)} (about ${fmt(hours, 0)} hours)?`;
+          ? `Will producer ${who} sign more than ${fmt(t[0])} blocks between block ${fmt(lockHeight + 1)} and block ${fmt(lockHeight + W)} (about ${fmt(hours, 0)} hours)?`
+          : `How many blocks will producer ${who} sign between block ${fmt(lockHeight + 1)} and block ${fmt(lockHeight + W)} (about ${fmt(hours, 0)} hours)?`;
         const options = T.k === 2
           ? [{ index: 0, label: `No — ${fmt(t[0])} or fewer`, min: null, max: t[0] }, { index: 1, label: `Yes — ${fmt(t[0] + 1)} or more`, min: t[0] + 1, max: null }]
           : rangeOptions(t, unitShow.count);
@@ -457,7 +457,7 @@ async function run() {
       const span = `between block ${fmt(lockHeight + 1)} and block ${fmt(lockHeight + T.W)}`;
       if (T.kind === "h2h") {
         q = { id: `${args.date}-${n}`, ...base, title: T.name,
-          text: `Producer ${short(A)}'s blocks minus producer ${short(B)}'s blocks, ${span}: will the difference be more than ${fmt(t1)}?`,
+          text: `Producer ${A}'s blocks minus producer ${B}'s blocks, ${span}: will the difference be more than ${fmt(t1)}?`,
           subjects: [A, B], unit: "count", windowStart: lockHeight + 1, windowEnd: lockHeight + T.W, thresholds: [t1],
           options: [{ index: 0, label: `No — ${fmt(t1)} or less`, min: null, max: t1 }, { index: 1, label: `Yes — ${fmt(t1 + 1)} or more`, min: t1 + 1, max: null }],
           predicted: [0.5, 0.5], model: { version: MODEL_VERSION, rates: { [A]: M.rateAt(a, M.r), [B]: M.rateAt(b, M.r) }, window: T.W } };
@@ -594,7 +594,7 @@ function resolve(blocks: Blk[], g: Game) {
       }
       if (!valueText) valueText = q.unit === "ms" ? (value / 1000).toFixed(3) + " s" : q.unit === "permille" ? (value / 10).toFixed(1) + "%" : fmt(value);
       q.result = offline.length
-        ? { void: true, reason: `${offline.map(short).join(", ")} went offline during the window`, value: valueText, dataHash, resolvedAt: new Date().toISOString() }
+        ? { void: true, reason: `${offline.join(", ")} went offline during the window`, value: valueText, dataHash, resolvedAt: new Date().toISOString() }
         : { void: false, option, value: valueText, dataHash, resolvedAt: new Date().toISOString() };
       if (offline.length) {
         const wk = String(q.week);

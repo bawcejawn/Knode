@@ -312,8 +312,10 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
       if (!e.voided) for (const a of e.answers ?? []) { const o = outcome.get(N(a.question_id))!; if (o === 1000) continue; counted++; if (o === N(a.option) + 1) pts++; }
       return { addr: r.address, pts, eligible: !e.voided && counted > 1 && BigInt(e.stake) >= VHP, stake: BigInt(e.stake), e };
     });
-    const allSettled = entries.every((r) => r.entry.settled);
-    const pointsMatch = scored.every((s) => s.pts === N(s.e.points) && s.eligible === !!s.e.eligible);
+    const staked = entries.filter((r) => BigInt(r.entry.stake ?? 0) >= VHP);
+    const allSettled = staked.every((r) => r.entry.settled);
+    const pointsMatch = scored.filter((s) => s.e.settled).every((s) => s.pts === N(s.e.points) && s.eligible === !!s.e.eligible);
+    const freeNeverPaid = scored.filter((s) => s.stake < VHP).every((s) => !s.e.eligible && !s.e.claimed);
     const elig = scored.filter((s) => s.eligible);
     const total = elig.reduce((s, x) => s + x.stake, 0n);
     let cutoff = 0, cum = 0n;
@@ -322,7 +324,8 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     const winners = cutoff >= 1 ? elig.filter((s) => s.pts >= cutoff) : [];
     const weight = winners.reduce((a, s) => a + BigInt(s.pts) * s.stake, 0n);
     const onWeight = (BigInt(wk.weight_hi) << 64n) + BigInt(wk.weight_lo);
-    check(allSettled, `week ${w}: all ${entries.length} entries settled (players who never came back were settled by the bot)`);
+    check(allSettled, `week ${w}: all ${staked.length} staked entries settled (players who never came back were settled by the bot)`);
+    check(freeNeverPaid, `week ${w}: ${entries.length - staked.length} free player(s) played without stake and were never eligible or paid`);
     check(pointsMatch, `week ${w}: every player's points and eligibility match an independent recount`);
     check(N(wk.cutoff) === cutoff && N(wk.winners) === winners.length && onWeight === weight,
       `week ${w}: winners match the independent recount — cutoff ${cutoff} pts, ${winners.length} winner(s) holding ≥30% of ${showKoin(total)} eligible VHP`);
@@ -341,8 +344,9 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   const pr = async (p: Player, w: number) => (await sim.read("get_player", { player: p.key.getAddress(), week: String(w) })).entry;
   const ghost = players.find((p) => p.habit === "ghost")!, quitter = players.find((p) => p.habit === "quitter")!;
   const late = players.find((p) => p.habit === "late")!, tiny = players.find((p) => p.habit === "tiny")!;
-  check(!(await pr(late, 0)) && !!(await pr(late, 1)), "a deposit made during week 0 only counted from week 1");
-  check(!(await pr(tiny, 0)), "a player below the 1 VHP minimum could not answer");
+  const late0 = await pr(late, 0), late1 = await pr(late, 1);
+  check(BigInt(late0?.stake ?? 0) === 0n && BigInt(late1?.stake ?? 0) === stakes.late, "a deposit made during week 0 only counted from week 1 (week 0 was free play)");
+  check(tiny.stake === 0n && !!(await pr(tiny, 0)), "a fractional deposit (0.5 VHP) was refused; that player still played for free");
   check(!!(await pr(quitter, 1))?.voided, "the mid-week withdrawal voided that player's week-1 answers");
   const g0 = await pr(ghost, 0);
   check(!!g0?.settled && !(g0?.claimed), "the player who vanished after week 0 was settled by the bot and their reward stays unclaimed (still producing)");

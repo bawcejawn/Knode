@@ -435,7 +435,9 @@ async function settlePass(ctx: Ctx) {
   for (let w = st.weeksFinalized; w < st.weeksClosed; w++) {
     const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
     if (h < num(wk.settle_start) || h > num(wk.settle_end)) continue;
-    const todo = (await allPlayers(ctx.chain, w)).filter((r) => r.entry && !r.entry.settled);
+    // Free players (no stake that week) can never be paid, so the bot doesn't spend Mana settling them.
+    const minStake = big(st.c.min_stake);
+    const todo = (await allPlayers(ctx.chain, w)).filter((r) => r.entry && !r.entry.settled && big(r.entry.stake) >= minStake && big(r.entry.stake) > 0n);
     if (todo.length) log(`  settling ${todo.length} player(s) for week ${w}`);
     let n = 0;
     for (const r of todo) {
@@ -637,6 +639,12 @@ export function units(amount: string): string {
   return (BigInt(m[1]) * 100_000_000n + BigInt((m[2] ?? "").padEnd(8, "0"))).toString();
 }
 
+/** Stakes are whole numbers only (1, 2, 3 …), as the contract requires. */
+export function whole(amount: string): string {
+  if (!/^\d+$/.test(String(amount).trim())) throw new Error(`Stakes are whole numbers only (like 1 or 25), not "${amount}".`);
+  return units(amount);
+}
+
 /** A producer public key in any common text form (base64, base64url or hex) → the base64url the ABI expects. */
 export function normalizeKey(k: string): string {
   const t = k.trim();
@@ -703,9 +711,9 @@ async function friendly(cmd: string, a: string[], send: boolean): Promise<boolea
     case "node-status": await nodeStatus(); return true;
     case "seed-vhp": await act("seed", "seed_deposit_vhp", { amount: units(need(0, "amount")) }, send); return true;
     case "seed-koin": await act("seed", "seed_deposit_koin", { amount: units(need(0, "amount")) }, send); return true;
-    case "deposit": await act("player", "deposit_vhp", { from: me("player"), amount: units(need(0, "amount")) }, send); return true;
-    case "deposit-koin": await act("player", "deposit_koin", { from: me("player"), amount: units(need(0, "amount")) }, send); return true;
-    case "withdraw": await act("player", "withdraw", { to: me("player"), amount: units(need(0, "amount")) }, send); return true;
+    case "deposit": await act("player", "deposit_vhp", { from: me("player"), amount: whole(need(0, "amount")) }, send); return true;
+    case "deposit-koin": await act("player", "deposit_koin", { from: me("player"), amount: whole(need(0, "amount")) }, send); return true;
+    case "withdraw": await act("player", "withdraw", { to: me("player"), amount: whole(need(0, "amount")) }, send); return true;
     case "answer": {
       const letter = need(1, "the option letter (A, B, C …)").toUpperCase();
       await act("player", "answer", { player: me("player"), question_id: Number(need(0, "question number")), option: letter.charCodeAt(0) - 65 }, send); return true;

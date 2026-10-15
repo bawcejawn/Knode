@@ -7,6 +7,9 @@
   const DAY = 28800;              // blocks per day
   const UNIT = 100000000n;        // 1 KOIN / 1 VHP = 10^8 units
   const RPC = "https://api.koinos.io";
+  // Block explorer links (change here if the explorer's address format differs).
+  const EXPLORER_ADDRESS = "https://koinosscan.io/address/";
+  const EXPLORER_PRODUCERS = "https://koinosscan.io/producers";
   const BASE = location.pathname.includes("/site/") ? "../" : "./";
   const DATA = BASE + "game-data/";
   const ABI_URL = BASE + "game/abi/kpred.koilib.json";
@@ -68,6 +71,19 @@
     if (h) return `${h}h ${m}m`;
     return `${Math.max(m, s > 0 ? 1 : 0)}m`;
   };
+  /** Question text with every Koinos address turned into an explorer link (full address, easy to look up). */
+  const linkify = (text) => {
+    const out = [];
+    let last = 0;
+    for (const m of String(text).matchAll(/1[1-9A-HJ-NP-Za-km-z]{25,34}/g)) {
+      out.push(text.slice(last, m.index));
+      out.push(el("a", { href: EXPLORER_ADDRESS + m[0], target: "_blank", rel: "noopener", class: "addr-link", title: "Open this producer on the block explorer" }, m[0]));
+      last = m.index + m[0].length;
+    }
+    out.push(text.slice(last));
+    return out;
+  };
+
   /** A UTC hour of the day shown in the viewer's own time zone, e.g. "8:00 AM". */
   const localHour = (utcHour) => { const d = new Date(); d.setUTCHours(utcHour, 0, 0, 0); return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); };
   const hue = (addr) => { let h = 0; for (const c of addr || "") h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
@@ -286,8 +302,9 @@
   $("#stake-dialog").addEventListener("close", async () => {
     const d = $("#stake-dialog");
     if (d.returnValue !== "go") return;
-    const units = toUnits($("#stake-amount").value);
-    if (!units || units === "0") return toast("Enter an amount, for example 25 or 2.5");
+    const raw = $("#stake-amount").value.trim();
+    if (!/^[1-9]\d*$/.test(raw)) return toast("Whole numbers only, for example 1 or 25.");
+    const units = toUnits(raw);
     if (d.dataset.mode === "deposit") {
       const tok = document.querySelector('input[name="tok"]:checked').value;
       if (big(units) < UNIT && big(S.player?.stake) + big(S.player?.pending) < UNIT) toast("Note: you need at least 1 VHP staked to answer.", 6000);
@@ -336,7 +353,7 @@
       el("span", {}, `Question #${q.chainId}`),
       mine !== null ? el("span", {}, `Your answer: ${String.fromCharCode(65 + mine)}`) : mode === "open" ? el("span", {}, S.account ? "Pick an option" : "Connect Kondor to answer") : null,
       q.result && q.result.value ? el("span", {}, `Actual: ${q.result.value}`) : null);
-    return el("article", { class: "q" }, top, el("h3", {}, q.text), opts, foot);
+    return el("article", { class: "q" }, top, el("h3", {}, ...linkify(q.text)), opts, foot);
   }
 
   function renderPlay() {
@@ -369,6 +386,7 @@
       const pts = S.board[S.week]?.scored.find((s) => s.address === S.account);
       you.replaceChildren(...[
         el("div", { class: "you-big" }, el("b", {}, amount(S.activeStake ?? p.stake)), el("span", { class: "muted" }, "VHP playing this week")),
+        (S.activeStake ?? 0n) < UNIT ? el("p", { class: "free-note" }, "You're playing free: your points count on the leaderboard. Stake at least 1 VHP to share in the rewards (a stake counts from the next week).") : null,
         big(p.pending) > 0n ? el("p", { class: "muted" }, `+ ${amount(p.pending)} VHP joining next week`) : null,
         el("dl", { class: "facts", style: "margin-top:14px" },
           el("dt", {}, "Points this week"), el("dd", {}, pts ? String(pts.pts) : "0"),
@@ -412,15 +430,16 @@
     }
     S.boardWeek = week;
     const b = S.board[week];
-    const rows = b.scored.filter((s) => s.eligible || s.address === S.account);
+    // Everyone who answered is listed. Free players (no stake) score points but are never paid.
+    const rows = b.scored.filter((s) => s.counted > 0 || s.address === S.account);
     if (!rows.length) { tbody.replaceChildren(el("tr", {}, el("td", { colspan: "5", class: "muted" }, "No players yet this week. Stake and answer to be the first."))); return; }
     let lastWinnerIdx = -1;
     rows.forEach((s, i) => { if (s.winner) lastWinnerIdx = i; });
     tbody.replaceChildren(...rows.map((s, i) => el("tr", { class: [s.address === S.account ? "me" : "", i === lastWinnerIdx ? "cutline" : ""].join(" ").trim() },
       el("td", {}, el("span", { class: `rank${s.winner ? " top" : ""}` }, String(i + 1))),
       el("td", {}, el("span", { class: "addr" }, s.address === S.account ? "You" : short(s.address)), i === lastWinnerIdx ? el("span", { class: "cut-label" }, "winners' line") : null),
-      el("td", { class: "num" }, s.eligible ? String(s.pts) : "not eligible yet"),
-      el("td", { class: "num" }, `${amount(s.stake, 0)} VHP`),
+      el("td", { class: "num" }, String(s.pts)),
+      el("td", { class: "num" }, s.stake < UNIT ? el("span", { class: "badge badge-free" }, "Free play") : `${amount(s.stake, 0)} VHP`),
       el("td", { class: "num" }, s.winner ? `${s.share.toFixed(2)}%` : "–"))));
     $("#lb-note").textContent = week === S.week
       ? "Live standings: points count once a question is resolved. Winners are the top players holding 30% of the week's stake, and everyone tied at the line wins too."
@@ -508,7 +527,7 @@
       const skill = 0.25 + drnd() * 0.45;
       return {
         address: "1" + Array.from({ length: 33 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz123456789"[Math.floor(drnd() * 58)]).join(""), voided: i === 9,
-        stake: BigInt(Math.round(50 + drnd() * 4000)) * UNIT,
+        stake: i % 6 === 5 ? 0n : BigInt(Math.round(50 + drnd() * 4000)) * UNIT,
         answers: resolved.filter(() => drnd() < 0.85).map((q) => ({ question_id: q.chainId, option: drnd() < skill && q.chainOutcome !== 1000 ? q.chainOutcome - 1 : Math.floor(drnd() * q.options.length) })),
       };
     });
@@ -546,6 +565,7 @@
       try { await loadLive(); } catch (e) { toast(`Couldn't reach the Koinos network: ${e.message}`, 8000); }
       setInterval(async () => { try { await loadLive(); S.board[S.week] = undefined; renderPlay(); } catch {} }, 60000);
     }
+    $("#producers-link").href = EXPLORER_PRODUCERS;
     $("#schedule").textContent = `Your time: new questions ${localHour(12)} Monday to Saturday, answers close ${localHour(0)}. Winners are final Tuesdays at ${localHour(12)}.`;
     renderAll();
     renderBoard(S.week).then(() => renderPlay()).catch(() => {});

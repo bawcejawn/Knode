@@ -201,16 +201,32 @@ describe("questions and answers", () => {
     expect(post(k, 2, 1300, 1301, 1400)).toBe(1);
   });
 
-  it("answers need a week-start stake, an open question, a valid option, and only once", () => {
+  it("free play: anyone can answer, but only the stake that counts this week can ever be paid", () => {
     const k = setup();
     at(1100);
     deposit(k, A, 10 * VHP);                         // during week 0: counts from week 1
     const q = post(k, 4, 1300, 1301, 1400);
-    gK = k; gId = q;
+    answer(k, A, q, 0);                              // plays week 0 for free
+    expect(k.get_player(new kpred.get_player_arguments(A, 0)).entry!.stake).toBe(0);
+    answer(k, E, q, 1);                              // never staked at all: free play too
+    expect(k.get_player(new kpred.get_player_arguments(E, 0)).entry!.stake).toBe(0);
+  });
+
+  it("stakes are whole numbers only", () => {
+    const k = setup();
+    gK = k;
     as(A);
     MockVM.commitTransaction();
-    expect(() => { gK!.answer(new kpred.answer_arguments(A, gId, 0)); }).toThrow();
-    expect(MockVM.getErrorMessage()).toBe("stake at least the minimum (counts from the week after depositing) to answer");
+    expect(() => { gK!.deposit_vhp(new kpred.deposit_vhp_arguments(A, VHP + VHP / 2)); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("stake whole numbers only (1, 2, 3 …)");
+    deposit(k, A, 3 * VHP);
+    MockVM.commitTransaction();
+    expect(() => { gK!.withdraw(new kpred.withdraw_arguments(A, VHP / 10)); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("withdraw whole numbers only (1, 2, 3 …)");
+    k.withdraw(new kpred.withdraw_arguments(A, VHP));
+  });
+
+  it("answers need an open question, a valid option, and only once", () => {
 
     const k2 = setup();
     deposit(k2, B, 10 * VHP);
@@ -1205,3 +1221,50 @@ describe("extreme edge cases", () => {
 });
 
 function bpsT(amount: u64, b: u64): u64 { return amount * b / 10000; }
+
+describe("free players", () => {
+  it("score points and appear in entries, are never eligible or paid, and the pool never pays their Mana", () => {
+    const k = setup();
+    deposit(k, A, 10 * VHP);
+    deposit(k, B, 10 * VHP);
+    at(1100);
+    const q0 = post(k, 2, 1300, 1301, 1400);
+    const q1 = post(k, 2, 1300, 1301, 1400);
+    // E has no stake: the pool won't sponsor E's answer
+    as(E);
+    setTx(0x0db52f40, Protobuf.encode(new kpred.answer_arguments(E, q0, 1), kpred.answer_arguments.encode), VHP / 2, 1);
+    expect(sponsor(k)).toBe(false);
+    as(A);
+    setTx(0x0db52f40, Protobuf.encode(new kpred.answer_arguments(A, q0, 1), kpred.answer_arguments.encode), VHP / 2, 1);
+    expect(sponsor(k)).toBe(true);
+    at(1200);
+    answer(k, A, q0, 1); answer(k, A, q1, 0);       // 1 right
+    answer(k, B, q0, 0); answer(k, B, q1, 0);       // 0 right
+    answer(k, E, q0, 1); answer(k, E, q1, 1);       // 2 right: best score, but plays free
+    at(1500); resolve(k, q0, 1); resolve(k, q1, 1);
+    give(KOIN_TAG, CONTRACT, 10 * VHP); give(MANA_TAG, CONTRACT, 10 * VHP);
+    at(2010);
+    nobody();
+    k.compound(new kpred.compound_arguments());     // closes week 0
+    setTx(0x6868e83d, Protobuf.encode(new kpred.settle_arguments(E, 0), kpred.settle_arguments.encode), VHP / 2, 1);
+    expect(sponsor(k)).toBe(false);                  // nobody pays the pool's Mana to settle a free entry
+    const se = k.settle(new kpred.settle_arguments(E, 0));
+    expect(se.points).toBe(2);
+    expect(se.eligible).toBe(false);
+    k.settle(new kpred.settle_arguments(A, 0));
+    k.settle(new kpred.settle_arguments(B, 0));
+    at(2200);
+    k.compound(new kpred.compound_arguments());     // finalizes
+    const w0 = k.get_week(new kpred.get_week_arguments(0)).week!;
+    expect(w0.eligible_players).toBe(2);             // the free player doesn't count toward the 30% line
+    expect(w0.cutoff).toBe(1);
+    expect(w0.winners).toBe(1);
+    as(A);
+    expect(k.claim(new kpred.claim_arguments(A, 0)).reward).toBe(w0.pot);   // A takes the whole pot
+    gK = k;
+    as(E);
+    MockVM.commitTransaction();
+    expect(() => { gK!.claim(new kpred.claim_arguments(E, 0)); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("not eligible that week");
+  });
+});

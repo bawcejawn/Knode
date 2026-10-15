@@ -32,6 +32,7 @@ const RESOLVE_MARGIN: u64 = 60; // resolve only after the window's blocks are ir
 // question watches are still counted by height; these bounds on the average block time keep the two consistent:
 const MIN_BLOCK_MS: u64 = 2800; // even if blocks ran this fast, a question's window still starts after its answers close
 const MAX_BLOCK_MS: u64 = 3500; // even if blocks ran this slow, the window still ends before its week is due to close
+const WHOLE: u64 = 100_000_000;   // stakes move in whole VHP / KOIN only (1, 2, 3 … never 1.5)
 const MAX_SPONSOR_LIMIT: u64 = 1_000_000_000; // 10 KOIN of Mana: the most one free transaction may ever cost the pool
 
 // Entry points the contract is willing to pay Mana for (first 4 bytes of sha256 of the name).
@@ -225,7 +226,8 @@ export class Kpred {
     if (this.now() >= q.lock_time) return "answers for this question are closed";
     if (option >= q.k) return "no such option";
     const p = this.players.get(player)!;
-    if (this.activeStake(p, q.week) < c.min_stake) return "stake at least the minimum (counts from the week after depositing) to answer";
+    // Free play: anyone may answer and earn points. Rewards are points × stake, so a player with no stake (or less
+    // than min_stake) is never eligible for a share: they appear on the leaderboard but are paid nothing.
     if (p.void_week_plus_one == q.week + 1) return "you withdrew this week, so this week's answers don't count";
     const e = this.entries.get(this.entryKey(player, q.week));
     if (e) {
@@ -357,6 +359,7 @@ export class Kpred {
     this.advance(c);
     System.require(!c.paused, "new deposits are paused");
     System.require(amount > 0, "amount must be positive");
+    System.require(amount % WHOLE == 0, "stake whole numbers only (1, 2, 3 …)");
     System.requireAuthority(authority.authorization_type.contract_call, from);
     if (isKoin) {
       Tokens.pullKoin(from, amount);
@@ -393,6 +396,7 @@ export class Kpred {
     const to = args.to!;
     System.requireAuthority(authority.authorization_type.contract_call, to);
     System.require(args.amount > 0, "amount must be positive");
+    System.require(args.amount % WHOLE == 0, "withdraw whole numbers only (1, 2, 3 …)");
     this.advance(c);
     const h = this.now();
     const w = this.weekOf(c, h);
@@ -935,11 +939,16 @@ export class Kpred {
       const a = Protobuf.decode<kpred.answer_arguments>(cc.args, kpred.answer_arguments.decode);
       if (!isAddress(a.player)) return false;
       if (this.answerCheck(c, a.player!, a.question_id, a.option).length > 0) return false;
+      // The pool pays the Mana only for staked players; free players use their own (or Kondor's free Mana).
+      const q = this.questions.get(u32Key(a.question_id))!;
+      if (this.activeStake(this.players.get(a.player!)!, q.week) < c.min_stake || c.min_stake == 0) return false;
       return System.checkAuthority(authority.authorization_type.contract_call, a.player!);
     }
     if (cc.entry_point == EP_SETTLE) {
       const a = Protobuf.decode<kpred.settle_arguments>(cc.args, kpred.settle_arguments.decode);
       if (!isAddress(a.player)) return false;
+      const se = this.entries.get(this.entryKey(a.player!, a.week));
+      if (se == null || se.stake < c.min_stake || c.min_stake == 0) return false; // free players' entries are never paid for
       if (this.settleCheck(a.player!, a.week).length == 0) return true;
       // The week may simply not be closed yet although it is due: the settle call closes it first.
       const t = this.totals.get()!;
