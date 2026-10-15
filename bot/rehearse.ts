@@ -110,7 +110,8 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   const weekLog: string[] = [];
   let lastClosed = 0;
   const closeHeights: number[] = [];
-  let ticks = 0, outageSkips = 0;
+  let ticks = 0, outageSkips = 0, claimChecked = 0;
+  const answered = new Set<string>();
 
   console.log(`Rehearsing ${opts.weeks} weeks on real blocks ${genesis}…${endHeight} (one bot run per simulated hour) ...`);
   for (let h = genesis - 2 * DAY + HOUR; h <= endHeight; h += HOUR) {
@@ -121,7 +122,13 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
 
     // ── players ──
     const st = await sim.read("get_state", {});
-    const next = Number(st.totals.next_question_id);
+    const next = Number(st.totals.next_question_id ?? 0);
+    const open: any[] = [];
+    for (let id = Math.max(0, next - 8); id < next; id++) {
+      const q = (await sim.read("get_question", { id })).question;
+      if (q && h < Number(q.lock_height) && Number(q.outcome ?? 0) === 0) open.push({ id, k: Number(q.k) });
+    }
+    const fin = Number(st.totals.weeks_finalized ?? 0);
     for (const p of players) {
       const A = p.key.getAddress();
       if (p.habit === "late" && p.stake === 0n && week === 0 && dayIdx === 2) {
@@ -133,15 +140,14 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
         if (await act(p.key, "withdraw", { to: A, amount: String(amt) })) p.stake -= amt;
       }
       // answer open questions
-      for (let id = Math.max(0, next - 6); id < next; id++) {
-        const q = (await sim.read("get_question", { id })).question;
-        if (!q || h >= Number(q.lock_height) || Number(q.outcome) !== 0) continue;
+      for (const q of open) {
+        if (answered.has(`${A}:${q.id}`)) continue;
+        answered.add(`${A}:${q.id}`);                                    // one decision per question
         if (p.habit === "casual" && rnd() < 0.4) continue;
-        await act(p.key, "answer", { player: A, question_id: id, option: Math.floor(rnd() * Number(q.k)) });
+        await act(p.key, "answer", { player: A, question_id: q.id, option: Math.floor(rnd() * q.k) });
       }
       // claim finished weeks (everyone except the ghost, who never comes back)
-      if (p.habit !== "ghost") {
-        const fin = Number(st.totals.weeks_finalized);
+      if (p.habit !== "ghost" && fin > claimChecked) {
         for (let w = Math.max(0, fin - 2); w < fin; w++) {
           const r = await sim.read("get_player", { player: A, week: String(w) });
           if (r.entry?.eligible && !r.entry.claimed) {
@@ -153,6 +159,8 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
         }
       }
     }
+
+    claimChecked = fin;
 
     // ── injected trouble ──
     if (!strayPosted && week === 1 && dayIdx === 9) {
@@ -175,9 +183,11 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
       // Crash simulation: the bot posted questions but "died" before saving their on-chain ids.
       const posted = fs.readdirSync(P.questions).filter((f) => !snap.has(f) || snap.get(f) !== fs.readFileSync(path.join(P.questions, f), "utf8"));
       for (const f of posted) {
+        // Only questions posted in THIS run lose their ids (ids at or above what the bot had already saved).
+        const saved = bsBefore ? JSON.parse(bsBefore).checkedUpTo : 0;
         const d = JSON.parse(fs.readFileSync(path.join(P.questions, f), "utf8"));
-        if (!d.questions.some((q: any) => q.chainId !== undefined)) continue;
-        for (const q of d.questions) delete q.chainId;
+        if (!d.questions.some((q: any) => q.chainId !== undefined && q.chainId >= saved)) continue;
+        for (const q of d.questions) if (q.chainId !== undefined && q.chainId >= saved) delete q.chainId;
         fs.writeFileSync(path.join(P.questions, f), JSON.stringify(d, null, 2));
         if (bsBefore !== null) fs.writeFileSync(bsFile, bsBefore);
         crashInjected = true;
@@ -218,7 +228,8 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   for (const q of posted) {
     const oc = (await sim.read("get_question", { id: q.chainId })).question;
     const w = Number(oc.week);
-    if (Number(oc.outcome) === 0) { if (w < W) unresolved++; continue; }
+    if (Number(oc.outcome) === 0) { if (w < W) { unresolved++; console.log(`  unresolved: ${q.id} (#${q.chainId})`); } continue; }
+    if (!q.result) { mismatch++; console.log(`  ${q.id} (#${q.chainId}) is resolved on-chain (${oc.outcome}) but has no local result`); continue; }
     const mine = q.result.void ? 1000 : q.result.option + 1;
     if (mine !== Number(oc.outcome)) mismatch++;
     if (q.result.void) voids++;

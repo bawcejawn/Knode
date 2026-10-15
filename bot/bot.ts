@@ -162,6 +162,14 @@ async function scanIds(ctx: Ctx, bs: BotState) {
 // ───────────── resolve ─────────────
 
 async function resolvePass(ctx: Ctx, bs: BotState) {
+  // Safety net: if a week is overdue to close because some question is still open, re-check every question id
+  // from the start (each one is either linked to a local question by its hash, or resolved as VOID).
+  const st = await state(ctx);
+  const wk = (await ctx.chain.read("get_week", { week: String(st.weeksClosed) })).week ?? {};
+  if (st.height > weekEnd(st, st.weeksClosed) + st.closeDelay + 2 * RESOLVE_SLACK && num(wk.resolved) < num(wk.questions) && bs.checkedUpTo > 0) {
+    log(`  ⚠ week ${st.weeksClosed} is overdue to close with ${num(wk.questions) - num(wk.resolved)} open question(s): re-checking every question id`);
+    bs.checkedUpTo = 0;
+  }
   await scanIds(ctx, bs);
   const { height } = await ctx.chain.head();
   const due = (q: any) => height > num(q.window_end) + RESOLVE_MARGIN;
