@@ -262,7 +262,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
       return { addr: r.address, pts, eligible: !e.voided && counted > 1 && BigInt(e.stake) >= VHP, stake: BigInt(e.stake), e };
     });
     const allSettled = entries.every((r) => r.entry.settled);
-    const pointsMatch = scored.every((s) => s.pts === N(s.e.points) && s.eligible === s.e.eligible);
+    const pointsMatch = scored.every((s) => s.pts === N(s.e.points) && s.eligible === !!s.e.eligible);
     const elig = scored.filter((s) => s.eligible);
     const total = elig.reduce((s, x) => s + x.stake, 0n);
     let cutoff = 0, cum = 0n;

@@ -40,7 +40,7 @@
       "argument": "kpred.list_players_arguments",
       "return": "kpred.list_players_result",
       "read_only": true,
-      "description": "Page through all players (for the bot's settle runs and the website's leaderboard). Returns up to"
+      "description": "Page through all players, each with their entry for a week (up to 50 per page, after address `start`)."
     },
     "init": {
       "entry_point": 3142846090,
