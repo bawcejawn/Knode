@@ -625,12 +625,41 @@ async function cmdSweep() {
   console.log("\nNote: VHP the owner made with OWNER_BURN stays VHP (burning can't be undone); it is still yours.");
 }
 
+// ───────────────────────── refund ─────────────────────────
+
+/** Send the owner's VHP and as much KOIN as its Mana allows to another wallet (e.g. your main wallet).
+ *  Moving KOIN needs Mana at least equal to the amount, so the rest can be sent again after Mana refills. */
+async function cmdRefund() {
+  guardNetwork();
+  const to = process.argv[3];
+  if (!to || !/^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(to)) throw new Error("Usage: npm run probes -- refund <your wallet address>");
+  const owner = signerFrom("OWNER_WIF");
+  const O = owner.getAddress();
+  if (to === O) throw new Error("That is the owner address itself.");
+  const { koin, vhp } = await tokenAddresses();
+  const [k, v, m] = await Promise.all([balance(koin, O), balance(vhp, O), mana(O)]);
+  console.log(`Owner holds KOIN ${show(k)}  VHP ${show(v)}  Mana ${show(m)}. Sending to ${to} ...`);
+  if (v > 0n) {
+    const r = await send([await op(token(vhp), "transfer", { from: O, to, value: v.toString() })], [owner], O, 0.5);
+    console.log(r.ok ? `  sent ${show(v)} VHP` : `  VHP transfer failed: ${r.error}`);
+  }
+  const keep = BigInt(sat(0.6)); // Mana for this transaction
+  const m2 = await mana(O);
+  const amt = (k < m2 ? k : m2) - keep;
+  if (amt > 0n) {
+    const r = await send([await op(token(koin), "transfer", { from: O, to, value: amt.toString() })], [owner], O, 0.5);
+    console.log(r.ok ? `  sent ${show(amt)} KOIN` : `  KOIN transfer failed: ${r.error}`);
+  }
+  const left = await balance(koin, O);
+  if (left > 0n) console.log(`\n${show(left)} KOIN stays on the owner until its Mana refills (about 20% per day). Run refund again later.`);
+}
+
 // ───────────────────────── main ─────────────────────────
 
 const cmd = process.argv[2] ?? "help";
-const cmds: Record<string, () => Promise<void>> = { keys: cmdKeys, status: cmdStatus, setup: cmdSetup, run: cmdRun, sweep: cmdSweep };
+const cmds: Record<string, () => Promise<void>> = { keys: cmdKeys, status: cmdStatus, setup: cmdSetup, run: cmdRun, sweep: cmdSweep, refund: cmdRefund };
 if (!cmds[cmd]) {
-  console.log("Usage: npm run probes -- keys | status | setup | run | sweep");
+  console.log("Usage: npm run probes -- keys | status | setup | run | sweep | refund <address>");
 } else {
   cmds[cmd]().catch((e) => {
     console.error("\nStopped: " + (e as Error).message);
