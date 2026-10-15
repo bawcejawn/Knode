@@ -28,19 +28,16 @@ const TOTALS_SPACE: u32 = 2;
 const STRESS_SPACE: u32 = 3;
 
 export class Kprobe {
-  contractId: Uint8Array;
-  config: Storage.Obj<kprobe.config_object>;
-  credits: Storage.Map<Uint8Array, kprobe.balance_object>;
-  totals: Storage.Map<string, kprobe.balance_object>;
-  scratch: Storage.Map<string, kprobe.balance_object>;
-
-  constructor() {
-    this.contractId = System.getContractId();
-    this.config = new Storage.Obj(this.contractId, CONFIG_SPACE, kprobe.config_object.decode, kprobe.config_object.encode, () => new kprobe.config_object());
-    this.credits = new Storage.Map(this.contractId, CREDIT_SPACE, kprobe.balance_object.decode, kprobe.balance_object.encode, () => new kprobe.balance_object());
-    this.totals = new Storage.Map(this.contractId, TOTALS_SPACE, kprobe.balance_object.decode, kprobe.balance_object.encode, () => new kprobe.balance_object());
-    this.scratch = new Storage.Map(this.contractId, STRESS_SPACE, kprobe.balance_object.decode, kprobe.balance_object.encode, () => new kprobe.balance_object());
-  }
+  // Fields are initialised where they are declared (AssemblyScript requires it; same style as the KOIN contract).
+  contractId: Uint8Array = System.getContractId();
+  config: Storage.Obj<kprobe.config_object> = new Storage.Obj(
+    System.getContractId(), CONFIG_SPACE, kprobe.config_object.decode, kprobe.config_object.encode, () => new kprobe.config_object());
+  credits: Storage.Map<Uint8Array, kprobe.balance_object> = new Storage.Map(
+    System.getContractId(), CREDIT_SPACE, kprobe.balance_object.decode, kprobe.balance_object.encode, () => new kprobe.balance_object());
+  totals: Storage.Map<string, kprobe.balance_object> = new Storage.Map(
+    System.getContractId(), TOTALS_SPACE, kprobe.balance_object.decode, kprobe.balance_object.encode, () => new kprobe.balance_object());
+  scratch: Storage.Map<string, kprobe.balance_object> = new Storage.Map(
+    System.getContractId(), STRESS_SPACE, kprobe.balance_object.decode, kprobe.balance_object.encode, () => new kprobe.balance_object());
 
   // ───── helpers ─────
 
@@ -176,7 +173,8 @@ export class Kprobe {
     System.require(owner != null && this.signedBy(owner!), "only the owner can register a producer key");
     const a = new pob.register_public_key_arguments();
     a.producer = this.contractId;
-    a.public_key = args.public_key;
+    System.require(args.public_key != null && args.public_key!.length > 0, "public_key required");
+    a.public_key = args.public_key!;
     const res = System.call(System.getContractAddress("pob"), POB_REGISTER_PUBLIC_KEY, Protobuf.encode(a, pob.register_public_key_arguments.encode));
     System.require(res.code == error.error_code.success, "register_public_key failed: " + (res.res.error ? res.res.error!.message : ""));
     return new kprobe.register_key_result();
