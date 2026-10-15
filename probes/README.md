@@ -31,7 +31,7 @@ A "refused" probe **passes** when the chain refuses it. That is the point: those
 ## What you need
 
 - Node.js 20+ (you already have it from Step 0).
-- About **30 KOIN** (mainnet) or **30 tKOIN** (testnet faucet: Koinos Discord **#faucet**, `!faucet <address>`).
+- About **40 KOIN** (mainnet) or **40 tKOIN** (testnet faucet: Koinos Discord **#faucet**, `!faucet <address>`).
 
 ## Steps
 
@@ -127,11 +127,11 @@ npm run probes -- keys --mainnet
 This points `.env` at mainnet (`RPC=https://api.koinos.io`, `CONFIRM_MAINNET=yes`) and makes fresh keys.
 The script refuses to touch mainnet without both lines.
 
-What happens to the owner's ~30 KOIN:
+What happens to the owner's ~40 KOIN:
 
 | Amount | What happens | Comes back? |
 |---|---|---|
-| ~20 | Never leaves the owner. It's Mana headroom for uploading the contract | Mana refills over ~5 days; nothing is charged |
+| ~30 | Never leaves the owner. It's Mana for uploading the contract (≈ 21 Mana for 25 KB) and the upgrade test at the end | Mana refills over ~5 days; nothing is charged |
 | 2 | Burned into VHP by the owner (P0) | Stays VHP, still yours |
 | 5 → contract | 1 deposit + about 2 compounded become VHP; the rest stays KOIN | `sweep` returns the KOIN and the VHP |
 | 2 → helper | Pays the helper's Mana for the attack tests | `sweep` returns it |
@@ -150,7 +150,7 @@ and permanent, including the probe contract.
 | `DEPOSIT` | 1 | Size of each test deposit and withdrawal |
 | `RESERVE` | 3 | KOIN the contract keeps during compound |
 | `RC_LIMIT` | 2 | Max Mana per probe transaction (never more than the payer has) |
-| `UPLOAD_RC_LIMIT` | 20 | Max Mana for uploading the contract |
+| `UPLOAD_RC_LIMIT` | 30 | Max Mana for uploading the contract |
 | `KOIN_ADDRESS`, `VHP_ADDRESS` | detected | Only needed if detection from recent blocks fails |
 
 ## How the security works (in plain words)

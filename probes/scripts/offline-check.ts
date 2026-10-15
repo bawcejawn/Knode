@@ -19,6 +19,14 @@ const WASM = "build/release/contract.wasm";
 ok(fs.existsSync(WASM), `${WASM} exists`);
 const wasm = fs.existsSync(WASM) ? new Uint8Array(fs.readFileSync(WASM)) : new Uint8Array();
 ok(wasm.length > 10_000 && wasm.length < 200_000, `contract size ${(wasm.length / 1024).toFixed(1)} KB`);
+// Koinos runs contracts in a WebAssembly VM without the newer "bulk memory" and "sign extension"
+// instructions, and starts them through an exported "_start" function (same settings as the KOIN contract).
+const WAT = "build/release/contract.wat";
+const wat = fs.existsSync(WAT) ? fs.readFileSync(WAT, "utf8") : "";
+ok(wat.length > 0, `${WAT} exists`);
+ok(/\(export "_start"/.test(wat) && !/\(start /.test(wat), "contract exports _start (no automatic start section)");
+ok(!/^\s+memory\.(copy|fill)\s*$/m.test(wat), "no bulk-memory instructions");
+ok(!/\b(i32|i64)\.extend(8|16|32)_s\b/.test(wat), "no sign-extension instructions");
 
 const abiFile = fs.existsSync("abi") ? fs.readdirSync("abi").find((f) => f.endsWith(".abi")) : undefined;
 ok(!!abiFile, "compiler-generated ABI found in abi/");

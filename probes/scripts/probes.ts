@@ -37,9 +37,9 @@ const CFG = {
   reserve: num("RESERVE", 3),             // KOIN the contract keeps unburned during compound
   rcLimit: num("RC_LIMIT", 2),            // max Mana (in KOIN) a normal probe transaction may use
   stressRcLimit: num("STRESS_RC_LIMIT", 5),
-  uploadRcLimit: num("UPLOAD_RC_LIMIT", 20), // max Mana for uploading the contract code
+  uploadRcLimit: num("UPLOAD_RC_LIMIT", 30), // max Mana for uploading the contract code (estimate is ~21 for 25 KB)
 };
-const NEED = CFG.fundContract + CFG.fundHelper + CFG.ownerBurn + CFG.deposit + CFG.uploadRcLimit; // KOIN the owner should hold
+const NEED = CFG.fundContract + CFG.fundHelper + CFG.ownerBurn + CFG.deposit + CFG.uploadRcLimit; // ~40 // KOIN the owner should hold
 const STATE_FILE = "probe-state.json";
 const WASM = "build/release/contract.wasm";
 const OUT_DIR = "probes-output";
@@ -167,9 +167,14 @@ function kprobeContract(contractSigner: Signer, withBytecode = false) {
   });
 }
 
-async function uploadOp(contractSigner: Signer) {
-  if (!fs.existsSync(WASM)) throw new Error(`${WASM} not found — run: npm run build`);
-  const c = kprobeContract(contractSigner, true);
+/** A tiny valid (empty) WebAssembly module: used for the upload ATTACK tests, so a refused attempt costs
+ *  almost no Mana and can only be refused by the security rule, not by running out of Mana. */
+const TINY_WASM = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+
+async function uploadOp(contractSigner: Signer, tiny = false) {
+  if (!tiny && !fs.existsSync(WASM)) throw new Error(`${WASM} not found — run: npm run build`);
+  const c = kprobeContract(contractSigner, !tiny);
+  if (tiny) (c as any).bytecode = TINY_WASM;
   const { operation } = await c.deploy({
     authorizesCallContract: true,
     authorizesTransactionApplication: true,
@@ -326,9 +331,11 @@ const rows: Row[] = [];
 const RESOURCE_ERR = /insufficient (rc|mana)|rc limit|max.?payer.?rc|exceed.*(rc|resource|compute|disk|network)|not enough (rc|mana)/i;
 
 function record(id: string, what: string, expect: "succeed" | "fail", r: Sent, check = true, note = "") {
-  const resourceRefusal = expect === "fail" && !r.ok && RESOURCE_ERR.test(r.error ?? "");
+  const resourceRefusal = !r.ok && RESOURCE_ERR.test(r.error ?? "");
   const pass = expect === "succeed" ? r.ok && check : !r.ok && !resourceRefusal;
-  if (resourceRefusal) note = "INCONCLUSIVE — refused for lack of Mana, not by the security rule; rerun later";
+  if (resourceRefusal) note = expect === "fail"
+    ? "INCONCLUSIVE — refused for lack of Mana, not by the security rule; rerun later"
+    : "INCONCLUSIVE — not enough Mana right now; rerun after Mana refills";
   const why = !pass && r.error ? ` — ${r.error.slice(0, 160)}` : !pass && expect === "succeed" && r.ok ? " — went through but the check failed" : "";
   const shownNote = resourceRefusal ? `${note}: ${r.error!.slice(0, 90)}` : expect === "fail" && r.error ? `refused as expected: ${r.error.slice(0, 90)}` : note;
   rows.push({ id, what, expect, pass, rc: r.rc, note: (shownNote + why).trim() });
@@ -457,14 +464,11 @@ async function cmdRun() {
     await send([await op(koinC, "transfer", { from: F, to: O, value: "1" })], [fresh], C, 1));
 
   // P10 — the code can be replaced only with the owner's signature
-  record("P10a", "deploy key alone cannot re-upload the code", "fail",
-    await send([await uploadOp(contract)], [helper, contract], H, CFG.uploadRcLimit));
-  record("P10b", "helper cannot re-upload the code", "fail",
-    await send([await uploadOp(contract)], [helper], H, CFG.uploadRcLimit));
-  r = await send([await uploadOp(contract)], [owner], O, CFG.uploadRcLimit);
-  const after = await info(contract);
-  record("P10", "owner can re-upload (upgrade) the code, and the data survives", "succeed", r,
-    after.owner === O && BigInt(after.pings) === BigInt(b.pings));
+  record("P10a", "deploy key alone cannot replace the code", "fail",
+    await send([await uploadOp(contract, true)], [helper, contract], H, 1));
+  record("P10b", "helper cannot replace the code", "fail",
+    await send([await uploadOp(contract, true)], [helper], H, 1));
+  const pingsBeforeUpgrade = BigInt((await info(contract)).pings ?? 0);
 
   // P11 — only the owner can recover the contract's funds
   record("P11", "helper cannot sweep the contract's funds", "fail",
@@ -472,15 +476,21 @@ async function cmdRun() {
 
   // P8 — Mana cost of storage, for sizing the real contract
   const costs: Record<string, string> = {};
-  for (const [w, n] of [[0, 0], [20, 0], [200, 0], [0, 200]] as const) {
+  for (const [w, n] of [[0, 0], [10, 0], [50, 0], [0, 50]] as const) {
     r = await send([await op(k, "stress", { writes: w, bins: n })], [owner], O, CFG.stressRcLimit);
     costs[`${w}w/${n}r`] = r.rc;
     record("P8", `stress: write ${w}, read ${n} storage entries`, "succeed", r);
   }
   const base = Number(costs["0w/0r"]);
-  const perWrite = (Number(costs["200w/0r"]) - Number(costs["20w/0r"])) / 180;
-  const perRead = (Number(costs["0w/200r"]) - base) / 200;
+  const perWrite = (Number(costs["50w/0r"]) - Number(costs["10w/0r"])) / 40;
+  const perRead = (Number(costs["0w/50r"]) - base) / 50;
   console.log(`\n  Mana per storage write ≈ ${show(perWrite)} KOIN, per read ≈ ${show(perRead)} KOIN (base call ${show(base)})`);
+
+  // P10 — last, because it costs the most Mana: the owner upgrades the code (same code) and the data survives.
+  r = await send([await uploadOp(contract)], [owner], O, CFG.uploadRcLimit);
+  const after = await info(contract);
+  record("P10", "owner can re-upload (upgrade) the code, and the data survives", "succeed", r,
+    after.owner === O && BigInt(after.pings ?? 0) === pingsBeforeUpgrade);
 
   // Summary
   const failed = rows.filter((x) => !x.pass);
