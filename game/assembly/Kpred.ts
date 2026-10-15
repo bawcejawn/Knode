@@ -28,6 +28,10 @@ const FEE_BPS: u64 = 500;       // 5% creator fee (KOIN)
 const RETAIN_BPS: u64 = 200;    // 2% owner share (VHP)
 const CUTOFF_BPS: u64 = 3000;   // winners = top 30% of eligible stake
 const RESOLVE_MARGIN: u64 = 60; // resolve only after the window's blocks are irreversible (~3 minutes)
+// Weeks and answer deadlines follow the block timestamps (ms, UTC), so they land on exact calendar times. The blocks a
+// question watches are still counted by height; these bounds on the average block time keep the two consistent:
+const MIN_BLOCK_MS: u64 = 2800; // even if blocks ran this fast, a question's window still starts after its answers close
+const MAX_BLOCK_MS: u64 = 3500; // even if blocks ran this slow, the window still ends before its week is due to close
 const MAX_SPONSOR_LIMIT: u64 = 1_000_000_000; // 10 KOIN of Mana: the most one free transaction may ever cost the pool
 
 // Entry points the contract is willing to pay Mana for (first 4 bytes of sha256 of the name).
@@ -102,19 +106,25 @@ export class Kpred {
     return System.getBlockField("header.height")!.uint64_value;
   }
 
+  /** The current block's timestamp in milliseconds (UTC). */
+  now(): u64 {
+    return System.getBlockField("header.timestamp")!.uint64_value;
+  }
+
   cfg(): kpred.config_object {
     const c = this.config.get()!;
     System.require(isAddress(c.owner), "not initialised");
     return c;
   }
 
-  /** Week number of a block height (heights before genesis count as week 0). */
-  weekOf(c: kpred.config_object, h: u64): u64 {
-    return h <= c.genesis_height ? 0 : (h - c.genesis_height) / c.week_blocks;
+  /** Week number of a time (times before the start count as week 0). */
+  weekOf(c: kpred.config_object, t: u64): u64 {
+    return t <= c.genesis_time ? 0 : (t - c.genesis_time) / c.week_length;
   }
 
+  /** Time the week ends (ms). */
   weekEnd(c: kpred.config_object, w: u64): u64 {
-    return c.genesis_height + (w + 1) * c.week_blocks;
+    return c.genesis_time + (w + 1) * c.week_length;
   }
 
   entryKey(player: Uint8Array, w: u64): Uint8Array { return cat(player, u64Key(w)); }
@@ -174,7 +184,7 @@ export class Kpred {
   }
 
   advance(c: kpred.config_object): void {
-    const h = this.height();
+    const h = this.now();
     let t = this.totals.get()!;
     if (this.finalizeDue(t, h)) {
       this.finalizeInternal(t.weeks_finalized);
@@ -212,8 +222,7 @@ export class Kpred {
     const q = this.questions.get(u32Key(id));
     if (!q) return "no such question";
     if (q.outcome != 0) return "question already resolved";
-    const h = this.height();
-    if (h >= q.lock_height) return "answers for this question are closed";
+    if (this.now() >= q.lock_time) return "answers for this question are closed";
     if (option >= q.k) return "no such option";
     const p = this.players.get(player)!;
     if (this.activeStake(p, q.week) < c.min_stake) return "stake at least the minimum (counts from the week after depositing) to answer";
@@ -228,7 +237,7 @@ export class Kpred {
   settleCheck(player: Uint8Array, w: u64): string {
     const wk = this.weeks.get(u64Key(w))!;
     if (!wk.closed) return "week not closed yet";
-    const h = this.height();
+    const h = this.now();
     if (h < wk.settle_start || h > wk.settle_end) return "outside the settlement window";
     const e = this.entries.get(this.entryKey(player, w));
     if (!e) return "no answers that week";
@@ -255,8 +264,9 @@ export class Kpred {
     r.config = c;
     r.totals = this.totals.get()!;
     r.height = this.height();
+    r.time = this.now();
     if (isAddress(c.owner)) {
-      r.week = this.weekOf(c, r.height);
+      r.week = this.weekOf(c, r.time);
       r.week_end = this.weekEnd(c, r.week);
     }
     r.vhp_balance = Tokens.vhpBalance(this.contractId);
@@ -313,17 +323,17 @@ export class Kpred {
     System.require(!isAddress(c.owner), "already initialised");
     System.require(BUILD_FOR_TESTING || this.signedByContractKey(), "init must be signed by the contract's own key");
     System.require(isAddress(args.owner) && isAddress(args.operator) && isAddress(args.seed_owner), "owner, operator and seed owner are required");
-    System.require(args.week_blocks > 0 && args.settle_blocks > 0, "week_blocks and settle_blocks must be positive");
-    System.require(args.timelock_blocks > 0, "timelock must be positive");
+    System.require(args.week_length > 0 && args.settle_length > 0, "week_length and settle_length must be positive");
+    System.require(args.timelock_length > 0, "timelock must be positive");
     System.require(args.max_sponsor_rc <= MAX_SPONSOR_LIMIT, "at most 10 KOIN of Mana per free transaction");
     c.owner = args.owner;
     c.operator = args.operator;
     c.seed_owner = args.seed_owner;
-    c.genesis_height = args.genesis_height;
-    c.week_blocks = args.week_blocks;
+    c.genesis_time = args.genesis_time;
+    c.week_length = args.week_length;
     c.close_delay = args.close_delay;
-    c.settle_blocks = args.settle_blocks;
-    c.timelock_blocks = args.timelock_blocks;
+    c.settle_length = args.settle_length;
+    c.timelock_length = args.timelock_length;
     c.min_stake = args.min_stake;
     c.max_sponsor_rc = args.max_sponsor_rc;
     this.config.put(c);
@@ -354,14 +364,14 @@ export class Kpred {
     } else {
       Tokens.pullVhp(from, amount);
     }
-    const h = this.height();
+    const h = this.now();
     const w = this.weekOf(c, h);
     const p = this.players.get(from)!;
     this.autoSettle(c, from, p);
     this.normalize(p, w);
     // Counts from the next week. Before the game starts (genesis), it counts from week 0.
     p.pending += amount;
-    p.pending_week = h < c.genesis_height ? 0 : w + 1;
+    p.pending_week = h < c.genesis_time ? 0 : w + 1;
     this.players.put(from, p);
     const t = this.totals.get()!;
     t.total_stake += amount;
@@ -384,7 +394,7 @@ export class Kpred {
     System.requireAuthority(authority.authorization_type.contract_call, to);
     System.require(args.amount > 0, "amount must be positive");
     this.advance(c);
-    const h = this.height();
+    const h = this.now();
     const w = this.weekOf(c, h);
     const p = this.players.get(to)!;
     this.autoSettle(c, to, p);                      // a finished week is settled before this week is voided
@@ -397,7 +407,7 @@ export class Kpred {
     rest -= fromPending;
     p.stake -= rest;
     // Any withdrawal during a running week voids that week's answers.
-    if (h >= c.genesis_height) {
+    if (h >= c.genesis_time) {
       p.void_week_plus_one = w + 1;
       const key = this.entryKey(to, w);
       const e = this.entries.get(key);
@@ -529,7 +539,7 @@ export class Kpred {
     const c = this.cfg();
     const t = this.totals.get()!;
     System.require(args.week == t.weeks_closed, "weeks close in order: close week " + t.weeks_closed.toString() + " first");
-    const h = this.height();
+    const h = this.now();
     System.require(h >= this.weekEnd(c, args.week) + c.close_delay, "too early to close this week");
     const wk = this.weeks.get(u64Key(args.week))!;
     System.require(wk.resolved == wk.questions, "some questions are not resolved yet");
@@ -563,7 +573,7 @@ export class Kpred {
     wk.retained = retained;
     wk.pot = pot;
     wk.settle_start = h;
-    wk.settle_end = h + c.settle_blocks;
+    wk.settle_end = h + c.settle_length;
     this.weeks.put(wkKey, wk);
     const r = new kpred.close_week_result();
     r.gain = gain;
@@ -577,7 +587,7 @@ export class Kpred {
     System.require(wk.closed, "week not closed yet");
     System.require(!wk.finalized, "already finalized");
     System.require(args.week == this.totals.get()!.weeks_finalized, "weeks finalize in order");
-    System.require(this.height() > wk.settle_end, "settlement window still open");
+    System.require(this.now() > wk.settle_end, "settlement window still open");
     return this.finalizeInternal(args.week);
   }
 
@@ -631,14 +641,19 @@ export class Kpred {
     System.requireAuthority(authority.authorization_type.contract_call, c.operator!);
     this.advance(c);
     const h = this.height();
-    System.require(h >= c.genesis_height, "the game has not started yet");
-    const w = this.weekOf(c, h);
+    const now = this.now();
+    System.require(now >= c.genesis_time, "the game has not started yet");
+    const w = this.weekOf(c, now);
     System.require(args.k >= 2 && args.k <= 16, "2 to 16 options");
-    System.require(args.lock_height > h, "lock height must be in the future");
-    System.require(args.lock_height <= this.weekEnd(c, w), "answers must close before the week ends");
-    System.require(args.window_start >= args.lock_height && args.window_end >= args.window_start, "the window must start after answers close");
-    // The window must finish (and be final) by the time the week is due to close, so no question can hold a week open.
-    System.require(args.window_end + RESOLVE_MARGIN <= this.weekEnd(c, w) + c.close_delay, "the window must end before the week is due to close");
+    System.require(args.lock_time > now, "answers must close in the future");
+    System.require(args.lock_time <= this.weekEnd(c, w), "answers must close before the week ends");
+    // The watched blocks must come after answers close, even if blocks ran faster than normal until then.
+    const minStart = h + (args.lock_time - now + MIN_BLOCK_MS - 1) / MIN_BLOCK_MS;
+    System.require(args.window_start >= minStart && args.window_end >= args.window_start, "the window must start after answers close");
+    // The window must finish (and be final) by the time the week is due to close, even if blocks ran slower than
+    // normal, so no question can hold a week open.
+    const due = this.weekEnd(c, w) + c.close_delay;
+    System.require(args.window_end + RESOLVE_MARGIN > h && (args.window_end + RESOLVE_MARGIN - h) * MAX_BLOCK_MS <= due - now, "the window must end before the week is due to close");
     System.require(args.params_hash != null && args.params_hash!.length == 32, "params_hash must be 32 bytes");
     const wkKey = u64Key(w);
     const wk = this.weeks.get(wkKey)!;
@@ -651,7 +666,7 @@ export class Kpred {
     const q = new kpred.question_object();
     q.week = w;
     q.k = args.k;
-    q.lock_height = args.lock_height;
+    q.lock_time = args.lock_time;
     q.window_start = args.window_start;
     q.window_end = args.window_end;
     q.params_hash = args.params_hash;
@@ -782,7 +797,7 @@ export class Kpred {
     System.require(args.hash != null && args.hash!.length == 32, "sha256 hash of the new bytecode required");
     const u = new kpred.timelock_object();
     u.hash = args.hash;
-    u.eta = this.height() + c.timelock_blocks;
+    u.eta = this.now() + c.timelock_length;
     this.upgrade.put(u);
     const r = new kpred.schedule_upgrade_result();
     r.eta = u.eta;
@@ -855,7 +870,7 @@ export class Kpred {
     const s = new kpred.timelock_object();
     s.vhp = args.vhp;
     s.koin = args.koin;
-    s.eta = this.height() + c.timelock_blocks;
+    s.eta = this.now() + c.timelock_length;
     this.seedWd.put(s);
     const r = new kpred.request_seed_withdrawal_result();
     r.eta = s.eta;
@@ -867,7 +882,7 @@ export class Kpred {
     System.requireAuthority(authority.authorization_type.contract_call, c.seed_owner!);
     const s = this.seedWd.get()!;
     System.require(s.eta > 0, "no seed withdrawal requested");
-    System.require(this.height() >= s.eta, "the timelock has not passed yet");
+    System.require(this.now() >= s.eta, "the timelock has not passed yet");
     const t = this.totals.get()!;
     const vhpAmt = s.vhp <= t.seed_vhp ? s.vhp : t.seed_vhp;
     let koinAmt = s.koin <= t.seed_koin ? s.koin : t.seed_koin;
@@ -928,7 +943,7 @@ export class Kpred {
       if (this.settleCheck(a.player!, a.week).length == 0) return true;
       // The week may simply not be closed yet although it is due: the settle call closes it first.
       const t = this.totals.get()!;
-      return a.week == t.weeks_closed && this.closeDue(c, t, this.height()) &&
+      return a.week == t.weeks_closed && this.closeDue(c, t, this.now()) &&
         this.entries.get(this.entryKey(a.player!, a.week)) != null;
     }
     if (cc.entry_point == EP_CLAIM) {
@@ -937,7 +952,7 @@ export class Kpred {
       if (this.claimCheck(a.player!, a.week).length > 0) {
         // Allow only if the week is merely awaiting its (due) finalization and the player was settled eligible.
         const t = this.totals.get()!;
-        if (a.week != t.weeks_finalized || !this.finalizeDue(t, this.height())) return false;
+        if (a.week != t.weeks_finalized || !this.finalizeDue(t, this.now())) return false;
         const e = this.entries.get(this.entryKey(a.player!, a.week));
         if (e == null || !e.eligible || e.claimed) return false;
       }
@@ -952,7 +967,7 @@ export class Kpred {
     if (!isAddress(c.owner)) return false;
     const u = this.upgrade.get()!;
     if (u.hash == null || u.hash!.length != 32 || u.eta == 0) return false;
-    if (this.height() < u.eta) return false;
+    if (this.now() < u.eta) return false;
     // The upload operation carries the whole new bytecode (tens of KB), far more than the default 1 KB buffer for
     // reading transaction fields. Enlarge it for this read so the check can see the bytecode at all.
     System.setSystemBufferSize(1024 * 1024);

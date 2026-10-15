@@ -30,7 +30,7 @@
 
   const S = {
     demo: false, dep: null, abi: null, provider: null, game: null,
-    height: 0, st: null, week: 0, weekEnd: 0, questions: [], files: [],
+    height: 0, chainTime: 0, seenAt: 0, st: null, week: 0, weekEnd: 0, questions: [], files: [],
     account: null, player: null, entry: null, balances: null, board: {}, boardWeek: null, claims: [],
   };
 
@@ -58,13 +58,18 @@
     return (BigInt(m[1]) * UNIT + BigInt((m[2] || "").padEnd(8, "0"))).toString();
   };
   const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "");
-  const duration = (blocks) => {
-    const s = Math.max(0, blocks) * 3;
+  /** Chain time now (ms): the last block's time plus however long ago we read it. */
+  const nowMs = () => (S.chainTime ? S.chainTime + (Date.now() - S.seenAt) : Date.now());
+  const BLOCK_MS = 3080; // typical time between Koinos blocks, for "result in about…" estimates only
+  const duration = (ms) => {
+    const s = Math.max(0, ms) / 1000;
     const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
     if (d) return `${d}d ${h}h`;
     if (h) return `${h}h ${m}m`;
     return `${Math.max(m, s > 0 ? 1 : 0)}m`;
   };
+  /** A UTC hour of the day shown in the viewer's own time zone, e.g. "8:00 AM". */
+  const localHour = (utcHour) => { const d = new Date(); d.setUTCHours(utcHour, 0, 0, 0); return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); };
   const hue = (addr) => { let h = 0; for (const c of addr || "") h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
   let toastTimer = 0;
   const toast = (msg, ms = 4200) => {
@@ -106,10 +111,12 @@
     const [st, head] = await Promise.all([read("get_state"), S.provider.getHeadInfo()]);
     S.st = st;
     S.height = num(head.head_topology.height);
+    S.chainTime = num(st.time) || Date.now();
+    S.seenAt = Date.now();
     const c = st.config || {};
-    const g = num(c.genesis_height), wb = num(c.week_blocks) || 201600;
-    S.week = S.height <= g ? 0 : Math.floor((S.height - g) / wb);
-    S.weekEnd = g + (S.week + 1) * wb;
+    const g = num(c.genesis_time), wl = num(c.week_length) || 604800000;
+    S.week = S.chainTime <= g ? 0 : Math.floor((S.chainTime - g) / wl);
+    S.weekEnd = g + (S.week + 1) * wl;
     S.genesis = g;
     await loadQuestions();
     if (S.account) await loadPlayer();
@@ -306,13 +313,13 @@
   function questionCard(q, mode) {
     const mine = myAnswer(q);
     const oc = outcomeOf(q);
-    const left = q.lockHeight - S.height;
+    const left = q.lockTime - nowMs();
     const top = el("div", { class: "q-top" },
       el("span", { class: `tier tier-${q.tier || "Medium"}` }, q.tier || "Question"),
-      mode === "open" ? el("span", { class: `timer${left < 1200 ? " soon" : ""}` }, `Closes in ${duration(left)}`)
+      mode === "open" ? el("span", { class: `timer${left < 3600000 ? " soon" : ""}`, title: `Answers close ${new Date(q.lockTime).toLocaleString()}` }, `Closes in ${duration(left)}`)
         : oc === 1000 ? el("span", { class: "badge badge-void" }, "Voided")
         : oc ? (mine === null ? el("span", { class: "badge badge-wait" }, "Resolved") : mine + 1 === oc ? el("span", { class: "badge badge-ok" }, "+1 point") : el("span", { class: "badge badge-miss" }, "No point"))
-        : el("span", { class: "badge badge-wait" }, `Result in ~${duration(q.windowEnd + 60 - S.height)}`));
+        : el("span", { class: "badge badge-wait" }, `Result in ~${duration((q.windowEnd + 60 - S.height) * BLOCK_MS)}`));
     const opts = el("div", { class: "opts" }, q.options.map((o) => {
       let cls = "opt";
       if (mine === o.index) cls += " picked";
@@ -335,19 +342,20 @@
   function renderPlay() {
     const st = S.st || {};
     const t = st.totals || {};
-    $("#week-pill").textContent = S.height < S.genesis ? "The game starts soon" : `Week ${S.week + 1}`;
-    $("#stat-ends").textContent = duration((S.height < S.genesis ? S.genesis : S.weekEnd) - S.height);
-    $("#stat-ends").nextElementSibling.textContent = S.height < S.genesis ? "until the first week starts" : "until the week ends";
+    const now = nowMs();
+    $("#week-pill").textContent = now < S.genesis ? "The game starts Monday" : `Week ${S.week + 1}`;
+    $("#stat-ends").textContent = duration((now < S.genesis ? S.genesis : S.weekEnd) - now);
+    $("#stat-ends").nextElementSibling.textContent = now < S.genesis ? "until the first week starts" : "until the week ends";
     const holdings = big(st.vhp_balance) + big(st.koin_balance);
     const owed = ["total_stake", "seed_vhp", "seed_koin", "owner_share", "creator_fee", "pots_outstanding"].reduce((s, k) => s + big(t[k]), 0n);
     const earned = holdings > owed ? holdings - owed : 0n;
     $("#stat-pot").textContent = `${amount((earned * 93n) / 100n)} VHP`;
     $("#stat-players").textContent = S.boardWeek === S.week && S.board[S.week] ? String(S.board[S.week].scored.length) : "…";
 
-    const open = S.questions.filter((q) => S.height < q.lockHeight).sort((a, b) => a.lockHeight - b.lockHeight);
-    const locked = S.questions.filter((q) => S.height >= q.lockHeight && !outcomeOf(q)).sort((a, b) => a.windowEnd - b.windowEnd);
+    const open = S.questions.filter((q) => now < q.lockTime).sort((a, b) => a.lockTime - b.lockTime);
+    const locked = S.questions.filter((q) => now >= q.lockTime && !outcomeOf(q)).sort((a, b) => a.windowEnd - b.windowEnd);
     const oq = $("#open-questions");
-    oq.replaceChildren(...(open.length ? open.map((q) => questionCard(q, "open")) : [el("div", { class: "empty" }, "No open questions right now. New ones arrive every day.")]));
+    oq.replaceChildren(...(open.length ? open.map((q) => questionCard(q, "open")) : [el("div", { class: "empty" }, `No open questions right now. New questions arrive Monday to Saturday at ${localHour(12)} your time.`)]));
     if (open.length > 2) oq.insertBefore(el("aside", { class: "ad ad-inline", "data-ad-slot": "in-feed", "aria-label": "Advertisement" }, el("span", {}, "Ad space"), el("small", {}, "in-feed")), oq.children[2]);
     $("#locked-questions").replaceChildren(...(locked.length ? locked.map((q) => questionCard(q, "locked")) : [el("div", { class: "empty" }, "Nothing waiting. Answered questions show up here until their result is in.")]));
 
@@ -483,9 +491,13 @@
     const qs = (window.KPRED_DEMO?.questions || []);
     const last = Math.max(...qs.map((q) => q.lockHeight));
     S.height = last - 9000;
-    S.genesis = 0; S.week = 2; S.weekEnd = S.height + 16000;
+    // Demo clock: "now" is 15:00 UTC on a Saturday, so Saturday's questions are open until 00:00 UTC.
+    const sat = new Date(); sat.setUTCDate(sat.getUTCDate() + ((6 - sat.getUTCDay() + 7) % 7)); sat.setUTCHours(15, 0, 0, 0);
+    S.chainTime = sat.getTime(); S.seenAt = Date.now();
+    S.genesis = 0; S.week = 2; S.weekEnd = S.chainTime + 33 * 3600000;
+    const lockOf = (q) => (q.lockHeight === last ? S.chainTime + 9 * 3600000 : S.chainTime + (q.lockHeight - S.height) * BLOCK_MS);
     S.dep = { contract: DEMO_PRODUCERS[4] };
-    S.questions = qs.map((q) => ({ ...q, chainOutcome: q.result && q.windowEnd + 60 < S.height ? (q.result.void ? 1000 : q.result.option + 1) : undefined, result: q.windowEnd + 60 < S.height ? q.result : null }));
+    S.questions = qs.map((q) => ({ ...q, lockTime: lockOf(q), chainOutcome: q.result && q.windowEnd + 60 < S.height ? (q.result.void ? 1000 : q.result.option + 1) : undefined, result: q.windowEnd + 60 < S.height ? q.result : null }));
     S.files = [...new Set(qs.map((q) => q.day))].map((d) => ({ f: `W002-D${d}.json`, d: { week: 2, day: d, questions: S.questions.filter((q) => q.day === d) } }));
     S.st = { totals: { total_stake: String(48250n * UNIT), seed_vhp: String(170000n * UNIT), seed_koin: String(20000n * UNIT), pots_outstanding: String(1203n * UNIT), owner_share: "0", creator_fee: "0" },
       vhp_balance: String(218250n * UNIT + 1203n * UNIT), koin_balance: String(20000n * UNIT + 412n * UNIT) };
@@ -534,11 +546,12 @@
       try { await loadLive(); } catch (e) { toast(`Couldn't reach the Koinos network: ${e.message}`, 8000); }
       setInterval(async () => { try { await loadLive(); S.board[S.week] = undefined; renderPlay(); } catch {} }, 60000);
     }
+    $("#schedule").textContent = `Your time: new questions ${localHour(12)} Monday to Saturday, answers close ${localHour(0)}. Winners are final Tuesdays at ${localHour(12)}.`;
     renderAll();
     renderBoard(S.week).then(() => renderPlay()).catch(() => {});
     ticker();
     setInterval(ticker, S.demo ? 3000 : 6000);
-    setInterval(() => { if (S.demo) S.height += 1; renderPlay(); }, 30000);
+    setInterval(() => renderPlay(), 30000);
   }
   start();
 })();

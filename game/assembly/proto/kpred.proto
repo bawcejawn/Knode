@@ -10,11 +10,12 @@ message config_object {
   bytes owner = 1 [(koinos.btype) = ADDRESS];
   bytes operator = 2 [(koinos.btype) = ADDRESS];      // posts questions and resolutions; cannot move funds
   bytes seed_owner = 3 [(koinos.btype) = ADDRESS];    // may withdraw the seed (after the timelock)
-  uint64 genesis_height = 4 [jstype = JS_STRING];     // week 0 starts at this block
-  uint64 week_blocks = 5 [jstype = JS_STRING];        // 201600 on mainnet (7 days of 3-second blocks)
-  uint64 close_delay = 6 [jstype = JS_STRING];        // blocks after week end before it can close (correction time)
-  uint64 settle_blocks = 7 [jstype = JS_STRING];      // length of the settlement window
-  uint64 timelock_blocks = 8 [jstype = JS_STRING];    // delay for upgrades and seed withdrawals
+  // All times are block timestamps in milliseconds since 1970 (UTC), so weeks follow the calendar exactly.
+  uint64 genesis_time = 4 [jstype = JS_STRING];       // week 0 starts at this time (a Monday 00:00 UTC on mainnet)
+  uint64 week_length = 5 [jstype = JS_STRING];        // 604800000 = 7 days
+  uint64 close_delay = 6 [jstype = JS_STRING];        // time after the week ends before it can close (correction time)
+  uint64 settle_length = 7 [jstype = JS_STRING];      // length of the settlement window
+  uint64 timelock_length = 8 [jstype = JS_STRING];    // delay for upgrades and seed withdrawals
   uint64 min_stake = 9 [jstype = JS_STRING];          // minimum stake to answer (1 VHP = 100000000)
   uint64 max_sponsor_rc = 10 [jstype = JS_STRING];    // largest rc_limit the contract will pay for
   bool paused = 11;                                   // pauses NEW deposits only
@@ -62,7 +63,7 @@ message entry_object {
 message question_object {
   uint64 week = 1 [jstype = JS_STRING];
   uint32 k = 2;                                       // number of options
-  uint64 lock_height = 3 [jstype = JS_STRING];        // answers accepted while height < lock_height
+  uint64 lock_time = 3 [jstype = JS_STRING];          // answers accepted while the block time is before this (ms)
   uint64 window_start = 4 [jstype = JS_STRING];
   uint64 window_end = 5 [jstype = JS_STRING];
   bytes params_hash = 6 [(koinos.btype) = HEX];       // sha256 of the full question published off-chain
@@ -80,8 +81,8 @@ message week_object {
   uint64 fee = 5 [jstype = JS_STRING];
   uint64 retained = 6 [jstype = JS_STRING];
   uint64 pot = 7 [jstype = JS_STRING];
-  uint64 settle_start = 8 [jstype = JS_STRING];
-  uint64 settle_end = 9 [jstype = JS_STRING];
+  uint64 settle_start = 8 [jstype = JS_STRING];      // time (ms)
+  uint64 settle_end = 9 [jstype = JS_STRING];        // time (ms)
   bool finalized = 10;
   uint64 eligible_stake = 11 [jstype = JS_STRING];
   uint32 eligible_players = 12;
@@ -101,7 +102,7 @@ message bucket_object {
 
 message timelock_object {
   bytes hash = 1 [(koinos.btype) = HEX];
-  uint64 eta = 2 [jstype = JS_STRING];
+  uint64 eta = 2 [jstype = JS_STRING];                // time (ms) from which it can be carried out
   uint64 vhp = 3 [jstype = JS_STRING];
   uint64 koin = 4 [jstype = JS_STRING];
 }
@@ -117,12 +118,13 @@ message get_state_result {
   totals_object totals = 2;
   uint64 height = 3 [jstype = JS_STRING];
   uint64 week = 4 [jstype = JS_STRING];
-  uint64 week_end = 5 [jstype = JS_STRING];
+  uint64 week_end = 5 [jstype = JS_STRING];           // time (ms) the current week ends
   uint64 vhp_balance = 6 [jstype = JS_STRING];
   uint64 koin_balance = 7 [jstype = JS_STRING];
   uint64 mana = 8 [jstype = JS_STRING];
   timelock_object upgrade = 9;
   timelock_object seed_withdrawal = 10;
+  uint64 time = 11 [jstype = JS_STRING];              // the current block's time (ms)
 }
 
 // @description A player's stake and their entry for a week.
@@ -186,11 +188,11 @@ message init_arguments {
   bytes owner = 1 [(koinos.btype) = ADDRESS];
   bytes operator = 2 [(koinos.btype) = ADDRESS];
   bytes seed_owner = 3 [(koinos.btype) = ADDRESS];
-  uint64 genesis_height = 4 [jstype = JS_STRING];
-  uint64 week_blocks = 5 [jstype = JS_STRING];
+  uint64 genesis_time = 4 [jstype = JS_STRING];
+  uint64 week_length = 5 [jstype = JS_STRING];
   uint64 close_delay = 6 [jstype = JS_STRING];
-  uint64 settle_blocks = 7 [jstype = JS_STRING];
-  uint64 timelock_blocks = 8 [jstype = JS_STRING];
+  uint64 settle_length = 7 [jstype = JS_STRING];
+  uint64 timelock_length = 8 [jstype = JS_STRING];
   uint64 min_stake = 9 [jstype = JS_STRING];
   uint64 max_sponsor_rc = 10 [jstype = JS_STRING];
 }
@@ -297,7 +299,7 @@ message finalize_week_result {
 // @read-only false
 message post_question_arguments {
   uint32 k = 1;
-  uint64 lock_height = 2 [jstype = JS_STRING];
+  uint64 lock_time = 2 [jstype = JS_STRING];
   uint64 window_start = 3 [jstype = JS_STRING];
   uint64 window_end = 4 [jstype = JS_STRING];
   bytes params_hash = 5 [(koinos.btype) = HEX];

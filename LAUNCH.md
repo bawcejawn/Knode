@@ -91,10 +91,26 @@ npm run bot -- node-key         # prints the node's PUBLIC key (safe to share)
 
 Keep the PC on and awake. Go to Settings → System → Power and set "When plugged in, put my device to sleep after" to **Never**.
 
+## The weekly rhythm (built into the contract and the bot)
+
+All times are UTC. Eastern time is UTC−4 in summer and UTC−5 in winter. The website shows every time in the visitor's own time zone.
+
+| When | What happens |
+|---|---|
+| Monday 00:00 | The week starts |
+| Monday–Saturday 12:00 | The day's questions come out: 4 on Monday and Tuesday, 3 on the other days, about 20 a week |
+| Next day 00:00 | Answers close, 12 hours after the questions came out |
+| A few hours later | Results are posted as soon as the watched blocks are final |
+| Sunday | Results day, with no new questions |
+| Monday 12:00 | The week closes: 12 hours for corrections, then the rewards are split |
+| Tuesday 12:00 | Winners are final and can collect |
+
+The contract uses each block's own timestamp, so these times are exact every week. They don't drift with block speed.
+
 ## Step 5 — Deploy the contract
 
 ```
-npm run bot -- deploy            # dry run: check the addresses, the start block (next Monday 00:00 UTC) and settings
+npm run bot -- deploy            # dry run: check the addresses, the start (Monday 00:00 UTC) and the schedule
 npm run bot -- deploy --send
 git add game-data/deployment.json
 git commit -m "Deployed"

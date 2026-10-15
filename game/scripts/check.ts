@@ -45,7 +45,7 @@ await round("deposit_vhp", { from: A, amount: "100000000" });
 await round("withdraw", { to: A, amount: "100000000" });
 await round("settle", { player: A, week: "3" });
 await round("claim", { player: A, week: "3" });
-await round("post_question", { k: 4, lock_height: "1000", window_start: "1001", window_end: "2000", params_hash: "0x" + "ab".repeat(32) });
+await round("post_question", { k: 4, lock_time: "1000", window_start: "1001", window_end: "2000", params_hash: "0x" + "ab".repeat(32) });
 await round("resolve_question", { id: 7, outcome: 1, data_hash: "0x" + "cd".repeat(32) });
 
 console.log(failures ? `\n${failures} check(s) FAILED — do not deploy.` : "\nAll offline checks passed.");

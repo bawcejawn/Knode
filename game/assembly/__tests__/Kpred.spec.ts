@@ -20,10 +20,12 @@ const E = Base58.decode("159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv");
 const VHP: u64 = 100_000_000;
 const KOIN_TAG: u8 = 1, VHP_TAG: u8 = 2, MANA_TAG: u8 = 3;
 const GENESIS: u64 = 1000, WEEK: u64 = 1000;
+// Simulated blocks are MS apart (the contract's fastest allowed average), so block heights and times line up simply.
+const MS: u64 = 2800;
 
 // ───────────── harness ─────────────
 function at(h: u64): void {
-  MockVM.setBlock(new protocol.block(new Uint8Array(0), new protocol.block_header(new Uint8Array(0), h)));
+  MockVM.setBlock(new protocol.block(new Uint8Array(0), new protocol.block_header(new Uint8Array(0), h, h * MS)));
   System.resetCache();
 }
 function as(acct: Uint8Array): void {
@@ -43,7 +45,7 @@ function setup(): Kpred {
   MockVM.setHeadInfo(new chain.head_info(null, 0, 1));
   at(100);
   const k = new Kpred();
-  const i = new kpred.init_arguments(OWNER, OPERATOR, SEED, GENESIS, WEEK, 10, 100, 50, VHP, VHP);
+  const i = new kpred.init_arguments(OWNER, OPERATOR, SEED, GENESIS * MS, WEEK * MS, 10 * MS, 100 * MS, 50 * MS, VHP, VHP);
   k.init(i);
   // wallets
   for (let n = 0; n < 5; n++) {
@@ -64,7 +66,7 @@ function deposit(k: Kpred, who: Uint8Array, amount: u64): void {
 }
 function post(k: Kpred, kk: u32, lock: u64, ws: u64, we: u64): u32 {
   as(OPERATOR);
-  return k.post_question(new kpred.post_question_arguments(kk, lock, ws, we, hash32(7))).id;
+  return k.post_question(new kpred.post_question_arguments(kk, lock * MS, ws, we, hash32(7))).id;
 }
 function answer(k: Kpred, who: Uint8Array, id: u32, option: u32): void {
   as(who);
@@ -88,7 +90,7 @@ describe("setup", () => {
     const k = setup();
     const s = k.get_state(new kpred.get_state_arguments());
     expect(Base58.encode(s.config!.owner!)).toBe(Base58.encode(OWNER));
-    expect(s.config!.week_blocks).toBe(WEEK);
+    expect(s.config!.week_length).toBe(WEEK * MS);
     gK = k;
     MockVM.commitTransaction();
     expect(() => {
@@ -187,13 +189,13 @@ describe("questions and answers", () => {
     at(1100);
     as(A);
     MockVM.commitTransaction();
-    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1300, 1301, 1400, hash32(1))); }).toThrow();
+    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1300 * MS, 1301, 1400, hash32(1))); }).toThrow();
     as(OPERATOR);
     MockVM.commitTransaction();
-    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 2100, 2101, 2200, hash32(1))); }).toThrow();
+    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 2100 * MS, 2101, 2200, hash32(1))); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("answers must close before the week ends");
     MockVM.commitTransaction();
-    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1300, 1200, 1400, hash32(1))); }).toThrow();
+    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1300 * MS, 1200, 1400, hash32(1))); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("the window must start after answers close");
     expect(post(k, 4, 1300, 1301, 1400)).toBe(0);
     expect(post(k, 2, 1300, 1301, 1400)).toBe(1);
@@ -279,7 +281,7 @@ describe("a full week", () => {
     at(1100);
     const q0 = post(k, 2, 1300, 1301, 1400);
     const q1 = post(k, 4, 1300, 1301, 1500);
-    const q2 = post(k, 2, 1900, 1901, 1940);
+    const q2 = post(k, 2, 1700, 1701, 1760);
     at(1200);
     answer(k, A, q0, 1); answer(k, A, q1, 2); answer(k, A, q2, 0);   // 3 right
     answer(k, E, q0, 1); answer(k, E, q1, 2); answer(k, E, q2, 0);   // 3 right (tie with A)
@@ -469,7 +471,7 @@ describe("seed", () => {
     expect(() => { gK!.request_seed_withdrawal(new kpred.request_seed_withdrawal_arguments(1000 * VHP, 0)); }).toThrow();
     as(SEED);
     const eta = k.request_seed_withdrawal(new kpred.request_seed_withdrawal_arguments(400 * VHP, 0)).eta;
-    expect(eta).toBe(150);
+    expect(eta).toBe(150 * MS);
     MockVM.commitTransaction();
     expect(() => { gK!.execute_seed_withdrawal(new kpred.execute_seed_withdrawal_arguments()); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("the timelock has not passed yet");
@@ -614,7 +616,7 @@ describe("more sponsorship and upgrades", () => {
     System.resetCache();
     const up = new authority.authorize_arguments(authority.authorization_type.contract_upload);
     expect(k.authorize(up).value).toBe(false);       // before the timelock
-    at(eta);
+    at(eta / MS);
     expect(k.authorize(up).value).toBe(true);        // owner, right code, after the timelock
     as(A);
     expect(k.authorize(up).value).toBe(false);       // not the owner
@@ -648,10 +650,15 @@ describe("safety valves", () => {
     as(OPERATOR);
     gK = k;
     MockVM.commitTransaction();
-    // week 0 ends at 2000, close delay 10: the window must end by 2010 - 60 = 1950
-    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1900, 1901, 1951, hash32(1))); }).toThrow();
+    // week 0 is due to close at block-time 2010; posted at 1100, even at 3.5 s per block the window (+60 blocks to be
+    // final) must fit in the 910 × 2.8 s left: (end + 60 − 1100) × 3.5 ≤ 910 × 2.8  →  end ≤ 1768
+    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1700 * MS, 1701, 1769, hash32(1))); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("the window must end before the week is due to close");
-    expect(post(k, 2, 1900, 1901, 1950)).toBe(0);
+    expect(post(k, 2, 1700, 1701, 1768)).toBe(0);
+    // and the window may not start before answers close, even if blocks ran at the fastest allowed pace
+    MockVM.commitTransaction();
+    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1300 * MS, 1299, 1400, hash32(1))); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("the window must start after answers close");
   });
 
   it("the owner can VOID an open question so the week can close; nobody else, and never a real answer", () => {
@@ -1048,7 +1055,7 @@ describe("extreme edge cases", () => {
     gK = k;
     as(OPERATOR);
     MockVM.commitTransaction();
-    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1300, 1301, 1400, hash32(1))); }).toThrow();
+    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1300 * MS, 1301, 1400, hash32(1))); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("too many questions this week");
     at(1200);
     for (let i: u32 = 0; i < 64; i++) answer(k, A, i, 1);
@@ -1117,7 +1124,7 @@ describe("extreme edge cases", () => {
     gK = k;
     as(OPERATOR);
     MockVM.commitTransaction();
-    expect(() => { gK!.post_question(new kpred.post_question_arguments(17, 1300, 1301, 1400, hash32(1))); }).toThrow();
+    expect(() => { gK!.post_question(new kpred.post_question_arguments(17, 1300 * MS, 1301, 1400, hash32(1))); }).toThrow();
     const q = post(k, 16, 1300, 1301, 1400);
     as(A);
     gQ = q;

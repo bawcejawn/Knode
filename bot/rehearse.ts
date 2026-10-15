@@ -17,7 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Signer } from "koilib";
 import { SimChain, showKoin } from "./chain.ts";
-import { tick, paths, generatorRunner, allPlayers, DAY, type Ctx } from "./bot.ts";
+import { tick, paths, generatorRunner, allPlayers, DAY, DAY_MS, HOUR_MS, utc, type Ctx } from "./bot.ts";
 import { readCompact, writeCsv } from "../common.ts";
 
 const SIM_WASM = "game/build/sim/contract.wasm";
@@ -43,9 +43,16 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   console.log("Loading the real block history ...");
   const history = readCompact();
   const h0 = history[0].h;
-  const genesis = h0 + 27 * DAY;                       // 27 days of history before week 0 for the generator's model
-  const endHeight = genesis + opts.weeks * 7 * DAY + 4 * DAY;
-  if (endHeight > history[history.length - 1].h) throw new Error(`Not enough history for ${opts.weeks} weeks.`);
+  // Weeks follow the real block timestamps: week 1 starts on the first Monday 00:00 UTC after 27 days of history
+  // (the generator's model needs ~25 days behind it), exactly like mainnet.
+  const tsOf = (h: number) => history[h - h0].ts;
+  const heightAt = (t: number) => { let lo = 0, hi = history.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (history[m].ts < t) lo = m + 1; else hi = m; } return history[lo].h; };
+  let genesisTime = Math.ceil(tsOf(h0 + 27 * DAY) / DAY_MS) * DAY_MS;
+  while (new Date(genesisTime).getUTCDay() !== 1) genesisTime += DAY_MS;
+  const genesis = heightAt(genesisTime);
+  const endTime = genesisTime + opts.weeks * 7 * DAY_MS + 3 * DAY_MS; // past the last week's close (Mon 12:00) and settlement (Tue 12:00)
+  if (endTime > history[history.length - 1].ts) throw new Error(`Not enough history for ${opts.weeks} weeks.`);
+  const endHeight = heightAt(endTime);
   const contract = Signer.fromSeed("rehearsal contract"), operator = Signer.fromSeed("rehearsal operator");
   const owner = Signer.fromSeed("rehearsal owner"), seedOwner = Signer.fromSeed("rehearsal seed");
   const sim = new SimChain(contract.getAddress(), SIM_WASM);
@@ -73,7 +80,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     .sort((a, b) => count.get(b)! - count.get(a)!)[0];
   if (!standIn) throw new Error("no steady producer in the history to stand in for the pool");
   process.env.EXCLUDE_PRODUCERS = standIn; // "our" node must never be the subject of a question
-  const outStart = genesis + (opts.weeks * 7 - 5) * DAY + 6 * HOUR, outEnd = outStart + 3 * HOUR;
+  const outStart = heightAt(genesisTime + (opts.weeks * 7 - 5) * DAY_MS + 6 * HOUR_MS), outEnd = outStart + 3 * HOUR;
   let returnedTo = 0;
   const recentBlocks = async () => {
     const lib = sim.height - 60;
@@ -96,11 +103,11 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     },
   };
 
-  sim.setHeight(genesis - 2 * DAY);
-  const init = { owner: owner.getAddress(), operator: operator.getAddress(), seed_owner: seedOwner.getAddress(), genesis_height: String(genesis),
-    week_blocks: String(7 * DAY), close_delay: String(DAY), settle_blocks: String(2 * DAY), timelock_blocks: String(2 * DAY),
+  sim.setHeight(genesis - 2 * DAY, tsOf(genesis - 2 * DAY));
+  const init = { owner: owner.getAddress(), operator: operator.getAddress(), seed_owner: seedOwner.getAddress(), genesis_time: String(genesisTime),
+    week_length: String(7 * DAY_MS), close_delay: String(12 * HOUR_MS), settle_length: String(24 * HOUR_MS), timelock_length: String(48 * HOUR_MS),
     min_stake: String(VHP), max_sponsor_rc: String(2n * VHP) };
-  check((await sim.sendAs([{ method: "init", args: init }], [C])).ok, "contract initialised with the mainnet settings (7-day weeks, 24 h correction delay, 48 h settlement)");
+  check((await sim.sendAs([{ method: "init", args: init }], [C])).ok, `contract initialised with the mainnet settings (week 1 starts ${utc(genesisTime)}, a Monday)`);
 
   // ── wallets ──
   const habits: Habit[] = ["diligent", "diligent", "diligent", "casual", "casual", "ghost", "quitter", "late", "tiny", "whale"];
@@ -139,16 +146,17 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
 
   const weekLog: string[] = [];
   let lastClosed = 0;
-  const closeHeights: number[] = [];
+  const closeTimes: number[] = [];
   let ticks = 0, outageSkips = 0, claimChecked = 0;
   const answered = new Set<string>();
 
-  console.log(`Rehearsing ${opts.weeks} weeks on real blocks ${genesis}…${endHeight} (one bot run per simulated hour) ...`);
+  console.log(`Rehearsing ${opts.weeks} weeks on real blocks ${genesis}…${endHeight}, ${utc(genesisTime)} to ${utc(endTime)} (one bot run per ~hour) ...`);
   for (let h = genesis - 2 * DAY + HOUR; h <= endHeight; h += HOUR) {
-    sim.setHeight(h);
+    const now = tsOf(h);
+    sim.setHeight(h, now);
     await produce();
-    const week = h < genesis ? -1 : Math.floor((h - genesis) / (7 * DAY));
-    const dayIdx = h < genesis ? -1 : Math.floor((h - genesis) / DAY);
+    const week = now < genesisTime ? -1 : Math.floor((now - genesisTime) / (7 * DAY_MS));
+    const dayIdx = now < genesisTime ? -1 : Math.floor((now - genesisTime) / DAY_MS);
 
     // ── players ──
     const st = await sim.read("get_state", {});
@@ -156,7 +164,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     const open: any[] = [];
     for (let id = Math.max(0, next - 8); id < next; id++) {
       const q = (await sim.read("get_question", { id })).question;
-      if (q && h < N(q.lock_height) && N(q.outcome ?? 0) === 0) open.push({ id, k: N(q.k) });
+      if (q && now < N(q.lock_time) && N(q.outcome ?? 0) === 0) open.push({ id, k: N(q.k) });
     }
     const fin = N(st.totals.weeks_finalized ?? 0);
     for (const p of players) {
@@ -196,10 +204,10 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     if (!strayPosted && week === 1 && dayIdx === 9) {
       // A question the bot knows nothing about (as if posted by hand with the operator key). The bot must void it
       // after its window, or week 1 could never close.
-      strayPosted = await act(operator, "post_question", { k: 2, lock_height: String(h + 600), window_start: String(h + 601), window_end: String(h + 1800), params_hash: strayHash });
+      strayPosted = await act(operator, "post_question", { k: 2, lock_time: String(now + 30 * 60_000), window_start: String(h + 700), window_end: String(h + 1800), params_hash: strayHash });
       check(strayPosted, "injected: a stray question unknown to the bot was posted on-chain");
     }
-    if (!outageDone && week === 1 && dayIdx === 11 && (h - genesis) % DAY < 20 * HOUR) { outageSkips++; continue; } // bot down ~20 h
+    if (!outageDone && week === 1 && dayIdx === 11 && (now - genesisTime) % DAY_MS < 20 * HOUR_MS) { outageSkips++; continue; } // bot down ~20 h
     if (!outageDone && week === 1 && dayIdx === 11) { outageDone = true; check(outageSkips >= 19, `injected: the bot was down for ${outageSkips} hours`); }
 
     // ── the bot ──
@@ -235,7 +243,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     const closed = N(s2.totals.weeks_closed);
     while (lastClosed < closed) {
       const wk = (await sim.read("get_week", { week: String(lastClosed) })).week;
-      closeHeights.push(N(wk.settle_start));
+      closeTimes.push(N(wk.settle_start));
       lastClosed++;
     }
   }
@@ -248,8 +256,9 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   check(N(T.weeks_closed) >= W, `all ${W} weeks closed automatically (closed: ${T.weeks_closed})`);
   check(N(T.weeks_finalized) >= W, `all ${W} weeks finalized automatically (finalized: ${T.weeks_finalized})`);
   for (let w = 0; w < W; w++) {
-    const due = genesis + (w + 1) * 7 * DAY + DAY;
-    check(closeHeights[w] !== undefined && closeHeights[w] - due <= HOUR + 60, `week ${w} closed on time (${closeHeights[w] - due} blocks after it was due)`);
+    const due = genesisTime + (w + 1) * 7 * DAY_MS + 12 * HOUR_MS; // Monday 12:00 UTC
+    const late = closeTimes[w] - due;
+    check(closeTimes[w] !== undefined && late >= 0 && late <= 75 * 60_000, `week ${w + 1} closed on time: ${utc(closeTimes[w])}, ${Math.round(late / 60_000)} min after Monday 12:00 UTC`);
   }
 
   // Questions: every one resolved, on-chain outcomes equal the generator's results, all inside their week.
@@ -259,7 +268,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   const nq = N(T.next_question_id);
   check(posted.length + 1 === nq, `every on-chain question is accounted for: ${posted.length} from the generator + 1 stray = ${nq}`);
   check(new Set(posted.map((q: any) => q.chainId)).size === posted.length, "no question was posted twice (the crash was recovered by matching hashes)");
-  let mismatch = 0, unresolved = 0, outOfWeek = 0, voids = 0;
+  let mismatch = 0, unresolved = 0, outOfWeek = 0, voids = 0, offSchedule = 0;
   for (const q of posted) {
     const oc = (await sim.read("get_question", { id: q.chainId })).question;
     const w = N(oc.week);
@@ -269,11 +278,19 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     if (mine !== N(oc.outcome)) mismatch++;
     if (q.result.void) voids++;
     if (String(oc.params_hash).replace(/^0x/, "") !== q.paramsHash) mismatch++;
-    if (N(oc.lock_height) > genesis + (w + 1) * 7 * DAY || N(oc.window_end) + 60 + HOUR > genesis + (w + 1) * 7 * DAY + DAY) outOfWeek++;
+    const wEnd = genesisTime + (w + 1) * 7 * DAY_MS;
+    if (N(oc.lock_time) > wEnd || tsOf(N(oc.window_end) + 60) > wEnd + 12 * HOUR_MS) outOfWeek++;
+    // the rhythm: answers close at exactly 00:00 UTC Tuesday..Sunday, and the watched blocks only start afterwards
+    const lock = N(oc.lock_time), dow = new Date(lock).getUTCDay();
+    if (lock % DAY_MS !== 0 || dow === 1 || tsOf(N(oc.window_start)) < lock) offSchedule++;
   }
   check(unresolved === 0, `every question of a finished week was resolved (${posted.length} questions, ${voids} void)`);
   check(mismatch === 0, "every on-chain outcome and params hash equals the generator's published result");
   check(outOfWeek === 0, "every question closed for answers inside its week and finished in time for the week to close");
+  check(offSchedule === 0, "every question's answers closed at exactly 00:00 UTC (Mon–Sat questions) and its blocks were all produced after that");
+  const perWeek = new Map<number, number>();
+  for (const q of posted) perWeek.set(q.week, (perWeek.get(q.week) ?? 0) + 1);
+  check([...perWeek.entries()].filter(([w]) => w < W).every(([, n]) => n >= 18 && n <= 20), `about 20 questions each week (${[...perWeek.entries()].filter(([w]) => w < W).map(([w, n]) => `week ${w + 1}: ${n}`).join(", ")})`);
   let strayVoid = false;
   for (let id = 0; id < nq; id++) { const q = (await sim.read("get_question", { id })).question; if (String(q.params_hash) === strayHash) strayVoid = N(q.outcome) === 1000; }
   check(strayVoid, "the stray question was resolved as VOID, so its week could close");

@@ -59,8 +59,9 @@ function loadGame(): Game {
       rpc: "https://api.koinos.io",
       weekOneStart: nextMonday(),
       lockBlocks: 14400,
-      questionsPerDay: [3, 3, 3, 3, 3, 3, 2],
-      tierByDay: ["Easy", "Easy", "Medium", "Medium", "Medium", "Hard", "Hard"],
+      // Monday..Sunday. 20 questions a week, Monday to Saturday; Sunday is results day.
+      questionsPerDay: [4, 4, 3, 3, 3, 3, 0],
+      tierByDay: ["Easy", "Easy", "Medium", "Medium", "Hard", "Hard", "Easy"],
       menus: { Easy: ["E1s", "E3", "E2s"], Medium: ["M1", "M9", "M10", "M4", "M5", "M6", "M7"], Hard: ["H1", "H3"] },
       // From the 120-day backtest (model v5). E3/M9 are fair but void ~6% (smaller nodes have more outages).
       enabled: ["E1s", "E2s", "E3", "M1", "M4", "M5", "M6", "M7", "M9", "M10", "H1", "H3"],
@@ -91,6 +92,7 @@ function parseArgs() {
   const n = (k: string) => (o[k] === undefined ? undefined : Number(o[k]));
   return { cmd, date: o.label ?? o.date ?? new Date().toISOString().slice(0, 10), force: o.force === "true" || "force" in o, offline: "offline" in o,
     week: n("week"), day: n("day"), maxLock: n("max-lock"), maxEnd: n("max-end"),
+    lockHeight: n("lock-height"), lockTime: n("lock-time"),
     exclude: o.exclude ? o.exclude.split(",").map((x) => x.trim()).filter(Boolean) : [] };
 }
 
@@ -289,7 +291,7 @@ type Option = { index: number; label: string; min: number | null; max: number | 
 type Question = {
   id: string; date: string; week: number; day: number; tier: string; template: string; title: string; text: string;
   subjects: string[]; group?: string[]; unit: string;
-  releaseHeight: number; lockHeight: number; windowStart: number; windowEnd: number;
+  releaseHeight: number; lockHeight: number; lockTime?: number; windowStart: number; windowEnd: number;
   thresholds: number[]; options: Option[]; predicted: number[];
   model: { version: string; rates: Record<string, number>; forecast?: Record<string, number>; window: number }; // rates: 2-day (void rule); forecast: what set the options
   paramsHash?: string; result?: any;
@@ -370,12 +372,19 @@ async function run() {
   if (dayNumber < 0) console.log(`(Practice run: the game starts ${g.weekOneStart}.)`);
 
   const excluded = new Set<string>([...(g.excludeProducers ?? []), ...(args.exclude ?? [])]);
+  // Bot mode: answers close at a fixed clock time (lockTime, ms) and the watched blocks start at a height the bot
+  // computed from it. The model is calibrated with that same gap between "now" and the window, so the options stay fair.
+  if (args.lockHeight !== undefined) {
+    if (args.lockHeight - libHeight < 600) throw new Error(`Too late in the day to release: the window would start only ${args.lockHeight - libHeight} blocks from now.`);
+    g.lockBlocks = args.lockHeight - libHeight;
+  }
+  if (count <= 0) throw new Error(`No questions are scheduled on day ${day + 1}.`);
   const M = buildModel(blocks, g, excluded);
   const st = loadState();
   const voided = new Set(st.voidedByWeek[String(week)] ?? []);
   const rand = seeded(`${args.date}:${blocks[blocks.length - 1].h}`);
   const cl = M.classesAt(M.r);
-  const lockHeight = libHeight + M.L;
+  const lockHeight = args.lockHeight ?? libHeight + M.L;
   if (args.maxLock !== undefined && lockHeight > args.maxLock) throw new Error(`Too late in the week to release: answers would close at ${lockHeight}, after the week ends at ${args.maxLock}.`);
   const maxEnd = args.maxEnd ?? Infinity; // the window must end early enough for the week to close on time
   const usedToday = new Set<string>();
@@ -393,7 +402,7 @@ async function run() {
   let attempts = 0;
   for (let mi = 0; questions.length < count && attempts < 40; mi = (mi + 1) % menu.length, attempts++) {
     const id = menu[mi], T = TEMPLATES[id];
-    const base = { date: args.date, week, day: day + 1, tier, template: id, releaseHeight: libHeight, lockHeight };
+    const base = { date: args.date, week, day: day + 1, tier, template: id, releaseHeight: libHeight, lockHeight, ...(args.lockTime !== undefined ? { lockTime: args.lockTime } : {}) };
     const n = questions.length + 1;
     let q: Question | null = null;
     if (T.W > 0 && lockHeight + T.W > maxEnd) continue;

@@ -150,7 +150,9 @@ export class SimChain implements Chain {
     this.module = await WebAssembly.compile(fs.readFileSync(this.wasmFile));
   }
 
-  setHeight(h: number) { this.height = h; }
+  time = 0;
+  /** Move the simulated chain to block h with timestamp t (ms). */
+  setHeight(h: number, t?: number) { this.height = h; if (t !== undefined) this.time = t; }
   async head() { return { height: this.height, lib: this.height - 60 }; }
   async mana(_address: string) { return 10n ** 12n; }
 
@@ -168,7 +170,7 @@ export class SimChain implements Chain {
     this.put(this.K.CONTRACT_ARGUMENTS_KEY, argBytes);
     this.put(this.K.CONTRACT_RESULT_KEY, new Uint8Array(0));
     this.put(this.K.EXIT_CODE_KEY, k.chain.value_type.encode({ int32_value: 0 }).finish());
-    this.put(this.K.BLOCK_KEY, k.protocol.block.encode({ header: { height: String(this.height) } }).finish());
+    this.put(this.K.BLOCK_KEY, k.protocol.block.encode({ header: { height: String(this.height), timestamp: String(this.time) } }).finish());
     this.put(this.K.HEAD_INFO_KEY, k.chain.head_info.encode({ head_topology: { height: String(this.height) }, last_irreversible_block: String(this.height - 60) }).finish());
     this.put(this.K.CALLER_KEY, k.chain.caller_data.encode({ caller: new Uint8Array(0), caller_privilege: 1 }).finish());
     this.put(this.K.TRANSACTION_KEY, k.protocol.transaction.encode({}).finish());

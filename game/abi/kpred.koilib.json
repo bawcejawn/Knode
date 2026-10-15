@@ -259,14 +259,14 @@
                   "(koinos.btype)": "ADDRESS"
                 }
               },
-              "genesis_height": {
+              "genesis_time": {
                 "type": "uint64",
                 "id": 4,
                 "options": {
                   "jstype": "JS_STRING"
                 }
               },
-              "week_blocks": {
+              "week_length": {
                 "type": "uint64",
                 "id": 5,
                 "options": {
@@ -280,14 +280,14 @@
                   "jstype": "JS_STRING"
                 }
               },
-              "settle_blocks": {
+              "settle_length": {
                 "type": "uint64",
                 "id": 7,
                 "options": {
                   "jstype": "JS_STRING"
                 }
               },
-              "timelock_blocks": {
+              "timelock_length": {
                 "type": "uint64",
                 "id": 8,
                 "options": {
@@ -503,7 +503,7 @@
                 "type": "uint32",
                 "id": 2
               },
-              "lock_height": {
+              "lock_time": {
                 "type": "uint64",
                 "id": 3,
                 "options": {
@@ -777,6 +777,13 @@
               "seed_withdrawal": {
                 "type": "timelock_object",
                 "id": 10
+              },
+              "time": {
+                "type": "uint64",
+                "id": 11,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
@@ -937,14 +944,14 @@
                   "(koinos.btype)": "ADDRESS"
                 }
               },
-              "genesis_height": {
+              "genesis_time": {
                 "type": "uint64",
                 "id": 4,
                 "options": {
                   "jstype": "JS_STRING"
                 }
               },
-              "week_blocks": {
+              "week_length": {
                 "type": "uint64",
                 "id": 5,
                 "options": {
@@ -958,14 +965,14 @@
                   "jstype": "JS_STRING"
                 }
               },
-              "settle_blocks": {
+              "settle_length": {
                 "type": "uint64",
                 "id": 7,
                 "options": {
                   "jstype": "JS_STRING"
                 }
               },
-              "timelock_blocks": {
+              "timelock_length": {
                 "type": "uint64",
                 "id": 8,
                 "options": {
@@ -1207,7 +1214,7 @@
                 "type": "uint32",
                 "id": 1
               },
-              "lock_height": {
+              "lock_time": {
                 "type": "uint64",
                 "id": 2,
                 "options": {

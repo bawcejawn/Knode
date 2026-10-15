@@ -42,10 +42,16 @@ function loadEnv(file = ".env") {
 loadEnv();
 const E = process.env;
 
-export const DAY = 28_800;               // blocks per day (3-second blocks)
+export const DAY = 28_800;               // blocks per day (3-second blocks) — used for block-history bookkeeping only
+export const HOUR_MS = 3_600_000, DAY_MS = 24 * HOUR_MS;
+// The weekly rhythm (all UTC). Weeks start Monday 00:00. Questions come out at 12:00 Monday–Saturday and answers close
+// at 00:00 the next day (12 hours). Sunday is results day.
+export const RELEASE_HOUR = 12, LOCK_HOUR = 24, QUESTION_DAYS = 6;
+const MIN_BLOCK_MS = 2_800, MAX_BLOCK_MS = 3_500; // the same bounds the contract enforces
 const RESOLVE_MARGIN = 60;               // the contract resolves only after window_end + 60
-const RESOLVE_SLACK = 1_200;             // windows must end ≥ 1 hour before the week can close, so the bot has time
-const MIN_ANSWER_TIME = 1_200;           // never post a question with less than ~1 hour left to answer
+const RESOLVE_SLACK = 1_200;             // windows must end ≥ ~1 hour (in blocks) before the week can close, so the bot has time
+const MIN_ANSWER_MS = HOUR_MS;           // never post a question with less than 1 hour left to answer
+export const utc = (ms: number) => new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC";
 const COMPOUND_MIN = toSat(1);           // compound once at least 1 KOIN of block rewards has piled up
 const SPACE = (n: number) => String(n).padStart(3, "0");
 
@@ -100,11 +106,12 @@ async function state(ctx: Ctx) {
   const c = s.config ?? {}, t = s.totals ?? {};
   return {
     raw: s, c, t,
-    height: num(s.height), genesis: num(c.genesis_height), weekBlocks: num(c.week_blocks), closeDelay: num(c.close_delay),
+    height: num(s.height), time: num(s.time), genesis: num(c.genesis_time), weekLen: num(c.week_length), closeDelay: num(c.close_delay),
     weeksClosed: num(t.weeks_closed), weeksFinalized: num(t.weeks_finalized), nextId: num(t.next_question_id),
   };
 }
-const weekEnd = (st: { genesis: number; weekBlocks: number }, w: number) => st.genesis + (w + 1) * st.weekBlocks;
+/** Time (ms) week w ends. */
+const weekEnd = (st: { genesis: number; weekLen: number }, w: number) => st.genesis + (w + 1) * st.weekLen;
 
 async function sendOp(ctx: Ctx, what: string, calls: Call[], opts: { sponsored?: boolean } = {}): Promise<boolean> {
   if (ctx.dryRun) { log(`  [dry run] would send: ${what}`); return true; }
@@ -124,7 +131,7 @@ export async function tick(ctx: Ctx) {
   const P = ctx.P;
   const st0 = await state(ctx);
   if (!st0.c.owner) throw new Error("The contract is not initialised yet (run deploy first).");
-  if (st0.weekBlocks % DAY !== 0) throw new Error(`week_blocks (${st0.weekBlocks}) must be a whole number of days`);
+  if (st0.weekLen !== 7 * DAY_MS) throw new Error(`week_length (${st0.weekLen}) must be 7 days`);
   const bs: BotState = { checkedUpTo: 0, orphans: [], lastCompound: 0, warnings: [], lastProduced: 0, producedByDay: {}, producerScannedTo: 0, ...readJson(P.botState) };
   const save = () => { if (!ctx.dryRun) writeJson(P.botState, bs); };
 
@@ -201,7 +208,7 @@ async function healthPass(ctx: Ctx, bs: BotState) {
 
   // 2. A week that should have closed but has not.
   const w = st.weeksClosed;
-  if (st.height > weekEnd(st, w) + st.closeDelay + 3 * RESOLVE_SLACK) {
+  if (st.time > weekEnd(st, w) + st.closeDelay + 3 * HOUR_MS) {
     const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
     ctx.problems.push(`Week ${w} is overdue to close (${num(wk.questions) - num(wk.resolved)} question(s) still open).`);
   }
@@ -260,7 +267,7 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
   // from the start (each one is either linked to a local question by its hash, or resolved as VOID).
   const st = await state(ctx);
   const wk = (await ctx.chain.read("get_week", { week: String(st.weeksClosed) })).week ?? {};
-  if (st.height > weekEnd(st, st.weeksClosed) + st.closeDelay + 2 * RESOLVE_SLACK && num(wk.resolved) < num(wk.questions) && bs.checkedUpTo > 0) {
+  if (st.time > weekEnd(st, st.weeksClosed) + st.closeDelay + 2 * HOUR_MS && num(wk.resolved) < num(wk.questions) && bs.checkedUpTo > 0) {
     log(`  ⚠ week ${st.weeksClosed} is overdue to close with ${num(wk.questions) - num(wk.resolved)} open question(s): re-checking every question id`);
     bs.checkedUpTo = 0;
   }
@@ -315,28 +322,39 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
 
 async function postPass(ctx: Ctx, bs: BotState) {
   const st = await state(ctx);
-  const { height } = await ctx.chain.head();
-  if (height < st.genesis) { if (!ctx.quiet) log(`  the game starts at block ${st.genesis} (now ${height}) — nothing to post yet`); return; }
-  const daysPerWeek = st.weekBlocks / DAY;
-  const d = Math.floor((height - st.genesis) / DAY);
-  const w = Math.floor(d / daysPerWeek), dd = d % daysPerWeek;
+  const { height, time } = st;
+  if (time < st.genesis) { if (!ctx.quiet) log(`  the game starts ${utc(st.genesis)} — nothing to post yet`); return; }
+  const d = Math.floor((time - st.genesis) / DAY_MS);
+  const w = Math.floor(d / 7), dd = d % 7;
+  if (dd >= QUESTION_DAYS) return; // Sunday: results day, no questions
+  const dayStart = st.genesis + d * DAY_MS;
+  const releaseAt = dayStart + RELEASE_HOUR * HOUR_MS, lockTime = dayStart + LOCK_HOUR * HOUR_MS;
+  if (time < releaseAt) { if (!ctx.quiet) log(`  today's questions come out at ${utc(releaseAt)}`); return; }
   const label = `W${SPACE(w)}-D${dd + 1}`;
   const file = path.join(ctx.P.questions, `${label}.json`);
   const wEnd = weekEnd(st, w);
   if (st.weeksClosed > w) return; // (only possible right at a boundary)
 
   if (!fs.existsSync(file)) {
-    const maxEnd = wEnd + st.closeDelay - RESOLVE_MARGIN - RESOLVE_SLACK;
-    log(`  releasing ${label} (week ${w}, day ${dd + 1}) — answers must close by ${wEnd}, windows must end by ${maxEnd}`);
+    if (lockTime - time < MIN_ANSWER_MS) {
+      if (!ctx.dryRun) writeJson(file, { date: label, week: w, day: dd + 1, questions: [], skipped: "the bot was down: too late to release today's questions" });
+      log(`  skipped ${label}: too late to release (answers close ${utc(lockTime)})`);
+      return;
+    }
+    // The watched blocks start after answers close even if blocks ran at the fastest pace the contract allows, and
+    // they end early enough for the week to close on time even at the slowest pace (the contract checks both).
+    const windowStart = height + Math.ceil((lockTime - time) / MIN_BLOCK_MS) + 20;
+    const maxEnd = height + Math.floor((wEnd + st.closeDelay - time) / MAX_BLOCK_MS) - RESOLVE_MARGIN - RESOLVE_SLACK;
+    log(`  releasing ${label} (week ${w + 1}, day ${dd + 1}) — answers close ${utc(lockTime)}; watched blocks from ${windowStart}`);
     if (ctx.dryRun) { log(`  [dry run] would run the generator and post its questions`); return; }
-    const g = ctx.generator(["release", "--label", label, "--week", String(w), "--day", String(dd % 7),
-      "--max-lock", String(wEnd), "--max-end", String(maxEnd),
+    const g = ctx.generator(["release", "--label", label, "--week", String(w), "--day", String(dd),
+      "--lock-height", String(windowStart - 1), "--lock-time", String(lockTime), "--max-end", String(maxEnd),
       // never ask about the pool itself or the operator's own producer(s): they could sway the answer
       "--exclude", [ctx.chain.contractId, ...(E.EXCLUDE_PRODUCERS ?? "").split(",")].map((x) => x.trim()).filter(Boolean).join(",")]);
     if (!g.ok) {
-      if (/Too late in the week/i.test(g.output)) {
-        writeJson(file, { date: label, week: w, day: dd + 1, questions: [], skipped: "too late in the week to release questions" });
-        log(`  skipped ${label}: too late in the week`);
+      if (/Too late/i.test(g.output)) {
+        writeJson(file, { date: label, week: w, day: dd + 1, questions: [], skipped: "too late to release today's questions" });
+        log(`  skipped ${label}: too late`);
       } else { log(`  ✖ the generator failed (will retry next run):\n${g.output.slice(-1500)}`); ctx.problems.push(`The question generator failed for ${label}.`); }
       return;
     }
@@ -352,15 +370,15 @@ async function postPass(ctx: Ctx, bs: BotState) {
     if (i >= cur.questions.length) break;
     const q = cur.questions[i];
     if (q.chainId !== undefined || q.postSkipped) continue;
-    const head = (await ctx.chain.head()).height;
-    if (q.lockHeight - head < MIN_ANSWER_TIME) {
-      q.postSkipped = `posted too late: answers would close in ${q.lockHeight - head} blocks`;
+    const now = (await state(ctx)).time;
+    if ((q.lockTime ?? 0) - now < MIN_ANSWER_MS) {
+      q.postSkipped = `posted too late: answers would close ${utc(q.lockTime ?? 0)}`;
       log(`  skipped ${q.id}: ${q.postSkipped}`);
       writeJson(file, cur);
       continue;
     }
     const before = await state(ctx);
-    const args = { k: q.options.length, lock_height: String(q.lockHeight), window_start: String(q.windowStart), window_end: String(q.windowEnd), params_hash: "0x" + q.paramsHash };
+    const args = { k: q.options.length, lock_time: String(q.lockTime), window_start: String(q.windowStart), window_end: String(q.windowEnd), params_hash: "0x" + q.paramsHash };
     const ok = await sendOp(ctx, `post ${q.id}: ${q.title}`, [{ method: "post_question", args }]);
     if (!ok || ctx.dryRun) continue;
     const id = before.nextId;
@@ -380,7 +398,7 @@ async function postPass(ctx: Ctx, bs: BotState) {
 async function closeFinalizePass(ctx: Ctx) {
   for (let i = 0; i < 4; i++) {
     const st = await state(ctx);
-    const h = (await ctx.chain.head()).height;
+    const h = st.time;
     const w = st.weeksClosed;
     const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
     if (h >= weekEnd(st, w) + st.closeDelay && num(wk.resolved) === num(wk.questions)) {
@@ -413,7 +431,7 @@ export async function allPlayers(chain: Chain, week: number) {
 
 async function settlePass(ctx: Ctx) {
   const st = await state(ctx);
-  const h = (await ctx.chain.head()).height;
+  const h = st.time;
   for (let w = st.weeksFinalized; w < st.weeksClosed; w++) {
     const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
     if (h < num(wk.settle_start) || h > num(wk.settle_end)) continue;
@@ -444,10 +462,12 @@ export async function status(ctx: Ctx) {
   const t = st.t;
   const holdings = big(st.raw.vhp_balance) + big(st.raw.koin_balance);
   const owed = ["total_stake", "seed_vhp", "seed_koin", "owner_share", "creator_fee", "pots_outstanding"].reduce((s, k) => s + big(t[k]), 0n);
-  const w = height < st.genesis ? 0 : Math.floor((height - st.genesis) / st.weekBlocks);
-  log(`Contract ${ctx.chain.contractId}  (${ctx.chain.kind})   block ${height} (irreversible ${lib})`);
-  log(height < st.genesis ? `Game starts at block ${st.genesis} (in ~${((st.genesis - height) * 3 / 3600).toFixed(1)} h)`
-    : `Week ${w}: ends at block ${weekEnd(st, w)} (in ~${((weekEnd(st, w) - height) * 3 / 3600).toFixed(1)} h)`);
+  const now = st.time;
+  const w = now < st.genesis ? 0 : Math.floor((now - st.genesis) / st.weekLen);
+  const inH = (ms: number) => `${((ms - now) / HOUR_MS).toFixed(1)} h`;
+  log(`Contract ${ctx.chain.contractId}  (${ctx.chain.kind})   block ${height} (irreversible ${lib}), chain time ${utc(now)}`);
+  log(now < st.genesis ? `Game starts ${utc(st.genesis)} (in ${inH(st.genesis)})`
+    : `Week ${w + 1}: ends ${utc(weekEnd(st, w))} (in ${inH(weekEnd(st, w))}); results final ${utc(weekEnd(st, w) + st.closeDelay)}`);
   log(`Weeks closed ${st.weeksClosed}, finalized ${st.weeksFinalized}; questions posted ${st.nextId}`);
   log(`Holdings  ${showKoin(holdings)}  (VHP ${showKoin(st.raw.vhp_balance)} + KOIN ${showKoin(st.raw.koin_balance)})   contract Mana ${showKoin(st.raw.mana)}`);
   log(`Owed      ${showKoin(owed)}  = stakes ${showKoin(t.total_stake)} + seed ${showKoin(big(t.seed_vhp) + big(t.seed_koin))} + fee ${showKoin(t.creator_fee)} + owner share ${showKoin(t.owner_share)} + unclaimed pots ${showKoin(t.pots_outstanding)}`);
@@ -455,14 +475,14 @@ export async function status(ctx: Ctx) {
   for (let k = Math.max(0, st.weeksClosed - 2); k <= Math.min(w, st.weeksClosed); k++) {
     const r = await ctx.chain.read("get_week", { week: String(k) });
     const wk = r.week ?? {};
-    log(`  week ${k}: ${num(wk.questions)} questions (${num(wk.resolved)} resolved)` + (wk.closed
-      ? `, gain ${showKoin(wk.gain)} → pot ${showKoin(wk.pot)}; ${num(wk.eligible_players)} eligible` + (wk.finalized ? `, cutoff ${num(wk.cutoff)} pts, ${num(wk.winners)} winner(s), claimed ${showKoin(wk.claimed)}${wk.rolled_over ? " (rolled over)" : ""}` : `, settling until block ${num(wk.settle_end)}`)
+    log(`  week ${k + 1}: ${num(wk.questions)} questions (${num(wk.resolved)} resolved)` + (wk.closed
+      ? `, gain ${showKoin(wk.gain)} → pot ${showKoin(wk.pot)}; ${num(wk.eligible_players)} eligible` + (wk.finalized ? `, cutoff ${num(wk.cutoff)} pts, ${num(wk.winners)} winner(s), claimed ${showKoin(wk.claimed)}${wk.rolled_over ? " (rolled over)" : ""}` : `, settling until ${utc(num(wk.settle_end))}`)
       : ""));
   }
   // Questions you can still answer (from the public question files).
   for (const f of dayFiles(ctx.P)) for (const q of f.data.questions ?? []) {
-    if (q.chainId === undefined || q.lockHeight <= height) continue;
-    log(`  open question #${q.chainId} (answers close in ~${((q.lockHeight - height) * 3 / 3600).toFixed(1)} h): ${q.text}`);
+    if (q.chainId === undefined || !q.lockTime || q.lockTime <= now) continue;
+    log(`  open question #${q.chainId} (answers close ${utc(q.lockTime)}, in ${inH(q.lockTime)}): ${q.text}`);
     for (const o of q.options) log(`      ${String.fromCharCode(65 + o.index)}) ${o.label}`);
   }
   const bs = readJson(ctx.P.botState, null);
@@ -499,20 +519,12 @@ async function tokenAddresses(provider: Provider, mainnet: boolean): Promise<{ k
   return { koin, vhp, pob };
 }
 
-/** Block height of the next Monday 00:00 UTC, from the recent average block time. */
-async function nextMondayHeight(provider: Provider): Promise<{ height: number; when: string; msPerBlock: number }> {
-  const head: any = await provider.getHeadInfo();
-  const h = Number(head.head_topology.height);
-  const at = async (height: number) => {
-    const r: any = await provider.call("block_store.get_blocks_by_height", { head_block_id: head.head_topology.id, ancestor_start_height: String(height), num_blocks: 1, return_block: true });
-    return Number(r.block_items[0].block.header.timestamp);
-  };
-  const [t0, t1] = [await at(h - DAY), await at(h)];
-  const msPerBlock = (t1 - t0) / DAY;
-  const d = new Date(t1);
+/** Next Monday 00:00 UTC (ms). */
+function nextMonday(): number {
+  const d = new Date();
   d.setUTCDate(d.getUTCDate() + (((8 - d.getUTCDay()) % 7) || 7));
   d.setUTCHours(0, 0, 0, 0);
-  return { height: h + Math.round((d.getTime() - t1) / msPerBlock), when: d.toISOString(), msPerBlock };
+  return d.getTime();
 }
 
 async function deploy(send: boolean) {
@@ -543,12 +555,14 @@ async function deploy(send: boolean) {
   const bal = async (c: Contract, a: string) => BigInt(((await (c.functions as any).balance_of({ owner: a })).result?.value) ?? 0);
   const [cKoin, cVhp] = [await bal(koinC, C), await bal(vhpC, C)];
   const opMana = BigInt(await provider.getAccountRc(operator.getAddress()));
-  const g = E.GENESIS_HEIGHT ? { height: Number(E.GENESIS_HEIGHT), when: "(set in .env)", msPerBlock: 3000 } : await nextMondayHeight(provider);
+  const genesis = E.GENESIS_TIME ? Date.parse(E.GENESIS_TIME) : nextMonday();
+  if (!isFinite(genesis) || new Date(genesis).getUTCDay() !== 1 || genesis % DAY_MS !== 0) throw new Error("The start must be a Monday 00:00 UTC (GENESIS_TIME like 2026-10-19T00:00:00Z).");
   const n = (k: string, d: number) => String(E[k] ? Number(E[k]) : d);
   const init = {
-    owner, operator: operator.getAddress(), seed_owner: seedOwner, genesis_height: String(g.height),
-    week_blocks: n("WEEK_BLOCKS", 7 * DAY), close_delay: n("CLOSE_DELAY", DAY), settle_blocks: n("SETTLE_BLOCKS", 2 * DAY),
-    timelock_blocks: n("TIMELOCK_BLOCKS", 2 * DAY), min_stake: n("MIN_STAKE", 100_000_000), max_sponsor_rc: n("MAX_SPONSOR_RC", 200_000_000),
+    owner, operator: operator.getAddress(), seed_owner: seedOwner, genesis_time: String(genesis),
+    // week Mon 00:00 → Mon 00:00; corrections until Mon 12:00 (close); settling until Tue 12:00 (winners final)
+    week_length: String(7 * DAY_MS), close_delay: String(12 * HOUR_MS), settle_length: String(24 * HOUR_MS),
+    timelock_length: String(48 * HOUR_MS), min_stake: n("MIN_STAKE", 100_000_000), max_sponsor_rc: n("MAX_SPONSOR_RC", 200_000_000),
   };
   const hash = sha256hex(wasm);
   log(`Network            ${rpc}${mainnet ? "   ⚠ MAINNET" : ""}`);
@@ -568,9 +582,10 @@ async function deploy(send: boolean) {
   log(`Pays the Mana      bot wallet ${operator.getAddress()} (has ${showKoin(opMana)} Mana; the upload needs about ${showKoin(estimate)}, plus ~2 for setup)`);
   log(`Owner              ${owner}`);
   log(`Seed owner         ${seedOwner}`);
-  log(`Week 0 starts      block ${g.height} ≈ ${g.when} (average block ${(g.msPerBlock / 1000).toFixed(3)} s)`);
-  log(`Settings           week ${init.week_blocks} blocks, correction delay ${init.close_delay}, settlement ${init.settle_blocks}, timelock ${init.timelock_blocks},`);
-  log(`                   min stake ${showKoin(init.min_stake)} VHP, sponsored tx limit ${showKoin(init.max_sponsor_rc)} Mana`);
+  log(`Week 1 starts      ${utc(genesis)} (a Monday). Every week: Monday 00:00 → next Monday 00:00 UTC`);
+  log(`Daily questions    Monday–Saturday: out at ${RELEASE_HOUR}:00 UTC, answers close at 00:00 UTC (12 hours). Sunday: results day`);
+  log(`After each week    corrections until Monday 12:00 UTC, then winners are final Tuesday 12:00 UTC; code/seed timelock 48 h`);
+  log(`Settings           min stake ${showKoin(init.min_stake)} VHP, sponsored tx limit ${showKoin(init.max_sponsor_rc)} Mana`);
   log(`Tokens             KOIN ${tokens.koin}  VHP ${tokens.vhp}  PoB ${tokens.pob}`);
   if (cKoin > 0n || cVhp > 0n) throw new Error("The contract address already holds tokens; they would count as the first week's earnings. Use a fresh CONTRACT_WIF.");
   if (!prior?.uploaded && opMana < (estimate * 13n) / 10n + toSat(2)) throw new Error(`The bot wallet needs about ${showKoin((estimate * 13n) / 10n + toSat(2))} Mana for the upload (with a 30% margin) but has ${showKoin(opMana)}. Send it more KOIN (Mana refills as KOIN sits there), then try again.`);
@@ -605,9 +620,9 @@ async function deploy(send: boolean) {
     log(`    initialised — Mana used ${showKoin(r.rcUsed)}`);
   }
   const s1 = await chain.read("get_state", {});
-  Object.assign(st, { genesis: Number(s1.config.genesis_height), weekBlocks: Number(s1.config.week_blocks), closeDelay: Number(s1.config.close_delay),
-    settleBlocks: Number(s1.config.settle_blocks), timelockBlocks: Number(s1.config.timelock_blocks), minStake: s1.config.min_stake, maxSponsorRc: s1.config.max_sponsor_rc,
-    genesisApprox: g.when, deployedAt: new Date().toISOString() });
+  Object.assign(st, { genesisTime: Number(s1.config.genesis_time), genesis: utc(Number(s1.config.genesis_time)), weekLength: Number(s1.config.week_length),
+    closeDelay: Number(s1.config.close_delay), settleLength: Number(s1.config.settle_length), timelockLength: Number(s1.config.timelock_length),
+    minStake: s1.config.min_stake, maxSponsorRc: s1.config.max_sponsor_rc, deployedAt: new Date().toISOString() });
   writeJson(P.deployment, st);
   log(`\nDone. Saved ${P.deployment} (commit it — it is public information).`);
   log(`Next (see LAUNCH.md): commit game-data/deployment.json, add the seed (seed-vhp / seed-koin), register the node key (register-key node), turn on the bot.`);
