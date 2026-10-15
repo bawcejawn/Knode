@@ -38,7 +38,9 @@ Ok "git is installed"
 $driveName = (Split-Path -Qualifier $Root).TrimEnd(':')
 $free = (Get-PSDrive $driveName).Free
 $haveData = Test-Path (Join-Path $Root "basedir\chain")
-$needGB = if ($haveData) { 5 } else { 200 }
+# Room needed: the snapshot archive (~61 GB) plus the two databases the producer uses, unpacked. The other three
+# databases in the archive are skipped and the archive is deleted afterwards. 140 GB leaves a safe margin.
+$needGB = if ($haveData) { 5 } else { 140 }
 if ($free -lt ($needGB * 1GB)) { throw ("Not enough free space on {0}: need about {1} GB, have {2:N0} GB." -f $driveName, $needGB, ($free / 1GB)) }
 Ok ("{0:N0} GB free on {1}:" -f ($free / 1GB), $driveName)
 
@@ -94,8 +96,11 @@ if ($haveData) {
   if (-not $snap) { throw "Couldn't read the snapshot list at snapshots.armana.io/index.json" }
   $file = Join-Path $Root $snap.name
   Note ("Newest snapshot: block {0:N0}, {1:N1} GB - this download takes a while; if it stops, run this script again and it continues where it left off." -f [int64]$snap.height, ([double]$snap.size_bytes / 1GB))
-  curl.exe -L --fail --retry 5 -C - -o $file $snap.url
-  if ($LASTEXITCODE -ne 0) { throw "The download stopped. Run this script again to continue it." }
+  $done = (Test-Path $file) -and ((Get-Item $file).Length -eq [int64]$snap.size_bytes)
+  if (-not $done) {
+    curl.exe -L --fail --retry 5 -C - -o $file $snap.url
+    if ($LASTEXITCODE -ne 0) { throw "The download stopped. Run this script again to continue it." }
+  } else { Ok "already downloaded" }
   Note "Checking the fingerprint (several minutes)..."
   $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
   if ($hash -ne $snap.sha256.ToLower()) { Remove-Item $file; throw "Fingerprint mismatch: the download was damaged and has been deleted. Run this script again." }
@@ -103,8 +108,14 @@ if ($haveData) {
   $restore = Join-Path $Root "restore"
   New-Item -ItemType Directory -Force $restore | Out-Null
   Note "Unpacking (can take 30+ minutes)..."
-  tar -xzf $file -C $restore
+  # Unpack only the two databases this node uses (chain, block_store); skip the other three to save space.
+  tar -xzf $file -C $restore --include "*.koinos/chain*" --include "*.koinos/block_store*"
   if ($LASTEXITCODE -ne 0) { throw "Unpacking failed. Free some disk space and run this script again." }
+  if (-not (Get-ChildItem $restore -Directory -Recurse -Filter "chain" -ErrorAction SilentlyContinue)) {
+    Note "Unpacking everything instead (needs more space)..."
+    tar -xzf $file -C $restore
+    if ($LASTEXITCODE -ne 0) { throw "Unpacking failed. Free some disk space and run this script again." }
+  }
   $src = Join-Path $restore ".koinos"
   if (-not (Test-Path $src)) { $src = (Get-ChildItem $restore -Directory -Recurse -Filter "chain" | Select-Object -First 1).Parent.FullName }
   foreach ($d in @("chain", "block_store")) {
