@@ -150,6 +150,16 @@ never shrinks the saved history. Rebuilding the history from nothing downloads a
 Files in `backtest-output/`: `report.json` (all numbers), `instances.csv` (every replayed question and its
 winning option), `blocks.csv` (the lean block cache).
 
+## Sharing the history for tuning
+
+```
+npm run export-blocks
+```
+
+Packs `backtest-output/blocks.csv` into `data/blocks-compact.csv.gz` (a few MB): signer, time since the
+previous block and transaction count for every block. Attach it to the chat (or upload it to the repo's
+`data/` folder) so the model can be tuned directly on the real chain. Public chain data only — no keys.
+
 ---
 
 # Live question generator

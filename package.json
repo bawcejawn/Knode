@@ -7,7 +7,8 @@
   "scripts": {
     "step0": "tsx step0.ts",
     "backtest": "tsx backtest.ts",
-    "generate": "tsx generator.ts"
+    "generate": "tsx generator.ts",
+    "export-blocks": "tsx export-blocks.ts"
   },
   "dependencies": {
     "koilib": "latest"

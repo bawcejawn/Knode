@@ -111,3 +111,12 @@ message stress_arguments {
 message stress_result {
   uint64 sum = 1 [jstype = JS_STRING];
 }
+
+// @description Owner only: send ALL of the contract's KOIN and VHP back to the owner (recovers probe funds).
+// @read-only false
+message sweep_arguments {}
+
+message sweep_result {
+  uint64 koin = 1 [jstype = JS_STRING];
+  uint64 vhp = 2 [jstype = JS_STRING];
+}

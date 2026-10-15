@@ -9,6 +9,7 @@
  *   P6 register_key  the contract can register a block-producer key with Proof-of-Burn
  *   P7 ping          the contract can sponsor (pay the Mana for) a user's transaction
  *   P8 stress        Mana cost of storage writes/reads (for sizing the real contract)
+ *   sweep            the owner can recover all KOIN and VHP left in the contract
  *   authorize        nobody — not even the deploy key — can move the contract's tokens or
  *                    re-upload its code without the owner's signature
  * Not for mainnet: no fees, no game logic, minimal checks.
@@ -200,6 +201,27 @@ export class Kprobe {
     for (let i: u32 = 0; i < args.bins; i++) sum += this.scratch.get(i.toString())!.value;
     const r = new kprobe.stress_result();
     r.sum = sum;
+    return r;
+  }
+
+  // ───── sweep: recover every token the probes left in the contract ─────
+  sweep(args: kprobe.sweep_arguments): kprobe.sweep_result {
+    const owner = this.config.get()!.owner;
+    System.require(owner != null && owner!.length > 0 && this.signedBy(owner!), "only the owner can sweep");
+    const r = new kprobe.sweep_result();
+    const vhpBal = this.vhp().balanceOf(this.contractId);
+    if (vhpBal > 0) {
+      System.require(this.vhp().transfer(this.contractId, owner!, vhpBal), "VHP sweep failed");
+      r.vhp = vhpBal;
+    }
+    // Moving KOIN needs Mana at least equal to the amount; whatever is left can be swept again in a few days.
+    let koinAmt = this.koin().balanceOf(this.contractId);
+    const mana = System.getAccountRC(this.contractId);
+    if (koinAmt > mana) koinAmt = mana;
+    if (koinAmt > 0) {
+      System.require(this.koin().transfer(this.contractId, owner!, koinAmt), "KOIN sweep failed");
+      r.koin = koinAmt;
+    }
     return r;
   }
 

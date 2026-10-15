@@ -5,8 +5,10 @@
  *   npm run probes -- status   balances and Mana of every test account
  *   npm run probes -- setup    deploy the probe contract, set its owner, fund it and the helper account
  *   npm run probes -- run      run every probe and print PASS / FAIL with the Mana each one used
+ *   npm run probes -- sweep    send everything left in the contract and the helper back to the owner
  *
- * Talks to Harbinger (the Koinos testnet) only. Never put a mainnet key in .env.
+ * Runs on Harbinger (testnet) by default. Mainnet needs RPC=https://api.koinos.io AND CONFIRM_MAINNET=yes
+ * in .env, and should only ever use a fresh wallet holding a small amount.
  */
 import fs from "node:fs";
 import crypto from "node:crypto";
@@ -40,7 +42,17 @@ const STATE_FILE = "probe-state.json";
 const WASM = "build/release/contract.wasm";
 const OUT_DIR = "probes-output";
 
+const IS_TESTNET = /harbinger/i.test(RPC);
 const provider = new Provider([RPC]);
+
+/** Mainnet uses real KOIN: refuse unless the user has explicitly opted in. */
+function guardNetwork() {
+  if (IS_TESTNET) return;
+  if (E.CONFIRM_MAINNET !== "yes") {
+    throw new Error(`RPC is ${RPC}, which is MAINNET (real KOIN). Add CONFIRM_MAINNET=yes to .env if you really mean it.`);
+  }
+  console.log(`⚠ MAINNET (${RPC}) — real KOIN. Use a fresh wallet with only the amount needed.\n`);
+}
 const sat = (koin: number) => BigInt(Math.round(koin * 1e8)).toString();
 const show = (s: string | number | bigint | undefined) => (Number(s ?? 0) / 1e8).toLocaleString("en-US", { maximumFractionDigits: 8 });
 
@@ -207,6 +219,7 @@ async function cmdStatus() {
 }
 
 async function cmdSetup() {
+  guardNetwork();
   const owner = signerFrom("OWNER_WIF");
   const contract = signerFrom("CONTRACT_WIF");
   const helper = signerFrom("HELPER_WIF");
@@ -276,6 +289,7 @@ function record(id: string, what: string, expect: "succeed" | "fail", r: Sent, c
 }
 
 async function cmdRun() {
+  guardNetwork();
   const owner = signerFrom("OWNER_WIF");
   const contract = signerFrom("CONTRACT_WIF");
   const helper = signerFrom("HELPER_WIF");
@@ -404,6 +418,10 @@ async function cmdRun() {
   record("P10", "owner can re-upload (upgrade) the code, and the data survives", "succeed", r,
     after.owner === O && BigInt(after.pings) === BigInt(b.pings));
 
+  // P11 — only the owner can recover the contract's funds
+  record("P11", "helper cannot sweep the contract's funds", "fail",
+    await send([await op(k, "sweep", {})], [helper]));
+
   // P8 — Mana cost of storage, for sizing the real contract
   const costs: Record<string, string> = {};
   for (const [w, n] of [[0, 0], [20, 0], [200, 0], [0, 200]] as const) {
@@ -427,12 +445,41 @@ async function cmdRun() {
   }
 }
 
+// ───────────────────────── sweep ─────────────────────────
+
+async function cmdSweep() {
+  guardNetwork();
+  const owner = signerFrom("OWNER_WIF");
+  const contract = signerFrom("CONTRACT_WIF");
+  const helper = signerFrom("HELPER_WIF");
+  const st = readState();
+  if (!st.deployed) throw new Error("Nothing deployed yet.");
+  const O = owner.getAddress(), H = helper.getAddress();
+  const before = await info(contract);
+  console.log(`Contract holds KOIN ${show(before.koin_balance)}  VHP ${show(before.vhp_balance)}  (Mana ${show(before.mana)})`);
+  const r = await send([await op(kprobeContract(contract), "sweep", {})], [owner]);
+  if (!r.ok) throw new Error(`sweep failed: ${r.error}`);
+  const after = await info(contract);
+  console.log(`Swept to owner. Contract now holds KOIN ${show(after.koin_balance)}  VHP ${show(after.vhp_balance)}`);
+  if (BigInt(after.koin_balance ?? 0) > 0n) console.log("Some KOIN is waiting for Mana to regenerate — run sweep again in a day or two.");
+
+  // Helper: return its KOIN too, keeping a little Mana for the transaction itself.
+  const hk = await balance(st.koin, H), hm = await mana(H);
+  const keep = BigInt(sat(0.3));
+  const amt = (hk < hm ? hk : hm) - keep;
+  if (amt > 0n) {
+    const r2 = await send([await op(token(st.koin), "transfer", { from: H, to: O, value: amt.toString() })], [helper], H, 0.3);
+    console.log(r2.ok ? `Helper returned ${show(amt)} KOIN to the owner.` : `Helper return failed: ${r2.error}`);
+  }
+  console.log("\nNote: VHP the owner made with OWNER_BURN stays VHP (burning can't be undone); it is still yours.");
+}
+
 // ───────────────────────── main ─────────────────────────
 
 const cmd = process.argv[2] ?? "help";
-const cmds: Record<string, () => Promise<void>> = { keys: cmdKeys, status: cmdStatus, setup: cmdSetup, run: cmdRun };
+const cmds: Record<string, () => Promise<void>> = { keys: cmdKeys, status: cmdStatus, setup: cmdSetup, run: cmdRun, sweep: cmdSweep };
 if (!cmds[cmd]) {
-  console.log("Usage: npm run probes -- keys | status | setup | run");
+  console.log("Usage: npm run probes -- keys | status | setup | run | sweep");
 } else {
   cmds[cmd]().catch((e) => {
     console.error("\nStopped: " + (e as Error).message);

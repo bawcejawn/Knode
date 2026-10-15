@@ -23,6 +23,7 @@ Koinos testnet (Harbinger) and tries every on-chain move the game depends on. Ea
 | P9a–c | The **deploy key** trying to move or approve the contract's VHP/KOIN | refused |
 | P10a / P10b | Re-uploading the code without the owner's signature | refused |
 | P10 | The owner upgrades the code, and the stored data survives | succeed |
+| P11 | Anyone but the owner sweeping the contract's funds | refused |
 | P8 | Mana cost of storage writes and reads (for sizing the real contract) | succeed |
 
 A "refused" probe **passes** when the chain refuses it. That is the point: those are attacks.
@@ -95,6 +96,27 @@ npm run probes -- run
 
 It takes a few minutes (each step waits for a block). Paste the output into the chat. The full
 results are also saved in `probes-output/results.json`.
+
+**7. Get the funds back.**
+
+```
+npm run probes -- sweep
+```
+
+Sends all KOIN and VHP left in the contract, plus the helper's KOIN, back to the owner. Moving KOIN needs
+Mana equal to the amount, so if some KOIN is left, run it again a day or two later.
+
+## Testnet or mainnet?
+
+The probes default to the testnet. They can run on mainnet with real KOIN (Koinos has no fees, only
+Mana that regenerates), but only like this:
+
+- Use a **brand-new wallet** made by `npm run probes -- keys`, funded with about 20 KOIN. Never your main wallet.
+- Add `RPC=https://api.koinos.io` and `CONFIRM_MAINNET=yes` to `.env` (the script refuses mainnet otherwise).
+- What is at stake: the ~10 KOIN sent to the contract and ~2 to the helper come back with `sweep`. The 3 KOIN
+  the owner burns (P0) and the 1 KOIN deposited (P3) become VHP: still yours, but VHP can't be turned back
+  into KOIN. If a bug stopped `sweep` from working, the owner can upgrade the contract code (P10) to fix it.
+- Everything on mainnet is public and permanent, including the deployed probe contract.
 
 ## Settings (optional, in `.env`)
 

@@ -18,6 +18,7 @@ export const kprobeAbi = {
     register_key: { entry_point: 0xa4d25b41, argument: "kprobe.register_key_arguments", return: "kprobe.register_key_result", read_only: false },
     ping:         { entry_point: 0x758d61f2, argument: "kprobe.ping_arguments",         return: "kprobe.ping_result",         read_only: false },
     stress:       { entry_point: 0xf43dc879, argument: "kprobe.stress_arguments",       return: "kprobe.stress_result",       read_only: false },
+    sweep:        { entry_point: 0xdfd33796, argument: "kprobe.sweep_arguments",        return: "kprobe.sweep_result",        read_only: false },
   },
   koilib_types: {
     nested: {
@@ -49,6 +50,8 @@ export const kprobeAbi = {
           ping_result: { fields: { count: f(1, "uint64", U64), payer: f(2, "bytes", ADDR) } },
           stress_arguments: { fields: { writes: f(1, "uint32"), bins: f(2, "uint32") } },
           stress_result: { fields: { sum: f(1, "uint64", U64) } },
+          sweep_arguments: { fields: {} },
+          sweep_result: { fields: { koin: f(1, "uint64", U64), vhp: f(2, "uint64", U64) } },
         },
       },
     },
