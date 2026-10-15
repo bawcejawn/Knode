@@ -399,9 +399,13 @@ async function run() {
   const questions: Question[] = [];
   const menu = g.menus[tier].filter((id) => g.enabled.includes(id)).map((id) => ({ id, s: rand() })).sort((a, b) => a.s - b.s).map((x) => x.id);
   const tol = g.model.tolerance;
+  // If the day's own templates can't fill the quota fairly, borrow from the nearest tier so the week still gets ~20.
+  const nearest: Record<string, string[]> = { Easy: ["Medium", "Hard"], Medium: ["Easy", "Hard"], Hard: ["Medium", "Easy"] };
+  const fallback = (nearest[tier] ?? []).flatMap((t) => g.menus[t] ?? []).filter((id) => g.enabled.includes(id) && !menu.includes(id));
   let attempts = 0;
-  for (let mi = 0; questions.length < count && attempts < 40; mi = (mi + 1) % menu.length, attempts++) {
-    const id = menu[mi], T = TEMPLATES[id];
+  for (let mi = 0; questions.length < count && attempts < 80; mi++, attempts++) {
+    const list = attempts < 40 || !fallback.length ? menu : fallback;
+    const id = list[mi % list.length], T = TEMPLATES[id];
     const base = { date: args.date, week, day: day + 1, tier, template: id, releaseHeight: libHeight, lockHeight, ...(args.lockTime !== undefined ? { lockTime: args.lockTime } : {}) };
     const n = questions.length + 1;
     let q: Question | null = null;
