@@ -30,14 +30,16 @@ const E = process.env;
 const RPC = E.RPC ?? "https://harbinger-api.koinos.io";
 const num = (k: string, d: number) => (E[k] ? Number(E[k]) : d);
 const CFG = {
-  fundContract: num("FUND_CONTRACT", 10), // tKOIN sent to the contract (its Mana pays for sponsored pings)
-  fundHelper: num("FUND_HELPER", 2),      // tKOIN for the helper (a second, unrelated user)
-  ownerBurn: num("OWNER_BURN", 3),        // tKOIN the owner burns into VHP so it has VHP to deposit
+  fundContract: num("FUND_CONTRACT", 5),  // KOIN sent to the contract (its Mana pays for sponsored pings)
+  fundHelper: num("FUND_HELPER", 2),      // KOIN for the helper (a second, unrelated user)
+  ownerBurn: num("OWNER_BURN", 2),        // KOIN the owner burns into VHP so it has VHP to deposit
   deposit: num("DEPOSIT", 1),             // size of each test deposit / withdrawal
-  reserve: num("RESERVE", 5),             // KOIN the contract keeps unburned during compound
+  reserve: num("RESERVE", 3),             // KOIN the contract keeps unburned during compound
   rcLimit: num("RC_LIMIT", 2),            // max Mana (in KOIN) a normal probe transaction may use
   stressRcLimit: num("STRESS_RC_LIMIT", 5),
+  uploadRcLimit: num("UPLOAD_RC_LIMIT", 20), // max Mana for uploading the contract code
 };
+const NEED = CFG.fundContract + CFG.fundHelper + CFG.ownerBurn + CFG.deposit + CFG.uploadRcLimit; // KOIN the owner should hold
 const STATE_FILE = "probe-state.json";
 const WASM = "build/release/contract.wasm";
 const OUT_DIR = "probes-output";
@@ -127,9 +129,13 @@ type Sent = { ok: boolean; rc: string; error?: string; receipt?: any };
 async function send(ops: any[], signers: Signer[], payer?: string, rcLimitKoin = CFG.rcLimit): Promise<Sent> {
   try {
     const payee = signers[0].getAddress();
+    // Never ask for more Mana than the payer has (the node would refuse the transaction outright).
+    const available = await mana(payer ?? payee);
+    const cap = BigInt(sat(rcLimitKoin));
+    const limit = (available * 95n) / 100n < cap ? (available * 95n) / 100n : cap;
     const tx = new Transaction({
       signer: signers[0], provider,
-      options: { payer: payer ?? payee, payee, rcLimit: sat(rcLimitKoin) },
+      options: { payer: payer ?? payee, payee, rcLimit: limit.toString() },
     });
     for (const op of ops) await tx.pushOperation(op);
     await tx.prepare();
@@ -189,19 +195,26 @@ async function cmdKeys() {
     E[name] = wif;
     lines.push(`${name}=${wif}`);
   }
-  if (lines.length) {
-    const existing = fs.existsSync(".env") ? fs.readFileSync(".env", "utf8") : `RPC=${RPC}\n`;
-    fs.writeFileSync(".env", existing.replace(/\s*$/, "\n") + lines.join("\n") + "\n");
-    console.log(`Added ${lines.map((l) => l.split("=")[0]).join(", ")} to .env (this file stays on your computer — never share it).`);
+  const wantMainnet = process.argv.includes("--mainnet");
+  if (lines.length || wantMainnet) {
+    let existing = fs.existsSync(".env") ? fs.readFileSync(".env", "utf8") : `RPC=${RPC}\n`;
+    if (wantMainnet) {
+      existing = existing.replace(/^RPC=.*$/m, "").replace(/^CONFIRM_MAINNET=.*$/m, "");
+      lines.unshift("RPC=https://api.koinos.io", "CONFIRM_MAINNET=yes");
+    }
+    fs.writeFileSync(".env", existing.replace(/\n{2,}/g, "\n").replace(/^\n/, "").replace(/\s*$/, "\n") + lines.join("\n") + "\n");
+    console.log(`Updated .env: ${lines.map((l) => l.split("=")[0]).join(", ")} (this file stays on your computer — never share it).`);
+    if (wantMainnet) console.log("⚠ .env now points at MAINNET (real KOIN).");
   } else {
     console.log("All three keys are already in .env.");
   }
   console.log("");
-  console.log(`  owner     ${signerFrom("OWNER_WIF").getAddress()}   ← send tKOIN here (faucet or your wallet)`);
+  const mainnetNow = process.argv.includes("--mainnet") || !IS_TESTNET;
+  console.log(`  owner     ${signerFrom("OWNER_WIF").getAddress()}   ← send ${mainnetNow ? "KOIN" : "tKOIN"} here from your wallet`);
   console.log(`  contract  ${signerFrom("CONTRACT_WIF").getAddress()}   ← the probe contract will live at this address`);
   console.log(`  helper    ${signerFrom("HELPER_WIF").getAddress()}   ← a second user; setup funds it from the owner`);
-  const need = CFG.fundContract + CFG.fundHelper + CFG.ownerBurn + CFG.deposit + 4;
-  console.log(`\nThe owner needs about ${need} tKOIN for setup + run.`);
+  console.log(`\nThe owner needs about ${NEED} KOIN: about ${CFG.fundContract + CFG.fundHelper + CFG.ownerBurn + CFG.deposit} is moved around by the tests (and swept back),`);
+  console.log(`the rest is Mana headroom for uploading the contract. Mana is not spent like a fee — it refills over ~5 days.`);
 }
 
 async function cmdStatus() {
@@ -225,9 +238,9 @@ async function cmdSetup() {
   const helper = signerFrom("HELPER_WIF");
   const { koin } = await tokenAddresses();
 
-  const need = CFG.fundContract + CFG.fundHelper + CFG.ownerBurn + CFG.deposit + 4;
+  const need = NEED;
   const ownerKoin = await balance(koin, owner.getAddress());
-  console.log(`Owner ${owner.getAddress()} has ${show(ownerKoin)} tKOIN (needs about ${need}).`);
+  console.log(`Owner ${owner.getAddress()} has ${show(ownerKoin)} KOIN (needs about ${need}).`);
   if (ownerKoin < BigInt(sat(need))) {
     console.log("Not enough yet. Fund the owner address, then run setup again.");
     process.exitCode = 1;
@@ -237,7 +250,7 @@ async function cmdSetup() {
   const st = readState();
   if (!st.deployed) {
     console.log("1/4 Deploying the probe contract (owner pays the Mana, contract key authorizes the upload) ...");
-    const r = await send([await uploadOp(contract)], [contract, owner], owner.getAddress(), 20);
+    const r = await send([await uploadOp(contract)], [contract, owner], owner.getAddress(), CFG.uploadRcLimit);
     if (!r.ok) throw new Error(`deploy failed: ${r.error}`);
     console.log(`    deployed — Mana used ${show(r.rc)}`);
     st.deployed = true;
@@ -279,10 +292,15 @@ async function cmdSetup() {
 type Row = { id: string; what: string; expect: "succeed" | "fail"; pass: boolean; rc: string; note: string };
 const rows: Row[] = [];
 
+// A refusal only proves something if it was refused for the right reason, not for lack of Mana.
+const RESOURCE_ERR = /insufficient (rc|mana)|rc limit|max.?payer.?rc|exceed.*(rc|resource|compute|disk|network)|not enough (rc|mana)/i;
+
 function record(id: string, what: string, expect: "succeed" | "fail", r: Sent, check = true, note = "") {
-  const pass = expect === "succeed" ? r.ok && check : !r.ok;
+  const resourceRefusal = expect === "fail" && !r.ok && RESOURCE_ERR.test(r.error ?? "");
+  const pass = expect === "succeed" ? r.ok && check : !r.ok && !resourceRefusal;
+  if (resourceRefusal) note = "INCONCLUSIVE — refused for lack of Mana, not by the security rule; rerun later";
   const why = !pass && r.error ? ` — ${r.error.slice(0, 160)}` : !pass && expect === "succeed" && r.ok ? " — went through but the check failed" : "";
-  const shownNote = expect === "fail" && r.error ? `refused as expected: ${r.error.slice(0, 90)}` : note;
+  const shownNote = resourceRefusal ? `${note}: ${r.error!.slice(0, 90)}` : expect === "fail" && r.error ? `refused as expected: ${r.error.slice(0, 90)}` : note;
   rows.push({ id, what, expect, pass, rc: r.rc, note: (shownNote + why).trim() });
   console.log(`${pass ? "PASS" : "FAIL"}  ${id.padEnd(4)} ${what}${r.ok ? `   (Mana ${show(r.rc)})` : ""}`);
   if (shownNote || why) console.log(`          ${(shownNote + why).trim()}`);
@@ -410,10 +428,10 @@ async function cmdRun() {
 
   // P10 — the code can be replaced only with the owner's signature
   record("P10a", "deploy key alone cannot re-upload the code", "fail",
-    await send([await uploadOp(contract)], [helper, contract], H, 20));
+    await send([await uploadOp(contract)], [helper, contract], H, CFG.uploadRcLimit));
   record("P10b", "helper cannot re-upload the code", "fail",
-    await send([await uploadOp(contract)], [helper], H, 20));
-  r = await send([await uploadOp(contract)], [owner], O, 20);
+    await send([await uploadOp(contract)], [helper], H, CFG.uploadRcLimit));
+  r = await send([await uploadOp(contract)], [owner], O, CFG.uploadRcLimit);
   const after = await info(contract);
   record("P10", "owner can re-upload (upgrade) the code, and the data survives", "succeed", r,
     after.owner === O && BigInt(after.pings) === BigInt(b.pings));
