@@ -32,6 +32,27 @@ anyone can re-check against the chain.
 Withdraw any time. Withdrawing during a week voids that week's answers. Unclaimed rewards stay in the
 pool and keep producing until claimed, but they are not stake until you claim and re-stake them.
 
+## Weeks advance by themselves
+
+A blockchain never runs code on its own, so "automatic" means: **every game transaction also does any
+overdue bookkeeping first.** Any deposit, withdraw, answer, settle, claim, compound, or the operator's
+daily question/resolution will close the previous week once it's due and finalize it once its settlement
+window has ended. A player who plays again is settled for their last week automatically. Nobody has to
+call `close_week` or `finalize_week` by hand (they still exist as a backup, and the bot uses them).
+
+## Why claim/withdraw timing can't change anyone's rewards
+
+- At every close the contract measures `gain = holdings − liabilities`. Liabilities are all stake, seed,
+  fee and owner share not yet taken, and every pot not yet claimed. Right after a close, holdings equal
+  liabilities exactly, so each unit of block reward is counted **once**, in the week it arrived.
+- A claim or withdrawal lowers holdings and liabilities by the same amount, so it can never create or erase
+  gain for any week.
+- Unclaimed rewards are liabilities, but the VHP behind them keeps producing. That production is new gain
+  for the pool, shared by everyone in later weeks.
+- Rounding dust stays in the contract as a liability (it never over-pays).
+- After every payout of a reward, fee or owner share the contract checks it still holds at least what it
+  owes, and refuses the transaction otherwise.
+
 ## Who can do what
 
 | Role | Can | Cannot |
@@ -57,7 +78,7 @@ From this `game` folder:
 
 ```
 npm install
-npm test          builds the contract and runs the 25 tests on a simulated chain (no network, no KOIN)
+npm test          builds the contract and runs the 29 tests on a simulated chain (no network, no KOIN)
 npm run build     production build → build/release/contract.wasm and abi/kpred.koilib.json
 npm run check     offline safety check of the production build
 ```
@@ -82,4 +103,9 @@ is deployed.
   2% share.
 - Sponsorship: pays for a valid answer, settle or claim; refuses a too-high rc_limit, two operations, invalid
   answers, no stake, someone else's answer or claim, already-settled entries, and every other entry point.
+- Automatic progression: weeks close and finalize as a side effect of ordinary play; returning players are
+  auto-settled.
+- Accounting lock: claiming/withdrawing early vs late gives identical weekly gains; a randomized 8-week
+  simulation (5 seeds) shows every week's gain equals what was minted, holdings equal what is owed after
+  each close, and everything minted is either paid out or waiting to be claimed.
 - Upgrades: refused before the timelock, for a non-owner, and for any bytecode other than the announced one.

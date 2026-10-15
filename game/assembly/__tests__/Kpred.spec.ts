@@ -300,17 +300,18 @@ describe("a full week", () => {
     expect(() => { gK!.close_week(new kpred.close_week_arguments(0)); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("some questions are not resolved yet");
 
-    at(2200); resolve(k, q2, 0);
-
     // The node earned 100 KOIN of block rewards during the week.
     give(KOIN_TAG, CONTRACT, 100 * VHP);
     give(MANA_TAG, CONTRACT, 100 * VHP);
 
+    // The last resolution of a finished week closes it automatically (nobody has to call close_week).
+    at(2200); resolve(k, q2, 0);
+    const w0 = k.get_week(new kpred.get_week_arguments(0)).week!;
+    expect(w0.closed).toBe(true);
+    expect(w0.gain).toBe(100 * VHP);
+    expect(w0.pot).toBe(93 * VHP);
     at(2210);
     nobody();
-    const cw = k.close_week(new kpred.close_week_arguments(0));
-    expect(cw.gain).toBe(100 * VHP);
-    expect(cw.pot).toBe(93 * VHP);
     let s = k.get_state(new kpred.get_state_arguments());
     expect(s.totals!.creator_fee).toBe(5 * VHP);
     expect(s.totals!.owner_share).toBe(2 * VHP);
@@ -335,7 +336,7 @@ describe("a full week", () => {
     MockVM.commitTransaction();
     expect(() => { gK!.finalize_week(new kpred.finalize_week_arguments(0)); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("settlement window still open");
-    at(2400);
+    at(2400);                                        // settlement window was 2200–2300
     const fw = k.finalize_week(new kpred.finalize_week_arguments(0));
     expect(fw.cutoff).toBe(3);
     expect(fw.winners).toBe(2);
@@ -688,5 +689,227 @@ describe("edge cases", () => {
     k.finalize_week(new kpred.finalize_week_arguments(0));
     as(A);
     expect(k.claim(new kpred.claim_arguments(A, 0)).reward).toBe(0);
+  });
+});
+
+// ───────────── automatic progression ─────────────
+describe("automatic progression", () => {
+  it("weeks close, settle and finalize as a side effect of normal play", () => {
+    const k = setup();
+    deposit(k, A, 10 * VHP);
+    deposit(k, B, 10 * VHP);
+    at(1100);
+    const q0 = post(k, 2, 1300, 1301, 1400);
+    const q1 = post(k, 2, 1300, 1301, 1400);
+    at(1200);
+    answer(k, A, q0, 1); answer(k, A, q1, 1);
+    answer(k, B, q0, 0); answer(k, B, q1, 0);
+    at(1500); resolve(k, q0, 1); resolve(k, q1, 1);
+    give(KOIN_TAG, CONTRACT, 10 * VHP); give(MANA_TAG, CONTRACT, 10 * VHP);
+    // Week 1: the operator posts a question after week 0's close delay → week 0 closes by itself.
+    at(2020);
+    const q2 = post(k, 2, 2300, 2301, 2400);
+    expect(k.get_week(new kpred.get_week_arguments(0)).week!.closed).toBe(true);
+    // A answers in week 1 during week 0's settlement window → A's week 0 is settled automatically.
+    at(2050);
+    answer(k, A, q2, 1);
+    expect(k.get_player(new kpred.get_player_arguments(A, 0)).entry!.settled).toBe(true);
+    expect(k.get_player(new kpred.get_player_arguments(B, 0)).entry!.settled).toBe(false); // B didn't play: not settled
+    // After the settlement window, any action (here: compound) finalizes week 0.
+    at(2200);
+    nobody();
+    k.compound(new kpred.compound_arguments());
+    const w0 = k.get_week(new kpred.get_week_arguments(0)).week!;
+    expect(w0.finalized).toBe(true);
+    expect(w0.winners).toBe(1);
+    as(A);
+    expect(k.claim(new kpred.claim_arguments(A, 0)).reward).toBe(w0.pot);
+  });
+});
+
+// ───────────── accounting: claim / withdraw timing never changes a week's measured gain ─────────────
+let gGains: u64[] = [];
+function timingScenario(early: bool, proportional: bool): u64[] {
+  const k = setup();
+  as(SEED);
+  k.seed_deposit_vhp(new kpred.seed_deposit_vhp_arguments(1000 * VHP));
+  k.seed_deposit_koin(new kpred.seed_deposit_koin_arguments(200 * VHP));
+  deposit(k, A, 100 * VHP);
+  deposit(k, B, 50 * VHP);
+  at(1100);
+  const q0 = post(k, 2, 1300, 1301, 1400);
+  const q1 = post(k, 2, 1300, 1301, 1400);
+  at(1200);
+  answer(k, A, q0, 1); answer(k, A, q1, 1);
+  answer(k, B, q0, 0); answer(k, B, q1, 0);
+  give(KOIN_TAG, CONTRACT, 40 * VHP); give(MANA_TAG, CONTRACT, 40 * VHP);     // week 0 rewards: 40
+  at(1500); resolve(k, q0, 1); resolve(k, q1, 1);
+  at(2010);
+  nobody();
+  k.close_week(new kpred.close_week_arguments(0));
+  k.settle(new kpred.settle_arguments(A, 0));
+  k.settle(new kpred.settle_arguments(B, 0));
+  at(2200);
+  k.finalize_week(new kpred.finalize_week_arguments(0));
+  if (early) {                                       // A claims its whole pot and B withdraws BEFORE week 1's rewards
+    as(A); k.claim(new kpred.claim_arguments(A, 0));
+    as(B); k.withdraw(new kpred.withdraw_arguments(B, 20 * VHP));
+  }
+  // Week 1 rewards: a fixed 25 KOIN, or 1% of everything the pool holds (production is proportional to VHP).
+  const holdings = Tokens.testGet(VHP_TAG, CONTRACT) + Tokens.testGet(KOIN_TAG, CONTRACT);
+  const r1: u64 = proportional ? holdings / 100 : 25 * VHP;
+  give(KOIN_TAG, CONTRACT, r1); give(MANA_TAG, CONTRACT, r1);
+  if (!early) {                                      // ...or AFTER them (but still before week 1 closes)
+    as(A); k.claim(new kpred.claim_arguments(A, 0));
+    as(B); k.withdraw(new kpred.withdraw_arguments(B, 20 * VHP));
+  }
+  at(3010);
+  nobody();
+  k.close_week(new kpred.close_week_arguments(1));
+  const out: u64[] = [];
+  out.push(k.get_week(new kpred.get_week_arguments(0)).week!.gain);
+  out.push(k.get_week(new kpred.get_week_arguments(1)).week!.gain);
+  out.push(r1);
+  return out;
+}
+
+describe("accounting is locked to what the pool actually earned", () => {
+  it("claiming or withdrawing early or late gives the same measured gain for every week", () => {
+    const early = timingScenario(true, false);
+    const late = timingScenario(false, false);
+    expect(early[0]).toBe(40 * VHP);
+    expect(late[0]).toBe(40 * VHP);
+    expect(early[1]).toBe(25 * VHP);                 // exactly the rewards produced in week 1
+    expect(late[1]).toBe(25 * VHP);
+  });
+
+  it("unclaimed rewards keep producing for the pool, and the gain is exactly what was produced", () => {
+    const early = timingScenario(true, true);        // reward claimed before week 1 production
+    const late = timingScenario(false, true);        // reward still in the pool during week 1 production
+    expect(early[1]).toBe(early[2]);                 // measured gain == simulated production, to the unit
+    expect(late[1]).toBe(late[2]);
+    expect(late[1] > early[1]).toBe(true);           // the unclaimed VHP earned for the pool while it sat there
+  });
+});
+
+// ───────────── randomized multi-week stress test ─────────────
+let seedRng: u64 = 12345;
+function rnd(n: u64): u64 {
+  seedRng = (seedRng * 6364136223846793005 + 1442695040888963407);
+  return (seedRng >> 33) % n;
+}
+
+let simClaims: u64 = 0, simWithdrawals: u32 = 0, simRollovers: u32 = 0, simWinners: u32 = 0;
+function simulate(seed: u64): void {
+    seedRng = seed;
+    const k = setup();
+    as(SEED);
+    k.seed_deposit_vhp(new kpred.seed_deposit_vhp_arguments(2000 * VHP));
+    k.seed_deposit_koin(new kpred.seed_deposit_koin_arguments(300 * VHP));
+    const players: Uint8Array[] = [A, B, C, D, E];
+    for (let i = 0; i < players.length; i++) deposit(k, players[i], (10 + rnd(90)) * VHP);
+    let minted: u64 = 0, mintedSinceClose: u64 = 0, distributed: u64 = 0, claimedTotal: u64 = 0;
+    for (let w: u64 = 0; w < 8; w++) {
+      const base = GENESIS + w * WEEK;
+      // Questions for the week
+      at(base + 50);
+      nobody();
+      as(OPERATOR);
+      const ids: u32[] = [];
+      for (let n = 0; n < 3; n++) ids.push(post(k, 2 + <u32>rnd(3), base + 300, base + 301, base + 400));
+      // Players: maybe top up, maybe answer
+      for (let i = 0; i < players.length; i++) {
+        const who = players[i];
+        at(base + 100 + <u64>i);
+        if (rnd(4) == 0) deposit(k, who, (1 + rnd(20)) * VHP);
+        const pl = k.get_player(new kpred.get_player_arguments(who, w));
+        if (pl.active_stake >= VHP && (pl.player!.void_week_plus_one != w + 1)) {
+          for (let n = 0; n < ids.length; n++) {
+            if (rnd(5) == 0) continue;
+            const q = k.get_question(new kpred.get_question_arguments(ids[n])).question!;
+            answer(k, who, ids[n], <u32>rnd(<u64>q.k));
+          }
+        }
+      }
+      // Block rewards trickle in during the week
+      for (let r = 0; r < 3; r++) {
+        const amt = (1 + rnd(30)) * VHP;
+        give(KOIN_TAG, CONTRACT, amt); give(MANA_TAG, CONTRACT, amt);
+        minted += amt; mintedSinceClose += amt;
+      }
+      // Someone withdraws part of their stake mid-week (voids their week)
+      const wd = players[<i32>rnd(5)];
+      at(base + 500);
+      const st = k.get_player(new kpred.get_player_arguments(wd, w + 1));
+      if (rnd(3) == 0 && st.player!.stake + st.player!.pending > 2 * VHP) {
+        as(wd);
+        k.withdraw(new kpred.withdraw_arguments(wd, VHP));
+        simWithdrawals++;
+      }
+      // Resolve (after the windows are final)
+      at(base + 600);
+      for (let n = 0; n < ids.length; n++) {
+        const q = k.get_question(new kpred.get_question_arguments(ids[n])).question!;
+        resolve(k, ids[n], rnd(10) == 0 ? 1000 : <u32>rnd(<u64>q.k));
+      }
+      // Close: gain must equal exactly what was produced since the previous close.
+      at(base + WEEK + 10);
+      nobody();
+      const before = k.get_week(new kpred.get_week_arguments(w)).week!;
+      if (!before.closed) k.close_week(new kpred.close_week_arguments(w));
+      const wk = k.get_week(new kpred.get_week_arguments(w)).week!;
+      expect(wk.gain).toBe(mintedSinceClose + (w > 0 && k.get_week(new kpred.get_week_arguments(w - 1)).week!.rolled_over ? k.get_week(new kpred.get_week_arguments(w - 1)).week!.pot : 0));
+      distributed += wk.fee + wk.retained + wk.pot;
+      mintedSinceClose = 0;
+      // Everyone gets settled, then the week is finalized
+      for (let i = 0; i < players.length; i++) {
+        const e = k.get_player(new kpred.get_player_arguments(players[i], w)).entry;
+        if (e != null && !e.settled) k.settle(new kpred.settle_arguments(players[i], w));
+      }
+      at(base + WEEK + 10 + 101);
+      const fz = k.get_week(new kpred.get_week_arguments(w)).week!;
+      if (!fz.finalized) k.finalize_week(new kpred.finalize_week_arguments(w));
+      // Random winners claim now (others later or never: unclaimed stays in the pool)
+      const fw = k.get_week(new kpred.get_week_arguments(w)).week!;
+      simWinners += fw.winners;
+      if (fw.rolled_over) simRollovers++;
+      if (!fw.rolled_over) {
+        for (let i = 0; i < players.length; i++) {
+          const e = k.get_player(new kpred.get_player_arguments(players[i], w)).entry;
+          if (e != null && e.eligible && e.points >= fw.cutoff && !e.claimed && rnd(2) == 0) {
+            as(players[i]);
+            claimedTotal += k.claim(new kpred.claim_arguments(players[i], w)).reward;
+          }
+        }
+      } else {
+        distributed -= fw.pot;                         // a rolled-over pot is counted again in a later week's gain
+      }
+      // Books balance after every week: holdings cover everything owed.
+      const s = k.get_state(new kpred.get_state_arguments());
+      const t = s.totals!;
+      const owed = t.total_stake + t.seed_vhp + t.seed_koin + t.owner_share + t.creator_fee + t.pots_outstanding;
+      expect(s.vhp_balance + s.koin_balance >= owed).toBe(true);
+      // Nothing earned is left unaccounted after a close — except a rolled-over pot, which waits for the next close.
+      expect(s.vhp_balance + s.koin_balance - owed).toBe(fw.rolled_over ? fw.pot : 0);
+    }
+    // Over all weeks: everything produced was distributed exactly once (fees + shares + pots), minus a rolled-over
+    // pot still waiting in the pool.
+    const t = k.get_state(new kpred.get_state_arguments()).totals!;
+    const last = k.get_week(new kpred.get_week_arguments(7)).week!;
+    const waiting: u64 = last.rolled_over ? last.pot : 0;
+    expect(distributed + waiting).toBe(minted);
+    expect(claimedTotal <= distributed).toBe(true);
+    expect(t.weeks_closed).toBe(8);
+    expect(t.weeks_finalized).toBe(8);
+    simClaims += claimedTotal;
+}
+
+describe("randomized 8-week simulations (5 different random seeds)", () => {
+  it("every close measures exactly the rewards produced since the previous close; books always balance", () => {
+    for (let sd: u64 = 1; sd <= 5; sd++) simulate(sd * 7919);
+    // Make sure the simulations really exercised claims, withdrawals and winners.
+    expect(simClaims > 0).toBe(true);
+    expect(simWithdrawals > 0).toBe(true);
+    expect(simWinners > 0).toBe(true);
   });
 });

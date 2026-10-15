@@ -31,6 +31,7 @@ message totals_object {
   uint64 weeks_closed = 7 [jstype = JS_STRING];       // number of weeks closed so far (= next week to close)
   uint32 next_question_id = 8;
   uint64 total_gain = 9 [jstype = JS_STRING];         // all-time gain distributed
+  uint64 weeks_finalized = 10 [jstype = JS_STRING];   // number of weeks finalized so far (= next week to finalize)
 }
 
 message player_object {
@@ -38,6 +39,7 @@ message player_object {
   uint64 pending = 2 [jstype = JS_STRING];            // deposited during pending_week; becomes active the week after
   uint64 pending_week = 3 [jstype = JS_STRING];
   uint64 void_week_plus_one = 4 [jstype = JS_STRING]; // week (+1) in which the player withdrew; 0 = never
+  uint64 last_week_plus_one = 5 [jstype = JS_STRING]; // latest week (+1) the player answered in; 0 = never
 }
 
 message answer_record {
@@ -248,7 +250,7 @@ message compound_result {
   uint64 burned = 1 [jstype = JS_STRING];
 }
 
-// @description Close a finished week: measure the gain, take fees, open settlement. Weeks close in order.
+// @description Close a finished week: measure the gain, take fees, open settlement. Weeks close in order. Also happens automatically on any game action.
 // @read-only false
 message close_week_arguments {
   uint64 week = 1 [jstype = JS_STRING];
@@ -259,7 +261,7 @@ message close_week_result {
   uint64 pot = 2 [jstype = JS_STRING];
 }
 
-// @description After settlement ends: find the winners' cutoff (top 30% of eligible stake by points, ties included).
+// @description After settlement ends: find the winners' cutoff (top 30% of eligible stake by points, ties included). Weeks finalize in order. Also happens automatically.
 // @read-only false
 message finalize_week_arguments {
   uint64 week = 1 [jstype = JS_STRING];
