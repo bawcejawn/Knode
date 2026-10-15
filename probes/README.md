@@ -53,6 +53,16 @@ npm run build
 If this prints errors, copy the whole output into the chat. It has never been compiled before,
 so a first-round fix or two is normal.
 
+**2b. Run the offline safety check** (no network, no keys):
+
+```
+npm run check
+```
+
+Every line should say PASS and the last line "All offline checks passed". It confirms the contract file was
+really produced, every entry point matches what the compiler generated, and every operation the probes
+send encodes correctly. Don't continue if anything says FAIL.
+
 **3. Make the test keys.**
 
 ```
