@@ -292,12 +292,28 @@ async function cmdSetup() {
     writeState(st);
   }
 
-  const before = await info(contract);
-  if (!before.owner) {
+  // `info` also reads the contract's producer key from Proof-of-Burn, and PoB fails the whole call while no
+  // key is registered (lesson for the real contract: a failing call into a system contract aborts the caller).
+  // So until a key exists, setup works without `info`.
+  let before: any = null;
+  try {
+    before = await info(contract);
+  } catch (e) {
+    if (!/no public key record/i.test((e as Error).message)) throw e;
+  }
+  const k = kprobeContract(contract);
+  if (!before?.owner) {
     console.log("2/4 Setting the owner (must be signed by the contract key) ...");
-    const k = kprobeContract(contract);
     const r = await send([await op(k, "init", { owner: owner.getAddress() })], [owner, contract]);
-    if (!r.ok) throw new Error(`init failed: ${r.error}`);
+    if (!r.ok && !/owner already set/i.test(r.error ?? "")) throw new Error(`init failed: ${r.error}`);
+    console.log(r.ok ? `    owner set — Mana used ${show(r.rc)}` : "    owner was already set");
+  }
+  if (!before) {
+    console.log("2b/4 Registering a placeholder producer key for the contract (no node uses it) ...");
+    const placeholder = Signer.fromSeed(crypto.randomBytes(32).toString("hex"));
+    const r = await send([await op(k, "register_key", { public_key: pubKeyB64(placeholder) })], [owner]);
+    if (!r.ok) throw new Error(`placeholder key failed: ${r.error}`);
+    console.log(`    registered — Mana used ${show(r.rc)}`);
   }
   const i = await info(contract);
   Object.assign(st, { contract: i.contract, owner: i.owner, koin: i.koin, vhp: i.vhp, pob: i.pob, helper: helper.getAddress() });
