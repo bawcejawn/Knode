@@ -24,7 +24,7 @@ import { createHash } from "node:crypto";
 import { BLOCKS_PER_DAY, fmt, pct, quant, sampleThresholds, optionFor, syncBlocks, readCsv, type Blk } from "./common.ts";
 
 const DIR = "generator-data";
-const MODEL_VERSION = "v4";
+const MODEL_VERSION = "v5";
 
 // ───────────────────────── Settings ─────────────────────────
 
@@ -36,7 +36,8 @@ type Game = {
   tierByDay: string[]; // 7 entries: Easy | Medium | Hard
   menus: Record<string, string[]>; // template ids per tier, in preference order (shuffled daily)
   enabled: string[]; // template ids allowed live (update from the backtest verdicts)
-  model: { rateDays: number; calibDays: number; aggDays: number; minDaily: number; minSmallDaily: number; minExpected: number; maxDrift: number; voidAlpha: number; tolerance: number; step: number; pairCleanDays?: number };
+  model: { rateDays: number; calibDays: number; aggDays: number; minDaily: number; minSmallDaily: number; minExpected: number; maxDrift: number; voidAlpha: number; tolerance: number; step: number; pairCleanDays?: number;
+    coreRateDays?: number; smallRateDays?: number; minVoidBlocks?: number; cleanDays?: number; reliabilityDays?: number; maxVoidHistory?: number };
 };
 
 function nextMonday(): string {
@@ -54,10 +55,11 @@ function loadGame(): Game {
       lockBlocks: 14400,
       questionsPerDay: [3, 3, 3, 3, 3, 3, 2],
       tierByDay: ["Easy", "Easy", "Medium", "Medium", "Medium", "Hard", "Hard"],
-      menus: { Easy: ["E1", "E3", "E2s", "E2"], Medium: ["M1", "M9", "M10", "M4", "M5", "M6", "M7"], Hard: ["H1", "H2s", "H2"] },
-      // Final list is set from the 120-day backtest verdicts (only PASS templates go live).
-      enabled: ["E1", "E3", "E2s", "M1", "M4", "M5", "M6", "M7", "M9", "H1", "H2s"],
-      model: { rateDays: 2, calibDays: 7, aggDays: 3, minDaily: 1400, minSmallDaily: 20, minExpected: 60, maxDrift: 0.25, voidAlpha: 0.001, tolerance: 0.05, step: 1200, pairCleanDays: 7 },
+      menus: { Easy: ["E1s", "E3", "E2s"], Medium: ["M1", "M9", "M10", "M4", "M5", "M6", "M7"], Hard: ["H1", "H3"] },
+      // From the 120-day backtest (model v5). E3/M9 are fair but void ~6% (smaller nodes have more outages).
+      enabled: ["E1s", "E2s", "E3", "M1", "M4", "M5", "M6", "M7", "M9", "M10", "H1", "H3"],
+      model: { rateDays: 2, calibDays: 7, aggDays: 3, minDaily: 1400, minSmallDaily: 20, minExpected: 60, maxDrift: 0.25, voidAlpha: 0.001, tolerance: 0.05, step: 1200,
+        pairCleanDays: 14, coreRateDays: 0.25, smallRateDays: 1, minVoidBlocks: 600, cleanDays: 2, reliabilityDays: 14, maxVoidHistory: 0.03 },
     };
     fs.mkdirSync(DIR, { recursive: true });
     fs.writeFileSync(file, JSON.stringify(g, null, 2));
@@ -91,7 +93,7 @@ function seeded(seed: string) {
 }
 const short = (a: string) => a.slice(0, 8) + "…";
 
-// ───────────────────────── The model (same as backtest v4) ─────────────────────────
+// ───────────────────────── The model (same as backtest v5) ─────────────────────────
 
 function buildModel(blocks: Blk[], g: Game) {
   const m = g.model;
@@ -115,7 +117,52 @@ function buildModel(blocks: Blk[], g: Game) {
   const R = Math.round(m.rateDays * BLOCKS_PER_DAY), C = Math.round(m.calibDays * BLOCKS_PER_DAY), A = Math.round(m.aggDays * BLOCKS_PER_DAY);
   const L = g.lockBlocks, H12 = BLOCKS_PER_DAY / 2;
   const rateAt = (p: number, q: number) => cnt(p, q - R, q) / R;
-  const absenceLimit = (rate: number, W: number) => Math.log(m.voidAlpha / W) / Math.log(1 - rate);
+  const absenceLimit = (rate: number, W: number) => Math.max(m.minVoidBlocks ?? 0, Math.log(m.voidAlpha / W) / Math.log(1 - rate));
+  // Forecast rate: core producers use the last 6 hours, smaller producers the last day (see README).
+  const RC = Math.round((m.coreRateDays ?? 0.25) * BLOCKS_PER_DAY), RS = Math.round((m.smallRateDays ?? 1) * BLOCKS_PER_DAY);
+  const fc = (p: number, q: number, cls: string) => {
+    const Rw = cls === "core" ? RC : RS;
+    const v = cnt(p, q - Rw, q) / Math.min(Rw, q);
+    return v > 0 ? v : rateAt(p, q);
+  };
+  // Fast "longest absence of one producer in [a, b)": block positions + largest gap per chunk of 256.
+  const POS = new Map<number, Int32Array>(), CHK = new Map<number, Int32Array>();
+  for (const p of tracked) {
+    const pos = new Int32Array(total[p]);
+    let n = 0;
+    for (let i = 0; i < N; i++) if (SG[i] === p) pos[n++] = i;
+    const ch = new Int32Array(Math.ceil(pos.length / 256));
+    for (let i = 0; i + 1 < pos.length; i++) ch[i >> 8] = Math.max(ch[i >> 8], pos[i + 1] - pos[i] - 1);
+    POS.set(p, pos); CHK.set(p, ch);
+  }
+  const lowerBound = (a: Int32Array, x: number) => { let lo = 0, hi = a.length; while (lo < hi) { const k = (lo + hi) >> 1; if (a[k] < x) lo = k + 1; else hi = k; } return lo; };
+  const absentIn = (p: number, a: number, b: number) => {
+    a = Math.max(0, a); b = Math.min(N, b);
+    const pos = POS.get(p)!, ch = CHK.get(p)!;
+    const lo = lowerBound(pos, a), hi = lowerBound(pos, b);
+    if (lo >= hi) return b - a;
+    let gmax = Math.max(pos[lo] - a, b - 1 - pos[hi - 1]);
+    let i = lo;
+    while (i < hi - 1) {
+      if ((i & 255) === 0 && i + 256 <= hi - 1) { gmax = Math.max(gmax, ch[i >> 8]); i += 256; }
+      else { gmax = Math.max(gmax, pos[i + 1] - pos[i] - 1); i++; }
+    }
+    return gmax;
+  };
+  // Reliability: share of this producer's own recent question windows that would have been voided.
+  const RD = Math.round((m.reliabilityDays ?? 14) * BLOCKS_PER_DAY);
+  const voidMemo = new Map<string, boolean>();
+  const voidHistory = (p: number, q: number, W: number) => {
+    let n = 0, v = 0;
+    for (let q0 = q - L - W - ((q - L - W) % m.step); q0 >= Math.max(R, q - RD); q0 -= m.step) {
+      if (cnt(p, q0 - R, q0) === 0) continue;
+      n++;
+      const k = `${p}:${q0}:${W}`;
+      if (!voidMemo.has(k)) voidMemo.set(k, absentIn(p, q0 + L, q0 + L + W) > absenceLimit(rateAt(p, q0), W));
+      if (voidMemo.get(k)) v++;
+    }
+    return n >= 24 ? v / n : 0;
+  };
   const longestAbsence = (ps: number[], a: number, b: number) => {
     const last = new Map(ps.map((p) => [p, a - 1])), gap = new Map(ps.map((p) => [p, 0]));
     for (let i = a; i < b; i++) { const s = SG[i]; if (last.has(s)) { gap.set(s, Math.max(gap.get(s)!, i - last.get(s)! - 1)); last.set(s, i); } }
@@ -136,18 +183,19 @@ function buildModel(blocks: Blk[], g: Game) {
       if (Math.abs(cnt(p, q - H12, q) / H12 / r - 1) > Math.max(m.maxDrift, 3 / Math.sqrt(r * H12))) { status.set(p, "drifting"); continue; }
       cand.push(p);
     }
-    const gaps = longestAbsence(cand, q - R, q);
+    const CD = Math.min(q, Math.max(R, Math.round((m.cleanDays ?? 2) * BLOCKS_PER_DAY)));
     const core: number[] = [], small: number[] = [];
     for (const p of cand) {
       const r = rateAt(p, q);
-      if (gaps.get(p)! > absenceLimit(r, R)) { status.set(p, "offline recently"); continue; }
+      if (absentIn(p, q - CD, q) > absenceLimit(r, CD)) { status.set(p, "offline recently"); continue; }
+      const Wp = r * BLOCKS_PER_DAY >= m.minDaily ? 20000 : smallWindow(r)!;
+      if (voidHistory(p, q, Wp) > (m.maxVoidHistory ?? 0.03)) { status.set(p, "unreliable (recent outages)"); continue; }
       if (r * BLOCKS_PER_DAY >= m.minDaily) { status.set(p, "core"); core.push(p); } else { status.set(p, "smaller"); small.push(p); }
     }
     core.sort((a, b) => rateAt(b, q) - rateAt(a, q));
     small.sort((a, b) => rateAt(b, q) - rateAt(a, q));
-    const PC = Math.min(q, Math.round((m.pairCleanDays ?? 7) * BLOCKS_PER_DAY));
-    const gapsPC = longestAbsence(core, q - PC, q);
-    const pairs = core.filter((p) => gapsPC.get(p)! <= absenceLimit(rateAt(p, q), PC));
+    const PC = Math.min(q, Math.round((m.pairCleanDays ?? 14) * BLOCKS_PER_DAY));
+    const pairs = core.filter((p) => absentIn(p, q - PC, q) <= absenceLimit(rateAt(p, q), PC));
     const out = { core, small, pairs, status };
     memo.set(q, out);
     return out;
@@ -160,7 +208,7 @@ function buildModel(blocks: Blk[], g: Game) {
   const zOf = (count: number, W: number, rate: number) => (count - W * rate) / Math.sqrt(W * rate * (1 - rate));
   // Learn only from windows that would NOT have been voided (live questions with an offline subject are
   // cancelled, so counting those low results would set every line too low).
-  const okWin = (p: number, q: number, W: number) => longestAbsence([p], q + L, q + L + W).get(p)! <= absenceLimit(rateAt(p, q), W);
+  const okWin = (p: number, q: number, W: number) => absentIn(p, q + L, q + L + W) <= absenceLimit(rateAt(p, q), W);
   // Group question: every producer that is not core-sized, by size and steadiness (never a big producer
   // that is only briefly filtered).
   const tailAt = (q: number) => {
@@ -178,7 +226,7 @@ function buildModel(blocks: Blk[], g: Game) {
       for (const p of cls === "core" ? cl.core : cl.small) {
         if (cls === "small" && smallWindow(rateAt(p, q)) !== W) continue;
         if (!okWin(p, q, W)) continue;
-        out.push({ p, z: zOf(cnt(p, q + L, q + L + W), W, rateAt(p, q)) });
+        out.push({ p, z: zOf(cnt(p, q + L, q + L + W), W, fc(p, q, cls)) });
       }
     }
     calibCache.set(key, out);
@@ -190,7 +238,7 @@ function buildModel(blocks: Blk[], g: Game) {
       if (q + L + W > r) continue;
       const sp = classesAt(q).pairs;
       for (let i = 0; i + 1 < sp.length; i++) {
-        const a = sp[i], b = sp[i + 1], ra = rateAt(a, q), rb = rateAt(b, q);
+        const a = sp[i], b = sp[i + 1], ra = fc(a, q, "core"), rb = fc(b, q, "core");
         if (!okWin(a, q, W) || !okWin(b, q, W)) continue;
         out.push((cnt(a, q + L, q + L + W) - cnt(b, q + L, q + L + W) - W * (ra - rb)) / Math.sqrt(W * (ra + rb - (ra - rb) ** 2)));
       }
@@ -202,7 +250,7 @@ function buildModel(blocks: Blk[], g: Game) {
     for (const q of grid) {
       if (q + L + W > r) continue;
       const tail = tailAt(q);
-      out.push(zOf(tail.reduce((s, p) => s + cnt(p, q + L, q + L + W), 0), W, tail.reduce((s, p) => s + rateAt(p, q), 0)));
+      out.push(zOf(tail.reduce((s, p) => s + cnt(p, q + L, q + L + W), 0), W, tail.reduce((s, p) => s + fc(p, q, "small"), 0)));
     }
     return out.sort((x, y) => x - y);
   };
@@ -220,7 +268,7 @@ function buildModel(blocks: Blk[], g: Game) {
     return out;
   };
 
-  return { N, h0, names, ids, tracked, cnt, rateAt, classesAt, smallWindow, absenceLimit, singleCalib, pairCalib, tailCalib, tailAt, stats, aggSample, r, L, longestAbsence, SG, TS, NTX };
+  return { N, h0, names, ids, tracked, cnt, rateAt, fc, classesAt, smallWindow, absenceLimit, singleCalib, pairCalib, tailCalib, tailAt, stats, aggSample, r, L, longestAbsence, SG, TS, NTX };
 }
 
 // ───────────────────────── Templates → questions ─────────────────────────
@@ -231,7 +279,7 @@ type Question = {
   subjects: string[]; group?: string[]; unit: string;
   releaseHeight: number; lockHeight: number; windowStart: number; windowEnd: number;
   thresholds: number[]; options: Option[]; predicted: number[];
-  model: { version: string; rates: Record<string, number>; window: number };
+  model: { version: string; rates: Record<string, number>; forecast?: Record<string, number>; window: number }; // rates: 2-day (void rule); forecast: what set the options
   paramsHash?: string; result?: any;
 };
 
@@ -248,7 +296,9 @@ const TEMPLATES: Record<string, { name: string; kind: string; k: number; W: numb
   M7: { name: "Transactions in the window", kind: "agg", k: 4, W: 5000, stat: "transactions" },
   H1: { name: "Core producer sextiles", kind: "single", k: 6, W: 5000, cls: "core" },
   H2: { name: "Two head-to-heads combined", kind: "combo", k: 4, W: 10000 },
+  E1s: { name: "Core producer over/under", kind: "single", k: 2, W: 10000, cls: "core" },
   E2s: { name: "Head-to-head with spread", kind: "h2h", k: 2, W: 10000 },
+  H3: { name: "Core producer eighths", kind: "single", k: 8, W: 10000, cls: "core" },
   H2s: { name: "Two head-to-heads combined", kind: "combo", k: 4, W: 5000 },
 };
 
@@ -285,7 +335,8 @@ async function run() {
   if (args.cmd === "show") return show(args.date);
 
   const provider = new Provider([g.rpc]);
-  const need = g.model.rateDays + g.model.calibDays + 1;
+  // History: 2-day rates + 7 days of calibration + 14 days of reliability record, plus a margin.
+  const need = g.model.rateDays + g.model.calibDays + (g.model.reliabilityDays ?? 14) + 2;
   const { blocks, lib } = args.offline
     ? { blocks: readCsv(path.join(DIR, "blocks.csv")), lib: NaN }
     : await syncBlocks(provider, path.join(DIR, "blocks.csv"), need, "backtest-output/blocks.csv");
@@ -333,12 +384,13 @@ async function run() {
       const pool = T.cls === "core" ? cl.core : cl.small;
       for (const p of order(pool)) {
         const rate = M.rateAt(p, M.r), W = T.cls === "core" ? T.W : M.smallWindow(rate)!;
+        const frate = M.fc(p, M.r, T.cls!);
         const rows = M.singleCalib(T.cls!, W);
         if (rows.length < 50) continue;
         const z = rows.map((x) => x.z).sort((a, b) => a - b), mid = quant(z, 0.5);
         const own = rows.filter((x) => x.p === p).map((x) => x.z).sort((a, b) => a - b);
         const lean = own.length >= 5 ? (quant(own, 0.5) - mid) * (own.length / (own.length + 30)) : 0;
-        const mean = W * rate, sd = Math.sqrt(mean * (1 - rate));
+        const mean = W * frate, sd = Math.sqrt(mean * (1 - frate));
         const t = Array.from({ length: T.k - 1 }, (_, j) => Math.floor(mean + sd * (quant(z, (j + 1) / T.k) + lean)));
         if (t[0] < 0 || t.some((v, j) => j > 0 && v <= t[j - 1])) continue;
         const pred = predictedFromZ(z, mean, sd, lean, t);
@@ -351,7 +403,7 @@ async function run() {
           ? [{ index: 0, label: `No — ${fmt(t[0])} or fewer`, min: null, max: t[0] }, { index: 1, label: `Yes — ${fmt(t[0] + 1)} or more`, min: t[0] + 1, max: null }]
           : rangeOptions(t, unitShow.count);
         q = { id: `${args.date}-${n}`, ...base, title: T.name, text, subjects: [who], unit: "count", windowStart: lockHeight + 1, windowEnd: lockHeight + W,
-          thresholds: t, options, predicted: pred, model: { version: MODEL_VERSION, rates: { [who]: rate }, window: W } };
+          thresholds: t, options, predicted: pred, model: { version: MODEL_VERSION, rates: { [who]: rate }, forecast: { [who]: frate }, window: W } };
         usedToday.add(who);
         break;
       }
@@ -360,7 +412,7 @@ async function run() {
       if (z.length < 50) continue;
       const zMid = quant(z, 0.5), sp = cl.pairs.filter((p) => !usedToday.has(M.names[p]) && !voided.has(M.names[p]));
       const line = (a: number, b: number) => {
-        const ra = M.rateAt(a, M.r), rb = M.rateAt(b, M.r);
+        const ra = M.fc(a, M.r, "core"), rb = M.fc(b, M.r, "core");
         return Math.floor(T.W * (ra - rb) + Math.sqrt(T.W * (ra + rb - (ra - rb) ** 2)) * zMid);
       };
       const firstPick = order(sp)[0];
@@ -401,7 +453,7 @@ async function run() {
       const z = M.tailCalib(T.W);
       if (z.length < 50) continue;
       const tail = M.tailAt(M.r);
-      const rt = tail.reduce((s, p) => s + M.rateAt(p, M.r), 0), mean = T.W * rt, sd = Math.sqrt(mean * (1 - rt));
+      const rt = tail.reduce((s, p) => s + M.fc(p, M.r, "small"), 0), mean = T.W * rt, sd = Math.sqrt(mean * (1 - rt));
       const t = Array.from({ length: T.k - 1 }, (_, j) => Math.floor(mean + sd * quant(z, (j + 1) / T.k)));
       if (t.some((v, j) => j > 0 && v <= t[j - 1])) continue;
       q = { id: `${args.date}-${n}`, ...base, title: T.name,
@@ -491,7 +543,7 @@ function resolve(blocks: Blk[], g: Game) {
         let last = a - 1, gap = 0;
         for (let i = a; i < b; i++) if (blocks[i].signer === who) { gap = Math.max(gap, i - last - 1); last = i; }
         gap = Math.max(gap, b - 1 - last);
-        return gap > Math.log(g.model.voidAlpha / (b - a)) / Math.log(1 - rate);
+        return gap > Math.max(g.model.minVoidBlocks ?? 0, Math.log(g.model.voidAlpha / (b - a)) / Math.log(1 - rate));
       });
       let value: number, option: number, valueText = "";
       if (TEMPLATES[q.template]?.kind === "h2h") { value = countOf(q.subjects[0]) - countOf(q.subjects[1]); option = optionFor(value, q.thresholds); }

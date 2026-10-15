@@ -96,42 +96,60 @@ only the few new blocks), and takes a few minutes. A run with a shorter `--days`
 never shrinks the saved history. Rebuilding the history from nothing downloads about 3.5 million blocks
 (several hours), saving every 50,000 so an interrupted run picks up where it stopped.
 
-## How the forecast works (v4)
+## How the forecast works (v5, tuned on 120 days of real blocks)
 
-- **Current rate:** each producer's share of blocks over the last 2 days. (A 4-week average proved far
-  too slow on the real chain.)
-- **Bucket widths learned from experience:** the last 7 days of the forecast's real errors set every
-  line and bucket edge, plus a small per-producer correction if a producer's recent results lean one way.
-- **Every producer gets a turn.** Core producers (1,400+ blocks/day) use fixed windows. Smaller producers
-  (20+ blocks/day) get a longer window — 17 hours, 1.5 days or 3 days — so at least 60 blocks are expected
-  and the question is fair. Producers too small for their own question are covered by a group question
-  (all non-core producers combined).
-- **Who can be a subject right now:** a producer must have 2+ days of history (new nodes qualify after
-  2 days), be steady (not ramping up or winding down beyond noise), and not have gone offline in the
-  last 2 days. Head-to-heads use core producers with a clean 7-day record.
-- **Learning only from fair windows (new in v4):** the bucket widths are learned only from past windows
-  where the subject did *not* go offline. Live questions with an offline subject are voided, so learning
-  from those very low results set every line too low and made "over" win 53–59% on the 120-day run.
-- **Group question (new in v4):** "all non-core producers" means producers that are smaller than core by
-  size. A big producer that is briefly filtered (new, drifting, offline) no longer drops into the group.
-- **Head-to-heads, shorter windows (new in v4):** two subjects double the chance one goes offline, so E2s
-  (10,000 blocks) and H2s (5,000 blocks) are tested next to the original E2 and H2.
-- **Void = the subject went offline** for longer than luck allows (chance below 0.1%).
+- **Forecast rate:** core producers use their share of blocks over the **last 6 hours**; smaller producers
+  over the **last day**. The 2-day rate used before lagged behind every time another producer dropped out
+  or came back, so big producers beat their line 55% of the time. With the 6-hour rate it is 49/51.
+- **Bucket widths learned from experience:** the last 7 days of the forecast's real errors set every line and
+  bucket edge (only from windows where the subject stayed online, because those are the ones that count live).
+- **Who can be a subject:** 2+ days of history, steady (not ramping up or down), no outage in the last 2 days,
+  and a **reliability record**: at most 3% of its own question windows over the last 14 days would have been
+  voided. A node that keeps dropping out waits until its record is clean, which keeps voids rare and rewards
+  steady operators. Head-to-heads need 14 clean days from both producers.
+- **Void = the subject went offline** longer than luck allows (chance below 0.1%) *and* for more than 600
+  blocks (about 30 minutes). Short restarts are normal and stay inside the learned spread.
+- **Group question:** "all non-core producers" means producers smaller than core by size.
 - **Network questions:** bucket edges from the last 3 days, using overlapping windows.
-- **Coverage report:** for every producer, how often it was eligible and why not.
+- **Retired:** distinct producers, longest streak, compute, top share (could not be split fairly); E1/E2 on
+  20,000 blocks (replaced by 10,000-block E1s/E2s, fewer voids); H2/H2s two head-to-heads (voids 10–15%).
+
+### Results on the last 120 days (model v5)
+
+| Template | Win rates | Voids | Verdict |
+|---|---|---|---|
+| E1s Core producer over/under (10,000 blocks) | 49 / 51 | 1.8% | PASS |
+| E2s Head-to-head with spread (10,000) | 50 / 50 | 3.5% | PASS |
+| E3 Smaller producer over/under | 49 / 51 | 6.1% | fair, voids above 5% |
+| M1 Core producer quartiles (10,000) | 26 / 23 / 24 / 27 | 1.8% | PASS |
+| M4 Largest gap (5,000) | 33 / 31 / 36 | 0% | PASS |
+| M5 Average interval (5,000) | 24 / 25 / 26 / 26 | 0% | PASS |
+| M6 Empty blocks (5,000) | 28 / 24 / 22 / 26 | 0% | PASS |
+| M7 Transactions (5,000) | 29 / 21 / 21 / 29 | 0% | PASS |
+| M9 Smaller producer quartiles | 28 / 21 / 23 / 27 | 6.1% | fair, voids above 5% |
+| M10 All non-core combined (20,000) | 26 / 21 / 26 / 27 | 0% | PASS |
+| H1 Core producer sextiles (5,000) | 17 / 16 / 16 / 16 / 16 / 18 | 1.3% | PASS |
+| H3 Core producer eighths (10,000) | 14 / 12 / 11 / 12 / 12 / 12 / 12 / 15 | 1.8% | PASS |
 
 ## Flags
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--days` | 120 | Days of history to test on |
-| `--rate-days` | 2 | Days used for each producer's current rate |
+| `--rate-days` | 2 | Days used for eligibility checks (size class, new, drifting, offline) |
+| `--core-rate-days` | 0.25 | Forecast rate window for core producers (6 hours) |
+| `--small-rate-days` | 1 | Forecast rate window for smaller producers |
+| `--clean-days` | 2 | No outage allowed in this many days |
+| `--reliability-days` | 14 | Look-back for each producer's void record |
+| `--max-void-history` | 0.03 | Skip a producer whose own past windows voided more than this share |
+| `--min-void-blocks` | 600 | An outage must be longer than this (≈ 30 min) to void a question |
+| `--max-small-window` | 86400 | Longest window a smaller producer may get |
 | `--calib-days` | 7 | Days of past forecast errors used to set bucket widths |
 | `--agg-days` | 3 | Days used for network-wide question buckets |
 | `--min-daily` | 1400 | Blocks/day to count as a core producer |
 | `--min-small-daily` | 20 | Blocks/day to get an individual (smaller-producer) question |
 | `--min-expected` | 60 | Blocks a smaller producer's window must be expected to hold |
-| `--pair-clean-days` | 7 | Head-to-head subjects must have no offline stretch in this many days |
+| `--pair-clean-days` | 14 | Head-to-head subjects must have no offline stretch in this many days |
 | `--max-drift` | 0.25 | Skip a producer whose last-12h rate moved more than this from its 2-day rate |
 | `--void-alpha` | 0.001 | Void only if an offline stretch has less than this chance of being luck |
 | `--step` | 1200 | Blocks between replayed release moments (1200 ≈ 1 hour) |
