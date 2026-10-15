@@ -616,10 +616,11 @@ async function cmdSweep() {
 
   // Helper: return its KOIN too, keeping a little Mana for the transaction itself.
   const hk = await balance(st.koin, H), hm = await mana(H);
-  const keep = BigInt(sat(0.3));
+  // The transfer itself moves Mana equal to the amount, and the transaction's own Mana comes on top.
+  const keep = BigInt(sat(0.8));
   const amt = (hk < hm ? hk : hm) - keep;
   if (amt > 0n) {
-    const r2 = await send([await op(token(st.koin), "transfer", { from: H, to: O, value: amt.toString() })], [helper], H, 0.3);
+    const r2 = await send([await op(token(st.koin), "transfer", { from: H, to: O, value: amt.toString() })], [helper], H, 0.6);
     console.log(r2.ok ? `Helper returned ${show(amt)} KOIN to the owner.` : `Helper return failed: ${r2.error}`);
   }
   console.log("\nNote: VHP the owner made with OWNER_BURN stays VHP (burning can't be undone); it is still yours.");
@@ -643,11 +644,11 @@ async function cmdRefund() {
     const r = await send([await op(token(vhp), "transfer", { from: O, to, value: v.toString() })], [owner], O, 0.5);
     console.log(r.ok ? `  sent ${show(v)} VHP` : `  VHP transfer failed: ${r.error}`);
   }
-  const keep = BigInt(sat(0.6)); // Mana for this transaction
+  const keep = BigInt(sat(0.8)); // the transfer moves Mana equal to the amount; this covers the transaction itself
   const m2 = await mana(O);
   const amt = (k < m2 ? k : m2) - keep;
   if (amt > 0n) {
-    const r = await send([await op(token(koin), "transfer", { from: O, to, value: amt.toString() })], [owner], O, 0.5);
+    const r = await send([await op(token(koin), "transfer", { from: O, to, value: amt.toString() })], [owner], O, 0.6);
     console.log(r.ok ? `  sent ${show(amt)} KOIN` : `  KOIN transfer failed: ${r.error}`);
   }
   const left = await balance(koin, O);
