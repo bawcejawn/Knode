@@ -217,6 +217,23 @@ async function cmdKeys() {
   console.log(`the rest is Mana headroom for uploading the contract. Mana is not spent like a fee — it refills over ~5 days.`);
 }
 
+/** Mana the contract upload should need, from the chain's current resource prices (read-only query). */
+async function uploadEstimate(): Promise<{ total: bigint; text: string } | null> {
+  if (!fs.existsSync(WASM)) return null;
+  try {
+    const res: any = await provider.call("chain.get_resource_limits", {});
+    const d = res?.resource_limit_data ?? {};
+    const size = fs.statSync(WASM).size;
+    const disk = BigInt(d.disk_storage_cost ?? 0) * BigInt(size + 1_000);           // stored bytecode + metadata
+    const net = BigInt(d.network_bandwidth_cost ?? 0) * BigInt(Math.ceil(size * 1.4) + 2_000); // transaction bytes (base64 overhead included)
+    const comp = BigInt(d.compute_bandwidth_cost ?? 0) * 5_000_000n;                // generous allowance for the upload's compute
+    const total = disk + net + comp;
+    return { total, text: `disk ${show(disk)} + network ${show(net)} + compute ${show(comp)} = about ${show(total)} Mana` };
+  } catch {
+    return null;
+  }
+}
+
 async function cmdStatus() {
   const { koin, vhp } = await tokenAddresses();
   const head: any = await provider.getHeadInfo();
@@ -229,6 +246,8 @@ async function cmdStatus() {
     const [k, v, m] = await Promise.all([balance(koin, addr), balance(vhp, addr), mana(addr)]);
     console.log(`  ${label.padEnd(9)} ${addr}   KOIN ${show(k).padStart(12)}   VHP ${show(v).padStart(12)}   Mana ${show(m).padStart(12)}`);
   }
+  const est = await uploadEstimate();
+  if (est) console.log(`\nUploading the contract (${(fs.statSync(WASM).size / 1024).toFixed(1)} KB): ${est.text}`);
 }
 
 async function cmdSetup() {
@@ -249,6 +268,17 @@ async function cmdSetup() {
 
   const st = readState();
   if (!st.deployed) {
+    // Check the upload fits in the owner's Mana before trying, so a failed upload can't waste it.
+    const est = await uploadEstimate();
+    const ownerMana = await mana(owner.getAddress());
+    if (est) {
+      console.log(`Upload estimate: ${est.text}. Owner Mana: ${show(ownerMana)}.`);
+      if ((est.total * 13n) / 10n > ownerMana || est.total > BigInt(sat(CFG.uploadRcLimit))) {
+        console.log("Not enough Mana for the upload with a safety margin. Nothing was sent. Paste this output in the chat.");
+        process.exitCode = 1;
+        return;
+      }
+    }
     console.log("1/4 Deploying the probe contract (owner pays the Mana, contract key authorizes the upload) ...");
     const r = await send([await uploadOp(contract)], [contract, owner], owner.getAddress(), CFG.uploadRcLimit);
     if (!r.ok) throw new Error(`deploy failed: ${r.error}`);
