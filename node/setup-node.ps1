@@ -1,5 +1,5 @@
 <#
-  Kprediction — set up the project's own Koinos node and block producer on this PC.
+  Kprediction - set up the project's own Koinos node and block producer on this PC.
 
   What it does (safe to run again; finished steps are skipped):
     1. checks Docker, git and free disk space
@@ -28,7 +28,7 @@ function WriteNoBom($path, $text) { [IO.File]::WriteAllText($path, $text, (New-O
 
 if ($Producer -notmatch '^1[1-9A-HJ-NP-Za-km-z]{25,34}$') { throw "That doesn't look like a Koinos address: $Producer" }
 
-# ───────────── 1. checks ─────────────
+# ------------- 1. checks -------------
 Step "1/5 Checking this PC"
 try { $null = docker version --format '{{.Server.Version}}' 2>$null; if ($LASTEXITCODE -ne 0) { throw "x" } }
 catch { throw "Docker isn't running. Install Docker Desktop (docker.com), start it, then run this again." }
@@ -42,7 +42,7 @@ $needGB = if ($haveData) { 5 } else { 200 }
 if ($free -lt ($needGB * 1GB)) { throw ("Not enough free space on {0}: need about {1} GB, have {2:N0} GB." -f $driveName, $needGB, ($free / 1GB)) }
 Ok ("{0:N0} GB free on {1}:" -f ($free / 1GB), $driveName)
 
-# ───────────── 2. official node setup ─────────────
+# ------------- 2. official node setup -------------
 Step "2/5 Official Koinos node setup"
 New-Item -ItemType Directory -Force $Root | Out-Null
 $repo = Join-Path $Root "koinos"
@@ -65,11 +65,11 @@ SetEnv "COMPOSE_PROJECT_NAME" "kpred-node"
 SetEnv "COMPOSE_PROFILES" "block_producer,jsonrpc"
 Ok "settings in $repo\.env (data folder $basedir)"
 
-# ───────────── 3. producer address ─────────────
+# ------------- 3. producer address -------------
 Step "3/5 Block producer for the game contract"
 $cfgPath = Join-Path $repo "config\config.yml"
 $cfg = Get-Content $cfgPath -Raw
-if ($cfg -notmatch '(?m)^block_producer:[ \t]*\r?$') { throw "config.yml has no 'block_producer:' section — tell Claude what the file looks like." }
+if ($cfg -notmatch '(?m)^block_producer:[ \t]*\r?$') { throw "config.yml has no 'block_producer:' section - tell Claude what the file looks like." }
 if ($cfg -match '(?m)^([ \t]+)#?[ \t]*producer:.*$') {
   $indent = $Matches[1]
   $cfg = ([regex]'(?m)^([ \t]+)#?[ \t]*producer:.*$').Replace($cfg, "$indent" + "producer: $Producer", 1)
@@ -79,10 +79,10 @@ if ($cfg -match '(?m)^([ \t]+)#?[ \t]*producer:.*$') {
 WriteNoBom $cfgPath $cfg
 Ok "producer: $Producer"
 
-# ───────────── 4. chain snapshot ─────────────
+# ------------- 4. chain snapshot -------------
 Step "4/5 Chain snapshot (Armana)"
 if ($haveData) {
-  Ok "chain data already present — skipping the snapshot"
+  Ok "chain data already present - skipping the snapshot"
 } else {
   $idx = Invoke-RestMethod "https://snapshots.armana.io/index.json"
   $candidates = @()
@@ -93,7 +93,7 @@ if ($haveData) {
   $snap = $candidates | Sort-Object { [int64]$_.height } -Descending | Select-Object -First 1
   if (-not $snap) { throw "Couldn't read the snapshot list at snapshots.armana.io/index.json" }
   $file = Join-Path $Root $snap.name
-  Note ("Newest snapshot: block {0:N0}, {1:N1} GB — this download takes a while; if it stops, run this script again and it continues where it left off." -f [int64]$snap.height, ([double]$snap.size_bytes / 1GB))
+  Note ("Newest snapshot: block {0:N0}, {1:N1} GB - this download takes a while; if it stops, run this script again and it continues where it left off." -f [int64]$snap.height, ([double]$snap.size_bytes / 1GB))
   curl.exe -L --fail --retry 5 -C - -o $file $snap.url
   if ($LASTEXITCODE -ne 0) { throw "The download stopped. Run this script again to continue it." }
   Note "Checking the fingerprint (several minutes)..."
@@ -108,7 +108,7 @@ if ($haveData) {
   $src = Join-Path $restore ".koinos"
   if (-not (Test-Path $src)) { $src = (Get-ChildItem $restore -Directory -Recurse -Filter "chain" | Select-Object -First 1).Parent.FullName }
   foreach ($d in @("chain", "block_store")) {
-    if (-not (Test-Path (Join-Path $src $d))) { throw "The snapshot has no '$d' folder — tell Claude." }
+    if (-not (Test-Path (Join-Path $src $d))) { throw "The snapshot has no '$d' folder - tell Claude." }
     Move-Item (Join-Path $src $d) (Join-Path $basedir $d)
   }
   Remove-Item $restore -Recurse -Force
@@ -116,13 +116,13 @@ if ($haveData) {
   Ok "chain data in place"
 }
 
-# ───────────── 5. start ─────────────
+# ------------- 5. start -------------
 Step "5/5 Starting the node"
 docker compose up -d
 if ($LASTEXITCODE -ne 0) { throw "docker compose failed to start the node." }
 $keyFile = Join-Path $basedir "block_producer\private.key"
 for ($i = 0; $i -lt 60 -and -not (Test-Path $keyFile); $i++) { Start-Sleep -Seconds 2 }
-if (Test-Path $keyFile) { Ok "the block producer created its key ($keyFile) — keep this file private" }
+if (Test-Path $keyFile) { Ok "the block producer created its key ($keyFile) - keep this file private" }
 else { Note "The block producer key isn't there yet; check again in a minute." }
 
 Write-Host ""
