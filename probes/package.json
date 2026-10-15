@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "node scripts/prebuild.cjs",
     "build": "koinos-sdk-as-cli build-all release 0 kprobe.proto --generate_authorize",
     "probes": "tsx scripts/probes.ts"
   },

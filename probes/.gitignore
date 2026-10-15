@@ -3,3 +3,4 @@ build/
 .env
 probe-state.json
 probes-output/
+abi/
