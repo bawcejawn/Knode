@@ -1,0 +1,8 @@
+node_modules/
+build/
+abi/
+.env
+deploy-state.json
+assembly/index.ts
+assembly/*.boilerplate.ts
+assembly/proto/*.ts
