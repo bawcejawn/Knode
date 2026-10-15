@@ -5,6 +5,7 @@
 import { Provider } from "koilib";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as zlib from "node:zlib";
 
 export const BLOCKS_PER_DAY = 28_800;
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -96,6 +97,10 @@ export async function syncBlocks(provider: Provider, file: string, days: number,
     console.log(`Seeding block history from ${seedFile} ...`);
     blocks = readCsv(seedFile);
   }
+  if (blocks.length === 0 && fs.existsSync(COMPACT)) {
+    console.log(`Seeding block history from ${COMPACT} ...`);
+    blocks = readCompact(COMPACT);
+  }
   const head: any = await withRetry("reading head", () => provider.getHeadInfo());
   const lib = Number(head.last_irreversible_block);
   const from = Math.max(1, lib - Math.round(days * BLOCKS_PER_DAY) + 1);
@@ -120,6 +125,24 @@ export async function syncBlocks(provider: Provider, file: string, days: number,
   }
   writeCsv(file, blocks);
   return { blocks, lib };
+}
+
+/** The repo's packed block history (see export-blocks.ts): signer table, start, then per block
+ *  "<signer index>,<ms since previous>,<transaction count>". The compute column is not kept (unused). */
+export const COMPACT = "data/blocks-compact.csv.gz";
+export function readCompact(file = COMPACT): Blk[] {
+  const lines = zlib.gunzipSync(fs.readFileSync(file)).toString("utf8").split("\n");
+  const signers = lines[0].split(",").slice(1);
+  const [, h0, ts0] = lines[1].split(",").map(Number);
+  const out: Blk[] = [];
+  let ts = ts0;
+  for (let i = 2; i < lines.length; i++) {
+    if (!lines[i]) continue;
+    const [s, dt, ntx] = lines[i].split(",").map(Number);
+    ts += dt;
+    out.push({ h: h0 + out.length, ts, signer: signers[s], ntx, compute: 0 });
+  }
+  return out;
 }
 
 // ───────────────────────── Small statistics helpers ─────────────────────────

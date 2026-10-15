@@ -8,7 +8,8 @@
     "prebuild": "node scripts/prebuild.cjs",
     "build": "koinos-sdk-as-cli build-all release 0 kpred.proto --generate_authorize && node scripts/make-abi.cjs",
     "test": "npm run build && node node_modules/@as-pect/cli/bin/asp.js --config as-pect.config.js",
-    "check": "tsx scripts/check.ts"
+    "check": "tsx scripts/check.ts",
+    "build:sim": "koinos-sdk-as-cli build-all release 1 kpred.proto --generate_authorize && node scripts/copy-sim.cjs && npm run build"
   },
   "dependencies": {
     "koilib": "latest"

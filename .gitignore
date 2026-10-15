@@ -6,3 +6,5 @@ generator-data/blocks.csv
 probes/build/
 probes/probe-state.json
 probes/probes-output/
+game-data/blocks.csv
+rehearsal-data/

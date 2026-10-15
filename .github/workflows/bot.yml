@@ -1,0 +1,45 @@
+# The operator bot, run by GitHub every hour for free. It does whatever is due (resolve finished questions,
+# post the day's questions, close / finalize weeks, settle players, compound) and commits game-data/ so every
+# question and result is public. Safe to run any number of times.
+#
+# Turn it on: Settings → Secrets and variables → Actions
+#   Secrets:   OPERATOR_WIF   the bot's key (it can only post and resolve questions — never move funds)
+#   Variables: BOT_ENABLED = true        (RPC is optional; defaults to https://api.koinos.io)
+name: Kpred bot
+
+on:
+  schedule:
+    - cron: "7 * * * *"      # every hour at minute 7
+  workflow_dispatch: {}       # "Run workflow" button for a manual run
+
+concurrency:
+  group: kpred-bot            # never two bots at once
+  cancel-in-progress: false
+
+permissions:
+  contents: write             # to commit game-data/
+
+jobs:
+  tick:
+    if: ${{ vars.BOT_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      # Recent block history for the question generator (downloaded once, then topped up each hour).
+      - uses: actions/cache@v4
+        with:
+          path: game-data/blocks.csv
+          key: blocks-${{ github.run_id }}
+          restore-keys: blocks-
+      - name: Run the bot
+        run: npm run bot -- tick
+        env:
+          OPERATOR_WIF: ${{ secrets.OPERATOR_WIF }}
+          RPC: ${{ vars.RPC || 'https://api.koinos.io' }}
+          GEN_DIR: game-data
+          BOT_GIT_PUSH: "1"

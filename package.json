@@ -1,19 +1,22 @@
 {
-  "name": "koinos-step0",
+  "name": "kprediction",
   "version": "1.0.0",
-  "description": "Read-only Koinos producer and reward analysis for the prediction platform",
+  "description": "Kprediction: weekly Koinos block-producer prediction game — analysis tools, question generator and operator bot",
   "type": "module",
   "private": true,
   "scripts": {
     "step0": "tsx step0.ts",
     "backtest": "tsx backtest.ts",
     "generate": "tsx generator.ts",
-    "export-blocks": "tsx export-blocks.ts"
+    "export-blocks": "tsx export-blocks.ts",
+    "bot": "tsx bot/bot.ts"
   },
   "dependencies": {
-    "koilib": "latest"
+    "koilib": "9.4.1"
   },
   "devDependencies": {
-    "tsx": "latest"
+    "@koinos/mock-vm": "1.3.0",
+    "@koinos/proto-js": "2.1.0",
+    "tsx": "4.23.15"
   }
 }

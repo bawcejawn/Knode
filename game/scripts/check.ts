@@ -23,7 +23,7 @@ ok(bin.length > 0 && bin.indexOf(marker) === -1, "production build (the test led
 
 ok(fs.existsSync(ABI), `${ABI} exists`);
 const abi = fs.existsSync(ABI) ? JSON.parse(fs.readFileSync(ABI, "utf8")) : { methods: {} };
-const expected = ["get_state", "get_player", "get_question", "get_week", "init", "deposit_vhp", "deposit_koin", "withdraw", "answer",
+const expected = ["get_state", "get_player", "get_question", "get_week", "list_players", "init", "deposit_vhp", "deposit_koin", "withdraw", "answer",
   "settle", "claim", "compound", "close_week", "finalize_week", "post_question", "resolve_question", "correct_question", "set_operator",
   "set_paused", "propose_owner", "accept_owner", "register_key", "schedule_upgrade", "claim_creator_fee", "claim_owner_share",
   "seed_deposit_vhp", "seed_deposit_koin", "request_seed_withdrawal", "execute_seed_withdrawal"];

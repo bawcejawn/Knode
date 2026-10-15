@@ -159,6 +159,25 @@ message get_week_result {
   repeated bucket_object buckets = 2;                 // index = points
 }
 
+// @description Page through all players, each with their entry for a week (up to 50 per page, after address `start`).
+// @read-only true
+message list_players_arguments {
+  bytes start = 1 [(koinos.btype) = ADDRESS];
+  uint32 limit = 2;
+  uint64 week = 3 [jstype = JS_STRING];
+}
+
+message player_row {
+  bytes address = 1 [(koinos.btype) = ADDRESS];
+  player_object player = 2;
+  entry_object entry = 3;
+  uint64 active_stake = 4 [jstype = JS_STRING];
+}
+
+message list_players_result {
+  repeated player_row rows = 1;
+}
+
 // ════════════════════════════ Setup ════════════════════════════
 
 // @description One-time setup. Must be signed by the contract's own key.

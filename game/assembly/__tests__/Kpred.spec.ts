@@ -913,3 +913,42 @@ describe("randomized 8-week simulations (5 different random seeds)", () => {
     expect(simWinners > 0).toBe(true);
   });
 });
+
+describe("listing players (for the bot and the website)", () => {
+  it("pages through every player in address order with their entry for a week", () => {
+    const k = setup();
+    deposit(k, A, 10 * VHP);
+    deposit(k, B, 20 * VHP);
+    deposit(k, C, 30 * VHP);
+    deposit(k, D, 40 * VHP);
+    deposit(k, E, 50 * VHP);
+    at(GENESIS + 10);
+    const id = post(k, 2, GENESIS + 500, GENESIS + 500, GENESIS + 600);
+    answer(k, B, id, 1);
+    // page size 2 → 3 pages, every player exactly once, sorted, no duplicates
+    let start = new Uint8Array(0);
+    let seen = 0, withEntry = 0;
+    let prev = new Uint8Array(0);
+    for (let page = 0; page < 5; page++) {
+      const rows = k.list_players(new kpred.list_players_arguments(start, 2, 0)).rows;
+      if (rows.length == 0) break;
+      for (let i = 0; i < rows.length; i++) {
+        const a = rows[i].address!;
+        expect(Base58.encode(a) != Base58.encode(prev)).toBe(true);
+        prev = a;
+        seen++;
+        if (rows[i].entry != null) {
+          withEntry++;
+          expect(Base58.encode(a)).toBe(Base58.encode(B));
+          expect(rows[i].entry!.stake).toBe(20 * VHP);
+        }
+        expect(rows[i].active_stake > 0).toBe(true);
+      }
+      start = rows[rows.length - 1].address!;
+    }
+    expect(seen).toBe(5);
+    expect(withEntry).toBe(1);
+    // limit 0 means the maximum page (50)
+    expect(k.list_players(new kpred.list_players_arguments(new Uint8Array(0), 0, 0)).rows.length).toBe(5);
+  });
+});

@@ -289,6 +289,22 @@ export class Kpred {
     return r;
   }
 
+  list_players(args: kpred.list_players_arguments): kpred.list_players_result {
+    const r = new kpred.list_players_result();
+    const limit: i32 = args.limit == 0 || args.limit > 50 ? 50 : <i32>args.limit;
+    const start = args.start != null ? args.start! : new Uint8Array(0);
+    const objs = this.players.getMany(start, limit);
+    for (let i = 0; i < objs.length; i++) {
+      const row = new kpred.player_row();
+      row.address = objs[i].key!;
+      row.player = objs[i].value;
+      row.active_stake = this.activeStake(objs[i].value, args.week);
+      row.entry = this.entries.get(this.entryKey(objs[i].key!, args.week));
+      r.rows.push(row);
+    }
+    return r;
+  }
+
   // ═══════════════════════ setup ═══════════════════════
 
   init(args: kpred.init_arguments): kpred.init_result {

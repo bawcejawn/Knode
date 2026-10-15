@@ -11,6 +11,11 @@
  *   npm run generate -- resolve                 resolve every question whose window has closed
  *   npm run generate -- show --date 2026-11-02  print a day's questions again
  *
+ * The operator bot (bot/bot.ts) calls it with the ON-CHAIN week and day instead of a calendar date:
+ *   release --label W003-D2 --week 3 --day 2 --max-lock <week end height> --max-end <last allowed window end>
+ * so every question fits inside its on-chain week (answers close before the week ends, and the window ends
+ * early enough that the week can close on time).
+ *
  * Files (in ./generator-data/):
  *   game.json            settings you can edit (week-one start date, schedule, enabled templates)
  *   state.json           rotation memory: when each producer was last featured, voids this week
@@ -23,7 +28,7 @@ import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { BLOCKS_PER_DAY, fmt, pct, quant, sampleThresholds, optionFor, syncBlocks, readCsv, type Blk } from "./common.ts";
 
-const DIR = "generator-data";
+const DIR = process.env.GEN_DIR ?? "generator-data"; // the bot uses game-data/ (committed, public)
 const MODEL_VERSION = "v5";
 
 // ───────────────────────── Settings ─────────────────────────
@@ -82,7 +87,9 @@ function parseArgs() {
     if (next === undefined || next.startsWith("--")) o[rest[i].slice(2)] = "true"; // a switch like --offline
     else { o[rest[i].slice(2)] = next; i++; }
   }
-  return { cmd, date: o.date ?? new Date().toISOString().slice(0, 10), force: o.force === "true" || "force" in o, offline: "offline" in o };
+  const n = (k: string) => (o[k] === undefined ? undefined : Number(o[k]));
+  return { cmd, date: o.label ?? o.date ?? new Date().toISOString().slice(0, 10), force: o.force === "true" || "force" in o, offline: "offline" in o,
+    week: n("week"), day: n("day"), maxLock: n("max-lock"), maxEnd: n("max-end") };
 }
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -349,8 +356,10 @@ async function run() {
   const file = path.join(DIR, "questions", `${args.date}.json`);
   if (fs.existsSync(file) && !args.force) throw new Error(`${file} already exists. Questions are released once per day (use --force only for testing).`);
 
-  const dayNumber = Math.floor((Date.parse(args.date) - Date.parse(g.weekOneStart)) / 86_400_000);
-  const week = Math.floor(dayNumber / 7) + 1, day = ((dayNumber % 7) + 7) % 7;
+  // Calendar mode (manual runs): week/day from the date. Bot mode: the on-chain week and day are given.
+  const onChain = args.week !== undefined && args.day !== undefined;
+  const dayNumber = onChain ? args.week! * 7 + args.day! : Math.floor((Date.parse(args.date) - Date.parse(g.weekOneStart)) / 86_400_000);
+  const week = onChain ? args.week! : Math.floor(dayNumber / 7) + 1, day = onChain ? args.day! : ((dayNumber % 7) + 7) % 7;
   const tier = g.tierByDay[day], count = g.questionsPerDay[day];
   console.log(`\n=== Releasing questions for ${args.date} — week ${week}, day ${day + 1} (${tier}), ${count} questions ===`);
   if (dayNumber < 0) console.log(`(Practice run: the game starts ${g.weekOneStart}.)`);
@@ -361,6 +370,8 @@ async function run() {
   const rand = seeded(`${args.date}:${blocks[blocks.length - 1].h}`);
   const cl = M.classesAt(M.r);
   const lockHeight = libHeight + M.L;
+  if (args.maxLock !== undefined && lockHeight > args.maxLock) throw new Error(`Too late in the week to release: answers would close at ${lockHeight}, after the week ends at ${args.maxLock}.`);
+  const maxEnd = args.maxEnd ?? Infinity; // the window must end early enough for the week to close on time
   const usedToday = new Set<string>();
 
   // Rotation: never-featured first, then longest since featured; ties broken by the day's seed.
@@ -379,11 +390,13 @@ async function run() {
     const base = { date: args.date, week, day: day + 1, tier, template: id, releaseHeight: libHeight, lockHeight };
     const n = questions.length + 1;
     let q: Question | null = null;
+    if (T.W > 0 && lockHeight + T.W > maxEnd) continue;
 
     if (T.kind === "single") {
       const pool = T.cls === "core" ? cl.core : cl.small;
       for (const p of order(pool)) {
         const rate = M.rateAt(p, M.r), W = T.cls === "core" ? T.W : M.smallWindow(rate)!;
+        if (lockHeight + W > maxEnd) continue;
         const frate = M.fc(p, M.r, T.cls!);
         const rows = M.singleCalib(T.cls!, W);
         if (rows.length < 50) continue;
