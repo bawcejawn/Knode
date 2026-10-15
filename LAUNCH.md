@@ -1,17 +1,22 @@
 # Kprediction — launch guide
 
-Follow these steps in order. Every command goes into **PowerShell**. Commands that send something are dry runs
-unless you add `--send`, so you can always look first.
+Follow the steps in order. Every command goes into **PowerShell**. Any command that sends something is a dry run
+unless you add `--send`, so you can always check first.
 
-> **Rule for keys:** private keys live only in the `.env` file on your PC. Never paste one into a chat, an email
-> or GitHub. The one exception is the bot's key, which goes into GitHub as an encrypted *secret* (step 8).
+> **The rule for keys:** private keys live only in `.env` files on your PC (and in the node's key file). Never
+> paste one into a chat, an email or GitHub. The one exception is the bot's key, which goes into GitHub as an
+> encrypted *secret* (step 8).
+
+**You need, once:**
+- [Git for Windows](https://git-scm.com/download/win)
+- [Node.js LTS](https://nodejs.org)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/). In its settings, turn on "Start Docker Desktop when you sign in".
 
 ---
 
-## Step 0 — Move the project out of OneDrive (once)
+## Step 0 — Move the project out of OneDrive
 
-OneDrive uploads everything in its folders to the cloud, including `.env` files with private keys. Make a clean
-copy outside OneDrive:
+OneDrive uploads its folders to the cloud, including `.env` files that hold keys. Make a clean copy outside it:
 
 ```
 git clone https://github.com/bawcejawn/Kprediction.git C:\kprediction
@@ -19,25 +24,20 @@ Copy-Item "C:\Users\cpada\OneDrive\Desktop\kprediction-git\probes\.env" "C:\kpre
 cd C:\kprediction
 ```
 
-From now on, work only in `C:\kprediction`. Once everything below works, delete the old OneDrive folder.
+From now on, use only `C:\kprediction`. Once everything below works, delete the old OneDrive folder.
 
-## Step 1 — Install and check everything (≈ 15 min)
+## Step 1 — Install and check (≈ 15 min)
 
 ```
 cd C:\kprediction
 npm install
 cd game
 npm install
-npm test                 # expect: [Tests]: 38 / 38  and  ✔ Pass!
+npm test                 # expect: [Tests]: 38 / 38  ✔ Pass!
 npm run check            # expect: All offline checks passed.
-npm run build:sim        # the test build the rehearsal needs
+npm run build:sim
 cd ..
 npm run bot -- rehearse --weeks 1      # ≈ 10 min, expect: All ... rehearsal checks passed.
-```
-
-`npm install` creates `package-lock.json` in `C:\kprediction` and in `game`. Commit them; they pin exact versions
-for the GitHub bot:
-```
 git add package-lock.json game/package-lock.json
 git commit -m "Add lockfiles"
 git push
@@ -49,62 +49,66 @@ git push
 npm run bot -- keys
 ```
 
-This writes the keys into **`C:\kprediction\.env`** (open it with `notepad .env`) and prints four addresses:
+The keys are written to **`C:\kprediction\.env`**. Open it with `notepad .env`. The command prints four addresses:
 
-| Role | Key name in `.env` | What it is |
+| Role | Key in `.env` | What it is |
 |---|---|---|
-| **contract** | `CONTRACT_WIF` | The game's own address. **Send it nothing.** It must be empty until it is deployed. |
-| **admin** | `OWNER_WIF` | Owner and seed owner: the node key, fees, corrections, the seed. **Back this up offline.** |
-| **bot** | `OPERATOR_WIF` | Yesterday's probe owner wallet (already ~52 KOIN). Posts and resolves questions. It cannot move game funds. |
-| **player** | `PLAYER_WIF` | Yesterday's probe helper wallet. Used to test deposits and answers during the soft launch. |
-
-Back up `OWNER_WIF` and `CONTRACT_WIF` on paper or in a password manager.
+| **contract** | `CONTRACT_WIF` | The game's own address. **Send it nothing.** It must stay empty until deploy. |
+| **admin** | `OWNER_WIF` | Owner and seed owner. **Back it up offline** (paper or a password manager). |
+| **bot** | `OPERATOR_WIF` | Yesterday's probe owner wallet (~52 KOIN). Posts and resolves questions; it can't move game funds. |
+| **player** | `PLAYER_WIF` | Yesterday's probe helper wallet, used for testing. |
 
 ## Step 3 — Fund the wallets
 
 | Send to | Amount | Why |
 |---|---|---|
-| **bot** address | **+50 KOIN** (≈100 in total) | Mana for uploading the contract (~55) and for daily questions afterwards |
-| **admin** address | **1,000 VHP + 100 KOIN** | The small soft-launch seed (1,000 VHP + 50 KOIN), plus Mana for admin actions |
-| **player** address | **5 VHP + 5 KOIN** | Test deposits and answers |
-| contract address | **nothing** | It must stay empty |
+| **bot** | **+50 KOIN** (≈ 100 in total) | Mana for uploading the contract (~55) and for the daily questions |
+| **admin** | **1,000 VHP + 100 KOIN** | The soft-launch seed (1,000 VHP + 50 KOIN), plus Mana for admin actions |
+| **player** | **5 VHP + 5 KOIN** | Test deposits and answers |
+| contract | **nothing** | |
 
-Mana refills over about 5 days, so fund the bot wallet a day early if you can.
+## Step 4 — The project's node (on this PC, separate from your 600k node)
 
-## Step 4 — The project's node (we'll do this together)
+One command sets everything up:
+- a separate folder (`C:\kpred-node`);
+- the official Koinos node;
+- a block producer that produces for the **contract address**;
+- the newest Armana chain snapshot, with its fingerprint checked, so the node doesn't replay the whole chain.
 
-The project needs its own block producer, set to produce for the **contract address**. It will have its own
-signing key, separate from your 600k node, so the VHP is never mixed. Send me the output of these four commands
-(they only read, they change nothing):
-
-```
-docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Ports}}"
-docker network ls
-Get-ChildItem "$env:APPDATA\koinos-node-desktop\node" -Recurse -Depth 2 | Select-Object FullName
-Get-PSDrive C
-```
-
-From that I'll give you exact commands. You will then send me the node's **public** key, which is safe to share.
-Never send the private one.
-
-## Step 5 — Deploy
+It needs about **200 GB free** while it unpacks. The download is about 60 GB. If the download stops, run the
+same command again and it continues where it left off.
 
 ```
-npm run bot -- deploy            # dry run: check the addresses, start block (next Monday 00:00 UTC) and settings
-npm run bot -- deploy --send     # uploads and initialises the contract
+cd C:\kprediction
+powershell -ExecutionPolicy Bypass -File node\setup-node.ps1 -Producer <contract address from step 2>
+```
+
+When it finishes:
+```
+npm run bot -- node-status      # wait until it says your node is caught up
+npm run bot -- node-key         # prints the node's PUBLIC key (safe to share)
+```
+
+Keep the PC on and awake. Go to Settings → System → Power and set "When plugged in, put my device to sleep after" to **Never**.
+
+## Step 5 — Deploy the contract
+
+```
+npm run bot -- deploy            # dry run: check the addresses, the start block (next Monday 00:00 UTC) and settings
+npm run bot -- deploy --send
 git add game-data/deployment.json
 git commit -m "Deployed"
 git push
 ```
 
-## Step 6 — Register the node's key
+## Step 6 — Connect the node to the game
 
 ```
-npm run bot -- register-key <the node's PUBLIC key>            # dry run
-npm run bot -- register-key <the node's PUBLIC key> --send
+npm run bot -- register-key node            # dry run
+npm run bot -- register-key node --send
 ```
 
-The key becomes active 20 blocks (~1 minute) later.
+This reads the node's key file on your PC and registers only its public key. It becomes active about 1 minute later.
 
 ## Step 7 — Soft-launch seed
 
@@ -114,32 +118,28 @@ npm run bot -- seed-koin 50 --send
 npm run bot -- status
 ```
 
-## Step 8 — Turn on the bot in GitHub
+## Step 8 — Turn on the bot and the website (GitHub)
 
-1. On github.com/bawcejawn/Kprediction, go to **Settings → Secrets and variables → Actions**.
-   - **New repository secret:** name `OPERATOR_WIF`, value: the `OPERATOR_WIF` line from `.env` (only the part after `=`).
-   - **Variables tab → New variable:** name `BOT_ENABLED`, value `true`.
-   - Optional variable: `EXCLUDE_PRODUCERS` = your own producer address, so the game never asks about your node.
-2. Go to **Actions → Kpred bot → Run workflow** to start the first run by hand. It takes a few minutes the first
-   time, because it downloads recent block history.
-3. Emails: on github.com, click your picture → **Settings → Notifications → Actions** and tick
-   **"Notify on failed workflows only"** with email. Any run that finds a problem ends as *failed*, and GitHub emails you.
+On github.com/bawcejawn/Kprediction:
+1. **Settings → Secrets and variables → Actions**
+   - New repository secret `OPERATOR_WIF`. The value is the `OPERATOR_WIF` line from `.env`, only the part after `=`.
+   - On the Variables tab, add `BOT_ENABLED` = `true`.
+2. **Settings → Pages**: Source "Deploy from a branch", branch `main`, folder `/ (root)`, then Save.
+   The site appears at **https://bawcejawn.github.io/Kprediction/** within a few minutes. To preview it with sample data
+   at any time, add `?demo` to the address.
+3. **Actions → Kpred bot → Run workflow** starts the first run by hand. The first one takes several minutes.
+4. Emails: click your picture → **Settings → Notifications → Actions**, then tick **"Notify on failed workflows only"**.
 
 ## Step 9 — The test week
 
-Before Monday, deposit with the player wallet. A deposit before the start counts for week 0:
+Before Monday, with the player wallet, run `npm run bot -- deposit 2 --send`. Or use the website with Kondor.
+
+During the week, answer on the website, or:
 ```
-npm run bot -- deposit 2 --send
+npm run bot -- status                 # open questions with their numbers and options
+npm run bot -- answer 3 B --send      # answer question #3 with B
 ```
-During the week:
-```
-npm run bot -- status                      # shows open questions with their numbers and options
-npm run bot -- answer 3 B --send           # answer question #3 with option B
-```
-After the week closes (Monday, plus 1 day for corrections and 2 days for settling), claim if you won:
-```
-npm run bot -- claim 0 --send
-```
+After the week (Monday, plus 1 day for corrections and 2 days for settling), collect: `npm run bot -- claim 0 --send`
 
 ## Step 10 — Full seed
 
@@ -148,7 +148,7 @@ Once week 0 has closed, settled and paid correctly:
 npm run bot -- seed-vhp 169000 --send
 npm run bot -- seed-koin 19950 --send
 ```
-Moving KOIN needs Mana at least equal to the amount, so make sure the admin wallet's Mana is full first.
+Moving KOIN needs Mana at least equal to the amount, so let the admin wallet's Mana refill first.
 
 ---
 
@@ -156,23 +156,33 @@ Moving KOIN needs Mana at least equal to the amount, so make sure the admin wall
 
 | Email says | What to do |
 |---|---|
-| "The pool has produced no block for N min" | Check the project's node: is the PC on, is Docker running, does the node have internet? |
+| "The pool has produced no block for N min" | Check the node: is the PC on, is Docker running? Run `npm run bot -- node-status` |
 | "The bot's wallet … is low on Mana" | Send the bot address some KOIN |
-| "The contract is low on Mana" | Usually temporary; it refills over hours. If it keeps happening, tell me |
-| "Week N is overdue to close" | A question is stuck. Run `npm run bot -- status` and tell me what it shows |
-| "A transaction failed" / "generator failed" | Often a busy RPC node. If you get it more than twice in a row, tell me |
+| "The contract is low on Mana" | Usually temporary (it refills). If it repeats, tell Claude |
+| "Week N is overdue to close" | Run `npm run bot -- status` and send Claude the output |
+| "A code upgrade / seed withdrawal / ownership transfer is scheduled" | If you didn't do it, your admin key may be stolen. Tell Claude immediately |
+| "A transaction failed" / "generator failed" | Often a busy network. If it repeats, tell Claude |
 
-**About the 1-hour alarm:** the bot raises the alarm after 1 hour without a block, or later if the pool normally
-goes longer than that between blocks. With a small seed the pool may only make a block every few hours, and
-alarming after 1 hour would email you about nothing. As the pool grows, the alarm tightens to 1 hour by itself.
+The 1-hour alarm: the bot raises it after 1 hour without a block. While the pool is small and normally goes
+longer than that between blocks, it waits until the silence is unusual instead.
 
-## Owner commands (all dry runs unless `--send`)
+## Everyday owner commands (dry run unless `--send`)
 
 ```
 npm run bot -- status
-npm run bot -- void 12 "reason"            # VOID open question #12 (only before its week closes)
-npm run bot -- claim-fee                   # 5% creator fee (KOIN) to the admin wallet
-npm run bot -- claim-share 10              # 10 VHP of the 2% owner share
-npm run bot -- sponsor-limit 0             # stop paying players' Mana (0) — or e.g. 2 to pay up to 2 KOIN per answer
-npm run bot -- pause on|off                # pause NEW deposits (withdrawals and claims always work)
+npm run bot -- node-status
+npm run bot -- void 12 "reason"       # VOID open question #12 (before its week closes)
+npm run bot -- claim-fee              # 5% creator fee (KOIN) to the admin wallet
+npm run bot -- claim-share 10         # 10 VHP of the 2% owner share
+npm run bot -- sponsor-limit 0        # stop paying players' Mana (players use their own / Kondor's free Mana)
+npm run bot -- pause on|off           # pause NEW deposits (withdrawals and claims always work)
+```
+
+## The node, day to day
+
+```
+cd C:\kpred-node\koinos
+docker compose ps                              # everything should say "running"
+docker compose logs --tail 30 block_producer   # what the producer is doing
+docker compose restart                         # restart it
 ```

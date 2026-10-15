@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kprediction</title>
+  <meta name="description" content="Call the next blocks on Koinos. Answer a few questions a day, climb the weekly board, win VHP.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to the game</a>
+
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href="#play" aria-label="Kprediction home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="brand-name">Kprediction</span>
+      </a>
+      <nav class="tabs" aria-label="Sections">
+        <a href="#play" data-view="play">Play</a>
+        <a href="#leaderboard" data-view="leaderboard">Leaderboard</a>
+        <a href="#results" data-view="results">Results</a>
+        <a href="#how" data-view="how">How it works</a>
+      </nav>
+      <button class="btn btn-wallet" id="connect" type="button">Connect Kondor</button>
+    </div>
+  </header>
+
+  <div class="demo-note" id="demo-note" hidden>
+    <div class="wrap">Preview with sample data from real Koinos blocks. Nothing here is sent to the chain.</div>
+  </div>
+
+  <div class="wrap">
+    <aside class="ad ad-banner" data-ad-slot="top-banner" aria-label="Advertisement">
+      <span>Ad space</span><small>728 × 90 banner</small>
+    </aside>
+  </div>
+
+  <main id="main" class="wrap">
+
+    <!-- ───────────── PLAY ───────────── -->
+    <section class="view" id="view-play" data-view="play">
+      <div class="hero">
+        <div class="hero-copy">
+          <p class="week-pill" id="week-pill">Week …</p>
+          <h1>Call the next blocks.</h1>
+          <p class="lede">Every day brings new questions about how Koinos producers will perform. Answer before the clock runs out, collect points, and the top of the week shares the pool's block rewards.</p>
+          <div class="hero-stats">
+            <div><b id="stat-ends">…</b><span>until the week ends</span></div>
+            <div><b id="stat-pot">…</b><span>earned for this week so far</span></div>
+            <div><b id="stat-players">…</b><span>players this week</span></div>
+          </div>
+        </div>
+        <div class="ticker" aria-label="Latest Koinos blocks">
+          <div class="ticker-head"><span class="live-dot" aria-hidden="true"></span>Live blocks</div>
+          <ol class="ticker-list" id="ticker"></ol>
+          <p class="ticker-foot" id="ticker-foot">Blocks signed by the game's pool are highlighted.</p>
+        </div>
+      </div>
+
+      <div class="layout">
+        <div class="col-main">
+          <div class="section-head">
+            <h2>Today's questions</h2>
+            <p class="muted" id="today-note">Answers close when the timer hits zero.</p>
+          </div>
+          <div id="open-questions" class="qlist"></div>
+
+          <div class="section-head">
+            <h2>Waiting for the blocks</h2>
+            <p class="muted">Answers are locked. Results appear when the window's blocks are final.</p>
+          </div>
+          <div id="locked-questions" class="qlist"></div>
+        </div>
+
+        <aside class="col-side">
+          <section class="panel" id="panel-you">
+            <h2>Your game</h2>
+            <div id="you-body"><p class="muted">Connect Kondor to stake and answer. Answering is free with Kondor's free Mana.</p></div>
+          </section>
+          <section class="panel" id="panel-claim" hidden>
+            <h2>Rewards to collect</h2>
+            <div id="claim-body"></div>
+          </section>
+          <aside class="ad ad-box" data-ad-slot="sidebar" aria-label="Advertisement">
+            <span>Ad space</span><small>300 × 250</small>
+          </aside>
+          <section class="panel">
+            <h2>This week's pool</h2>
+            <dl class="facts" id="pool-facts"></dl>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ───────────── LEADERBOARD ───────────── -->
+    <section class="view" id="view-leaderboard" data-view="leaderboard" hidden>
+      <div class="section-head big">
+        <h1>Leaderboard</h1>
+        <p class="muted" id="lb-note">Points count once a question is resolved. Winners are the top players holding 30% of the week's stake; everyone tied at the line wins too.</p>
+      </div>
+      <div class="lb-switch" role="tablist" id="lb-weeks"></div>
+      <div class="table-wrap">
+        <table class="board" id="board">
+          <thead><tr><th scope="col">Rank</th><th scope="col">Player</th><th scope="col" class="num">Points</th><th scope="col" class="num">Stake</th><th scope="col" class="num">Share of reward</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <aside class="ad ad-inline" data-ad-slot="leaderboard-inline" aria-label="Advertisement">
+        <span>Ad space</span><small>responsive in-page</small>
+      </aside>
+    </section>
+
+    <!-- ───────────── RESULTS ───────────── -->
+    <section class="view" id="view-results" data-view="results" hidden>
+      <div class="section-head big">
+        <h1>Results</h1>
+        <p class="muted">Every answer comes straight from the blocks. Each result has a fingerprint (hash) of the blocks used, so anyone can check it.</p>
+      </div>
+      <div id="results-list" class="results"></div>
+    </section>
+
+    <!-- ───────────── HOW IT WORKS ───────────── -->
+    <section class="view" id="view-how" data-view="how" hidden>
+      <div class="section-head big">
+        <h1>How it works</h1>
+        <p class="muted">A weekly game about the Koinos chain. Your stake keeps producing blocks for the pool the whole time.</p>
+      </div>
+      <ol class="steps">
+        <li><h3>Stake VHP</h3><p>Deposit at least 1 VHP (or KOIN, which is burned into VHP). A deposit counts from the next week. You can withdraw any time, but withdrawing during a week cancels that week's answers.</p></li>
+        <li><h3>Answer daily questions</h3><p>New questions arrive every day. Each one closes for answers about 12 hours later, before the blocks it asks about are produced. Every correct answer is one point.</p></li>
+        <li><h3>The week closes</h3><p>The pool's block rewards for the week are split: 93% to the winners, 5% creator fee, 2% kept by the owner. Players with the most points who together hold 30% of the stake win, and ties at the line win too. You need at least 2 counted answers.</p></li>
+        <li><h3>Collect your reward</h3><p>Your share is the pot × your points × your stake ÷ the same total over all winners, paid in VHP. Unclaimed rewards wait for you, and keep producing for the pool meanwhile.</p></li>
+      </ol>
+      <div class="faq">
+        <details><summary>Who decides the right answer?</summary><p>The blocks do. After a question's window ends and the blocks are final, the answer is computed from them and published with a hash of the exact blocks used. If a producer in a question goes offline, the question is voided and doesn't count for anyone.</p></details>
+        <details><summary>Does it cost anything to play?</summary><p>No fees. Koinos uses Mana, which refills on its own. If your Mana is low, tick Kondor's free Mana option when you confirm.</p></details>
+        <details><summary>Can anyone take my stake?</summary><p>No. The contract only sends your stake back to you. The owner can't move players' stakes or rewards, and code changes must be announced 48 hours ahead so anyone can withdraw first.</p></details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <aside class="ad ad-banner" data-ad-slot="footer-banner" aria-label="Advertisement">
+        <span>Ad space</span><small>728 × 90 banner</small>
+      </aside>
+      <div class="foot-row">
+        <span>Kprediction runs fully on Koinos. Open source.</span>
+        <span id="foot-contract"></span>
+      </div>
+    </div>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="stake-dialog">
+    <form method="dialog" id="stake-form">
+      <h2 id="stake-title">Stake</h2>
+      <p class="muted" id="stake-help"></p>
+      <label class="field"><span id="stake-label">Amount</span><input id="stake-amount" inputmode="decimal" autocomplete="off" placeholder="0" required></label>
+      <div class="seg" id="stake-token" role="radiogroup" aria-label="Token">
+        <label><input type="radio" name="tok" value="VHP" checked><span>VHP</span></label>
+        <label><input type="radio" name="tok" value="KOIN"><span>KOIN</span></label>
+      </div>
+      <p class="warn" id="stake-warn" hidden></p>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" value="cancel" type="submit" formnovalidate>Cancel</button>
+        <button class="btn btn-primary" id="stake-go" value="go" type="submit">Continue in Kondor</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js"></script>
+  <script src="demo-data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

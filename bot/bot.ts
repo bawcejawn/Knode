@@ -139,7 +139,14 @@ export async function tick(ctx: Ctx) {
   await step("settling players", () => settlePass(ctx));
   await step("compounding", () => compoundPass(ctx, bs));
   await step("health check", () => healthPass(ctx, bs));
+  if (!ctx.dryRun) writeIndex(P);
   ctx.checkpoint("bot: tick");
+}
+
+/** game-data/index.json: the list of day files, so the website (a static page) can find every question. */
+function writeIndex(P: Paths) {
+  const days = fs.existsSync(P.questions) ? fs.readdirSync(P.questions).filter((f) => f.endsWith(".json")).sort().map((f) => `questions/${f}`) : [];
+  writeJson(path.join(P.dir, "index.json"), { updated: new Date().toISOString(), days });
 }
 
 // ───────────── health: is the pool producing blocks? is anything stuck or running low? ─────────────
@@ -667,7 +674,17 @@ async function friendly(cmd: string, a: string[], send: boolean): Promise<boolea
   };
   const need = (i: number, what: string) => { if (a[i] === undefined || a[i].startsWith("--")) throw new Error(`missing ${what}`); return a[i]; };
   switch (cmd) {
-    case "register-key": await act("owner", "register_key", { public_key: normalizeKey(need(0, "the node's PUBLIC key")) }, send); return true;
+    case "register-key": {
+      const k = need(0, "the node's PUBLIC key (or: node)");
+      const pub = k === "node" || fs.existsSync(k) ? nodePublicKey(k === "node" ? undefined : k) : normalizeKey(k);
+      await act("owner", "register_key", { public_key: pub }, send); return true;
+    }
+    case "node-key": {
+      const pub = nodePublicKey(a[0] && !a[0].startsWith("--") ? a[0] : undefined);
+      log(`The project node's PUBLIC key (safe to share):\n  ${pub}\n\nRegister it for the game contract with:\n  npm run bot -- register-key node          (dry run)\n  npm run bot -- register-key node --send`);
+      return true;
+    }
+    case "node-status": await nodeStatus(); return true;
     case "seed-vhp": await act("seed", "seed_deposit_vhp", { amount: units(need(0, "amount")) }, send); return true;
     case "seed-koin": await act("seed", "seed_deposit_koin", { amount: units(need(0, "amount")) }, send); return true;
     case "deposit": await act("player", "deposit_vhp", { from: me("player"), amount: units(need(0, "amount")) }, send); return true;
@@ -685,6 +702,39 @@ async function friendly(cmd: string, a: string[], send: boolean): Promise<boolea
     case "pause": await act("owner", "set_paused", { paused: need(0, "on or off") === "on" }, send); return true;
   }
   return false;
+}
+
+// ═══════════════════════════════ the project's node ═══════════════════════════════
+
+const NODE_KEY_FILE = "C:\\kpred-node\\basedir\\block_producer\\private.key";
+
+/** Reads the node's block-producer key file on this PC and returns only its PUBLIC key (base64url). The private
+ *  key never leaves this function and is never printed. */
+export function nodePublicKey(file = E.NODE_KEY_FILE ?? NODE_KEY_FILE): string {
+  if (!fs.existsSync(file)) throw new Error(`No key file at ${file}. Is the project node set up and started? (node/setup-node.ps1)`);
+  const raw = fs.readFileSync(file, "utf8").trim();
+  let signer: Signer;
+  if (/^[5KL][1-9A-HJ-NP-Za-km-z]{50,51}$/.test(raw)) signer = Signer.fromWif(raw);
+  else if (/^(0x)?[0-9a-fA-F]{64}$/.test(raw)) signer = new Signer({ privateKey: raw.replace(/^0x/, "") });
+  else throw new Error(`${file} is not in a key format this tool knows. Tell Claude (do NOT paste the file's contents).`);
+  const pk: any = (signer as any).publicKey;
+  const bytes: Uint8Array = typeof pk === "string" ? Buffer.from(pk.replace(/^0x/, ""), "hex") : pk;
+  return Buffer.from(bytes).toString("base64url");
+}
+
+/** Is the project's node running and caught up with the chain? */
+async function nodeStatus() {
+  const local = new Provider([E.NODE_RPC ?? "http://127.0.0.1:8080"]);
+  const pub = new Provider([E.RPC ?? "https://api.koinos.io"]);
+  const p: any = await pub.getHeadInfo();
+  const ph = Number(p.head_topology.height);
+  let lh = 0;
+  try { lh = Number(((await local.getHeadInfo()) as any).head_topology.height); }
+  catch { log("The project node doesn't answer on 127.0.0.1:8080. Is Docker running? In C:\\kpred-node\\koinos run: docker compose up -d"); process.exitCode = 1; return; }
+  const behind = ph - lh;
+  log(`Network block ${ph.toLocaleString()} — your node ${lh.toLocaleString()}`);
+  if (behind <= 20) log("✔ Your node is caught up. The block producer can produce.");
+  else log(`… your node is ${behind.toLocaleString()} blocks behind (~${(behind * 3 / 3600).toFixed(1)} h of chain). It catches up much faster than real time; check again later.`);
 }
 
 // ═══════════════════════════════ keys ═══════════════════════════════
