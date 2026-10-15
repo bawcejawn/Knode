@@ -26,7 +26,7 @@ const abi = fs.existsSync(ABI) ? JSON.parse(fs.readFileSync(ABI, "utf8")) : { me
 const expected = ["get_state", "get_player", "get_question", "get_week", "list_players", "init", "deposit_vhp", "deposit_koin", "withdraw", "answer",
   "settle", "claim", "compound", "close_week", "finalize_week", "post_question", "resolve_question", "correct_question", "set_operator",
   "set_paused", "propose_owner", "accept_owner", "register_key", "schedule_upgrade", "claim_creator_fee", "claim_owner_share",
-  "seed_deposit_vhp", "seed_deposit_koin", "request_seed_withdrawal", "execute_seed_withdrawal"];
+  "seed_deposit_vhp", "seed_deposit_koin", "request_seed_withdrawal", "execute_seed_withdrawal", "cancel_upgrade", "set_sponsor_limit"];
 for (const m of expected) ok(!!abi.methods[m], `ABI has ${m}`);
 ok(abi.methods.answer?.entry_point === 0x0db52f40 && abi.methods.settle?.entry_point === 0x6868e83d && abi.methods.claim?.entry_point === 0xdd1b3c31,
   "sponsored entry points match the ones hard-coded in the contract");

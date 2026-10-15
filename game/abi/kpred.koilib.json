@@ -131,7 +131,7 @@
       "argument": "kpred.correct_question_arguments",
       "return": "kpred.correct_question_result",
       "read_only": false,
-      "description": "Correct a resolution before its week closes (owner only)."
+      "description": "Correct a resolution, or VOID a question still open, before its week closes (owner only)."
     },
     "set_operator": {
       "entry_point": 1114516503,
@@ -174,6 +174,20 @@
       "return": "kpred.schedule_upgrade_result",
       "read_only": false,
       "description": "Announce a code upgrade by the sha256 of its bytecode; it can be uploaded after the timelock (owner only)."
+    },
+    "cancel_upgrade": {
+      "entry_point": 187647932,
+      "argument": "kpred.cancel_upgrade_arguments",
+      "return": "kpred.cancel_upgrade_result",
+      "read_only": false,
+      "description": "Cancel an announced code upgrade (owner only)."
+    },
+    "set_sponsor_limit": {
+      "entry_point": 1906813279,
+      "argument": "kpred.set_sponsor_limit_arguments",
+      "return": "kpred.set_sponsor_limit_result",
+      "read_only": false,
+      "description": "Set the most Mana the contract pays for one free transaction; 0 turns free transactions off (owner only, at most 10 KOIN)."
     },
     "claim_creator_fee": {
       "entry_point": 1525726320,
@@ -1355,6 +1369,26 @@
                 }
               }
             }
+          },
+          "cancel_upgrade_arguments": {
+            "fields": {}
+          },
+          "cancel_upgrade_result": {
+            "fields": {}
+          },
+          "set_sponsor_limit_arguments": {
+            "fields": {
+              "max_sponsor_rc": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "set_sponsor_limit_result": {
+            "fields": {}
           },
           "claim_creator_fee_arguments": {
             "fields": {

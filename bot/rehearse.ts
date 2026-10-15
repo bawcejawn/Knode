@@ -58,8 +58,34 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   const P = paths(dir);
   const run = generatorRunner(dir, ["--offline"]);
   let generatorRuns = 0;
+
+  // The pool's own block production is played by a real producer that was steady over the whole period;
+  // a 3-hour outage of "our node" is injected near the end to test the email alarm.
+  const lo = genesis - 2 * DAY - h0, hi = endHeight - h0;
+  const lastSeen = new Map<string, number>(), maxGap = new Map<string, number>(), count = new Map<string, number>();
+  for (let i = lo; i <= hi; i++) {
+    const b = history[i];
+    maxGap.set(b.signer, Math.max(maxGap.get(b.signer) ?? b.h - history[lo].h, b.h - (lastSeen.get(b.signer) ?? history[lo].h)));
+    lastSeen.set(b.signer, b.h);
+    count.set(b.signer, (count.get(b.signer) ?? 0) + 1);
+  }
+  const standIn = [...count.keys()].filter((a) => (maxGap.get(a) ?? 1e9) < 600 && endHeight - (lastSeen.get(a) ?? 0) < 600)
+    .sort((a, b) => count.get(b)! - count.get(a)!)[0];
+  if (!standIn) throw new Error("no steady producer in the history to stand in for the pool");
+  process.env.EXCLUDE_PRODUCERS = standIn; // "our" node must never be the subject of a question
+  const outStart = genesis + (opts.weeks * 7 - 5) * DAY + 6 * HOUR, outEnd = outStart + 3 * HOUR;
+  let returnedTo = 0;
+  const recentBlocks = async () => {
+    const lib = sim.height - 60;
+    const from = Math.max(h0, lib - 26 * DAY, returnedTo + 1);
+    returnedTo = lib;
+    return history.slice(from - h0, lib - h0 + 1).map((b) => ({
+      h: b.h, signer: b.signer === standIn ? (b.h >= outStart && b.h < outEnd ? "our node was down" : C) : b.signer,
+    }));
+  };
+
   const ctx: Ctx = {
-    chain: sim, operator, P, dryRun: false, quiet: !opts.verbose, checkpoint: () => {},
+    chain: sim, operator, P, dryRun: false, quiet: !opts.verbose, checkpoint: () => {}, problems: [], recentBlocks,
     generator: (args) => {
       // The generator reads blocks.csv: give it the last 26 days of irreversible history at the simulated height.
       const lib = sim.height - 60;
@@ -108,6 +134,8 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   // ── trouble to inject ──
   let crashInjected = false, strayPosted = false, outageDone = false;
   const strayHash = "0x" + "5a".repeat(32);
+  let alarmsDuringOutage = 0, falseAlarms = 0;
+  const otherProblems: string[] = [];
 
   const weekLog: string[] = [];
   let lastClosed = 0;
@@ -181,6 +209,11 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     if (!crashInjected && week === 1 && dayIdx === 8) for (const f of fs.existsSync(P.questions) ? fs.readdirSync(P.questions) : []) snap.set(f, fs.readFileSync(path.join(P.questions, f), "utf8"));
     await tick(ctx);
     ticks++;
+    for (const pr of ctx.problems) {
+      if (/produced no block/.test(pr)) { if (h > outStart && h <= outEnd + HOUR) alarmsDuringOutage++; else { falseAlarms++; console.log(`  unexpected alarm at ${h}: ${pr}`); } }
+      else { otherProblems.push(`${h}: ${pr}`); }
+    }
+    ctx.problems = [];
     if (!crashInjected && week === 1 && dayIdx === 8) {
       // Crash simulation: the bot posted questions but "died" before saving their on-chain ids.
       const posted = fs.readdirSync(P.questions).filter((f) => !snap.has(f) || snap.get(f) !== fs.readFileSync(path.join(P.questions, f), "utf8"));
@@ -244,6 +277,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   let strayVoid = false;
   for (let id = 0; id < nq; id++) { const q = (await sim.read("get_question", { id })).question; if (String(q.params_hash) === strayHash) strayVoid = N(q.outcome) === 1000; }
   check(strayVoid, "the stray question was resolved as VOID, so its week could close");
+  check(!local.some((q: any) => [...(q.subjects ?? []), ...(q.group ?? [])].includes(standIn)), "no question was ever about the pool's own node (it could sway the answer)");
   const lateSkips = local.filter((q: any) => q.postSkipped).length;
   const dayFilesSkipped = files.filter((d: any) => d.skipped).length;
   check(true, `bot outage handled: ${lateSkips} question(s) skipped as too late to answer, ${dayFilesSkipped} day(s) skipped`);
@@ -314,6 +348,9 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   check(BigInt(T.seed_vhp) === 170_000n * VHP && BigInt(T.seed_koin) === 20_000n * VHP, "the seed is untouched");
   check(BigInt(st.koin_balance) >= BigInt(T.seed_koin) + BigInt(T.creator_fee), "compounding never touched the seed KOIN or the unpaid creator fee");
   const botFailures = sim.failures;
+  check(alarmsDuringOutage >= 1, `the 3-hour outage of the pool's node raised the email alarm (${alarmsDuringOutage} hourly run(s) flagged it)`);
+  check(falseAlarms === 0, `no false production alarms in ${ticks} hourly runs`);
+  check(otherProblems.length === 0, `no other problems were reported${otherProblems.length ? ": " + otherProblems.slice(0, 3).join("; ") : ""}`);
   check(botFailures.length === 0, `the bot's own transactions never failed (${sim.calls} sent)${botFailures.length ? ": " + botFailures.slice(0, 3).map((f) => `${f.method}: ${f.error}`).join("; ") : ""}`);
 
   console.log("\n" + weekLog.join("\n"));

@@ -29,7 +29,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
+      # Exact versions from package-lock.json when it exists (safer: nothing unexpected is installed next to the bot key).
+      - run: if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
       # Recent block history for the question generator (downloaded once, then topped up each hour).
       - uses: actions/cache@v4
         with:

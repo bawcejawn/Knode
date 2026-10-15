@@ -78,7 +78,7 @@ From this `game` folder:
 
 ```
 npm install
-npm test          builds the contract and runs the 30 tests on a simulated chain (no network, no KOIN)
+npm test          builds the contract and runs the 38 tests on a simulated chain (no network, no KOIN)
 npm run build     production build → build/release/contract.wasm and abi/kpred.koilib.json
 npm run check     offline safety check of the production build
 npm run build:sim test build for the bot's rehearsal (build/sim — never deploy it)
@@ -109,5 +109,11 @@ is deployed.
 - Accounting lock: claiming/withdrawing early vs late gives identical weekly gains; a randomized 8-week
   simulation (5 seeds) shows every week's gain equals what was minted, holdings equal what is owed after
   each close, and everything minted is either paid out or waiting to be claimed.
+- Safety valves: a question's window must end before its week is due to close; the owner can VOID a question
+  that is still open (never set a real answer); the owner can cancel an announced upgrade and adjust or switch off
+  the free-transaction limit (max 10 KOIN of Mana).
+- Extreme cases: 64 questions in a week (65th refused) and a perfect 64; every question voided (pot rolls over and is
+  counted once more); exact option/lock/resolve boundaries; withdraw-and-redeposit in the same week; a 1-billion-VHP
+  whale beside a 1-VHP minnow paid exactly.
 - Listing players page by page with their entry for a week (used by the bot and the website).
 - Upgrades: refused before the timelock, for a non-owner, and for any bytecode other than the announced one.

@@ -78,6 +78,7 @@ function resolve(k: Kpred, id: u32, outcome: u32): void {
 // Globals used inside expect(() => ...).toThrow() (AssemblyScript closures cannot capture locals).
 let gK: Kpred | null = null;
 let gWho: Uint8Array = new Uint8Array(0);
+let gQ: u32 = 0;
 let gId: u32 = 0;
 let gOpt: u32 = 0;
 let gAmt: u64 = 0;
@@ -278,7 +279,7 @@ describe("a full week", () => {
     at(1100);
     const q0 = post(k, 2, 1300, 1301, 1400);
     const q1 = post(k, 4, 1300, 1301, 1500);
-    const q2 = post(k, 2, 1900, 1950, 2100);
+    const q2 = post(k, 2, 1900, 1901, 1940);
     at(1200);
     answer(k, A, q0, 1); answer(k, A, q1, 2); answer(k, A, q2, 0);   // 3 right
     answer(k, E, q0, 1); answer(k, E, q1, 2); answer(k, E, q2, 0);   // 3 right (tie with A)
@@ -625,6 +626,90 @@ describe("more sponsorship and upgrades", () => {
     MockVM.setTransaction(tx);
     System.resetCache();
     expect(k.authorize(up).value).toBe(false);       // different bytecode than announced
+    op.upload_contract = new protocol.upload_contract_operation(CONTRACT, code);
+    tx.operations[0] = op;
+    MockVM.setTransaction(tx);
+    System.resetCache();
+    expect(k.authorize(up).value).toBe(true);
+    as(A);
+    gK = k;
+    MockVM.commitTransaction();
+    expect(() => { gK!.cancel_upgrade(new kpred.cancel_upgrade_arguments()); }).toThrow();
+    as(OWNER);
+    k.cancel_upgrade(new kpred.cancel_upgrade_arguments());
+    expect(k.authorize(up).value).toBe(false);       // cancelled: the announced code can no longer be uploaded
+  });
+});
+
+describe("safety valves", () => {
+  it("refuses a question whose window ends after the week is due to close", () => {
+    const k = setup();
+    at(1100);
+    as(OPERATOR);
+    gK = k;
+    MockVM.commitTransaction();
+    // week 0 ends at 2000, close delay 10: the window must end by 2010 - 60 = 1950
+    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1900, 1901, 1951, hash32(1))); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("the window must end before the week is due to close");
+    expect(post(k, 2, 1900, 1901, 1950)).toBe(0);
+  });
+
+  it("the owner can VOID an open question so the week can close; nobody else, and never a real answer", () => {
+    const k = setup();
+    deposit(k, A, 10 * VHP);
+    at(1100);
+    const q0 = post(k, 2, 1300, 1301, 1400);
+    const q1 = post(k, 2, 1300, 1301, 1400);
+    at(1200);
+    answer(k, A, q0, 1);
+    answer(k, A, q1, 1);
+    at(1500);
+    resolve(k, q0, 1);
+    // the bot never resolves q1 (say its key was lost)
+    at(2015);
+    gK = k;
+    as(A);
+    MockVM.commitTransaction();
+    gQ = q1;
+    expect(() => { gK!.correct_question(new kpred.correct_question_arguments(gQ, 1000, hash32(3))); }).toThrow();
+    as(OWNER);
+    MockVM.commitTransaction();
+    expect(() => { gK!.correct_question(new kpred.correct_question_arguments(gQ, 1, hash32(3))); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("an open question can only be voided (outcome 1000)");
+    k.correct_question(new kpred.correct_question_arguments(q1, 1000, hash32(3)));
+    const w0 = k.get_week(new kpred.get_week_arguments(0)).week!;
+    expect(w0.resolved).toBe(2);
+    expect(w0.closed).toBe(true);                    // voiding the last open question closed the week
+    expect(k.get_question(new kpred.get_question_arguments(q1)).question!.outcome).toBe(1000);
+    // once closed, resolutions are final
+    MockVM.commitTransaction();
+    gQ = q0;
+    expect(() => { gK!.correct_question(new kpred.correct_question_arguments(gQ, 0, hash32(3))); }).toThrow();
+  });
+
+  it("the owner can lower, raise (max 10 KOIN) or switch off the free-transaction limit", () => {
+    const k = setup();
+    deposit(k, A, 10 * VHP);
+    at(1100);
+    const q = post(k, 2, 1300, 1301, 1400);
+    as(A);
+    const good = Protobuf.encode(new kpred.answer_arguments(A, q, 1), kpred.answer_arguments.encode);
+    setTx(0x0db52f40, good, VHP / 2, 1);
+    expect(sponsor(k)).toBe(true);
+    gK = k;
+    MockVM.commitTransaction();
+    expect(() => { gK!.set_sponsor_limit(new kpred.set_sponsor_limit_arguments(0)); }).toThrow();   // not the owner
+    as(OWNER);
+    MockVM.commitTransaction();
+    expect(() => { gK!.set_sponsor_limit(new kpred.set_sponsor_limit_arguments(11 * VHP)); }).toThrow();
+    k.set_sponsor_limit(new kpred.set_sponsor_limit_arguments(0));
+    as(A);
+    expect(sponsor(k)).toBe(false);                  // off: players pay their own Mana
+    as(OWNER);
+    k.set_sponsor_limit(new kpred.set_sponsor_limit_arguments(10 * VHP));
+    as(A);
+    setTx(0x0db52f40, good, 5 * VHP, 1);
+    expect(sponsor(k)).toBe(true);
   });
 });
 
@@ -952,3 +1037,164 @@ describe("listing players (for the bot and the website)", () => {
     expect(k.list_players(new kpred.list_players_arguments(new Uint8Array(0), 0, 0)).rows.length).toBe(5);
   });
 });
+
+describe("extreme edge cases", () => {
+  it("a full week of 64 questions: the 65th is refused, a perfect score of 64 is counted and paid even when claimed 5 weeks later", () => {
+    const k = setup();
+    deposit(k, A, 10 * VHP);
+    deposit(k, B, 10 * VHP);
+    at(1100);
+    for (let i = 0; i < 64; i++) post(k, 2, 1300, 1301, 1400);
+    gK = k;
+    as(OPERATOR);
+    MockVM.commitTransaction();
+    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1300, 1301, 1400, hash32(1))); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("too many questions this week");
+    at(1200);
+    for (let i: u32 = 0; i < 64; i++) answer(k, A, i, 1);
+    answer(k, B, 0, 0);
+    answer(k, B, 1, 0);
+    at(1500);
+    for (let i: u32 = 0; i < 64; i++) resolve(k, i, 1);
+    give(KOIN_TAG, CONTRACT, 100 * VHP);
+    give(MANA_TAG, CONTRACT, 100 * VHP);
+    at(2015);
+    nobody();
+    k.compound(new kpred.compound_arguments());               // any action closes the finished week
+    expect(k.get_week(new kpred.get_week_arguments(0)).week!.closed).toBe(true);
+    at(2016);
+    expect(k.settle(new kpred.settle_arguments(A, 0)).points).toBe(64);
+    expect(k.settle(new kpred.settle_arguments(B, 0)).points).toBe(0);
+    // five weeks later, the reward is still there, exactly
+    at(7000);
+    as(A);
+    const before = Tokens.testGet(VHP_TAG, A);
+    expect(k.claim(new kpred.claim_arguments(A, 0)).reward).toBe(93 * VHP);
+    expect(Tokens.testGet(VHP_TAG, A) - before).toBe(93 * VHP);
+    const w0 = k.get_week(new kpred.get_week_arguments(0)).week!;
+    expect(w0.cutoff).toBe(64);
+    expect(w0.winners).toBe(1);
+  });
+
+  it("a week where every question is voided: nobody is eligible, the pot rolls into the next week's gain", () => {
+    const k = setup();
+    deposit(k, A, 10 * VHP);
+    deposit(k, B, 10 * VHP);
+    at(1100);
+    const q0 = post(k, 2, 1300, 1301, 1400);
+    const q1 = post(k, 2, 1300, 1301, 1400);
+    at(1200);
+    answer(k, A, q0, 1); answer(k, A, q1, 1);
+    answer(k, B, q0, 0); answer(k, B, q1, 0);
+    give(KOIN_TAG, CONTRACT, 100 * VHP);
+    give(MANA_TAG, CONTRACT, 100 * VHP);
+    at(1500);
+    resolve(k, q0, 1000);
+    resolve(k, q1, 1000);
+    at(2015);
+    nobody();
+    k.compound(new kpred.compound_arguments());
+    at(2016);
+    expect(k.settle(new kpred.settle_arguments(A, 0)).eligible).toBe(false);
+    expect(k.settle(new kpred.settle_arguments(B, 0)).eligible).toBe(false);
+    at(2200);
+    k.compound(new kpred.compound_arguments());               // finalizes week 0
+    const w0 = k.get_week(new kpred.get_week_arguments(0)).week!;
+    expect(w0.finalized).toBe(true);
+    expect(w0.rolled_over).toBe(true);
+    at(3015);
+    k.compound(new kpred.compound_arguments());               // closes week 1 (no questions, no new rewards)
+    const w1 = k.get_week(new kpred.get_week_arguments(1)).week!;
+    expect(w1.closed).toBe(true);
+    expect(w1.gain).toBe(93 * VHP);                          // the rolled-over pot, counted once more, nothing else
+    expect(w1.pot).toBe(93 * VHP - bpsT(93 * VHP, 500) - bpsT(93 * VHP, 200));
+  });
+
+  it("option and timing boundaries are exact: 16 options max, answers until lock−1, resolve from window_end+61", () => {
+    const k = setup();
+    deposit(k, A, 10 * VHP);
+    at(1100);
+    gK = k;
+    as(OPERATOR);
+    MockVM.commitTransaction();
+    expect(() => { gK!.post_question(new kpred.post_question_arguments(17, 1300, 1301, 1400, hash32(1))); }).toThrow();
+    const q = post(k, 16, 1300, 1301, 1400);
+    as(A);
+    gQ = q;
+    MockVM.commitTransaction();
+    expect(() => { gK!.answer(new kpred.answer_arguments(A, gQ, 16)); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("no such option");
+    at(1300);
+    MockVM.commitTransaction();
+    expect(() => { gK!.answer(new kpred.answer_arguments(A, gQ, 15)); }).toThrow();   // at the lock height: closed
+    at(1299);
+    answer(k, A, q, 15);                                       // one block before: accepted
+    as(OPERATOR);
+    at(1460);
+    MockVM.commitTransaction();
+    expect(() => { gK!.resolve_question(new kpred.resolve_question_arguments(gQ, 15, hash32(2))); }).toThrow();
+    at(1461);
+    resolve(k, q, 15);
+    expect(k.get_question(new kpred.get_question_arguments(q)).question!.outcome).toBe(16);
+  });
+
+  it("withdrawing everything and re-depositing in the same week still voids that week, but not the next", () => {
+    const k = setup();
+    deposit(k, A, 10 * VHP);
+    at(1100);
+    const q0 = post(k, 2, 1300, 1301, 1400);
+    at(1200);
+    answer(k, A, q0, 1);
+    as(A);
+    k.withdraw(new kpred.withdraw_arguments(A, 10 * VHP));
+    deposit(k, A, 10 * VHP);
+    expect(k.get_player(new kpred.get_player_arguments(A, 0)).entry!.voided).toBe(true);
+    // the re-deposit counts from week 1, and week 1 answers are fine
+    expect(k.get_player(new kpred.get_player_arguments(A, 1)).active_stake).toBe(10 * VHP);
+    at(1500);
+    resolve(k, q0, 1);
+    at(2015);
+    nobody();
+    k.compound(new kpred.compound_arguments());
+    at(2100);
+    const q1 = post(k, 2, 2300, 2301, 2400);
+    at(2200);
+    answer(k, A, q1, 0);
+    expect(k.get_player(new kpred.get_player_arguments(A, 1)).entry!.voided).toBe(false);
+  });
+
+  it("a whale with 1 billion VHP and a minnow with 1 VHP are paid exactly (128-bit math, no overflow)", () => {
+    const k = setup();
+    give(VHP_TAG, A, 1_000_000_000 * VHP);
+    deposit(k, A, 1_000_000_000 * VHP);
+    deposit(k, B, VHP);
+    at(1100);
+    const q0 = post(k, 2, 1300, 1301, 1400);
+    const q1 = post(k, 2, 1300, 1301, 1400);
+    at(1200);
+    answer(k, A, q0, 1); answer(k, A, q1, 1);
+    answer(k, B, q0, 1); answer(k, B, q1, 1);
+    give(KOIN_TAG, CONTRACT, 1_000_000 * VHP);
+    give(MANA_TAG, CONTRACT, 1_000_000 * VHP);
+    at(1500);
+    resolve(k, q0, 1); resolve(k, q1, 1);
+    at(2015);
+    nobody();
+    k.compound(new kpred.compound_arguments());
+    at(2016);
+    k.settle(new kpred.settle_arguments(A, 0));
+    k.settle(new kpred.settle_arguments(B, 0));
+    at(2200);
+    as(A);
+    const ra = k.claim(new kpred.claim_arguments(A, 0)).reward;
+    as(B);
+    const rb = k.claim(new kpred.claim_arguments(B, 0)).reward;
+    const pot: u64 = 930_000 * VHP;
+    // shares 1e9 : 1 of the pot (both have 2 points), rounded down, never more than the pot
+    expect(rb).toBe(<u64>(<f64>0) + pot / 1_000_000_001);
+    expect(ra + rb <= pot).toBe(true);
+    expect(pot - ra - rb < 2).toBe(true);
+  });
+});
+
+function bpsT(amount: u64, b: u64): u64 { return amount * b / 10000; }

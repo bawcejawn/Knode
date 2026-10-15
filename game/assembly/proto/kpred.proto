@@ -319,7 +319,7 @@ message resolve_question_result {}
 
 // ════════════════════════════ Owner ════════════════════════════
 
-// @description Correct a resolution before its week closes (owner only).
+// @description Correct a resolution, or VOID a question still open, before its week closes (owner only).
 // @read-only false
 message correct_question_arguments {
   uint32 id = 1;
@@ -376,6 +376,20 @@ message schedule_upgrade_arguments {
 message schedule_upgrade_result {
   uint64 eta = 1 [jstype = JS_STRING];
 }
+
+// @description Cancel an announced code upgrade (owner only).
+// @read-only false
+message cancel_upgrade_arguments {}
+
+message cancel_upgrade_result {}
+
+// @description Set the most Mana the contract pays for one free transaction; 0 turns free transactions off (owner only, at most 10 KOIN).
+// @read-only false
+message set_sponsor_limit_arguments {
+  uint64 max_sponsor_rc = 1 [jstype = JS_STRING];
+}
+
+message set_sponsor_limit_result {}
 
 // @description Claim the 5% creator fee in KOIN (owner only; limited by the contract's Mana).
 // @read-only false

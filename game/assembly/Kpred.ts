@@ -28,6 +28,7 @@ const FEE_BPS: u64 = 500;       // 5% creator fee (KOIN)
 const RETAIN_BPS: u64 = 200;    // 2% owner share (VHP)
 const CUTOFF_BPS: u64 = 3000;   // winners = top 30% of eligible stake
 const RESOLVE_MARGIN: u64 = 60; // resolve only after the window's blocks are irreversible (~3 minutes)
+const MAX_SPONSOR_LIMIT: u64 = 1_000_000_000; // 10 KOIN of Mana: the most one free transaction may ever cost the pool
 
 // Entry points the contract is willing to pay Mana for (first 4 bytes of sha256 of the name).
 const EP_ANSWER: u32 = 0x0db52f40;
@@ -314,6 +315,7 @@ export class Kpred {
     System.require(isAddress(args.owner) && isAddress(args.operator) && isAddress(args.seed_owner), "owner, operator and seed owner are required");
     System.require(args.week_blocks > 0 && args.settle_blocks > 0, "week_blocks and settle_blocks must be positive");
     System.require(args.timelock_blocks > 0, "timelock must be positive");
+    System.require(args.max_sponsor_rc <= MAX_SPONSOR_LIMIT, "at most 10 KOIN of Mana per free transaction");
     c.owner = args.owner;
     c.operator = args.operator;
     c.seed_owner = args.seed_owner;
@@ -635,6 +637,8 @@ export class Kpred {
     System.require(args.lock_height > h, "lock height must be in the future");
     System.require(args.lock_height <= this.weekEnd(c, w), "answers must close before the week ends");
     System.require(args.window_start >= args.lock_height && args.window_end >= args.window_start, "the window must start after answers close");
+    // The window must finish (and be final) by the time the week is due to close, so no question can hold a week open.
+    System.require(args.window_end + RESOLVE_MARGIN <= this.weekEnd(c, w) + c.close_delay, "the window must end before the week is due to close");
     System.require(args.params_hash != null && args.params_hash!.length == 32, "params_hash must be 32 bytes");
     const wkKey = u64Key(w);
     const wk = this.weeks.get(wkKey)!;
@@ -693,11 +697,39 @@ export class Kpred {
     System.require(this.isOwner(c), "owner only");
     const key = u32Key(args.id);
     const q = this.questions.get(key);
-    System.require(q != null && q!.outcome != 0, "question is not resolved yet");
-    System.require(!this.weeks.get(u64Key(q!.week))!.closed, "the week is closed; resolutions are final");
-    this.setOutcome(q!, args.outcome, args.data_hash);
-    this.questions.put(key, q!);
+    System.require(q != null, "no such question");
+    const wkKey = u64Key(q!.week);
+    const wk = this.weeks.get(wkKey)!;
+    System.require(!wk.closed, "the week is closed; resolutions are final");
+    if (q!.outcome == 0) {
+      // Still open (e.g. the bot is down or its key was lost): the owner may only VOID it, so the week can close.
+      System.require(args.outcome == VOID, "an open question can only be voided (outcome 1000)");
+      this.setOutcome(q!, args.outcome, args.data_hash);
+      this.questions.put(key, q!);
+      wk.resolved += 1;
+      this.weeks.put(wkKey, wk);
+      this.advance(c);
+    } else {
+      this.setOutcome(q!, args.outcome, args.data_hash);
+      this.questions.put(key, q!);
+    }
     return new kpred.correct_question_result();
+  }
+
+  cancel_upgrade(args: kpred.cancel_upgrade_arguments): kpred.cancel_upgrade_result {
+    const c = this.cfg();
+    System.require(this.isOwner(c), "owner only");
+    this.upgrade.put(new kpred.timelock_object());
+    return new kpred.cancel_upgrade_result();
+  }
+
+  set_sponsor_limit(args: kpred.set_sponsor_limit_arguments): kpred.set_sponsor_limit_result {
+    const c = this.cfg();
+    System.require(this.isOwner(c), "owner only");
+    System.require(args.max_sponsor_rc <= MAX_SPONSOR_LIMIT, "at most 10 KOIN of Mana per free transaction");
+    c.max_sponsor_rc = args.max_sponsor_rc;
+    this.config.put(c);
+    return new kpred.set_sponsor_limit_result();
   }
 
   set_operator(args: kpred.set_operator_arguments): kpred.set_operator_result {

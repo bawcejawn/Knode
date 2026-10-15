@@ -32,19 +32,31 @@ hold up a week.
 
 ## Commands
 
-From the repo's root folder (run `npm install` once):
+From the repo's root folder (run `npm install` once). **LAUNCH.md** has the full step-by-step launch guide.
 
 ```
-npm run bot -- status                 the game right now (no key needed)
+npm run bot -- status                 the game now: weeks, money, open questions, pool production (no key needed)
 npm run bot -- tick --dry-run         what the bot would do, without sending anything
-npm run bot -- tick                   do it
+npm run bot -- tick                   do it (GitHub runs this every hour)
+npm run bot -- keys                   create the project's keys in .env (never prints a private key)
+npm run bot -- deploy [--send]        deploy + initialise the contract
+npm run bot -- register-key <public key> [--send]
+npm run bot -- seed-vhp <amount> / seed-koin <amount> [--send]
+npm run bot -- deposit <amount> / answer <question #> <letter> / claim <week> / withdraw <amount> [--send]   (player)
+npm run bot -- void <question #> "reason" / claim-fee / claim-share <amount> / sponsor-limit <KOIN> / pause on|off [--send]
+npm run bot -- admin <method> key=value ... --as owner|seed|operator|player [--send]   (anything else)
 npm run bot -- rehearse --weeks 3     whole weeks on a simulated chain (no network, no keys, no KOIN)
-npm run bot -- deploy                 deployment plan (dry run)
-npm run bot -- deploy --send          deploy + initialise the contract
-npm run bot -- admin <method> '<json>' --as owner|seed [--send]
 ```
 
-`rehearse` needs the test build of the contract first. In the `game` folder, run `npm run build:sim`.
+`rehearse` needs the contract's test build: in the `game` folder, run `npm run build:sim` first.
+
+**Health alarms:**
+- the pool has made no block for 1 hour (or longer, if the pool normally goes longer between blocks);
+- the bot's or the contract's Mana is low;
+- a week is overdue to close;
+- a transaction or the question generator failed.
+
+Any of these ends the hourly run as *failed*, and GitHub emails you.
 
 ## The rehearsal
 

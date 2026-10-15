@@ -28,6 +28,7 @@ import { createRequire } from "node:module";
 import { Signer, Provider, Contract } from "koilib";
 import { Chain, KoinosChain, SimChain, Call, showKoin, toSat, loadAbi } from "./chain.ts";
 import { tokenAbi } from "./token-abi.ts";
+import { syncBlocks } from "../common.ts";
 
 // ───────────────────────── settings ─────────────────────────
 
@@ -60,7 +61,11 @@ export const paths = (dir: string): Paths => ({
 const readJson = (f: string, d: any = {}) => (fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : d);
 const writeJson = (f: string, v: any) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v, null, 2) + "\n"); };
 
-type BotState = { checkedUpTo: number; orphans: number[]; lastCompound: number; warnings: string[] };
+type BotState = {
+  checkedUpTo: number; orphans: number[]; lastCompound: number; warnings: string[];
+  /** Block production by the pool: last block it produced, and blocks produced per day (day = height / 28,800). */
+  lastProduced: number; producedByDay: Record<string, number>; producerScannedTo: number;
+};
 type DayFile = { date: string; week: number; day: number; questions: any[]; skipped?: string };
 
 function dayFiles(P: Paths): Array<{ file: string; data: DayFile }> {
@@ -80,6 +85,10 @@ export type Ctx = {
   generator: (args: string[]) => { ok: boolean; output: string };
   /** Saves game-data/ to the repo (scheduled bot only) so a crash can never lose a posted question's details. */
   checkpoint: (message: string) => void;
+  /** Recent irreversible blocks (height + producer), for the production health check. */
+  recentBlocks?: () => Promise<Array<{ h: number; signer: string }>>;
+  /** Things that need a human. A scheduled run with problems ends as "failed", which makes GitHub email you. */
+  problems: string[];
   quiet?: boolean;
 };
 
@@ -105,7 +114,7 @@ async function sendOp(ctx: Ctx, what: string, calls: Call[], opts: { sponsored?:
     r = await ctx.chain.send(calls, [ctx.operator], {});
   }
   if (r.ok) { if (!ctx.quiet) log(`  ✔ ${what}${r.rcUsed && r.rcUsed !== "0" ? `  (Mana ${showKoin(r.rcUsed)})` : ""}`); }
-  else log(`  ✖ ${what}: ${r.error}`);
+  else { log(`  ✖ ${what}: ${r.error}`); ctx.problems.push(`A transaction failed: ${what} — ${String(r.error).slice(0, 200)}`); }
   return r.ok;
 }
 
@@ -116,18 +125,87 @@ export async function tick(ctx: Ctx) {
   const st0 = await state(ctx);
   if (!st0.c.owner) throw new Error("The contract is not initialised yet (run deploy first).");
   if (st0.weekBlocks % DAY !== 0) throw new Error(`week_blocks (${st0.weekBlocks}) must be a whole number of days`);
-  const bs: BotState = { checkedUpTo: 0, orphans: [], lastCompound: 0, warnings: [], ...readJson(P.botState) };
+  const bs: BotState = { checkedUpTo: 0, orphans: [], lastCompound: 0, warnings: [], lastProduced: 0, producedByDay: {}, producerScannedTo: 0, ...readJson(P.botState) };
   const save = () => { if (!ctx.dryRun) writeJson(P.botState, bs); };
 
-  await resolvePass(ctx, bs);
-  save();
-  await postPass(ctx, bs);
-  save();
-  await closeFinalizePass(ctx);
-  await settlePass(ctx);
-  await compoundPass(ctx, bs);
-  save();
+  // Each step is protected: one failing step (a busy RPC node, say) never stops the others.
+  const step = async (name: string, fn: () => Promise<void>) => {
+    try { await fn(); } catch (e) { ctx.problems.push(`${name} failed: ${(e as Error).message ?? e}`); log(`  ✖ ${name} failed: ${(e as Error).message ?? e}`); }
+    save();
+  };
+  await step("resolving questions", () => resolvePass(ctx, bs));
+  await step("posting questions", () => postPass(ctx, bs));
+  await step("closing / finalizing", () => closeFinalizePass(ctx));
+  await step("settling players", () => settlePass(ctx));
+  await step("compounding", () => compoundPass(ctx, bs));
+  await step("health check", () => healthPass(ctx, bs));
   ctx.checkpoint("bot: tick");
+}
+
+// ───────────── health: is the pool producing blocks? is anything stuck or running low? ─────────────
+
+export const ALERT_BLOCKS = Math.round(Number(E.PRODUCER_ALERT_MINUTES ?? 60) * 20); // 60 minutes = 1,200 blocks
+
+/** Expected blocks per block-height from the last 7 full days of the pool's production. */
+export function productionRate(bs: BotState, lib: number): number {
+  const today = Math.floor(lib / DAY);
+  let blocks = 0, days = 0;
+  for (let d = today - 7; d < today; d++) if (bs.producedByDay[String(d)] !== undefined) { blocks += bs.producedByDay[String(d)]; days++; }
+  return days ? blocks / (days * DAY) : 0;
+}
+
+/** How long a silence must last before it is an alarm. At least PRODUCER_ALERT_MINUTES (default 60). If the pool is
+ *  small and normally goes longer than that between blocks, waiting for a silence that would happen by pure luck
+ *  less than 1 time in 1,000 avoids emailing you about nothing. */
+export function alertAfter(rate: number): number {
+  if (rate <= 0) return Infinity;
+  return Math.max(ALERT_BLOCKS, Math.ceil(Math.log(1000) / rate));
+}
+
+async function healthPass(ctx: Ctx, bs: BotState) {
+  const st = await state(ctx);
+  const { lib } = await ctx.chain.head();
+  const C = ctx.chain.contractId;
+
+  // 1. Block production by the pool.
+  if (ctx.recentBlocks) {
+    const blocks = await ctx.recentBlocks();
+    for (const b of blocks) {
+      if (b.h <= bs.producerScannedTo) continue;
+      if (b.signer === C) {
+        const d = String(Math.floor(b.h / DAY));
+        bs.producedByDay[d] = (bs.producedByDay[d] ?? 0) + 1;
+        if (b.h > bs.lastProduced) bs.lastProduced = b.h;
+      }
+      bs.producerScannedTo = b.h;
+    }
+    const today = Math.floor(lib / DAY);
+    for (const d of Object.keys(bs.producedByDay)) if (Number(d) < today - 8) delete bs.producedByDay[d];
+    const rate = productionRate(bs, lib);
+    if (bs.lastProduced === 0) {
+      if (!ctx.quiet) log(`  the pool has not produced a block yet (normal until the producer key is registered and the seed is in)`);
+    } else {
+      const gap = lib - bs.lastProduced, limit = alertAfter(rate);
+      const mins = (n: number) => `${Math.round(n / 20)} min`;
+      if (!ctx.quiet) log(`  pool production: last block ${bs.lastProduced} (${mins(gap)} ago); ~${(rate * DAY).toFixed(0)} blocks/day; alarm after ${isFinite(limit) ? mins(limit) : "a first full day of data"}`);
+      if (gap > limit) ctx.problems.push(`The pool has produced no block for ${mins(gap)} (last block ${bs.lastProduced}). Check the project's node.`);
+    }
+  }
+
+  // 2. A week that should have closed but has not.
+  const w = st.weeksClosed;
+  if (st.height > weekEnd(st, w) + st.closeDelay + 3 * RESOLVE_SLACK) {
+    const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
+    ctx.problems.push(`Week ${w} is overdue to close (${num(wk.questions) - num(wk.resolved)} question(s) still open).`);
+  }
+
+  // 3. Mana running low (real chain only).
+  if (ctx.chain.kind === "koinos") {
+    const opMana = await ctx.chain.mana(ctx.operator.getAddress());
+    if (opMana < toSat(2)) ctx.problems.push(`The bot's wallet ${ctx.operator.getAddress()} is low on Mana (${showKoin(opMana)}). Send it some KOIN.`);
+    const cMana = big(st.raw.mana);
+    if (big(st.t.seed_koin) > 0n && cMana < toSat(10)) ctx.problems.push(`The contract is low on Mana (${showKoin(cMana)}): free transactions may be refused for a while.`);
+  }
 }
 
 // ───────────── link on-chain question ids to local files, find orphans ─────────────
@@ -203,10 +281,9 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
         const outcome = q.result.void ? 1000 : q.result.option;
         const dataHash = "0x" + (q.result.dataHash ?? sha256hex(`void: ${q.result.reason}`));
         const label = q.result.void ? `VOID (${q.result.reason})` : `option ${String.fromCharCode(65 + q.result.option)} (actual ${q.result.value})`;
-        if (await sendOp(ctx, `resolve ${q.id} (#${q.chainId}) → ${label}`, [{ method: "resolve_question", args: { id: q.chainId, outcome, data_hash: dataHash } }])) {
-          q.chainOutcome = outcome === 1000 ? 1000 : outcome + 1;
-          dirty = true;
-        }
+        // Not marked done here: the next pass reads the outcome back from the chain, so a transaction that never
+        // made it into a block is simply sent again.
+        await sendOp(ctx, `resolve ${q.id} (#${q.chainId}) → ${label}`, [{ method: "resolve_question", args: { id: q.chainId, outcome, data_hash: dataHash } }]);
       }
       if (dirty && !ctx.dryRun) writeJson(f.file, f.data);
     }
@@ -214,7 +291,7 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
     // Some finished questions have no result yet: let the generator read the blocks and work them out.
     ranGenerator = true;
     const g = ctx.generator(["resolve"]);
-    if (!g.ok) { log(`  ✖ resolving from block data failed:\n${g.output.slice(-1500)}`); break; }
+    if (!g.ok) { log(`  ✖ resolving from block data failed:\n${g.output.slice(-1500)}`); ctx.problems.push("Resolving questions from block data failed."); break; }
   }
 }
 
@@ -237,12 +314,14 @@ async function postPass(ctx: Ctx, bs: BotState) {
     log(`  releasing ${label} (week ${w}, day ${dd + 1}) — answers must close by ${wEnd}, windows must end by ${maxEnd}`);
     if (ctx.dryRun) { log(`  [dry run] would run the generator and post its questions`); return; }
     const g = ctx.generator(["release", "--label", label, "--week", String(w), "--day", String(dd % 7),
-      "--max-lock", String(wEnd), "--max-end", String(maxEnd)]);
+      "--max-lock", String(wEnd), "--max-end", String(maxEnd),
+      // never ask about the pool itself or the operator's own producer(s): they could sway the answer
+      "--exclude", [ctx.chain.contractId, ...(E.EXCLUDE_PRODUCERS ?? "").split(",")].map((x) => x.trim()).filter(Boolean).join(",")]);
     if (!g.ok) {
       if (/Too late in the week/i.test(g.output)) {
         writeJson(file, { date: label, week: w, day: dd + 1, questions: [], skipped: "too late in the week to release questions" });
         log(`  skipped ${label}: too late in the week`);
-      } else log(`  ✖ the generator failed (will retry next run):\n${g.output.slice(-1500)}`);
+      } else { log(`  ✖ the generator failed (will retry next run):\n${g.output.slice(-1500)}`); ctx.problems.push(`The question generator failed for ${label}.`); }
       return;
     }
     // Save the questions publicly BEFORE posting them, so their details can never be lost.
@@ -364,7 +443,16 @@ export async function status(ctx: Ctx) {
       ? `, gain ${showKoin(wk.gain)} → pot ${showKoin(wk.pot)}; ${num(wk.eligible_players)} eligible` + (wk.finalized ? `, cutoff ${num(wk.cutoff)} pts, ${num(wk.winners)} winner(s), claimed ${showKoin(wk.claimed)}${wk.rolled_over ? " (rolled over)" : ""}` : `, settling until block ${num(wk.settle_end)}`)
       : ""));
   }
-  if (ctx.chain.kind === "koinos") log(`Operator ${ctx.operator.getAddress()} Mana ${showKoin(await ctx.chain.mana(ctx.operator.getAddress()))}`);
+  // Questions you can still answer (from the public question files).
+  for (const f of dayFiles(ctx.P)) for (const q of f.data.questions ?? []) {
+    if (q.chainId === undefined || q.lockHeight <= height) continue;
+    log(`  open question #${q.chainId} (answers close in ~${((q.lockHeight - height) * 3 / 3600).toFixed(1)} h): ${q.text}`);
+    for (const o of q.options) log(`      ${String.fromCharCode(65 + o.index)}) ${o.label}`);
+  }
+  const bs = readJson(ctx.P.botState, null);
+  if (bs?.lastProduced) log(`Pool production: last block ${bs.lastProduced} (${Math.round((lib - bs.lastProduced) / 20)} min ago), ~${(productionRate(bs, lib) * DAY).toFixed(0)} blocks/day`);
+  else log(`Pool production: no block produced yet`);
+  if (ctx.chain.kind === "koinos") log(`Bot wallet ${ctx.operator.getAddress()} Mana ${showKoin(await ctx.chain.mana(ctx.operator.getAddress()))}`);
 }
 
 // ═══════════════════════════════ deploy ═══════════════════════════════
@@ -419,7 +507,10 @@ async function deploy(send: boolean) {
   const need = (k: string) => { if (!E[k]) throw new Error(`${k} is missing from .env`); return E[k]!; };
   const contractKey = Signer.fromWif(need("CONTRACT_WIF"));
   const operator = Signer.fromWif(need("OPERATOR_WIF"));
-  const owner = need("OWNER_ADDRESS"), seedOwner = E.SEED_OWNER_ADDRESS ?? owner;
+  const addrOf = (wif?: string) => (wif ? Signer.fromWif(wif).getAddress() : undefined);
+  const owner = E.OWNER_ADDRESS ?? addrOf(E.OWNER_WIF);
+  if (!owner) throw new Error("OWNER_WIF (or OWNER_ADDRESS) is missing from .env — run: npm run bot -- keys");
+  const seedOwner = E.SEED_OWNER_ADDRESS ?? addrOf(E.SEED_WIF) ?? owner;
   const provider = new Provider([rpc]);
   contractKey.provider = provider; operator.provider = provider;
   const P = paths(E.GEN_DIR ?? "game-data");
@@ -448,7 +539,18 @@ async function deploy(send: boolean) {
   log(`Network            ${rpc}${mainnet ? "   ⚠ MAINNET" : ""}`);
   log(`Contract address   ${C}   (holds ${showKoin(cKoin)} KOIN, ${showKoin(cVhp)} VHP — must be 0 before setup)`);
   log(`Code               ${WASM}, ${(wasm.length / 1024).toFixed(1)} KB, sha256 ${hash}`);
-  log(`Pays the Mana      operator ${operator.getAddress()} (has ${showKoin(opMana)} Mana; the upload needs ~${Math.ceil(wasm.length / 1024 * 0.8 + 5)})`);
+  // Upload cost from the chain's current resource prices (stored bytes + transaction bytes + a compute allowance).
+  const abiText = JSON.stringify(abi);
+  const bytes = wasm.length + abiText.length;
+  let estimate = toSat(Math.ceil(bytes / 1024 * 0.8 + 10));
+  try {
+    const d: any = (await provider.call("chain.get_resource_limits", {}) as any)?.resource_limit_data ?? {};
+    const disk = BigInt(d.disk_storage_cost ?? 0) * BigInt(bytes + 2_000);
+    const net = BigInt(d.network_bandwidth_cost ?? 0) * BigInt(Math.ceil(bytes * 1.4) + 4_000);
+    const comp = BigInt(d.compute_bandwidth_cost ?? 0) * 8_000_000n;
+    if (disk + net + comp > 0n) estimate = disk + net + comp;
+  } catch {}
+  log(`Pays the Mana      bot wallet ${operator.getAddress()} (has ${showKoin(opMana)} Mana; the upload needs about ${showKoin(estimate)}, plus ~2 for setup)`);
   log(`Owner              ${owner}`);
   log(`Seed owner         ${seedOwner}`);
   log(`Week 0 starts      block ${g.height} ≈ ${g.when} (average block ${(g.msPerBlock / 1000).toFixed(3)} s)`);
@@ -456,6 +558,7 @@ async function deploy(send: boolean) {
   log(`                   min stake ${showKoin(init.min_stake)} VHP, sponsored tx limit ${showKoin(init.max_sponsor_rc)} Mana`);
   log(`Tokens             KOIN ${tokens.koin}  VHP ${tokens.vhp}  PoB ${tokens.pob}`);
   if (cKoin > 0n || cVhp > 0n) throw new Error("The contract address already holds tokens; they would count as the first week's earnings. Use a fresh CONTRACT_WIF.");
+  if (!prior?.uploaded && opMana < (estimate * 13n) / 10n + toSat(2)) throw new Error(`The bot wallet needs about ${showKoin((estimate * 13n) / 10n + toSat(2))} Mana for the upload (with a 30% margin) but has ${showKoin(opMana)}. Send it more KOIN (Mana refills as KOIN sits there), then try again.`);
   if (!send) { log(`\nDry run only. Nothing was sent. Run again with --send to deploy.`); return; }
 
   const chain = new KoinosChain(rpc, C);
@@ -463,8 +566,8 @@ async function deploy(send: boolean) {
   if (!st.uploaded) {
     log("\n1/2 Uploading the contract (the operator pays the Mana, the contract key authorizes) ...");
     const c = new Contract({ id: C, abi, provider, signer: contractKey, bytecode: new Uint8Array(wasm) });
-    const { operation } = await c.deploy({ abi: JSON.stringify(abi), authorizesCallContract: true, authorizesTransactionApplication: true, authorizesUploadContract: true, onlyOperation: true } as any);
-    const tx = new (await import("koilib")).Transaction({ signer: operator, provider, options: { payer: operator.getAddress(), payee: operator.getAddress(), rcLimit: toSat(Math.min(Number(opMana) / 1e8 * 0.95, 60)).toString() } });
+    const { operation } = await c.deploy({ abi: abiText, authorizesCallContract: true, authorizesTransactionApplication: true, authorizesUploadContract: true, onlyOperation: true } as any);
+    const tx = new (await import("koilib")).Transaction({ signer: operator, provider, options: { payer: operator.getAddress(), payee: operator.getAddress(), rcLimit: (((estimate * 13n) / 10n) < (opMana * 95n) / 100n ? (estimate * 13n) / 10n : (opMana * 95n) / 100n).toString() } });
     await tx.pushOperation(operation);
     await tx.prepare();
     let t: any = tx.transaction;
@@ -493,37 +596,129 @@ async function deploy(send: boolean) {
   log(`Next: register the node's producer key (admin register_key), add the seed (admin seed_deposit_vhp / seed_deposit_koin), start the bot.`);
 }
 
-// ═══════════════════════════════ admin ═══════════════════════════════
+// ═══════════════════════════════ actions with your own keys (owner / seed / player) ═══════════════════════════════
 
-async function admin(method: string, json: string, as: string, send: boolean) {
+/** Whole-token amount ("1000", "0.5") → the chain's 8-decimal units, exactly (no floating point). */
+export function units(amount: string): string {
+  const m = String(amount).trim().match(/^(\d+)(?:\.(\d{0,8}))?$/);
+  if (!m) throw new Error(`"${amount}" is not an amount (examples: 1000 or 0.5)`);
+  return (BigInt(m[1]) * 100_000_000n + BigInt((m[2] ?? "").padEnd(8, "0"))).toString();
+}
+
+/** A producer public key in any common text form (base64, base64url or hex) → the base64url the ABI expects. */
+export function normalizeKey(k: string): string {
+  const t = k.trim();
+  let bytes: Buffer;
+  if (/^(0x)?[0-9a-fA-F]{66}$/.test(t)) bytes = Buffer.from(t.replace(/^0x/, ""), "hex");
+  else bytes = Buffer.from(t.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+  if (bytes.length !== 33 || (bytes[0] !== 2 && bytes[0] !== 3)) throw new Error("That does not look like a producer PUBLIC key (33-byte compressed key). Never paste a private key.");
+  return bytes.toString("base64url");
+}
+
+const ROLES: Record<string, { key: string; fallback?: string }> = {
+  owner: { key: "OWNER_WIF" }, seed: { key: "SEED_WIF", fallback: "OWNER_WIF" }, operator: { key: "OPERATOR_WIF" }, player: { key: "PLAYER_WIF" },
+};
+
+async function act(role: string, method: string, args: any, send: boolean) {
   const P = paths(E.GEN_DIR ?? "game-data");
   const dep = readJson(P.deployment, null);
   if (!dep?.contract) throw new Error(`${P.deployment} not found — deploy first.`);
   const rpc = E.RPC ?? dep.rpc;
   if (send && !/harbinger/i.test(rpc) && E.CONFIRM_MAINNET !== "yes") throw new Error("MAINNET: add CONFIRM_MAINNET=yes to .env first.");
-  const keyName = ({ owner: "OWNER_WIF", seed: "SEED_WIF", operator: "OPERATOR_WIF" } as any)[as];
-  if (!keyName) throw new Error("--as must be owner, seed or operator");
-  if (!E[keyName]) throw new Error(`${keyName} is missing from .env`);
-  const signer = Signer.fromWif(E[keyName]!);
+  const r0 = ROLES[role];
+  if (!r0) throw new Error(`--as must be one of ${Object.keys(ROLES).join(", ")}`);
+  const wif = E[r0.key] ?? (r0.fallback ? E[r0.fallback] : undefined);
+  if (!wif) throw new Error(`${r0.key} is missing from .env`);
+  const signer = Signer.fromWif(wif);
   const chain = new KoinosChain(rpc, dep.contract);
   signer.provider = chain.provider;
   const abi = loadAbi();
   if (!abi.methods[method] || abi.methods[method].read_only) throw new Error(`unknown or read-only method ${method}`);
-  const args = JSON.parse(json || "{}");
   const calls: Call[] = [];
   // Deposits pull tokens with transfer(from → contract), which the token only allows after an approve in the same transaction.
   const pull: Record<string, [string, string]> = { seed_deposit_vhp: [dep.vhp, "VHP"], seed_deposit_koin: [dep.koin, "KOIN"], deposit_vhp: [dep.vhp, "VHP"], deposit_koin: [dep.koin, "KOIN"] };
   if (pull[method]) calls.push({ contract: pull[method][0], abi: tokenAbi, method: "approve", args: { owner: signer.getAddress(), spender: dep.contract, value: String(args.amount) } });
   calls.push({ method, args });
-  log(`As ${as} (${signer.getAddress()}) on ${rpc}:`);
+  log(`As ${role} (${signer.getAddress()}) on ${rpc}:`);
   for (const c of calls) log(`  ${c.contract ? `${pull[method][1]}.` : ""}${c.method} ${JSON.stringify(c.args)}`);
-  if (method === "seed_deposit_koin") log(`  note: moving KOIN needs the sender's Mana ≥ the amount (${showKoin(args.amount)}); the Mana moves with it.`);
-  if (!send) { log("Dry run only. Add --send to send it."); return; }
+  if (method === "seed_deposit_koin" || method === "deposit_koin") log(`  note: moving KOIN needs this wallet's Mana ≥ the amount (${showKoin(args.amount)}); the Mana moves with it.`);
+  if (!send) { log("\nDry run only — nothing was sent. Add --send to send it."); return; }
   const r = await chain.send(calls, [signer], { rcLimitKoin: 5 });
-  log(r.ok ? `✔ sent (Mana ${showKoin(r.rcUsed)})  ${r.txId}` : `✖ ${r.error}`);
+  log(r.ok ? `✔ done (Mana used ${showKoin(r.rcUsed)})  transaction ${r.txId}` : `✖ ${r.error}`);
   if (!r.ok) process.exitCode = 1;
 }
 
+/** Friendly commands (amounts in whole KOIN / VHP). Each is a dry run unless --send is added. */
+async function friendly(cmd: string, a: string[], send: boolean): Promise<boolean> {
+  const me = (role: string) => {
+    const r0 = ROLES[role];
+    const wif = E[r0.key] ?? (r0.fallback ? E[r0.fallback] : undefined);
+    if (!wif) throw new Error(`${r0.key} is missing from .env`);
+    return Signer.fromWif(wif).getAddress();
+  };
+  const need = (i: number, what: string) => { if (a[i] === undefined || a[i].startsWith("--")) throw new Error(`missing ${what}`); return a[i]; };
+  switch (cmd) {
+    case "register-key": await act("owner", "register_key", { public_key: normalizeKey(need(0, "the node's PUBLIC key")) }, send); return true;
+    case "seed-vhp": await act("seed", "seed_deposit_vhp", { amount: units(need(0, "amount")) }, send); return true;
+    case "seed-koin": await act("seed", "seed_deposit_koin", { amount: units(need(0, "amount")) }, send); return true;
+    case "deposit": await act("player", "deposit_vhp", { from: me("player"), amount: units(need(0, "amount")) }, send); return true;
+    case "deposit-koin": await act("player", "deposit_koin", { from: me("player"), amount: units(need(0, "amount")) }, send); return true;
+    case "withdraw": await act("player", "withdraw", { to: me("player"), amount: units(need(0, "amount")) }, send); return true;
+    case "answer": {
+      const letter = need(1, "the option letter (A, B, C …)").toUpperCase();
+      await act("player", "answer", { player: me("player"), question_id: Number(need(0, "question number")), option: letter.charCodeAt(0) - 65 }, send); return true;
+    }
+    case "claim": await act("player", "claim", { player: me("player"), week: need(0, "week number") }, send); return true;
+    case "claim-fee": await act("owner", "claim_creator_fee", { to: a[0] && !a[0].startsWith("--") ? a[0] : me("owner") }, send); return true;
+    case "claim-share": await act("owner", "claim_owner_share", { to: a[1] && !a[1].startsWith("--") ? a[1] : me("owner"), amount: units(need(0, "amount")) }, send); return true;
+    case "void": await act("owner", "correct_question", { id: Number(need(0, "question number")), outcome: 1000, data_hash: "0x" + sha256hex(`voided by the owner: ${a.slice(1).filter((x) => !x.startsWith("--")).join(" ") || "no reason given"}`) }, send); return true;
+    case "sponsor-limit": await act("owner", "set_sponsor_limit", { max_sponsor_rc: units(need(0, "KOIN of Mana (0 = off)")) }, send); return true;
+    case "pause": await act("owner", "set_paused", { paused: need(0, "on or off") === "on" }, send); return true;
+  }
+  return false;
+}
+
+// ═══════════════════════════════ keys ═══════════════════════════════
+
+/** Creates the keys this project needs in the root .env (never prints a private key). Re-uses the probe wallets:
+ *  the probe owner (with its KOIN) becomes the bot's wallet, the probe helper becomes the test player. */
+function keys() {
+  const file = path.resolve(".env");
+  let text = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+  const has = (k: string) => new RegExp(`^${k}=`, "m").test(text);
+  const add = (k: string, v: string) => { text = (text.trim() ? text.replace(/\s*$/, "\n") : "") + `${k}=${v}\n`; E[k] = v; };
+  const added: string[] = [];
+  if (!has("RPC")) add("RPC", "https://api.koinos.io");
+  if (!has("CONFIRM_MAINNET")) add("CONFIRM_MAINNET", "yes");
+  const probe: Record<string, string> = {};
+  if (fs.existsSync("probes/.env")) for (const line of fs.readFileSync("probes/.env", "utf8").split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (m) probe[m[1]] = m[2];
+  }
+  if (!has("OPERATOR_WIF") && probe.OWNER_WIF) { add("OPERATOR_WIF", probe.OWNER_WIF); added.push("OPERATOR_WIF (copied from the probe owner wallet)"); }
+  if (!has("PLAYER_WIF") && probe.HELPER_WIF) { add("PLAYER_WIF", probe.HELPER_WIF); added.push("PLAYER_WIF (copied from the probe helper wallet)"); }
+  for (const k of ["OPERATOR_WIF", "PLAYER_WIF", "CONTRACT_WIF", "OWNER_WIF"]) {
+    if (has(k)) continue;
+    add(k, Signer.fromSeed(crypto.randomBytes(32).toString("hex")).getPrivateKey("wif"));
+    added.push(`${k} (new)`);
+  }
+  fs.writeFileSync(file, text);
+  try { fs.chmodSync(file, 0o600); } catch {}
+  const addr = (k: string) => Signer.fromWif(E[k] ?? text.match(new RegExp(`^${k}=(.*)$`, "m"))![1].trim()).getAddress();
+  log(added.length ? `Added to ${file}:\n  ${added.join("\n  ")}` : `All keys already exist in ${file}.`);
+  log(`
+  Role                      Address                                 What it does
+  contract (CONTRACT_WIF)   ${addr("CONTRACT_WIF")}      the game itself. Must stay EMPTY until deploy. Used once.
+  admin    (OWNER_WIF)      ${addr("OWNER_WIF")}      owner + seed owner: fees, corrections, node key, the seed
+  bot      (OPERATOR_WIF)   ${addr("OPERATOR_WIF")}      posts/resolves questions; pays its own Mana (needs KOIN)
+  player   (PLAYER_WIF)     ${addr("PLAYER_WIF")}      test player for the soft launch
+
+The private keys are ONLY in: ${file}
+  • Back up OWNER_WIF and CONTRACT_WIF offline (write them on paper or a password manager). Lose OWNER_WIF and nobody
+    can claim the fee/owner share, correct a question or upgrade the code.
+  • Never paste a private key in a chat, email or GitHub. Only OPERATOR_WIF ever goes into GitHub (as a secret).
+  • Open the file with:  notepad .env`);
+}
 // ═══════════════════════════════ wiring ═══════════════════════════════
 
 const require = createRequire(import.meta.url);
@@ -561,7 +756,11 @@ function liveCtx(dryRun: boolean): Ctx {
   const operator = E.OPERATOR_WIF ? Signer.fromWif(E.OPERATOR_WIF) : Signer.fromSeed("read-only placeholder");
   operator.provider = chain.provider;
   if (!dryRun && !E.OPERATOR_WIF) throw new Error("OPERATOR_WIF is missing (use --dry-run to look without a key).");
-  return { chain, operator, P, dryRun, generator: generatorRunner(P.dir), checkpoint: gitCheckpoint(P.dir) };
+  return {
+    chain, operator, P, dryRun, generator: generatorRunner(P.dir), checkpoint: gitCheckpoint(P.dir), problems: [],
+    // The same block history the question generator uses (game-data/blocks.csv), topped up to the newest final block.
+    recentBlocks: async () => (await syncBlocks(chain.provider, path.join(P.dir, "blocks.csv"), 26)).blocks,
+  };
 }
 
 async function main() {
@@ -573,12 +772,24 @@ async function main() {
     const ctx = liveCtx(flag("--dry-run"));
     log(`tick at ${new Date().toISOString()}${ctx.dryRun ? " (dry run)" : ""}`);
     await tick(ctx);
-    return status(ctx);
+    await status(ctx);
+    if (ctx.problems.length) {
+      log(`\n⚠ NEEDS ATTENTION (${ctx.problems.length}):\n${ctx.problems.map((p) => "  • " + p).join("\n")}`);
+      process.exitCode = 1; // a failed scheduled run makes GitHub email you
+    }
+    return;
   }
   if (cmd === "deploy") return deploy(flag("--send"));
-  if (cmd === "admin") return admin(rest[0], rest[1] && !rest[1].startsWith("--") ? rest[1] : "{}", opt("--as", "owner")!, flag("--send"));
+  if (cmd === "keys") return keys();
+  if (cmd === "admin") {
+    // admin <method> key=value key=value … --as owner|seed|operator|player [--send]
+    const args: any = {};
+    for (const kv of rest.slice(1)) { const m = kv.match(/^([a-z_]+)=(.*)$/); if (m) args[m[1]] = m[2]; }
+    return act(opt("--as", "owner")!, rest[0], args, flag("--send"));
+  }
+  if (await friendly(cmd, rest, flag("--send"))) return;
   if (cmd === "rehearse") { const { rehearse } = await import("./rehearse.ts"); return rehearse({ weeks: Number(opt("--weeks", "3")), verbose: flag("--verbose") }); }
-  throw new Error(`Unknown command "${cmd}". Use status, tick, deploy, admin or rehearse.`);
+  throw new Error(`Unknown command "${cmd}". See bot/README.md for the list of commands.`);
 }
 
 if (process.argv[1] && /bot\.ts$/.test(process.argv[1])) {

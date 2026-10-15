@@ -35,6 +35,7 @@ const MODEL_VERSION = "v5";
 
 type Game = {
   rpc: string;
+  excludeProducers?: string[]; // producers never used in questions (e.g. the game's own pool, the operator's own node)
   weekOneStart: string; // YYYY-MM-DD (UTC); day 0 of week 1
   lockBlocks: number; // answers close this many blocks after release; the window starts right after
   questionsPerDay: number[]; // 7 entries
@@ -89,7 +90,8 @@ function parseArgs() {
   }
   const n = (k: string) => (o[k] === undefined ? undefined : Number(o[k]));
   return { cmd, date: o.label ?? o.date ?? new Date().toISOString().slice(0, 10), force: o.force === "true" || "force" in o, offline: "offline" in o,
-    week: n("week"), day: n("day"), maxLock: n("max-lock"), maxEnd: n("max-end") };
+    week: n("week"), day: n("day"), maxLock: n("max-lock"), maxEnd: n("max-end"),
+    exclude: o.exclude ? o.exclude.split(",").map((x) => x.trim()).filter(Boolean) : [] };
 }
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -102,7 +104,7 @@ const short = (a: string) => a.slice(0, 8) + "…";
 
 // ───────────────────────── The model (same as backtest v5) ─────────────────────────
 
-function buildModel(blocks: Blk[], g: Game) {
+function buildModel(blocks: Blk[], g: Game, excluded: Set<string> = new Set()) {
   const m = g.model;
   const N = blocks.length;
   const h0 = blocks[0].h;
@@ -184,6 +186,9 @@ function buildModel(blocks: Blk[], g: Game) {
     if (memo.has(q)) return memo.get(q)!;
     const status = new Map<number, string>(), cand: number[] = [];
     for (const p of tracked.filter((p) => cnt(p, q - R, q) > 0)) {
+      // Never ask about producers tied to the game (the pool itself, the operator's own node): they could
+      // influence the answer by switching their node off.
+      if (excluded.has(names[p])) { status.set(p, "excluded (tied to the game)"); continue; }
       const r = rateAt(p, q);
       if (r * BLOCKS_PER_DAY < m.minSmallDaily || (!smallWindow(r) && r * BLOCKS_PER_DAY < m.minDaily)) { status.set(p, "too small"); continue; }
       if (cnt(p, q - R, q - R / 2) === 0 || cnt(p, q - R / 2, q) === 0) { status.set(p, "new (<2 days)"); continue; }
@@ -220,7 +225,7 @@ function buildModel(blocks: Blk[], g: Game) {
   // that is only briefly filtered).
   const tailAt = (q: number) => {
     const st = classesAt(q).status;
-    return tracked.filter((p) => (st.get(p) === "smaller" || st.get(p) === "too small") && rateAt(p, q) > 0);
+    return tracked.filter((p) => (st.get(p) === "smaller" || st.get(p) === "too small") && rateAt(p, q) > 0 && !excluded.has(names[p]));
   };
   const calibCache = new Map<string, Array<{ p: number; z: number }>>();
   const singleCalib = (cls: "core" | "small", W: number) => {
@@ -364,7 +369,8 @@ async function run() {
   console.log(`\n=== Releasing questions for ${args.date} — week ${week}, day ${day + 1} (${tier}), ${count} questions ===`);
   if (dayNumber < 0) console.log(`(Practice run: the game starts ${g.weekOneStart}.)`);
 
-  const M = buildModel(blocks, g);
+  const excluded = new Set<string>([...(g.excludeProducers ?? []), ...(args.exclude ?? [])]);
+  const M = buildModel(blocks, g, excluded);
   const st = loadState();
   const voided = new Set(st.voidedByWeek[String(week)] ?? []);
   const rand = seeded(`${args.date}:${blocks[blocks.length - 1].h}`);

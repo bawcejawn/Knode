@@ -105,10 +105,14 @@ export class KoinosChain implements Chain {
       let t: any = tx.transaction;
       for (const s of signers) t = await s.signTransaction(t);
       const { receipt, transaction } = await this.provider.sendTransaction(t);
-      await transaction.wait("byBlock", 180_000).catch(() => undefined);
       if ((receipt as any)?.reverted) {
+        await transaction.wait("byBlock", 60_000).catch(() => undefined); // a reverted transaction still uses its nonce
         return { ok: false, rcUsed: String((receipt as any).rc_used ?? 0), txId: t.id, error: `reverted: ${JSON.stringify((receipt as any).logs ?? [])}` };
       }
+      // Only a transaction seen in a block counts as done. If it is not confirmed in time, report a failure:
+      // the bot re-checks the chain on its next run instead of assuming it went through.
+      const confirmed = await transaction.wait("byBlock", 180_000).then(() => true, () => false);
+      if (!confirmed) return { ok: false, txId: t.id, error: "sent, but not seen in a block within 3 minutes (will be re-checked next run)" };
       return { ok: true, rcUsed: String((receipt as any)?.rc_used ?? 0), txId: t.id };
     } catch (e) {
       return { ok: false, error: (e as Error).message ?? String(e) };
