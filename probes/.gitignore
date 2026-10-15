@@ -4,3 +4,6 @@ build/
 probe-state.json
 probes-output/
 abi/
+assembly/index.ts
+assembly/*.boilerplate.ts
+assembly/proto/*.ts
