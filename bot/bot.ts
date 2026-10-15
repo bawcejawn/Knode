@@ -475,28 +475,27 @@ export async function status(ctx: Ctx) {
 
 const WASM = "game/build/release/contract.wasm";
 
-async function tokenAddresses(provider: Provider): Promise<{ koin: string; vhp: string; pob: string }> {
-  if (E.KOIN_ADDRESS && E.VHP_ADDRESS && E.POB_ADDRESS) return { koin: E.KOIN_ADDRESS, vhp: E.VHP_ADDRESS, pob: E.POB_ADDRESS };
-  // Every block mints KOIN to its signer and burns VHP from it: the busiest minter/burner are the KOIN/VHP contracts,
-  // and the burner of KOIN in a burn transaction is PoB. PoB is taken from .env or the probe results.
-  const head: any = await provider.getHeadInfo();
-  const h = Number(head.head_topology.height);
-  const res: any = await provider.call("block_store.get_blocks_by_height", {
-    head_block_id: head.head_topology.id, ancestor_start_height: String(h - 30), num_blocks: 30, return_block: true, return_receipt: true,
-  });
-  const mint = new Map<string, number>(), burn = new Map<string, number>();
-  for (const it of res.block_items ?? []) {
-    const signer = it.block?.header?.signer;
-    for (const ev of it.receipt?.events ?? []) {
-      if (!ev.impacted?.includes(signer)) continue;
-      if (String(ev.name).endsWith("mint_event")) mint.set(ev.source, (mint.get(ev.source) ?? 0) + 1);
-      if (String(ev.name).endsWith("burn_event")) burn.set(ev.source, (burn.get(ev.source) ?? 0) + 1);
-    }
-  }
-  const top = (m: Map<string, number>) => [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-  const probe = readJson("probes/probe-state.json");
-  const koin = top(mint) ?? probe.koin, vhp = top(burn) ?? probe.vhp, pob = E.POB_ADDRESS ?? probe.pob;
-  if (!koin || !vhp || !pob) throw new Error("Could not find the KOIN/VHP/PoB contracts — set KOIN_ADDRESS, VHP_ADDRESS and POB_ADDRESS in .env");
+// Koinos mainnet system contracts (KOIN and VHP confirmed against the explorer). The game contract itself never uses
+// these: on-chain it asks the chain for "koin", "vhp" and "pob" by name. The bot only needs KOIN and VHP to approve
+// deposits; PoB is recorded for reference.
+const MAINNET = { koin: "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK", vhp: "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", pob: "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv" };
+
+async function tokenAddresses(provider: Provider, mainnet: boolean): Promise<{ koin: string; vhp: string; pob: string }> {
+  const koin = E.KOIN_ADDRESS ?? (mainnet ? MAINNET.koin : undefined);
+  const vhp = E.VHP_ADDRESS ?? (mainnet ? MAINNET.vhp : undefined);
+  const pob = E.POB_ADDRESS ?? (mainnet ? MAINNET.pob : "");
+  if (!koin || !vhp) throw new Error("Set KOIN_ADDRESS and VHP_ADDRESS in .env for this network.");
+  // Sanity check against the chain: every block mints KOIN to its producer and burns VHP from it.
+  try {
+    const head: any = await provider.getHeadInfo();
+    const h = Number(head.head_topology.height);
+    const res: any = await provider.call("block_store.get_blocks_by_height", {
+      head_block_id: head.head_topology.id, ancestor_start_height: String(h - 10), num_blocks: 10, return_block: false, return_receipt: true,
+    });
+    const sources = new Set<string>();
+    for (const it of res.block_items ?? []) for (const ev of it.receipt?.events ?? []) sources.add(ev.source);
+    if (sources.size && (!sources.has(koin) || !sources.has(vhp))) log(`⚠ Recent blocks don't show KOIN ${koin} / VHP ${vhp} activity — double-check these addresses.`);
+  } catch { /* the check is only a hint */ }
   return { koin, vhp, pob };
 }
 
@@ -537,7 +536,7 @@ async function deploy(send: boolean) {
   const wasm = fs.readFileSync(WASM);
   if (wasm.indexOf(Buffer.from("TEST LEDGER", "utf16le")) !== -1) throw new Error("This is the TEST build (simulated token ledger). Run `npm run build` in the game folder.");
   const abi = loadAbi();
-  const tokens = await tokenAddresses(provider);
+  const tokens = await tokenAddresses(provider, mainnet);
   const C = contractKey.getAddress();
   const koinC = new Contract({ id: tokens.koin, abi: tokenAbi as any, provider });
   const vhpC = new Contract({ id: tokens.vhp, abi: tokenAbi as any, provider });
@@ -579,6 +578,8 @@ async function deploy(send: boolean) {
 
   const chain = new KoinosChain(rpc, C);
   const st: any = { network: mainnet ? "mainnet" : "harbinger", rpc, contract: C, owner, operator: operator.getAddress(), seedOwner, ...tokens, wasmSha256: hash, ...prior };
+  // If an earlier run's upload went through but the confirmation timed out, the code is already there: don't upload twice.
+  if (!st.uploaded) { try { await chain.read("get_state", {}); st.uploaded = true; log("\n1/2 The contract code is already on chain."); } catch { /* not uploaded yet */ } }
   if (!st.uploaded) {
     log("\n1/2 Uploading the contract (the operator pays the Mana, the contract key authorizes) ...");
     const c = new Contract({ id: C, abi, provider, signer: contractKey, bytecode: new Uint8Array(wasm) });
@@ -590,8 +591,8 @@ async function deploy(send: boolean) {
     t = await operator.signTransaction(t);
     t = await contractKey.signTransaction(t);
     const { receipt, transaction } = await provider.sendTransaction(t);
-    await transaction.wait("byBlock", 180_000);
     if ((receipt as any)?.reverted) throw new Error(`upload reverted: ${JSON.stringify((receipt as any).logs)}`);
+    await transaction.wait("byBlock", 300_000).catch(() => { throw new Error("The upload was sent but not confirmed within 5 minutes. Wait a few minutes and run the same deploy --send command again: it will see the code and continue."); });
     log(`    uploaded — Mana used ${showKoin((receipt as any).rc_used)}`);
     st.uploaded = true; st.uploadTx = t.id;
     writeJson(P.deployment, st);
@@ -609,7 +610,7 @@ async function deploy(send: boolean) {
     genesisApprox: g.when, deployedAt: new Date().toISOString() });
   writeJson(P.deployment, st);
   log(`\nDone. Saved ${P.deployment} (commit it — it is public information).`);
-  log(`Next: register the node's producer key (admin register_key), add the seed (admin seed_deposit_vhp / seed_deposit_koin), start the bot.`);
+  log(`Next (see LAUNCH.md): commit game-data/deployment.json, add the seed (seed-vhp / seed-koin), register the node key (register-key node), turn on the bot.`);
 }
 
 // ═══════════════════════════════ actions with your own keys (owner / seed / player) ═══════════════════════════════
