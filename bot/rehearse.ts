@@ -23,6 +23,8 @@ import { readCompact, writeCsv } from "../common.ts";
 const SIM_WASM = "game/build/sim/contract.wasm";
 const VHP = 100_000_000n;
 const HOUR = 1_200;
+/** Numbers from contract results: protobuf leaves out zero values, so a missing field means 0. */
+const N = (x: any) => Number(x ?? 0);
 
 let seed = 12345;
 const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
@@ -122,13 +124,13 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
 
     // ── players ──
     const st = await sim.read("get_state", {});
-    const next = Number(st.totals.next_question_id ?? 0);
+    const next = N(st.totals.next_question_id ?? 0);
     const open: any[] = [];
     for (let id = Math.max(0, next - 8); id < next; id++) {
       const q = (await sim.read("get_question", { id })).question;
-      if (q && h < Number(q.lock_height) && Number(q.outcome ?? 0) === 0) open.push({ id, k: Number(q.k) });
+      if (q && h < N(q.lock_height) && N(q.outcome ?? 0) === 0) open.push({ id, k: N(q.k) });
     }
-    const fin = Number(st.totals.weeks_finalized ?? 0);
+    const fin = N(st.totals.weeks_finalized ?? 0);
     for (const p of players) {
       const A = p.key.getAddress();
       if (p.habit === "late" && p.stake === 0n && week === 0 && dayIdx === 2) {
@@ -152,7 +154,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
           const r = await sim.read("get_player", { player: A, week: String(w) });
           if (r.entry?.eligible && !r.entry.claimed) {
             const wk = (await sim.read("get_week", { week: String(w) })).week;
-            if (wk.rolled_over || Number(r.entry.points) < Number(wk.cutoff)) continue;
+            if (wk.rolled_over || N(r.entry.points) < N(wk.cutoff)) continue;
             const before = await sim.ledgerGet(2, A);
             if (await act(p.key, "claim", { player: A, week: String(w) })) p.claimed += (await sim.ledgerGet(2, A)) - before;
           }
@@ -197,10 +199,10 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
 
     // ── per-week bookkeeping ──
     const s2 = await sim.read("get_state", {});
-    const closed = Number(s2.totals.weeks_closed);
+    const closed = N(s2.totals.weeks_closed);
     while (lastClosed < closed) {
       const wk = (await sim.read("get_week", { week: String(lastClosed) })).week;
-      closeHeights.push(Number(wk.settle_start));
+      closeHeights.push(N(wk.settle_start));
       lastClosed++;
     }
   }
@@ -210,8 +212,8 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   const T = st.totals;
   const W = opts.weeks;
   console.log("");
-  check(Number(T.weeks_closed) >= W, `all ${W} weeks closed automatically (closed: ${T.weeks_closed})`);
-  check(Number(T.weeks_finalized) >= W, `all ${W} weeks finalized automatically (finalized: ${T.weeks_finalized})`);
+  check(N(T.weeks_closed) >= W, `all ${W} weeks closed automatically (closed: ${T.weeks_closed})`);
+  check(N(T.weeks_finalized) >= W, `all ${W} weeks finalized automatically (finalized: ${T.weeks_finalized})`);
   for (let w = 0; w < W; w++) {
     const due = genesis + (w + 1) * 7 * DAY + DAY;
     check(closeHeights[w] !== undefined && closeHeights[w] - due <= HOUR + 60, `week ${w} closed on time (${closeHeights[w] - due} blocks after it was due)`);
@@ -221,26 +223,26 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   const files = fs.readdirSync(P.questions).sort().map((f) => JSON.parse(fs.readFileSync(path.join(P.questions, f), "utf8")));
   const local = files.flatMap((d: any) => d.questions);
   const posted = local.filter((q: any) => q.chainId !== undefined);
-  const nq = Number(T.next_question_id);
+  const nq = N(T.next_question_id);
   check(posted.length + 1 === nq, `every on-chain question is accounted for: ${posted.length} from the generator + 1 stray = ${nq}`);
   check(new Set(posted.map((q: any) => q.chainId)).size === posted.length, "no question was posted twice (the crash was recovered by matching hashes)");
   let mismatch = 0, unresolved = 0, outOfWeek = 0, voids = 0;
   for (const q of posted) {
     const oc = (await sim.read("get_question", { id: q.chainId })).question;
-    const w = Number(oc.week);
-    if (Number(oc.outcome) === 0) { if (w < W) { unresolved++; console.log(`  unresolved: ${q.id} (#${q.chainId})`); } continue; }
+    const w = N(oc.week);
+    if (N(oc.outcome) === 0) { if (w < W) { unresolved++; console.log(`  unresolved: ${q.id} (#${q.chainId})`); } continue; }
     if (!q.result) { mismatch++; console.log(`  ${q.id} (#${q.chainId}) is resolved on-chain (${oc.outcome}) but has no local result`); continue; }
     const mine = q.result.void ? 1000 : q.result.option + 1;
-    if (mine !== Number(oc.outcome)) mismatch++;
+    if (mine !== N(oc.outcome)) mismatch++;
     if (q.result.void) voids++;
     if (String(oc.params_hash).replace(/^0x/, "") !== q.paramsHash) mismatch++;
-    if (Number(oc.lock_height) > genesis + (w + 1) * 7 * DAY || Number(oc.window_end) + 60 + HOUR > genesis + (w + 1) * 7 * DAY + DAY) outOfWeek++;
+    if (N(oc.lock_height) > genesis + (w + 1) * 7 * DAY || N(oc.window_end) + 60 + HOUR > genesis + (w + 1) * 7 * DAY + DAY) outOfWeek++;
   }
   check(unresolved === 0, `every question of a finished week was resolved (${posted.length} questions, ${voids} void)`);
   check(mismatch === 0, "every on-chain outcome and params hash equals the generator's published result");
   check(outOfWeek === 0, "every question closed for answers inside its week and finished in time for the week to close");
   let strayVoid = false;
-  for (let id = 0; id < nq; id++) { const q = (await sim.read("get_question", { id })).question; if (String(q.params_hash) === strayHash) strayVoid = Number(q.outcome) === 1000; }
+  for (let id = 0; id < nq; id++) { const q = (await sim.read("get_question", { id })).question; if (String(q.params_hash) === strayHash) strayVoid = N(q.outcome) === 1000; }
   check(strayVoid, "the stray question was resolved as VOID, so its week could close");
   const lateSkips = local.filter((q: any) => q.postSkipped).length;
   const dayFilesSkipped = files.filter((d: any) => d.skipped).length;
@@ -252,15 +254,15 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     const rows = await allPlayers(sim, w);
     const entries = rows.filter((r) => r.entry);
     const outcome = new Map<number, number>();
-    for (let id = 0; id < nq; id++) outcome.set(id, Number((await sim.read("get_question", { id })).question.outcome));
+    for (let id = 0; id < nq; id++) outcome.set(id, N((await sim.read("get_question", { id })).question.outcome));
     const scored = entries.map((r) => {
       const e = r.entry;
       let pts = 0, counted = 0;
-      if (!e.voided) for (const a of e.answers ?? []) { const o = outcome.get(Number(a.question_id))!; if (o === 1000) continue; counted++; if (o === Number(a.option) + 1) pts++; }
+      if (!e.voided) for (const a of e.answers ?? []) { const o = outcome.get(N(a.question_id))!; if (o === 1000) continue; counted++; if (o === N(a.option) + 1) pts++; }
       return { addr: r.address, pts, eligible: !e.voided && counted > 1 && BigInt(e.stake) >= VHP, stake: BigInt(e.stake), e };
     });
     const allSettled = entries.every((r) => r.entry.settled);
-    const pointsMatch = scored.every((s) => s.pts === Number(s.e.points) && s.eligible === s.e.eligible);
+    const pointsMatch = scored.every((s) => s.pts === N(s.e.points) && s.eligible === s.e.eligible);
     const elig = scored.filter((s) => s.eligible);
     const total = elig.reduce((s, x) => s + x.stake, 0n);
     let cutoff = 0, cum = 0n;
@@ -271,7 +273,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     const onWeight = (BigInt(wk.weight_hi) << 64n) + BigInt(wk.weight_lo);
     check(allSettled, `week ${w}: all ${entries.length} entries settled (players who never came back were settled by the bot)`);
     check(pointsMatch, `week ${w}: every player's points and eligibility match an independent recount`);
-    check(Number(wk.cutoff) === cutoff && Number(wk.winners) === winners.length && onWeight === weight,
+    check(N(wk.cutoff) === cutoff && N(wk.winners) === winners.length && onWeight === weight,
       `week ${w}: winners match the independent recount — cutoff ${cutoff} pts, ${winners.length} winner(s) holding ≥30% of ${showKoin(total)} eligible VHP`);
     let payOk = true;
     for (const s of winners) {
@@ -298,7 +300,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   const holdings = BigInt(st.vhp_balance) + BigInt(st.koin_balance);
   const owed = ["total_stake", "seed_vhp", "seed_koin", "owner_share", "creator_fee", "pots_outstanding"].reduce((s, k) => s + BigInt(T[k]), 0n);
   let gains = 0n, rolled = 0n, claimedOnChain = 0n;
-  for (let w = 0; w < Number(T.weeks_closed); w++) {
+  for (let w = 0; w < N(T.weeks_closed); w++) {
     const wk = (await sim.read("get_week", { week: String(w) })).week;
     gains += BigInt(wk.gain);
     if (wk.rolled_over) rolled += BigInt(wk.pot);
