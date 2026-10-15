@@ -37,7 +37,7 @@ try { $null = git --version } catch { throw "git is missing. Install Git for Win
 Ok "git is installed"
 $driveName = (Split-Path -Qualifier $Root).TrimEnd(':')
 $free = (Get-PSDrive $driveName).Free
-$haveData = Test-Path (Join-Path $Root "basedir\chain")
+$haveData = (Test-Path (Join-Path $Root "basedir\chain")) -and (Test-Path (Join-Path $Root "basedir\block_store"))
 # Room needed: the snapshot archive (~61 GB) plus the two databases the producer uses, unpacked. The other three
 # databases in the archive are skipped and the archive is deleted afterwards. 140 GB leaves a safe margin.
 $needGB = if ($haveData) { 5 } else { 140 }
@@ -87,19 +87,34 @@ if ($haveData) {
   Ok "chain data already present - skipping the snapshot"
 } else {
   $idx = Invoke-RestMethod "https://snapshots.armana.io/index.json"
-  $candidates = @()
+  $candidates = @(); $listed = @()
   foreach ($p in $idx.PSObject.Properties) {
-    if ($p.Name -match 'retire|delet|old') { continue }
-    foreach ($s in @($p.Value)) { if ($s -and $s.url -and $s.sha256 -and $s.height) { $candidates += $s } }
+    foreach ($s in @($p.Value)) {
+      if (-not ($s -and $s.url -and $s.sha256 -and $s.height)) { continue }
+      $listed += $s
+      if ($p.Name -notmatch 'retire|delet|old') { $candidates += $s }
+    }
   }
   $snap = $candidates | Sort-Object { [int64]$_.height } -Descending | Select-Object -First 1
+  # A download already started keeps going, even if a newer snapshot appeared meanwhile (old ones stay up for a day).
+  $partial = Get-ChildItem $Root -Filter "koinos-mainnet-*.tar.gz" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  if ($partial) {
+    $match = $listed | Where-Object { $_.name -eq $partial.Name } | Select-Object -First 1
+    if ($match) { $snap = $match } else { Remove-Item $partial.FullName }
+  }
   if (-not $snap) { throw "Couldn't read the snapshot list at snapshots.armana.io/index.json" }
   $file = Join-Path $Root $snap.name
   Note ("Newest snapshot: block {0:N0}, {1:N1} GB - this download takes a while; if it stops, run this script again and it continues where it left off." -f [int64]$snap.height, ([double]$snap.size_bytes / 1GB))
   $done = (Test-Path $file) -and ((Get-Item $file).Length -eq [int64]$snap.size_bytes)
   if (-not $done) {
-    curl.exe -L --fail --retry 5 -C - -o $file $snap.url
-    if ($LASTEXITCODE -ne 0) { throw "The download stopped. Run this script again to continue it." }
+    # --ssl-no-revoke: Windows' curl otherwise fails when it can't reach the certificate-revocation server (the
+    # connection is still encrypted and the certificate still checked, and the file's SHA-256 is verified below).
+    $ok = $false
+    for ($try = 1; $try -le 30 -and -not $ok; $try++) {
+      curl.exe -L --fail --ssl-no-revoke --retry 5 -C - -o $file $snap.url
+      if ($LASTEXITCODE -eq 0) { $ok = $true } else { Note "Connection dropped (attempt $try of 30) - continuing in 20 s..."; Start-Sleep -Seconds 20 }
+    }
+    if (-not $ok) { throw "The download keeps stopping. Run this script again later to continue it." }
   } else { Ok "already downloaded" }
   Note "Checking the fingerprint (several minutes)..."
   $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
