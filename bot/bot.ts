@@ -199,7 +199,16 @@ async function healthPass(ctx: Ctx, bs: BotState) {
     ctx.problems.push(`Week ${w} is overdue to close (${num(wk.questions) - num(wk.resolved)} question(s) still open).`);
   }
 
-  // 3. Mana running low (real chain only).
+  // 3. Changes only the owner should ever make. If the admin key were stolen, these are the first signs; the
+  //    48-hour timelock gives everyone time to react (players can always withdraw).
+  const up = st.raw.upgrade ?? {}, wd = st.raw.seed_withdrawal ?? {};
+  if (num(up.eta) > 0) ctx.problems.push(`A code upgrade is scheduled (possible from block ${up.eta}). If you did not do this, your admin key may be compromised.`);
+  if (num(wd.eta) > 0) ctx.problems.push(`A seed withdrawal is scheduled (possible from block ${wd.eta}). If you did not do this, your admin key may be compromised.`);
+  if (st.c.pending_owner) ctx.problems.push(`An ownership transfer to ${st.c.pending_owner} is pending. If you did not do this, your admin key may be compromised.`);
+  if (st.c.operator && st.c.operator !== ctx.operator.getAddress() && ctx.chain.kind === "koinos" && E.OPERATOR_WIF)
+    ctx.problems.push(`The contract's operator is ${st.c.operator}, not this bot (${ctx.operator.getAddress()}).`);
+
+  // 4. Mana running low (real chain only).
   if (ctx.chain.kind === "koinos") {
     const opMana = await ctx.chain.mana(ctx.operator.getAddress());
     if (opMana < toSat(2)) ctx.problems.push(`The bot's wallet ${ctx.operator.getAddress()} is low on Mana (${showKoin(opMana)}). Send it some KOIN.`);
