@@ -126,7 +126,23 @@ type Sent = { ok: boolean; rc: string; error?: string; receipt?: any };
  * signers[0] is the payee (whose nonce is used); every signer adds its signature.
  * payer pays the Mana and defaults to the payee.
  */
+const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
+/** The mempool keeps counting a payer's recent transactions against its Mana for a few minutes, so a burst of
+ *  transactions can be refused with "insufficient pending account resources". That refusal costs nothing:
+ *  wait and send again (up to ~5 minutes). */
 async function send(ops: any[], signers: Signer[], payer?: string, rcLimitKoin = CFG.rcLimit): Promise<Sent> {
+  for (let attempt = 1; ; attempt++) {
+    const r = await sendOnce(ops, signers, payer, rcLimitKoin);
+    if (r.ok || !/insufficient pending account resources/i.test(r.error ?? "") || attempt >= 15) return r;
+    if (attempt === 1) process.stdout.write("          (waiting for earlier transactions to settle");
+    process.stdout.write(".");
+    await sleep(20_000);
+    if (attempt === 14) process.stdout.write(")\n");
+  }
+}
+
+async function sendOnce(ops: any[], signers: Signer[], payer?: string, rcLimitKoin = CFG.rcLimit): Promise<Sent> {
   try {
     const payee = signers[0].getAddress();
     // Never ask for more Mana than the payer has (the node would refuse the transaction outright).
@@ -344,7 +360,7 @@ type Row = { id: string; what: string; expect: "succeed" | "fail"; pass: boolean
 const rows: Row[] = [];
 
 // A refusal only proves something if it was refused for the right reason, not for lack of Mana.
-const RESOURCE_ERR = /insufficient (rc|mana)|rc limit|max.?payer.?rc|exceed.*(rc|resource|compute|disk|network)|not enough (rc|mana)/i;
+const RESOURCE_ERR = /insufficient (rc|mana)|pending account resources|rc limit|max.?payer.?rc|exceed.*(rc|resource|compute|disk|network)|not enough (rc|mana)/i;
 
 function record(id: string, what: string, expect: "succeed" | "fail", r: Sent, check = true, note = "") {
   const resourceRefusal = !r.ok && RESOURCE_ERR.test(r.error ?? "");
@@ -371,142 +387,203 @@ async function cmdRun() {
   const koinC = token(st.koin), vhpC = token(st.vhp);
   const pobC = new Contract({ id: st.pob, abi: pobAbi as any, provider });
   const D = sat(CFG.deposit);
+  // `run --only P0,P2,P8` reruns just those groups (P2 also runs P2a/P2b, and so on).
+  const onlyArg = process.argv.find((x) => x.startsWith("--only"));
+  const onlyVal = onlyArg?.includes("=") ? onlyArg.split("=")[1] : onlyArg ? process.argv[process.argv.indexOf(onlyArg) + 1] : undefined;
+  const only = onlyVal ? new Set(onlyVal.split(",").map((x) => x.trim().toUpperCase())) : null;
+  const want = (group: string) => !only || only.has(group);
+  if (only) console.log(`Running only: ${[...only].join(", ")}\n`);
+  let a: any = {}, b: any = {}, r: Sent = { ok: false, rc: "0" };
+  let perWrite = NaN, perRead = NaN;
 
+  if (want("P1")) {
   // P1 — the contract can see itself and the chain
-  const i0 = await info(contract);
-  record("P1", "info: own address, owner, system contracts, balances, Mana, height", "succeed", { ok: true, rc: "0" },
-    i0.contract === C && i0.owner === O && !!i0.koin && !!i0.vhp && !!i0.pob && Number(i0.head_height) > 0 && BigInt(i0.mana ?? 0) > 0n,
-    `KOIN ${show(i0.koin_balance)}  VHP ${show(i0.vhp_balance)}  Mana ${show(i0.mana)}  height ${i0.head_height}`);
+    const i0 = await info(contract);
+    record("P1", "info: own address, owner, system contracts, balances, Mana, height", "succeed", { ok: true, rc: "0" },
+      i0.contract === C && i0.owner === O && !!i0.koin && !!i0.vhp && !!i0.pob && Number(i0.head_height) > 0 && BigInt(i0.mana ?? 0) > 0n,
+      `KOIN ${show(i0.koin_balance)}  VHP ${show(i0.vhp_balance)}  Mana ${show(i0.mana)}  height ${i0.head_height}`);
 
-  record("P1b", "init cannot be run a second time", "fail",
-    await send([await op(k, "init", { owner: H })], [owner, contract]));
+    record("P1b", "init cannot be run a second time", "fail",
+      await send([await op(k, "init", { owner: H })], [owner, contract]));
 
-  // Give the owner some VHP by burning tKOIN through Proof-of-Burn.
+  
+  }
+
+  // Give the owner some VHP by burning KOIN through Proof-of-Burn. On mainnet the KOIN contract only lets
+  // PoB burn your KOIN if you approve PoB first, in the same transaction (learned from the first run).
   const ownerVhp0 = await balance(st.vhp, O);
-  if (ownerVhp0 < BigInt(sat(CFG.deposit * 2))) {
-    const r = await send([await op(pobC, "burn", { token_amount: sat(CFG.ownerBurn), burn_address: O, vhp_address: O })], [owner]);
-    record("P0", `owner burns ${CFG.ownerBurn} tKOIN into VHP (Proof-of-Burn)`, "succeed", r,
+  if (want("P0") && ownerVhp0 < BigInt(sat(CFG.deposit * 2))) {
+    const r0 = await send([
+      await op(koinC, "approve", { owner: O, spender: st.pob, value: sat(CFG.ownerBurn) }),
+      await op(pobC, "burn", { token_amount: sat(CFG.ownerBurn), burn_address: O, vhp_address: O }),
+    ], [owner]);
+    record("P0", `owner approves PoB and burns ${CFG.ownerBurn} KOIN into VHP`, "succeed", r0,
       (await balance(st.vhp, O)) >= ownerVhp0 + BigInt(sat(CFG.ownerBurn)));
   }
 
+  if (want("P2")) {
   // P2 — VHP deposit: approve + deposit in one transaction
-  record("P2a", "deposit_vhp WITHOUT approving first is refused", "fail",
-    await send([await op(k, "deposit_vhp", { from: O, amount: D })], [owner]));
-  let a = await info(contract);
-  let r = await send([
-    await op(vhpC, "approve", { owner: O, spender: C, value: D }),
-    await op(k, "deposit_vhp", { from: O, amount: D }),
-  ], [owner]);
-  let b = await info(contract);
-  record("P2", `approve + deposit_vhp ${CFG.deposit} VHP in one transaction`, "succeed", r,
-    BigInt(b.vhp_balance) - BigInt(a.vhp_balance) === BigInt(D) && BigInt(b.credited_total) - BigInt(a.credited_total) === BigInt(D),
-    `contract VHP ${show(a.vhp_balance)} → ${show(b.vhp_balance)}`);
-  // Owner leaves an approval open; the helper must still not be able to use it.
-  await send([await op(vhpC, "approve", { owner: O, spender: C, value: D })], [owner]);
-  record("P2b", "helper cannot deposit the owner's VHP, even with an open approval", "fail",
-    await send([await op(k, "deposit_vhp", { from: O, amount: D })], [helper]));
-  await send([await op(vhpC, "approve", { owner: O, spender: C, value: "0" })], [owner]); // close it again
+    record("P2a", "deposit_vhp WITHOUT approving first is refused", "fail",
+      await send([await op(k, "deposit_vhp", { from: O, amount: D })], [owner]));
+    a = await info(contract);
+    r = await send([
+      await op(vhpC, "approve", { owner: O, spender: C, value: D }),
+      await op(k, "deposit_vhp", { from: O, amount: D }),
+    ], [owner]);
+    b = await info(contract);
+    record("P2", `approve + deposit_vhp ${CFG.deposit} VHP in one transaction`, "succeed", r,
+      BigInt(b.vhp_balance) - BigInt(a.vhp_balance) === BigInt(D) && BigInt(b.credited_total) - BigInt(a.credited_total) === BigInt(D),
+      `contract VHP ${show(a.vhp_balance)} → ${show(b.vhp_balance)}`);
+    // Owner leaves an approval open; the helper must still not be able to use it.
+    await send([await op(vhpC, "approve", { owner: O, spender: C, value: D })], [owner]);
+    record("P2b", "helper cannot deposit the owner's VHP, even with an open approval", "fail",
+      await send([await op(k, "deposit_vhp", { from: O, amount: D })], [helper]));
+    await send([await op(vhpC, "approve", { owner: O, spender: C, value: "0" })], [owner]); // close it again
 
-  // P3 — KOIN deposit, burned 1:1 into the contract's own VHP
-  a = await info(contract);
-  r = await send([
-    await op(koinC, "approve", { owner: O, spender: C, value: D }),
-    await op(k, "deposit_koin", { from: O, amount: D }),
-  ], [owner]);
-  b = await info(contract);
-  record("P3", `approve + deposit_koin ${CFG.deposit} KOIN → contract burns it into its own VHP`, "succeed", r,
-    BigInt(b.vhp_balance) - BigInt(a.vhp_balance) === BigInt(D) && BigInt(b.koin_balance) === BigInt(a.koin_balance),
-    `contract VHP ${show(a.vhp_balance)} → ${show(b.vhp_balance)}, KOIN unchanged at ${show(b.koin_balance)}`);
-
-  // P4 — withdrawals go only to the owner of the credit
-  record("P4a", "helper cannot withdraw the owner's credit", "fail",
-    await send([await op(k, "withdraw_vhp", { to: O, amount: D })], [helper]));
-  record("P4b", "helper cannot withdraw with no credit of its own", "fail",
-    await send([await op(k, "withdraw_vhp", { to: H, amount: D })], [helper]));
-  record("P4c", "owner cannot withdraw more than credited", "fail",
-    await send([await op(k, "withdraw_vhp", { to: O, amount: sat(CFG.deposit * 100) })], [owner]));
-  const ov = await balance(st.vhp, O);
-  r = await send([await op(k, "withdraw_vhp", { to: O, amount: D })], [owner]);
-  record("P4", `owner withdraws ${CFG.deposit} VHP`, "succeed", r,
-    (await balance(st.vhp, O)) - ov === BigInt(D));
-
-  // P9 — nobody can move the contract's tokens from outside, not even with the deploy key
-  record("P9a", "deploy key signs a VHP transfer out of the contract", "fail",
-    await send([await op(vhpC, "transfer", { from: C, to: O, value: D })], [owner, contract]));
-  record("P9b", "deploy key signs a KOIN transfer out of the contract", "fail",
-    await send([await op(koinC, "transfer", { from: C, to: O, value: D })], [owner, contract]));
-  record("P9c", "deploy key signs a VHP approve for itself on the contract's tokens", "fail",
-    await send([await op(vhpC, "approve", { owner: C, spender: O, value: D })], [owner, contract]));
-
-  // P5 — compound: burn the contract's own KOIN above the reserve (limited by Mana)
-  a = await info(contract);
-  r = await send([await op(k, "compound", { keep_reserve: sat(CFG.reserve) })], [owner]);
-  b = await info(contract);
-  const burned = BigInt(a.koin_balance) - BigInt(b.koin_balance);
-  record("P5", `compound keeps ${CFG.reserve} KOIN and burns the rest into VHP`, "succeed", r,
-    burned >= 0n && BigInt(b.vhp_balance) - BigInt(a.vhp_balance) === burned && BigInt(b.koin_balance) >= BigInt(sat(CFG.reserve)),
-    `burned ${show(burned)} KOIN; contract VHP ${show(a.vhp_balance)} → ${show(b.vhp_balance)}; Mana before ${show(a.mana)}`);
-  a = b;
-  r = await send([await op(k, "compound", { keep_reserve: sat(CFG.reserve) })], [owner]);
-  b = await info(contract);
-  record("P5b", "a second compound right away burns nothing (safe to run often)", "succeed", r,
-    BigInt(b.koin_balance) === BigInt(a.koin_balance));
-
-  // P6 — the contract can register a block-producer key
-  const prodKey = Signer.fromSeed(crypto.randomBytes(32).toString("hex"));
-  const keyB64 = pubKeyB64(prodKey);
-  record("P6a", "helper cannot register a producer key", "fail",
-    await send([await op(k, "register_key", { public_key: keyB64 })], [helper]));
-  r = await send([await op(k, "register_key", { public_key: keyB64 })], [owner]);
-  b = await info(contract);
-  record("P6", "owner registers a producer key for the contract with Proof-of-Burn", "succeed", r,
-    b.producer_key === keyB64, `registered ${keyB64.slice(0, 16)}…  read back ${String(b.producer_key ?? "").slice(0, 16)}…`);
-
-  // P7 — the contract pays the Mana for a brand-new user's ping, and only for ping
-  const fresh = Signer.fromSeed(crypto.randomBytes(32).toString("hex"));
-  fresh.provider = provider;
-  const F = fresh.getAddress();
-  a = await info(contract);
-  r = await send([await op(k, "ping", { note: "hello" })], [fresh], C, 1);
-  b = await info(contract);
-  record("P7", "a zero-KOIN account pings, the contract pays the Mana", "succeed", r,
-    BigInt(b.pings) === BigInt(a.pings) + 1n && (await balance(st.koin, F)) === 0n,
-    `new account ${F}; contract Mana ${show(a.mana)} → ${show(b.mana)}`);
-  record("P7a", "the contract refuses to pay for anything except ping", "fail",
-    await send([await op(k, "stress", { writes: 1, bins: 0 })], [fresh], C, 1));
-  record("P7b", "the contract refuses to pay for a transaction with two operations", "fail",
-    await send([await op(k, "ping", { note: "1" }), await op(k, "ping", { note: "2" })], [fresh], C, 1));
-  record("P7c", "the contract refuses to pay for a KOIN transfer", "fail",
-    await send([await op(koinC, "transfer", { from: F, to: O, value: "1" })], [fresh], C, 1));
-
-  // P10 — the code can be replaced only with the owner's signature
-  record("P10a", "deploy key alone cannot replace the code", "fail",
-    await send([await uploadOp(contract, true)], [helper, contract], H, 1));
-  record("P10b", "helper cannot replace the code", "fail",
-    await send([await uploadOp(contract, true)], [helper], H, 1));
-  const pingsBeforeUpgrade = BigInt((await info(contract)).pings ?? 0);
-
-  // P11 — only the owner can recover the contract's funds
-  record("P11", "helper cannot sweep the contract's funds", "fail",
-    await send([await op(k, "sweep", {})], [helper]));
-
-  // P8 — Mana cost of storage, for sizing the real contract
-  const costs: Record<string, string> = {};
-  for (const [w, n] of [[0, 0], [10, 0], [50, 0], [0, 50]] as const) {
-    r = await send([await op(k, "stress", { writes: w, bins: n })], [owner], O, CFG.stressRcLimit);
-    costs[`${w}w/${n}r`] = r.rc;
-    record("P8", `stress: write ${w}, read ${n} storage entries`, "succeed", r);
+  
   }
-  const base = Number(costs["0w/0r"]);
-  const perWrite = (Number(costs["50w/0r"]) - Number(costs["10w/0r"])) / 40;
-  const perRead = (Number(costs["0w/50r"]) - base) / 50;
-  console.log(`\n  Mana per storage write ≈ ${show(perWrite)} KOIN, per read ≈ ${show(perRead)} KOIN (base call ${show(base)})`);
 
+  if (want("P3")) {
+  // P3 — KOIN deposit, burned 1:1 into the contract's own VHP
+    a = await info(contract);
+    r = await send([
+      await op(koinC, "approve", { owner: O, spender: C, value: D }),
+      await op(k, "deposit_koin", { from: O, amount: D }),
+    ], [owner]);
+    b = await info(contract);
+    record("P3", `approve + deposit_koin ${CFG.deposit} KOIN → contract burns it into its own VHP`, "succeed", r,
+      BigInt(b.vhp_balance) - BigInt(a.vhp_balance) === BigInt(D) && BigInt(b.koin_balance) === BigInt(a.koin_balance),
+      `contract VHP ${show(a.vhp_balance)} → ${show(b.vhp_balance)}, KOIN unchanged at ${show(b.koin_balance)}`);
+
+  
+  }
+
+  if (want("P4")) {
+  // P4 — withdrawals go only to the owner of the credit
+    record("P4a", "helper cannot withdraw the owner's credit", "fail",
+      await send([await op(k, "withdraw_vhp", { to: O, amount: D })], [helper]));
+    record("P4b", "helper cannot withdraw with no credit of its own", "fail",
+      await send([await op(k, "withdraw_vhp", { to: H, amount: D })], [helper]));
+    record("P4c", "owner cannot withdraw more than credited", "fail",
+      await send([await op(k, "withdraw_vhp", { to: O, amount: sat(CFG.deposit * 100) })], [owner]));
+    const ov = await balance(st.vhp, O);
+    r = await send([await op(k, "withdraw_vhp", { to: O, amount: D })], [owner]);
+    record("P4", `owner withdraws ${CFG.deposit} VHP`, "succeed", r,
+      (await balance(st.vhp, O)) - ov === BigInt(D));
+
+  
+  }
+
+  if (want("P9")) {
+  // P9 — nobody can move the contract's tokens from outside, not even with the deploy key
+    record("P9a", "deploy key signs a VHP transfer out of the contract", "fail",
+      await send([await op(vhpC, "transfer", { from: C, to: O, value: D })], [owner, contract]));
+    record("P9b", "deploy key signs a KOIN transfer out of the contract", "fail",
+      await send([await op(koinC, "transfer", { from: C, to: O, value: D })], [owner, contract]));
+    record("P9c", "deploy key signs a VHP approve for itself on the contract's tokens", "fail",
+      await send([await op(vhpC, "approve", { owner: C, spender: O, value: D })], [owner, contract]));
+
+  
+  }
+
+  if (want("P5")) {
+  // P5 — compound: burn the contract's own KOIN above the reserve (limited by Mana)
+    a = await info(contract);
+    r = await send([await op(k, "compound", { keep_reserve: sat(CFG.reserve) })], [owner]);
+    b = await info(contract);
+    const burned = BigInt(a.koin_balance) - BigInt(b.koin_balance);
+    record("P5", `compound keeps ${CFG.reserve} KOIN and burns the rest into VHP`, "succeed", r,
+      burned >= 0n && BigInt(b.vhp_balance) - BigInt(a.vhp_balance) === burned && BigInt(b.koin_balance) >= BigInt(sat(CFG.reserve)),
+      `burned ${show(burned)} KOIN; contract VHP ${show(a.vhp_balance)} → ${show(b.vhp_balance)}; Mana before ${show(a.mana)}`);
+    a = b;
+    r = await send([await op(k, "compound", { keep_reserve: sat(CFG.reserve) })], [owner]);
+    b = await info(contract);
+    record("P5b", "a second compound right away burns nothing (safe to run often)", "succeed", r,
+      BigInt(b.koin_balance) === BigInt(a.koin_balance));
+
+  
+  }
+
+  if (want("P6")) {
+  // P6 — the contract can register a block-producer key
+    const prodKey = Signer.fromSeed(crypto.randomBytes(32).toString("hex"));
+    const keyB64 = pubKeyB64(prodKey);
+    record("P6a", "helper cannot register a producer key", "fail",
+      await send([await op(k, "register_key", { public_key: keyB64 })], [helper]));
+    r = await send([await op(k, "register_key", { public_key: keyB64 })], [owner]);
+    b = await info(contract);
+    record("P6", "owner registers a producer key for the contract with Proof-of-Burn", "succeed", r,
+      b.producer_key === keyB64, `registered ${keyB64.slice(0, 16)}…  read back ${String(b.producer_key ?? "").slice(0, 16)}…`);
+
+  
+  }
+
+  if (want("P7")) {
+  // P7 — the contract pays the Mana for a brand-new user's ping, and only for ping
+    const fresh = Signer.fromSeed(crypto.randomBytes(32).toString("hex"));
+    fresh.provider = provider;
+    const F = fresh.getAddress();
+    a = await info(contract);
+    r = await send([await op(k, "ping", { note: "hello" })], [fresh], C, 1);
+    b = await info(contract);
+    record("P7", "a zero-KOIN account pings, the contract pays the Mana", "succeed", r,
+      BigInt(b.pings) === BigInt(a.pings) + 1n && (await balance(st.koin, F)) === 0n,
+      `new account ${F}; contract Mana ${show(a.mana)} → ${show(b.mana)}`);
+    record("P7a", "the contract refuses to pay for anything except ping", "fail",
+      await send([await op(k, "stress", { writes: 1, bins: 0 })], [fresh], C, 1));
+    record("P7b", "the contract refuses to pay for a transaction with two operations", "fail",
+      await send([await op(k, "ping", { note: "1" }), await op(k, "ping", { note: "2" })], [fresh], C, 1));
+    record("P7c", "the contract refuses to pay for a KOIN transfer", "fail",
+      await send([await op(koinC, "transfer", { from: F, to: O, value: "1" })], [fresh], C, 1));
+
+  
+  }
+
+  if (want("P10")) {
+  // P10 — the code can be replaced only with the owner's signature
+    record("P10a", "deploy key alone cannot replace the code", "fail",
+      await send([await uploadOp(contract, true)], [helper, contract], H, 1));
+    record("P10b", "helper cannot replace the code", "fail",
+      await send([await uploadOp(contract, true)], [helper], H, 1));
+
+
+  
+  }
+
+  if (want("P11")) {
+  // P11 — only the owner can recover the contract's funds
+    record("P11", "helper cannot sweep the contract's funds", "fail",
+      await send([await op(k, "sweep", {})], [helper]));
+
+  
+  }
+
+  if (want("P8")) {
+  // P8 — Mana cost of storage, for sizing the real contract
+    const costs: Record<string, string> = {};
+    for (const [w, n] of [[0, 0], [10, 0], [50, 0], [0, 50]] as const) {
+      r = await send([await op(k, "stress", { writes: w, bins: n })], [owner], O, CFG.stressRcLimit);
+      costs[`${w}w/${n}r`] = r.rc;
+      record("P8", `stress: write ${w}, read ${n} storage entries`, "succeed", r);
+    }
+    const base = Number(costs["0w/0r"]);
+    perWrite = (Number(costs["50w/0r"]) - Number(costs["10w/0r"])) / 40;
+    perRead = (Number(costs["0w/50r"]) - base) / 50;
+    console.log(`\n  Mana per storage write ≈ ${show(perWrite)} KOIN, per read ≈ ${show(perRead)} KOIN (base call ${show(base)})`);
+
+  
+  }
+
+  if (want("P10")) {
   // P10 — last, because it costs the most Mana: the owner upgrades the code (same code) and the data survives.
-  r = await send([await uploadOp(contract)], [owner], O, CFG.uploadRcLimit);
-  const after = await info(contract);
-  record("P10", "owner can re-upload (upgrade) the code, and the data survives", "succeed", r,
-    after.owner === O && BigInt(after.pings ?? 0) === pingsBeforeUpgrade);
+    const pingsBeforeUpgrade = BigInt((await info(contract)).pings ?? 0);
+    r = await send([await uploadOp(contract)], [owner], O, CFG.uploadRcLimit);
+    const after = await info(contract);
+    record("P10", "owner can re-upload (upgrade) the code, and the data survives", "succeed", r,
+      after.owner === O && BigInt(after.pings ?? 0) === pingsBeforeUpgrade);
+
+  
+  }
 
   // Summary
   const failed = rows.filter((x) => !x.pass);
