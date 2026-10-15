@@ -1,0 +1,18 @@
+{
+  "name": "koinos-step0",
+  "version": "1.0.0",
+  "description": "Read-only Koinos producer and reward analysis for the prediction platform",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "step0": "tsx step0.ts",
+    "backtest": "tsx backtest.ts",
+    "generate": "tsx generator.ts"
+  },
+  "dependencies": {
+    "koilib": "latest"
+  },
+  "devDependencies": {
+    "tsx": "latest"
+  }
+}

@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package kprobe;
+
+import "koinos/options.proto";
+
+// Storage objects
+message config_object {
+  bytes owner = 1 [(koinos.btype) = ADDRESS];
+}
+
+message balance_object {
+  uint64 value = 1 [jstype = JS_STRING];
+}
+
+// @description P1 — what the contract sees: its addresses, balances, mana and chain height
+// @read-only true
+message info_arguments {}
+
+message info_result {
+  bytes contract = 1 [(koinos.btype) = ADDRESS];
+  bytes owner = 2 [(koinos.btype) = ADDRESS];
+  bytes koin = 3 [(koinos.btype) = ADDRESS];
+  bytes vhp = 4 [(koinos.btype) = ADDRESS];
+  bytes pob = 5 [(koinos.btype) = ADDRESS];
+  uint64 koin_balance = 6 [jstype = JS_STRING];
+  uint64 vhp_balance = 7 [jstype = JS_STRING];
+  uint64 mana = 8 [jstype = JS_STRING];
+  uint64 head_height = 9 [jstype = JS_STRING];
+  uint64 credited_total = 10 [jstype = JS_STRING];
+  uint64 pings = 11 [jstype = JS_STRING];
+  bytes producer_key = 12 [(koinos.btype) = BASE64];
+}
+
+// @description Set the owner once. The transaction must be signed by the contract's own key.
+// @read-only false
+message init_arguments {
+  bytes owner = 1 [(koinos.btype) = ADDRESS];
+}
+
+message init_result {}
+
+// @description P2 — deposit VHP. The user approves this contract for `amount` VHP in the same transaction.
+// @read-only false
+message deposit_vhp_arguments {
+  bytes from = 1 [(koinos.btype) = ADDRESS];
+  uint64 amount = 2 [jstype = JS_STRING];
+}
+
+message deposit_vhp_result {
+  uint64 credited = 1 [jstype = JS_STRING];
+}
+
+// @description P3 — deposit KOIN; the contract burns it into its own VHP 1:1 and credits the user.
+// @read-only false
+message deposit_koin_arguments {
+  bytes from = 1 [(koinos.btype) = ADDRESS];
+  uint64 amount = 2 [jstype = JS_STRING];
+}
+
+message deposit_koin_result {
+  uint64 credited = 1 [jstype = JS_STRING];
+}
+
+// @description P4 — withdraw credited VHP back to the user.
+// @read-only false
+message withdraw_vhp_arguments {
+  bytes to = 1 [(koinos.btype) = ADDRESS];
+  uint64 amount = 2 [jstype = JS_STRING];
+}
+
+message withdraw_vhp_result {}
+
+// @description P5 — compound: burn the contract's own KOIN above `keep_reserve` into its own VHP (limited by mana).
+// @read-only false
+message compound_arguments {
+  uint64 keep_reserve = 1 [jstype = JS_STRING];
+}
+
+message compound_result {
+  uint64 burned = 1 [jstype = JS_STRING];
+  uint64 mana_before = 2 [jstype = JS_STRING];
+}
+
+// @description P6 — register a block-producer public key for the contract (owner only).
+// @read-only false
+message register_key_arguments {
+  bytes public_key = 1 [(koinos.btype) = BASE64];
+}
+
+message register_key_result {}
+
+// @description P7 — a sponsored action: the contract pays the Mana when it is the transaction's payer.
+// @read-only false
+message ping_arguments {
+  string note = 1;
+}
+
+message ping_result {
+  uint64 count = 1 [jstype = JS_STRING];
+  bytes payer = 2 [(koinos.btype) = ADDRESS];
+}
+
+// @description P8 — write `writes` storage entries and read `bins` of them back, to measure Mana costs.
+// @read-only false
+message stress_arguments {
+  uint32 writes = 1;
+  uint32 bins = 2;
+}
+
+message stress_result {
+  uint64 sum = 1 [jstype = JS_STRING];
+}
