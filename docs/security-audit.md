@@ -8,7 +8,7 @@ Focus: can anyone's tokens ever be lost, stuck or taken?
 | Money | Held as | Who can take it out | Limits |
 |---|---|---|---|
 | Players' stakes | VHP | Only the player, to their own wallet | Any amount up to their stake, at any time. Never pausable. |
-| Players' rewards | VHP | Only the winning player | Exactly pot × points × stake ÷ total, rounded down |
+| Players' rewards | VHP | Only the winning player | Basket A by rank + basket B by rank × stake, rounded down at every step, so a week's claims never exceed its pot |
 | Seed (soft launch and full) | VHP + KOIN | Only the seed owner | Only after a 48-hour public timelock, never more than the seed |
 | Producer fee (5%) | KOIN | Only the owner | Never more than the fee earned; charged once (a carried-over pot isn't charged again) |
 

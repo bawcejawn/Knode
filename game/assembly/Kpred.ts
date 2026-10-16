@@ -7,12 +7,16 @@
  *   close_week     measures the pool's gain and splits it: 5% producer fee (KOIN), 95% winners' pot (a pot with no
  *                  winners rolls into the next week's pot without being charged the fee again)
  *   settle         counts each player's points (anyone can call it, for anyone, free)
- *   finalize_week  finds the winners: the top 30% of eligible stake by points, everyone tied at the cutoff included
- *   claim          pays each winner pot × (points × stake) / (sum of points × stake over winners), in VHP
+ *   finalize_week  finds the winners: the top 30% of staked players by points (headcount), everyone tied included,
+ *                  and gives each place a rank weight 1/√rank (players tied share their places' weights evenly)
+ *   claim          pays each winner, in VHP, from two baskets:
+ *                    A = 65% of what the house (seed + unclaimed pots) earned, by rank weight only
+ *                    B = the other 35% plus everything players' stake earned, by rank weight × stake
  * All of this runs on-chain. The only off-chain inputs are the operator's question parameters and resolutions.
  *
  * Who can do what:
- *   players     deposit (whole numbers), withdraw any amount at any time (voids that week's answers), answer, settle, claim
+ *   players     deposit (whole numbers), withdraw any amount at any time (withdrawing all leaves that week; part lowers
+ *               the week's stake), answer, settle, claim
  *   operator    post and resolve questions — cannot move any funds
  *   owner       correct a resolution before its week closes, set operator, pause NEW deposits, register the node key,
  *               claim the producer fee, schedule an upgrade (uploadable only after the timelock)
@@ -26,7 +30,9 @@ import { Tokens } from "./Tokens";
 const VOID: u32 = 1000;
 const MAX_QUESTIONS_PER_WEEK: u32 = 64;
 const FEE_BPS: u64 = 500;       // 5% producer fee (KOIN), charged once on everything the pool earns
-const CUTOFF_BPS: u64 = 3000;   // winners = top 30% of eligible stake
+const WIN_PCT: u64 = 30;        // winners = the top 30% of eligible (staked) players by headcount, ties included
+const BASKET_A_BPS: u64 = 6500; // basket A = 65% of what the house (seed + unclaimed pots) earned: shared by rank only
+const W_SCALE: u64 = 1_000_000_000_000_000_000; // rank weight of place r = sqrt(W_SCALE / r) = 1e9 / √r
 const RESOLVE_MARGIN: u64 = 60; // resolve only after the window's blocks are irreversible (~3 minutes)
 // Weeks and answer deadlines follow the block timestamps (ms, UTC), so they land on exact calendar times. The blocks a
 // question watches are still counted by height; these bounds on the average block time keep the two consistent:
@@ -71,6 +77,15 @@ function cat(a: Uint8Array, b: Uint8Array): Uint8Array {
 function bps(amount: u64, b: u64): u64 {
   return (u128.fromU64(amount) * u128.fromU64(b) / u128.fromU64(10000)).toU64();
 }
+/** Integer square root (floor). */
+function isqrt(n: u64): u64 {
+  if (n < 2) return n;
+  let x = n, y = n / 2 + 1;
+  while (y < x) { x = y; y = (x + n / x) / 2; }
+  return x;
+}
+/** The balanced rank curve: place r gets 1/√r (scaled by 1e9). 1st 10.4%, 2nd 7.4%, 3rd 6.0% … of 30 winners. */
+export function rankWeight(r: u64): u64 { return isqrt(W_SCALE / r); }
 function isAddress(a: Uint8Array | null): bool {
   return a != null && a.length == 25;
 }
@@ -157,6 +172,21 @@ export class Kpred {
   /** What the contract owes, in KOIN-equivalent units (VHP and KOIN are 1:1). */
   liabilities(t: kpred.totals_object): u64 {
     return t.total_stake + t.seed_vhp + t.seed_koin + t.owner_share + t.creator_fee + t.pots_outstanding;
+  }
+
+  /** Bring the "who produced it" accumulators up to the current block time. Call it before changing anything that
+   *  produces: players' stake, the seed's VHP, unclaimed pots. */
+  accrue(t: kpred.totals_object): void {
+    const now = this.now();
+    if (t.acc_time == 0) { t.acc_time = now; return; }   // first call after the upgrade: start measuring now
+    if (now <= t.acc_time) return;
+    const dt = u128.fromU64(now - t.acc_time);
+    const house = t.seed_vhp + t.pots_outstanding + t.rolled_over;
+    const ap = new u128(t.acc_player_lo, t.acc_player_hi) + u128.fromU64(t.total_stake) * dt;
+    const ah = new u128(t.acc_house_lo, t.acc_house_hi) + u128.fromU64(house) * dt;
+    t.acc_player_lo = ap.lo; t.acc_player_hi = ap.hi;
+    t.acc_house_lo = ah.lo; t.acc_house_hi = ah.hi;
+    t.acc_time = now;
   }
 
   /** Holdings must always cover everything owed. Checked after every reward/fee payout, so a bug can never pay out
@@ -377,6 +407,7 @@ export class Kpred {
     p.pending_week = h < c.genesis_time ? 0 : w + 1;
     this.players.put(from, p);
     const t = this.totals.get()!;
+    this.accrue(t);
     t.total_stake += amount;
     this.totals.put(t);
   }
@@ -409,19 +440,26 @@ export class Kpred {
     p.pending -= fromPending;
     rest -= fromPending;
     p.stake -= rest;
-    // A withdrawal that touches the active stake during a running week voids that week's answers. (Taking back only a
-    // not-yet-active top-up leaves this week's stake unchanged, so it voids nothing.)
+    // During a running week (only when this week's stake is touched; taking back a not-yet-active top-up changes nothing):
+    //   - withdrawing ALL of this week's stake takes the player out of the week: their answers stop counting;
+    //   - withdrawing PART keeps them in, with the lower stake as their multiplier for the week.
     if (h >= c.genesis_time && rest > 0) {
-      p.void_week_plus_one = w + 1;
       const key = this.entryKey(to, w);
       const e = this.entries.get(key);
-      if (e && !e.voided) {
-        e.voided = true;
+      if (p.stake == 0) {
+        p.void_week_plus_one = w + 1;
+        if (e && !e.voided) {
+          e.voided = true;
+          this.entries.put(key, e);
+        }
+      } else if (e && !e.voided && e.stake > p.stake) {
+        e.stake = p.stake;
         this.entries.put(key, e);
       }
     }
     this.players.put(to, p);
     const t = this.totals.get()!;
+    this.accrue(t);
     t.total_stake -= args.amount;
     this.totals.put(t);
     this.ensureVhp(args.amount);
@@ -510,16 +548,24 @@ export class Kpred {
     const wk = this.weeks.get(wkKey)!;
     const key = this.entryKey(player, args.week);
     const e = this.entries.get(key)!;
-    // reward = pot × (points × stake) / (Σ points × stake over winners), in 128-bit arithmetic
-    const weight = u128.fromU64(<u64>e.points) * u128.fromU64(e.stake);
-    const total = new u128(wk.weight_lo, wk.weight_hi);
-    const reward = (u128.fromU64(wk.pot) * weight / total).toU64();
+    // Basket A (by rank): pot_a × (this score group's rank weight ÷ its players) ÷ all winners' rank weight.
+    // Basket B (by rank × stake): pot_b × (rank weight ÷ players × stake) ÷ the same total over all winners.
+    // Every step rounds down, so the claims of a week can never add up to more than its pot.
+    const b = this.buckets.get(this.bucketKey(args.week, e.points))!;
+    const n = u128.fromU64(<u64>b.players);
+    let reward = u128.muldiv(u128.fromU64(wk.pot_a), u128.fromU64(b.sum_w), n * u128.fromU64(wk.sum_w)).toU64();
+    const bw = new u128(wk.bw_lo, wk.bw_hi);
+    if (!bw.isZero()) {
+      const mine = u128.muldiv(u128.fromU64(b.sum_w), u128.fromU64(e.stake), n);
+      reward += u128.muldiv(u128.fromU64(wk.pot_b), mine, bw).toU64();
+    }
     e.claimed = true;
     e.reward = reward;
     this.entries.put(key, e);
     wk.claimed += reward;
     this.weeks.put(wkKey, wk);
     const t = this.totals.get()!;
+    this.accrue(t);
     t.pots_outstanding -= reward;
     this.totals.put(t);
     this.ensureVhp(reward);
@@ -556,6 +602,7 @@ export class Kpred {
    *  amount, so their timing never changes any week's measured gain. */
   closeInternal(c: kpred.config_object, week: u64, h: u64): kpred.close_week_result {
     const t = this.totals.get()!;
+    this.accrue(t);
     const wkKey = u64Key(week);
     const wk = this.weeks.get(wkKey)!;
     // Gain = everything the contract holds minus everything it owes.
@@ -564,9 +611,23 @@ export class Kpred {
     const gain = holdings > owed ? holdings - owed : 0;
     // A pot that had no winners was already charged the fee when it was first earned: it rolls in fee-free.
     const carried = t.rolled_over < gain ? t.rolled_over : gain;
-    const fee = bps(gain - carried, FEE_BPS);
-    const retained: u64 = 0;                          // the owner share is retired
+    const fresh = gain - carried;
+    const fee = bps(fresh, FEE_BPS);
+    const net = fresh - fee;
+    // Who produced the new earnings: the house (seed + unclaimed pots) or players' stake, weighted by time.
+    const ap = new u128(t.acc_player_lo, t.acc_player_hi), ah = new u128(t.acc_house_lo, t.acc_house_hi);
+    let housePpm: u64;
+    if ((ap + ah).isZero()) {
+      const house = t.seed_vhp + t.pots_outstanding + t.rolled_over, all = house + t.total_stake;
+      housePpm = all == 0 ? 1_000_000 : u128.muldiv(u128.fromU64(house), u128.fromU64(1_000_000), u128.fromU64(all)).toU64();
+    } else {
+      housePpm = u128.muldiv(ah, u128.fromU64(1_000_000), ap + ah).toU64();
+    }
+    const houseNet = u128.muldiv(u128.fromU64(net), u128.fromU64(housePpm), u128.fromU64(1_000_000)).toU64() + carried;
+    const potA = bps(houseNet, BASKET_A_BPS);
     const pot = gain - fee;
+    const retained: u64 = 0;                          // the owner share is retired
+    t.acc_player_lo = 0; t.acc_player_hi = 0; t.acc_house_lo = 0; t.acc_house_hi = 0;
     t.rolled_over = 0;
     t.creator_fee += fee;
     t.pots_outstanding += pot;
@@ -578,6 +639,9 @@ export class Kpred {
     wk.fee = fee;
     wk.retained = retained;
     wk.pot = pot;
+    wk.pot_a = potA;
+    wk.pot_b = pot - potA;
+    wk.house_ppm = housePpm;
     wk.settle_start = h;
     wk.settle_end = h + c.settle_length;
     this.weeks.put(wkKey, wk);
@@ -600,21 +664,34 @@ export class Kpred {
   finalizeInternal(week: u64): kpred.finalize_week_result {
     const wkKey = u64Key(week);
     const wk = this.weeks.get(wkKey)!;
-    // Walk down from the highest score until the winners hold at least 30% of eligible stake (ties included).
+    // Walk down from the highest score until the winners are at least 30% of the eligible players (ties included).
+    // Only staked players take places; a score of 0 never wins.
+    const need = (<u64>wk.eligible_players * WIN_PCT + 99) / 100;
     let cutoff: u32 = 0;
     let cum: u64 = 0;
-    const need = u128.fromU64(wk.eligible_stake) * u128.fromU64(CUTOFF_BPS);
-    for (let p = wk.max_points; p >= 1; p--) {
-      cum += this.buckets.get(this.bucketKey(week, p))!.stake;
-      cutoff = p;
-      if (u128.fromU64(cum) * u128.fromU64(10000) >= need) break;
+    if (need > 0) {
+      for (let p = wk.max_points; p >= 1; p--) {
+        cum += <u64>this.buckets.get(this.bucketKey(week, p))!.players;
+        cutoff = p;
+        if (cum >= need) break;
+      }
     }
-    let weight = u128.Zero;
+    // Give each winning score group its places' rank weights (players tied share their places evenly).
+    let rank: u64 = 1;
+    let sumW: u64 = 0;
+    let bw = u128.Zero;
     let winners: u32 = 0;
     if (cutoff >= 1) {
-      for (let p = cutoff; p <= wk.max_points; p++) {
-        const b = this.buckets.get(this.bucketKey(week, p))!;
-        weight = weight + u128.fromU64(<u64>p) * u128.fromU64(b.stake);
+      for (let p = wk.max_points; p >= cutoff; p--) {
+        const bk = this.bucketKey(week, p);
+        const b = this.buckets.get(bk)!;
+        if (b.players == 0) continue;
+        let gw: u64 = 0;
+        for (let i: u32 = 0; i < b.players; i++) { gw += rankWeight(rank); rank++; }
+        b.sum_w = gw;
+        this.buckets.put(bk, b);
+        sumW += gw;
+        bw = bw + u128.muldiv(u128.fromU64(gw), u128.fromU64(b.stake), u128.fromU64(<u64>b.players));
         winners += b.players;
       }
     }
@@ -624,12 +701,15 @@ export class Kpred {
     tf.weeks_finalized += 1;
     this.totals.put(tf);
     wk.winners = winners;
-    wk.weight_lo = weight.lo;
-    wk.weight_hi = weight.hi;
-    if (weight.isZero()) {
-      // Nobody scored: the pot goes back into the pool and becomes part of the next week's gain.
+    wk.sum_w = sumW;
+    wk.bw_lo = bw.lo;
+    wk.bw_hi = bw.hi;
+    if (winners > 0 && bw.isZero()) { wk.pot_a += wk.pot_b; wk.pot_b = 0; }   // only if every winner had 0 stake (min_stake 0)
+    if (winners == 0) {
+      // Nobody scored: the pot goes back into the pool and is paid out with the next week's (without a second fee).
       wk.rolled_over = true;
       const t = this.totals.get()!;
+      this.accrue(t);
       t.pots_outstanding -= wk.pot;
       t.rolled_over += wk.pot;
       this.totals.put(t);
@@ -855,6 +935,7 @@ export class Kpred {
     System.require(args.amount > 0, "amount must be positive");
     Tokens.pullVhp(c.seed_owner!, args.amount);
     const t = this.totals.get()!;
+    this.accrue(t);
     t.seed_vhp += args.amount;
     this.totals.put(t);
     return new kpred.seed_deposit_vhp_result();
@@ -900,6 +981,7 @@ export class Kpred {
     if (koinAmt > mana) koinAmt = mana;                 // the rest can be executed again after Mana refills
     const koinBal = Tokens.koinBalance(this.contractId);
     if (koinAmt > koinBal) koinAmt = koinBal;           // KOIN still held as VHP arrives with the next block rewards
+    this.accrue(t);
     t.seed_vhp -= vhpAmt;
     t.seed_koin -= koinAmt;
     this.totals.put(t);

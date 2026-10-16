@@ -39,8 +39,19 @@ function loadEnv(file = ".env") {
     if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
   }
 }
-loadEnv();
+// --testnet: everything runs against the local Harbinger testnet node with its own keys (.env.testnet) and its own
+// data folder (testnet-data). Mainnet keys, files and the live game are never touched.
+export const TESTNET = process.argv.includes("--testnet");
+if (TESTNET) {
+  loadEnv(".env.testnet");
+  process.env.NETWORK = "testnet";
+  process.env.RPC ??= "http://127.0.0.1:8081";
+  process.env.NODE_RPC ??= process.env.RPC;
+  process.env.GEN_DIR ??= "testnet-data";
+} else loadEnv();
 const E = process.env;
+/** Is this RPC the real network? Only the testnet flag or a Harbinger address says no. */
+export const isMainnet = (rpc: string) => E.NETWORK !== "testnet" && !/harbinger/i.test(rpc);
 
 export const DAY = 28_800;               // blocks per day (3-second blocks) — used for block-history bookkeeping only
 export const HOUR_MS = 3_600_000, DAY_MS = 24 * HOUR_MS;
@@ -513,10 +524,16 @@ const WASM = "game/build/release/contract.wasm";
 const MAINNET = { koin: "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK", vhp: "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", pob: "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv" };
 
 async function tokenAddresses(provider: Provider, mainnet: boolean): Promise<{ koin: string; vhp: string; pob: string }> {
-  const koin = E.KOIN_ADDRESS ?? (mainnet ? MAINNET.koin : undefined);
-  const vhp = E.VHP_ADDRESS ?? (mainnet ? MAINNET.vhp : undefined);
+  let koin = E.KOIN_ADDRESS ?? (mainnet ? MAINNET.koin : undefined);
+  let vhp = E.VHP_ADDRESS ?? (mainnet ? MAINNET.vhp : undefined);
   const pob = E.POB_ADDRESS ?? (mainnet ? MAINNET.pob : "");
-  if (!koin || !vhp) throw new Error("Set KOIN_ADDRESS and VHP_ADDRESS in .env for this network.");
+  if (!koin || !vhp) {
+    // Not mainnet and not set: discover them from recent blocks (each block mints KOIN to its producer and burns VHP).
+    const found = await discoverTokens(provider);
+    koin = koin ?? found.koin; vhp = vhp ?? found.vhp;
+    if (koin && vhp) log(`Found the tokens from recent blocks: KOIN ${koin}, VHP ${vhp}`);
+  }
+  if (!koin || !vhp) throw new Error("Couldn't find the KOIN and VHP addresses on this network. Set KOIN_ADDRESS and VHP_ADDRESS in .env.");
   // Sanity check against the chain: every block mints KOIN to its producer and burns VHP from it.
   try {
     const head: any = await provider.getHeadInfo();
@@ -531,6 +548,24 @@ async function tokenAddresses(provider: Provider, mainnet: boolean): Promise<{ k
   return { koin, vhp, pob };
 }
 
+/** Find the KOIN and VHP contracts from the last blocks' events: the block reward mints KOIN and burns VHP. */
+async function discoverTokens(provider: Provider): Promise<{ koin?: string; vhp?: string }> {
+  try {
+    const head: any = await provider.getHeadInfo();
+    const h = Number(head.head_topology.height);
+    const res: any = await provider.call("block_store.get_blocks_by_height", {
+      head_block_id: head.head_topology.id, ancestor_start_height: String(Math.max(1, h - 20)), num_blocks: 20, return_block: false, return_receipt: true,
+    });
+    const mint = new Map<string, number>(), burn = new Map<string, number>();
+    for (const it of res.block_items ?? []) for (const ev of it.receipt?.events ?? []) {
+      if (/mint/i.test(ev.name ?? "")) mint.set(ev.source, (mint.get(ev.source) ?? 0) + 1);
+      if (/burn/i.test(ev.name ?? "")) burn.set(ev.source, (burn.get(ev.source) ?? 0) + 1);
+    }
+    const top = (m: Map<string, number>) => [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    return { koin: top(mint), vhp: top(burn) };
+  } catch { return {}; }
+}
+
 /** Next Monday 00:00 UTC (ms). */
 function nextMonday(): number {
   const d = new Date();
@@ -541,7 +576,7 @@ function nextMonday(): number {
 
 async function deploy(send: boolean) {
   const rpc = E.RPC ?? "https://api.koinos.io";
-  const mainnet = !/harbinger/i.test(rpc);
+  const mainnet = isMainnet(rpc);
   if (send && mainnet && E.CONFIRM_MAINNET !== "yes") throw new Error(`RPC is ${rpc} (MAINNET, real KOIN). Add CONFIRM_MAINNET=yes to .env if you really mean it.`);
   const need = (k: string) => { if (!E[k]) throw new Error(`${k} is missing from .env`); return E[k]!; };
   const contractKey = Signer.fromWif(need("CONTRACT_WIF"));
@@ -567,14 +602,16 @@ async function deploy(send: boolean) {
   const bal = async (c: Contract, a: string) => BigInt(((await (c.functions as any).balance_of({ owner: a })).result?.value) ?? 0);
   const [cKoin, cVhp] = [await bal(koinC, C), await bal(vhpC, C)];
   const opMana = BigInt(await provider.getAccountRc(operator.getAddress()));
-  const genesis = E.GENESIS_TIME ? Date.parse(E.GENESIS_TIME) : nextMonday();
-  if (!isFinite(genesis) || new Date(genesis).getUTCDay() !== 1 || genesis % DAY_MS !== 0) throw new Error("The start must be a Monday 00:00 UTC (GENESIS_TIME like 2026-10-19T00:00:00Z).");
+  // Testnet: fast weeks so whole cycles (and upgrades) can be tested in an afternoon.
+  const fast = !mainnet && E.FAST !== "no";
+  const genesis = E.GENESIS_TIME ? Date.parse(E.GENESIS_TIME) : fast ? Math.ceil((Date.now() + 10 * 60_000) / 600_000) * 600_000 : nextMonday();
+  if (!fast && (!isFinite(genesis) || new Date(genesis).getUTCDay() !== 1 || genesis % DAY_MS !== 0)) throw new Error("The start must be a Monday 00:00 UTC (GENESIS_TIME like 2026-10-19T00:00:00Z).");
   const n = (k: string, d: number) => String(E[k] ? Number(E[k]) : d);
   const init = {
     owner, operator: operator.getAddress(), seed_owner: seedOwner, genesis_time: String(genesis),
     // week Mon 00:00 → Mon 00:00; corrections until Mon 12:00 (close); settling until Tue 12:00 (winners final)
-    week_length: String(7 * DAY_MS), close_delay: String(12 * HOUR_MS), settle_length: String(24 * HOUR_MS),
-    timelock_length: String(48 * HOUR_MS), min_stake: n("MIN_STAKE", 100_000_000), max_sponsor_rc: n("MAX_SPONSOR_RC", 200_000_000),
+    week_length: String(fast ? HOUR_MS : 7 * DAY_MS), close_delay: String(fast ? 5 * 60_000 : 12 * HOUR_MS), settle_length: String(fast ? 10 * 60_000 : 24 * HOUR_MS),
+    timelock_length: String(fast ? 10 * 60_000 : 48 * HOUR_MS), min_stake: n("MIN_STAKE", 100_000_000), max_sponsor_rc: n("MAX_SPONSOR_RC", 200_000_000),
   };
   const hash = sha256hex(wasm);
   log(`Network            ${rpc}${mainnet ? "   ⚠ MAINNET" : ""}`);
@@ -604,7 +641,7 @@ async function deploy(send: boolean) {
   if (!send) { log(`\nDry run only. Nothing was sent. Run again with --send to deploy.`); return; }
 
   const chain = new KoinosChain(rpc, C);
-  const st: any = { network: mainnet ? "mainnet" : "harbinger", rpc, contract: C, owner, operator: operator.getAddress(), seedOwner, ...tokens, wasmSha256: hash, ...prior };
+  const st: any = { network: mainnet ? "mainnet" : "testnet", rpc, contract: C, owner, operator: operator.getAddress(), seedOwner, ...tokens, wasmSha256: hash, ...prior };
   // If an earlier run's upload went through but the confirmation timed out, the code is already there: don't upload twice.
   if (!st.uploaded) { try { await chain.read("get_state", {}); st.uploaded = true; log("\n1/2 The contract code is already on chain."); } catch { /* not uploaded yet */ } }
   if (!st.uploaded) {
@@ -653,7 +690,7 @@ async function upgrade(sub: string | undefined, send: boolean) {
   const dep = readJson(P.deployment, null);
   if (!dep?.contract) throw new Error(`${P.deployment} not found — deploy first.`);
   const rpc = E.RPC ?? dep.rpc;
-  const mainnet = !/harbinger/i.test(rpc);
+  const mainnet = isMainnet(rpc);
   if (send && mainnet && E.CONFIRM_MAINNET !== "yes") throw new Error("MAINNET: add CONFIRM_MAINNET=yes to .env first.");
   if (!fs.existsSync(WASM)) throw new Error(`${WASM} not found — in the game folder run: npm test && npm run check`);
   const wasm = fs.readFileSync(WASM);
@@ -749,7 +786,7 @@ async function act(role: string, method: string, args: any, send: boolean) {
   const dep = readJson(P.deployment, null);
   if (!dep?.contract) throw new Error(`${P.deployment} not found — deploy first.`);
   const rpc = E.RPC ?? dep.rpc;
-  if (send && !/harbinger/i.test(rpc) && E.CONFIRM_MAINNET !== "yes") throw new Error("MAINNET: add CONFIRM_MAINNET=yes to .env first.");
+  if (send && isMainnet(rpc) && E.CONFIRM_MAINNET !== "yes") throw new Error("MAINNET: add CONFIRM_MAINNET=yes to .env first.");
   const r0 = ROLES[role];
   if (!r0) throw new Error(`--as must be one of ${Object.keys(ROLES).join(", ")}`);
   const wif = E[r0.key] ?? (r0.fallback ? E[r0.fallback] : undefined);
@@ -854,6 +891,17 @@ export function nodePublicKey(file = E.NODE_KEY_FILE ?? NODE_KEY_FILE): string {
 
 /** Is the project's node running and caught up with the chain? */
 async function nodeStatus() {
+  if (TESTNET) {
+    // No public testnet node to compare with: a node is caught up when its newest block is only seconds old.
+    const local = new Provider([E.NODE_RPC!]);
+    let head: any;
+    try { head = await local.getHeadInfo(); }
+    catch { log(`The testnet node doesn't answer on ${E.NODE_RPC}. In C:\\kpred-testnet\\koinos run: docker compose up -d`); process.exitCode = 1; return; }
+    const ageMin = (Date.now() - Number(head.head_block_time)) / 60_000;
+    log(`Testnet node at block ${Number(head.head_topology.height).toLocaleString()}, newest block from ${utc(Number(head.head_block_time))}`);
+    log(ageMin < 2 ? "✔ The testnet node is caught up." : `… still syncing: about ${ageMin < 120 ? `${ageMin.toFixed(0)} minutes` : `${(ageMin / 60 / 24).toFixed(1)} days`} of testnet chain to go.`);
+    return;
+  }
   const local = new Provider([E.NODE_RPC ?? "http://127.0.0.1:8080"]);
   const pub = new Provider([E.RPC ?? "https://api.koinos.io"]);
   const p: any = await pub.getHeadInfo();
@@ -872,15 +920,16 @@ async function nodeStatus() {
 /** Creates the keys this project needs in the root .env (never prints a private key). Re-uses the probe wallets:
  *  the probe owner (with its KOIN) becomes the bot's wallet, the probe helper becomes the test player. */
 function keys() {
-  const file = path.resolve(".env");
+  const file = path.resolve(TESTNET ? ".env.testnet" : ".env");
   let text = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
   const has = (k: string) => new RegExp(`^${k}=`, "m").test(text);
   const add = (k: string, v: string) => { text = (text.trim() ? text.replace(/\s*$/, "\n") : "") + `${k}=${v}\n`; E[k] = v; };
   const added: string[] = [];
-  if (!has("RPC")) add("RPC", "https://api.koinos.io");
-  if (!has("CONFIRM_MAINNET")) add("CONFIRM_MAINNET", "yes");
+  if (!TESTNET && !has("RPC")) add("RPC", "https://api.koinos.io");
+  if (!TESTNET && !has("CONFIRM_MAINNET")) add("CONFIRM_MAINNET", "yes");
   const probe: Record<string, string> = {};
-  if (fs.existsSync("probes/.env")) for (const line of fs.readFileSync("probes/.env", "utf8").split(/\r?\n/)) {
+  // (Testnet wallets are always brand new: they never share a key with mainnet.)
+  if (!TESTNET && fs.existsSync("probes/.env")) for (const line of fs.readFileSync("probes/.env", "utf8").split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
     if (m) probe[m[1]] = m[2];
   }
@@ -906,7 +955,10 @@ The private keys are ONLY in: ${file}
   • Back up OWNER_WIF and CONTRACT_WIF offline (write them on paper or a password manager). Lose OWNER_WIF and nobody
     can claim the producer fee, correct a question or upgrade the code.
   • Never paste a private key in a chat, email or GitHub. Only OPERATOR_WIF ever goes into GitHub (as a secret).
-  • Open the file with:  notepad .env`);
+  • Open the file with:  notepad ${TESTNET ? ".env.testnet" : ".env"}${TESTNET ? `
+
+TESTNET: get free test KOIN for each wallet in the Koinos Discord (#faucet):  !faucet <address>
+  At least the bot, admin and player wallets. Never send real KOIN to these addresses.` : ""}`);
 }
 // ═══════════════════════════════ wiring ═══════════════════════════════
 

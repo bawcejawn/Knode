@@ -159,9 +159,13 @@
       const [p, wk] = await Promise.all([read("get_player", { player: a, week: String(w) }), read("get_week", { week: String(w) })]);
       const e = p.entry, W = wk.week || {};
       if (!e || !e.eligible || e.claimed || W.rolled_over || num(e.points) < num(W.cutoff)) continue;
-      const weight = (big(W.weight_hi) << 64n) + big(W.weight_lo);
-      const est = weight > 0n ? (big(W.pot) * BigInt(num(e.points)) * big(e.stake)) / weight : 0n;
-      claims.push({ week: w, reward: est });
+      let est = null;
+      try {
+        if (!S.board[w]) S.board[w] = await loadBoard(w);
+        const me = S.board[w].scored.find((x) => x.address === a);
+        if (me && me.reward !== undefined) est = me.reward;
+      } catch {}
+      claims.push({ week: w, reward: est ?? 0n });
     }
     S.claims = claims;
   }
@@ -180,20 +184,60 @@
     }).sort((x, y) => y.pts - x.pts || (y.stake > x.stake ? 1 : y.stake < x.stake ? -1 : 0));
     const elig = scored.filter((s) => s.eligible);
     const total = elig.reduce((s, x) => s + x.stake, 0n);
-    let cutoff = 0, cum = 0n;
+    // Winners: the top 30% of staked, eligible players by points (headcount), ties included; 0 points never wins.
+    const need = Math.ceil((elig.length * 30) / 100);
+    let cutoff = 0, cum = 0;
     const maxP = Math.max(0, ...elig.map((s) => s.pts));
-    for (let p = maxP; p >= 1; p--) {
-      cum += elig.filter((s) => s.pts === p).reduce((s, x) => s + x.stake, 0n);
-      cutoff = p;
-      if (cum * 10000n >= total * 3000n) break;
+    if (need > 0) for (let p = maxP; p >= 1; p--) { cum += elig.filter((s) => s.pts === p).length; cutoff = p; if (cum >= need) break; }
+    // Rank weights 1/√rank; players tied share their places' weights evenly.
+    const groups = new Map();
+    let rank = 1n, sumW = 0n, bw = 0n;
+    if (cutoff >= 1) for (let p = maxP; p >= cutoff; p--) {
+      const members = elig.filter((s) => s.pts === p);
+      if (!members.length) continue;
+      let gw = 0n;
+      for (let i = 0; i < members.length; i++) { gw += rankWeight(rank); rank++; }
+      const stake = members.reduce((a, x) => a + x.stake, 0n);
+      groups.set(p, { n: BigInt(members.length), sumW: gw });
+      sumW += gw;
+      bw += (gw * stake) / BigInt(members.length);
     }
-    const weight = elig.filter((s) => cutoff >= 1 && s.pts >= cutoff).reduce((s, x) => s + BigInt(x.pts) * x.stake, 0n);
     for (const s of scored) {
       s.winner = s.eligible && cutoff >= 1 && s.pts >= cutoff;
-      s.share = s.winner && weight > 0n ? Number((BigInt(s.pts) * s.stake * 1000000n) / weight) / 10000 : 0;
+      s.group = s.winner ? groups.get(s.pts) : null;
     }
-    return { scored, cutoff, total };
+    return { scored, cutoff, total, sumW, bw };
   }
+
+  /** Fill in each winner's reward for pots A and B (exactly the contract's arithmetic, rounded down). */
+  function applyPots(board, potA, potB) {
+    for (const s of board.scored) {
+      if (!s.winner || !s.group) { s.reward = undefined; continue; }
+      const g = s.group;
+      let r = board.sumW > 0n ? (potA * g.sumW) / (g.n * board.sumW) : 0n;
+      if (board.bw > 0n) r += (potB * ((g.sumW * s.stake) / g.n)) / board.bw;
+      s.reward = r;
+    }
+  }
+
+  /** This week's pots if it closed now: 5% fee off new earnings, then 65% of the house's part by rank, the rest by
+   *  rank × stake. An estimate (the real split weighs who produced what over the whole week). */
+  function livePots() {
+    const t = S.st?.totals || {};
+    const holdings = big(S.st?.vhp_balance) + big(S.st?.koin_balance);
+    const owed = ["total_stake", "seed_vhp", "seed_koin", "owner_share", "creator_fee", "pots_outstanding"].reduce((a, k) => a + big(t[k]), 0n);
+    const gain = holdings > owed ? holdings - owed : 0n;
+    const carried = big(t.rolled_over) < gain ? big(t.rolled_over) : gain;
+    const fresh = gain - carried, net = fresh - (fresh * 500n) / 10000n;
+    const house = big(t.seed_vhp) + big(t.pots_outstanding) + big(t.rolled_over), all = house + big(t.total_stake);
+    const houseNet = (all > 0n ? (net * house) / all : net) + carried;
+    const potA = (houseNet * 6500n) / 10000n;
+    return { potA, potB: net + carried - potA };
+  }
+
+  const W_SCALE = 10n ** 18n;
+  function isqrt(n) { if (n < 2n) return n; let x = n, y = n / 2n + 1n; while (y < x) { x = y; y = (x + n / x) / 2n; } return x; }
+  const rankWeight = (r) => isqrt(W_SCALE / BigInt(r));
 
   async function loadBoard(week) {
     if (S.demo) return demoBoard(week);
@@ -209,7 +253,12 @@
     const outcomes = new Map();
     await Promise.all([...ids].map(async (id) => outcomes.set(id, num(((await read("get_question", { id })).question || {}).outcome))));
     const res = score(rows, outcomes);
-    if (week < num(S.st.totals?.weeks_finalized)) res.final = (await read("get_week", { week: String(week) })).week || {};
+    if (week < num(S.st.totals?.weeks_finalized)) {
+      res.final = (await read("get_week", { week: String(week) })).week || {};
+      applyPots(res, big(res.final.pot_a), big(res.final.pot_b));
+    } else if (week === S.week) {
+      const lp = livePots(); applyPots(res, lp.potA, lp.potB); res.estimate = true;
+    }
     return res;
   }
 
@@ -365,7 +414,7 @@
     } else {
       const total = big(S.player?.stake) + big(S.player?.pending);
       $("#stake-help").textContent = `You can withdraw any amount up to ${exact(total)} VHP, decimals included. It goes straight back to your wallet.`;
-      warn.textContent = "Withdrawing during a week cancels your answers for this week (unless you only take back a top-up that hasn't started counting yet).";
+      warn.textContent = "Withdrawing part keeps you in this week with a lower stake. Withdrawing everything takes you out of this week.";
       warn.hidden = !S.entry;
     }
     d.dataset.mode = mode;
@@ -479,6 +528,10 @@
         joining > 0n ? el("p", { class: "muted" }, `+ ${amount(joining)} VHP joining next week`) : null,
         el("dl", { class: "facts", style: "margin-top:14px" },
           el("dt", {}, "Points this week"), el("dd", {}, pts ? String(pts.pts) : "0"),
+          ...(nowMs() >= S.genesis && pts && pts.counted > 0 ? [
+            el("dt", {}, "Live place"), el("dd", {}, pts.eligible ? `#${S.board[S.week].scored.filter((x) => x.eligible).indexOf(pts) + 1} of ${S.board[S.week].scored.filter((x) => x.eligible).length}` : "free play (no place)"),
+            el("dt", { title: "An estimate from what the pool has earned so far this week; the final split is set when the week closes." }, "If the week ended now"),
+            el("dd", {}, pts.winner && pts.reward !== undefined ? `~${amount(pts.reward)} VHP` : !pts.eligible ? "needs 1 VHP + 2 answers" : "not in the top 30% yet")] : []),
           el("dt", {}, "Answers given"), el("dd", {}, String((S.entry?.answers || []).length)),
           el("dt", {}, "Wallet"), el("dd", { class: "addr" }, short(S.account))),
         S.entry?.voided ? el("p", { class: "warn" }, "You withdrew this week, so this week's answers don't count.") : null,
@@ -524,14 +577,17 @@
     if (!rows.length) { tbody.replaceChildren(el("tr", {}, el("td", { colspan: "5", class: "muted" }, "No players yet this week. Stake and answer to be the first."))); return; }
     let lastWinnerIdx = -1;
     rows.forEach((s, i) => { if (s.winner) lastWinnerIdx = i; });
+    // Places are counted among eligible staked players only (free players never take a place).
+    let place = 0;
+    const placeOf = new Map(rows.map((s) => [s, s.eligible ? ++place : null]));
     tbody.replaceChildren(...rows.map((s, i) => el("tr", { class: [s.address === S.account ? "me" : "", i === lastWinnerIdx ? "cutline" : ""].join(" ").trim() },
-      el("td", {}, el("span", { class: `rank${s.winner ? " top" : ""}` }, String(i + 1))),
+      el("td", {}, el("span", { class: `rank${s.winner ? " top" : ""}` }, placeOf.get(s) ? String(placeOf.get(s)) : "–")),
       el("td", {}, el("span", { class: "addr" }, s.address === S.account ? "You" : short(s.address)), i === lastWinnerIdx ? el("span", { class: "cut-label" }, "winners' line") : null),
       el("td", { class: "num" }, String(s.pts)),
       el("td", { class: "num" }, s.stake < UNIT ? el("span", { class: "badge badge-free" }, "Free play") : `${amount(s.stake, 0)} VHP`),
-      el("td", { class: "num" }, s.winner ? `${s.share.toFixed(2)}%` : "–"))));
+      el("td", { class: "num" }, s.winner && s.reward !== undefined ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : "–"))));
     $("#lb-note").textContent = week === S.week
-      ? "Live standings: points count once a question is resolved. Winners are the top players holding 30% of the week's stake, and everyone tied at the line wins too."
+      ? "Live standings: points count as soon as each question's blocks are final. The top 30% of staked players win (ties too). Rewards shown with ~ are estimates if the week ended now."
       : b.final ? `Final: ${num(b.final.winners)} winner(s) at ${num(b.final.cutoff)}+ points shared ${amount(b.final.pot)} VHP.` : "Final standings.";
     if (week === S.week) $("#stat-players").textContent = String(b.scored.length);
   }
@@ -634,7 +690,9 @@
     const outcomes = new Map(S.questions.filter((q) => q.chainOutcome).map((q) => [q.chainId, q.chainOutcome]));
     const rows = S.demoRows.slice();
     if (S.account) rows.push({ address: S.account, stake: 250n * UNIT, answers: S.entry.answers, voided: false });
-    return score(rows, outcomes);
+    const res = score(rows, outcomes);
+    const lp = livePots(); applyPots(res, lp.potA, lp.potB); res.estimate = true;
+    return res;
   }
 
   // ═══════════════ start ═══════════════

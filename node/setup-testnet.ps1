@@ -64,7 +64,8 @@ Ok "started"
 
 Write-Host ""
 Write-Host "Done. The node now downloads the testnet chain; that can take a few hours the first time." -ForegroundColor Cyan
-Write-Host "  cd $repo ; docker compose logs --tail 5 chain     # shows the block height it has reached"
+Write-Host "  cd C:\kprediction"
+Write-Host "  npm run bot -- node-status --testnet     # how far it has synced"
 Write-Host ""
 Write-Host "Useful:"
 Write-Host "  cd $repo ; docker compose logs --tail 30 chain     # what the testnet node is doing"

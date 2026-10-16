@@ -19,6 +19,7 @@ import { Signer } from "koilib";
 import { SimChain, showKoin } from "./chain.ts";
 import { tick, paths, generatorRunner, allPlayers, DAY, DAY_MS, HOUR_MS, utc, type Ctx } from "./bot.ts";
 import { readCompact, writeCsv } from "../common.ts";
+import { winnersOf, rewardOf } from "./payout.ts";
 
 const SIM_WASM = "game/build/sim/contract.wasm";
 const VHP = 100_000_000n;
@@ -174,7 +175,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
       }
       if (p.habit === "ghost" && week >= 1) continue;                   // played week 0, then vanished forever
       if (p.habit === "quitter" && week === 1 && dayIdx === 10 && p.stake > 0n) {
-        const amt = p.stake / 2n;                                          // withdraws half mid-week: week 1 is void
+        const amt = p.stake;                                               // withdraws everything mid-week: out of week 1
         if (await act(p.key, "withdraw", { to: A, amount: String(amt) })) p.stake -= amt;
       }
       // answer open questions
@@ -317,27 +318,26 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     const pointsMatch = scored.filter((s) => s.e.settled).every((s) => s.pts === N(s.e.points) && s.eligible === !!s.e.eligible);
     const freeNeverPaid = scored.filter((s) => s.stake < VHP).every((s) => !s.e.eligible && !s.e.claimed);
     const elig = scored.filter((s) => s.eligible);
-    const total = elig.reduce((s, x) => s + x.stake, 0n);
-    let cutoff = 0, cum = 0n;
-    const maxP = Math.max(0, ...elig.map((s) => s.pts));
-    for (let p = maxP; p >= 1; p--) { cum += elig.filter((s) => s.pts === p).reduce((a, x) => a + x.stake, 0n); cutoff = p; if (cum * 10000n >= total * 3000n) break; }
-    const winners = cutoff >= 1 ? elig.filter((s) => s.pts >= cutoff) : [];
-    const weight = winners.reduce((a, s) => a + BigInt(s.pts) * s.stake, 0n);
-    const onWeight = (BigInt(wk.weight_hi) << 64n) + BigInt(wk.weight_lo);
+    const W8 = winnersOf(elig.map((s) => ({ pts: s.pts, stake: s.stake })));
+    const winners = W8.cutoff >= 1 ? elig.filter((s) => s.pts >= W8.cutoff) : [];
+    const onBw = (BigInt(wk.bw_hi ?? 0) << 64n) + BigInt(wk.bw_lo ?? 0);
     check(allSettled, `week ${w}: all ${staked.length} staked entries settled (players who never came back were settled by the bot)`);
     check(freeNeverPaid, `week ${w}: ${entries.length - staked.length} free player(s) played without stake and were never eligible or paid`);
     check(pointsMatch, `week ${w}: every player's points and eligibility match an independent recount`);
-    check(N(wk.cutoff) === cutoff && N(wk.winners) === winners.length && onWeight === weight,
-      `week ${w}: winners match the independent recount — cutoff ${cutoff} pts, ${winners.length} winner(s) holding ≥30% of ${showKoin(total)} eligible VHP`);
+    check(N(wk.cutoff) === W8.cutoff && N(wk.winners) === winners.length && BigInt(wk.sum_w ?? 0) === W8.sumW && onBw === W8.bw,
+      `week ${w}: winners match the independent recount — cutoff ${W8.cutoff} pts, ${winners.length} winner(s) = top 30% of ${elig.length} staked players (ties included)`);
+    check(BigInt(wk.pot_a ?? 0) + BigInt(wk.pot_b ?? 0) === BigInt(wk.pot ?? 0),
+      `week ${w}: the pot splits exactly into basket A ${showKoin(wk.pot_a)} (by rank) + basket B ${showKoin(wk.pot_b)} (by rank × stake); the house produced ${(N(wk.house_ppm) / 10000).toFixed(1)}%`);
     let payOk = true;
     for (const s of winners) {
       if (!s.e.claimed) continue;
-      const expect = (BigInt(wk.pot) * BigInt(s.pts) * s.stake) / weight;
+      const g = W8.groups.find((x) => x.pts === s.pts)!;
+      const expect = rewardOf(g, s.stake, BigInt(wk.pot_a), BigInt(wk.pot_b), W8.sumW, W8.bw);
       if (BigInt(s.e.reward) !== expect) payOk = false;
     }
-    check(payOk, `week ${w}: every claimed reward = pot × points × stake ÷ total weight, to the unit`);
+    check(payOk, `week ${w}: every claimed reward = basket A by rank + basket B by rank × stake, to the unit`);
     const voided = entries.filter((r) => r.entry.voided).length;
-    weekLog.push(`week ${w}: ${wk.questions} questions · gain ${showKoin(wk.gain)} → fee ${showKoin(wk.fee)} / owner ${showKoin(wk.retained)} / pot ${showKoin(wk.pot)} · ${entries.length} played (${voided} voided), ${wk.eligible_players} eligible · cutoff ${wk.cutoff} pts · ${wk.winners} winner(s) · claimed ${showKoin(wk.claimed)}${wk.rolled_over ? " · ROLLED OVER" : ""}`);
+    weekLog.push(`week ${w}: ${wk.questions} questions · gain ${showKoin(wk.gain)} → fee ${showKoin(wk.fee)} / pot ${showKoin(wk.pot)} (A ${showKoin(wk.pot_a)} by rank + B ${showKoin(wk.pot_b)} by rank × stake) · ${entries.length} played (${voided} voided), ${wk.eligible_players} eligible · cutoff ${wk.cutoff} pts · ${wk.winners} winner(s) · claimed ${showKoin(wk.claimed)}${wk.rolled_over ? " · ROLLED OVER" : ""}`);
   }
 
   // Habits behaved as designed.
@@ -347,7 +347,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   const late0 = await pr(late, 0), late1 = await pr(late, 1);
   check(BigInt(late0?.stake ?? 0) === 0n && BigInt(late1?.stake ?? 0) === stakes.late, "a deposit made during week 0 only counted from week 1 (week 0 was free play)");
   check(tiny.stake === 0n && !!(await pr(tiny, 0)), "a fractional deposit (0.5 VHP) was refused; that player still played for free");
-  check(!!(await pr(quitter, 1))?.voided, "the mid-week withdrawal voided that player's week-1 answers");
+  check(!!(await pr(quitter, 1))?.voided, "withdrawing everything mid-week took that player out of week 1");
   const g0 = await pr(ghost, 0);
   check(!!g0?.settled && !(g0?.claimed), "the player who vanished after week 0 was settled by the bot and their reward stays unclaimed (still producing)");
 
