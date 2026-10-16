@@ -33,7 +33,7 @@ cd C:\kprediction
 npm install
 cd game
 npm install
-npm test                 # expect: [Tests]: 38 / 38  ✔ Pass!
+npm test                 # expect: [Tests]: 43 / 43  ✔ Pass!
 npm run check            # expect: All offline checks passed.
 npm run build:sim
 cd ..
@@ -109,7 +109,8 @@ The contract uses each block's own timestamp, so these times are exact every wee
 The questions themselves are still about real block ranges ("between block A and block B").
 
 **Free play:** anyone can answer and appear on the leaderboard without staking. Rewards are points × stake, so free
-players are never paid. Stakes are whole numbers only (1, 2, 3 VHP …). The pool only pays Mana for staked players;
+players are never paid. Deposits are whole numbers only (1, 2, 3 VHP …); withdrawals can be any amount, down to the last
+decimal, so everyone can always take out every unit. The pool only pays Mana for staked players;
 free players use their own Mana or Kondor's free Mana.
 
 ## Step 5 — Deploy the contract
@@ -160,7 +161,9 @@ During the week, answer on the website, or:
 npm run bot -- status                 # open questions with their numbers and options
 npm run bot -- answer 3 B --send      # answer question #3 with B
 ```
-After the week (Monday, plus 1 day for corrections and 2 days for settling), collect: `npm run bot -- claim 0 --send`
+After the week (from Tuesday 12:00 UTC, once winners are final), collect: `npm run bot -- claim 0 --send`
+
+To take money out: `npm run bot -- withdraw 0.5 --send` (any amount, decimals allowed) or `npm run bot -- withdraw all --send`.
 
 ## Step 10 — Full seed
 
@@ -172,6 +175,16 @@ npm run bot -- seed-koin 19950 --send
 Moving KOIN needs Mana at least equal to the amount, so let the admin wallet's Mana refill first.
 
 ---
+
+## Security in one page
+
+See `docs/security-audit.md` for the full audit. The short version:
+- **Players' stakes can only go back to the player who deposited them.** No one else can sign a withdrawal for them, and
+  withdrawals can never be paused.
+- **Nobody, not even the admin, can move the contract's tokens directly.** The contract refuses every outside request.
+- **Code changes take 48 hours** and the bot emails you the moment one is scheduled, so players always have two days to leave.
+- **After deploy, the contract key in `.env` (`CONTRACT_WIF`) has no power left.** Keep a backup anyway, offline.
+- **Back up the admin key (`OWNER_WIF`) offline.** It is the most powerful key. Never put it on GitHub.
 
 ## What the email alerts mean
 

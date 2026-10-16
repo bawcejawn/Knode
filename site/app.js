@@ -8,8 +8,8 @@
   const UNIT = 100000000n;        // 1 KOIN / 1 VHP = 10^8 units
   const RPC = "https://api.koinos.io";
   // Block explorer links (change here if the explorer's address format differs).
-  const EXPLORER_ADDRESS = "https://koinosscan.io/address/";
-  const EXPLORER_PRODUCERS = "https://koinosscan.io/producers";
+  const EXPLORER_ADDRESS = "https://koinosscan.com/address/";
+  const EXPLORER_PRODUCERS = "https://koinosscan.com/producers";
   const BASE = location.pathname.includes("/site/") ? "../" : "./";
   const DATA = BASE + "game-data/";
   const ABI_URL = BASE + "game/abi/kpred.koilib.json";
@@ -59,6 +59,11 @@
     const m = String(text).trim().match(/^(\d+)(?:\.(\d{0,8}))?$/);
     if (!m) return null;
     return (BigInt(m[1]) * UNIT + BigInt((m[2] || "").padEnd(8, "0"))).toString();
+  };
+  /** Every decimal, nothing rounded (for "withdraw all"). */
+  const exact = (units) => {
+    const v = big(units), w = v / UNIT, f = (v % UNIT).toString().padStart(8, "0").replace(/0+$/, "");
+    return f ? `${w}.${f}` : `${w}`;
   };
   const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "");
   /** Chain time now (ms): the last block's time plus however long ago we read it. */
@@ -283,6 +288,9 @@
     $("#stake-title").textContent = mode === "deposit" ? "Stake" : "Withdraw";
     $("#stake-token").hidden = mode !== "deposit";
     $("#stake-amount").value = "";
+    $("#stake-amount").inputMode = mode === "deposit" ? "numeric" : "decimal";
+    $("#stake-amount").placeholder = mode === "deposit" ? "e.g. 25" : "e.g. 2.5";
+    $("#stake-max").hidden = mode === "deposit";
     const warn = $("#stake-warn");
     if (mode === "deposit") {
       const b = S.balances || {};
@@ -290,8 +298,8 @@
       warn.hidden = true;
     } else {
       const total = big(S.player?.stake) + big(S.player?.pending);
-      $("#stake-help").textContent = `You can withdraw up to ${amount(total)} VHP. It goes straight back to your wallet.`;
-      warn.textContent = "Withdrawing during a week cancels your answers for this week.";
+      $("#stake-help").textContent = `You can withdraw any amount up to ${exact(total)} VHP, decimals included. It goes straight back to your wallet.`;
+      warn.textContent = "Withdrawing during a week cancels your answers for this week (unless you only take back a top-up that hasn't started counting yet).";
       warn.hidden = !S.entry;
     }
     d.dataset.mode = mode;
@@ -299,12 +307,21 @@
     $("#stake-amount").focus();
   }
 
+  $("#stake-max").addEventListener("click", () => {
+    $("#stake-amount").value = exact(big(S.player?.stake) + big(S.player?.pending));
+  });
+
   $("#stake-dialog").addEventListener("close", async () => {
     const d = $("#stake-dialog");
     if (d.returnValue !== "go") return;
     const raw = $("#stake-amount").value.trim();
-    if (!/^[1-9]\d*$/.test(raw)) return toast("Whole numbers only, for example 1 or 25.");
+    const isDeposit = d.dataset.mode === "deposit";
+    if (isDeposit && !/^[1-9]\d*$/.test(raw)) return toast("Stakes are whole numbers only, for example 1 or 25.");
     const units = toUnits(raw);
+    if (!isDeposit) {
+      if (!units || big(units) <= 0n) return toast("Enter an amount, for example 2.5 (up to 8 decimals).");
+      if (big(units) > big(S.player?.stake) + big(S.player?.pending)) return toast("That is more than you have staked.");
+    }
     if (d.dataset.mode === "deposit") {
       const tok = document.querySelector('input[name="tok"]:checked').value;
       if (big(units) < UNIT && big(S.player?.stake) + big(S.player?.pending) < UNIT) toast("Note: you need at least 1 VHP staked to answer.", 6000);
@@ -316,7 +333,7 @@
         ];
       });
     } else {
-      await send(`withdraw ${amount(units)} VHP`, async () => [await opOf(writer(), "withdraw", { to: S.account, amount: units })]);
+      await send(`withdraw ${exact(units)} VHP`, async () => [await opOf(writer(), "withdraw", { to: S.account, amount: units })]);
     }
   });
 

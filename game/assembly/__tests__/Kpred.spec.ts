@@ -212,18 +212,28 @@ describe("questions and answers", () => {
     expect(k.get_player(new kpred.get_player_arguments(E, 0)).entry!.stake).toBe(0);
   });
 
-  it("stakes are whole numbers only", () => {
+  it("deposits are whole numbers only; withdrawals may be any amount, down to the last unit", () => {
     const k = setup();
     gK = k;
     as(A);
     MockVM.commitTransaction();
     expect(() => { gK!.deposit_vhp(new kpred.deposit_vhp_arguments(A, VHP + VHP / 2)); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("stake whole numbers only (1, 2, 3 …)");
-    deposit(k, A, 3 * VHP);
     MockVM.commitTransaction();
-    expect(() => { gK!.withdraw(new kpred.withdraw_arguments(A, VHP / 10)); }).toThrow();
-    expect(MockVM.getErrorMessage()).toBe("withdraw whole numbers only (1, 2, 3 …)");
-    k.withdraw(new kpred.withdraw_arguments(A, VHP));
+    expect(() => { gK!.deposit_koin(new kpred.deposit_koin_arguments(A, 1)); }).toThrow();
+    deposit(k, A, 3 * VHP);
+    k.withdraw(new kpred.withdraw_arguments(A, VHP / 10));          // 0.1
+    k.withdraw(new kpred.withdraw_arguments(A, 12_345_678));        // 0.12345678
+    const pl = k.get_player(new kpred.get_player_arguments(A, 0)).player!;
+    expect(pl.stake + pl.pending).toBe(3 * VHP - VHP / 10 - 12_345_678);
+    MockVM.commitTransaction();
+    expect(() => { gK!.withdraw(new kpred.withdraw_arguments(A, 3 * VHP)); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("more than your stake");
+    k.withdraw(new kpred.withdraw_arguments(A, 3 * VHP - VHP / 10 - 12_345_678));   // everything that is left
+    expect(Tokens.testGet(VHP_TAG, A)).toBe(1000 * VHP);             // every unit came back
+    expect(k.get_state(new kpred.get_state_arguments()).totals!.total_stake).toBe(0);
+    MockVM.commitTransaction();
+    expect(() => { gK!.withdraw(new kpred.withdraw_arguments(A, 1)); }).toThrow();
   });
 
   it("answers need an open question, a valid option, and only once", () => {
@@ -496,6 +506,26 @@ describe("seed", () => {
     expect(r.vhp).toBe(400 * VHP);
     expect(k.get_state(new kpred.get_state_arguments()).totals!.seed_vhp).toBe(600 * VHP);
   });
+
+  it("a KOIN seed withdrawal pays what KOIN is on hand and the rest later, never more than the seed", () => {
+    const k = setup();
+    as(SEED);
+    k.seed_deposit_koin(new kpred.seed_deposit_koin_arguments(100 * VHP));
+    // say 60 of that KOIN is currently held as VHP (it comes back as KOIN with the block rewards)
+    Tokens.testSet(KOIN_TAG, CONTRACT, 40 * VHP);
+    give(VHP_TAG, CONTRACT, 60 * VHP);
+    const eta = k.request_seed_withdrawal(new kpred.request_seed_withdrawal_arguments(0, 100 * VHP)).eta;
+    at(eta / MS);
+    expect(k.execute_seed_withdrawal(new kpred.execute_seed_withdrawal_arguments()).koin).toBe(40 * VHP);
+    give(KOIN_TAG, CONTRACT, 60 * VHP);
+    expect(k.execute_seed_withdrawal(new kpred.execute_seed_withdrawal_arguments()).koin).toBe(60 * VHP);
+    expect(Tokens.testGet(KOIN_TAG, SEED)).toBe(500 * VHP);
+    expect(k.get_state(new kpred.get_state_arguments()).totals!.seed_koin).toBe(0);
+    gK = k;
+    MockVM.commitTransaction();
+    expect(() => { gK!.execute_seed_withdrawal(new kpred.execute_seed_withdrawal_arguments()); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("no seed withdrawal requested");
+  });
 });
 
 describe("owner powers are limited", () => {
@@ -626,7 +656,7 @@ describe("more sponsorship and upgrades", () => {
     const tx = new protocol.transaction();
     tx.header = new protocol.transaction_header();
     const op = new protocol.operation();
-    op.upload_contract = new protocol.upload_contract_operation(CONTRACT, code);
+    op.upload_contract = new protocol.upload_contract_operation(CONTRACT, code, "", true, true, true);
     tx.operations.push(op);
     MockVM.setTransaction(tx);
     System.resetCache();
@@ -639,12 +669,25 @@ describe("more sponsorship and upgrades", () => {
     as(OWNER);
     const other = new Uint8Array(100);
     other.fill(7);
-    op.upload_contract = new protocol.upload_contract_operation(CONTRACT, other);
+    op.upload_contract = new protocol.upload_contract_operation(CONTRACT, other, "", true, true, true);
     tx.operations[0] = op;
     MockVM.setTransaction(tx);
     System.resetCache();
     expect(k.authorize(up).value).toBe(false);       // different bytecode than announced
-    op.upload_contract = new protocol.upload_contract_operation(CONTRACT, code);
+    op.upload_contract = new protocol.upload_contract_operation(CONTRACT, code, "", true, true, true);
+    tx.operations[0] = op;
+    MockVM.setTransaction(tx);
+    System.resetCache();
+    expect(k.authorize(up).value).toBe(true);
+    // the right code, but with the contract's own rules switched off: refused
+    for (let flag = 0; flag < 3; flag++) {
+      op.upload_contract = new protocol.upload_contract_operation(CONTRACT, code, "", flag != 0, flag != 1, flag != 2);
+      tx.operations[0] = op;
+      MockVM.setTransaction(tx);
+      System.resetCache();
+      expect(k.authorize(up).value).toBe(false);
+    }
+    op.upload_contract = new protocol.upload_contract_operation(CONTRACT, code, "", true, true, true);
     tx.operations[0] = op;
     MockVM.setTransaction(tx);
     System.resetCache();
@@ -675,6 +718,12 @@ describe("safety valves", () => {
     MockVM.commitTransaction();
     expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1300 * MS, 1299, 1400, hash32(1))); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("the window must start after answers close");
+    // a gigantic window_end cannot wrap the arithmetic around and slip through
+    MockVM.commitTransaction();
+    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1700 * MS, 1701, u64.MAX_VALUE - 30, hash32(1))); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("the window must end before the week is due to close");
+    MockVM.commitTransaction();
+    expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1700 * MS, 1701, 5270498306775198, hash32(1))); }).toThrow();
   });
 
   it("the owner can VOID an open question so the week can close; nobody else, and never a real answer", () => {
@@ -753,6 +802,28 @@ describe("edge cases", () => {
     const r = k.settle(new kpred.settle_arguments(A, 0));
     expect(r.eligible).toBe(false);
     expect(r.points).toBe(0);
+  });
+
+  it("taking back only a not-yet-active top-up leaves this week's answers counting", () => {
+    const k = setup();
+    deposit(k, A, 10 * VHP);
+    at(1100);
+    const q0 = post(k, 2, 1300, 1301, 1400);
+    const q1 = post(k, 2, 1300, 1301, 1400);
+    at(1200);
+    answer(k, A, q0, 1);
+    deposit(k, A, 5 * VHP);                           // pending until week 1
+    as(A);
+    k.withdraw(new kpred.withdraw_arguments(A, 5 * VHP / 2));     // 2.5 of the pending top-up
+    answer(k, A, q1, 1);                              // still allowed: this week's stake was not touched
+    at(1500); resolve(k, q0, 1); resolve(k, q1, 1);
+    at(2010);
+    k.close_week(new kpred.close_week_arguments(0));
+    const r = k.settle(new kpred.settle_arguments(A, 0));
+    expect(r.eligible).toBe(true);
+    expect(r.points).toBe(2);
+    const p = k.get_player(new kpred.get_player_arguments(A, 1)).player!;
+    expect(p.stake + p.pending).toBe(10 * VHP + 5 * VHP / 2);
   });
 
   it("a mid-week top-up does not change the week's stake snapshot", () => {

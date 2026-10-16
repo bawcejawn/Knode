@@ -11,7 +11,7 @@
  * All of this runs on-chain. The only off-chain inputs are the operator's question parameters and resolutions.
  *
  * Who can do what:
- *   players     deposit, withdraw (any time; voids that week's answers), answer, settle, claim
+ *   players     deposit (whole numbers), withdraw any amount at any time (voids that week's answers), answer, settle, claim
  *   operator    post and resolve questions — cannot move any funds
  *   owner       correct a resolution before its week closes, set operator, pause NEW deposits, register the node key,
  *               claim the creator fee / owner share, schedule an upgrade (uploadable only after the timelock)
@@ -32,7 +32,7 @@ const RESOLVE_MARGIN: u64 = 60; // resolve only after the window's blocks are ir
 // question watches are still counted by height; these bounds on the average block time keep the two consistent:
 const MIN_BLOCK_MS: u64 = 2800; // even if blocks ran this fast, a question's window still starts after its answers close
 const MAX_BLOCK_MS: u64 = 3500; // even if blocks ran this slow, the window still ends before its week is due to close
-const WHOLE: u64 = 100_000_000;   // stakes move in whole VHP / KOIN only (1, 2, 3 … never 1.5)
+const WHOLE: u64 = 100_000_000;   // deposits are whole VHP / KOIN only (1, 2, 3 … never 1.5); withdrawals may be any amount
 const MAX_SPONSOR_LIMIT: u64 = 1_000_000_000; // 10 KOIN of Mana: the most one free transaction may ever cost the pool
 
 // Entry points the contract is willing to pay Mana for (first 4 bytes of sha256 of the name).
@@ -396,7 +396,6 @@ export class Kpred {
     const to = args.to!;
     System.requireAuthority(authority.authorization_type.contract_call, to);
     System.require(args.amount > 0, "amount must be positive");
-    System.require(args.amount % WHOLE == 0, "withdraw whole numbers only (1, 2, 3 …)");
     this.advance(c);
     const h = this.now();
     const w = this.weekOf(c, h);
@@ -410,8 +409,9 @@ export class Kpred {
     p.pending -= fromPending;
     rest -= fromPending;
     p.stake -= rest;
-    // Any withdrawal during a running week voids that week's answers.
-    if (h >= c.genesis_time) {
+    // A withdrawal that touches the active stake during a running week voids that week's answers. (Taking back only a
+    // not-yet-active top-up leaves this week's stake unchanged, so it voids nothing.)
+    if (h >= c.genesis_time && rest > 0) {
       p.void_week_plus_one = w + 1;
       const key = this.entryKey(to, w);
       const e = this.entries.get(key);
@@ -657,7 +657,9 @@ export class Kpred {
     // The window must finish (and be final) by the time the week is due to close, even if blocks ran slower than
     // normal, so no question can hold a week open.
     const due = this.weekEnd(c, w) + c.close_delay;
-    System.require(args.window_end + RESOLVE_MARGIN > h && (args.window_end + RESOLVE_MARGIN - h) * MAX_BLOCK_MS <= due - now, "the window must end before the week is due to close");
+    // (Written with a division so that no window_end, however large, can overflow the arithmetic.)
+    const span = (due - now) / MAX_BLOCK_MS;
+    System.require(span >= RESOLVE_MARGIN && args.window_end <= h + span - RESOLVE_MARGIN, "the window must end before the week is due to close");
     System.require(args.params_hash != null && args.params_hash!.length == 32, "params_hash must be 32 bytes");
     const wkKey = u64Key(w);
     const wk = this.weeks.get(wkKey)!;
@@ -892,6 +894,8 @@ export class Kpred {
     let koinAmt = s.koin <= t.seed_koin ? s.koin : t.seed_koin;
     const mana = Tokens.mana(this.contractId);
     if (koinAmt > mana) koinAmt = mana;                 // the rest can be executed again after Mana refills
+    const koinBal = Tokens.koinBalance(this.contractId);
+    if (koinAmt > koinBal) koinAmt = koinBal;           // KOIN still held as VHP arrives with the next block rewards
     t.seed_vhp -= vhpAmt;
     t.seed_koin -= koinAmt;
     this.totals.put(t);
@@ -987,6 +991,9 @@ export class Kpred {
       if (op.upload_contract == null) continue;
       const up = op.upload_contract!;
       if (!Arrays.equal(up.contract_id, this.contractId)) continue;
+      // The new code must keep this contract in charge of its own account. With any of these switched off, whoever
+      // holds the deploy key could move the pool's tokens or replace the code directly, skipping every rule here.
+      if (!up.authorizes_call_contract || !up.authorizes_transaction_application || !up.authorizes_upload_contract) return false;
       const mh = new Crypto.Multihash();
       mh.deserialize(System.hash(Crypto.multicodec.sha2_256, up.bytecode)!);
       if (!Arrays.equal(mh.digest, u.hash)) return false;

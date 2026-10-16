@@ -369,6 +369,45 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   check(BigInt(T.seed_vhp) === 170_000n * VHP && BigInt(T.seed_koin) === 20_000n * VHP, "the seed is untouched");
   check(BigInt(st.koin_balance) >= BigInt(T.seed_koin) + BigInt(T.creator_fee), "compounding never touched the seed KOIN or the unpaid creator fee");
   const botFailures = sim.failures;
+
+  // Exit: every player takes everything back (decimals included), the owner takes the fee and the share, and the seed
+  // leaves after its 48-hour timelock. Whatever is still owed afterwards (rewards not yet claimed) stays fully covered.
+  let exitOk = true;
+  for (const p of players) {
+    const A = p.key.getAddress();
+    const pl = (await sim.read("get_player", { player: A, week: "0" })).player ?? {};
+    const all = BigInt(pl.stake ?? 0) + BigInt(pl.pending ?? 0);
+    if (all === 0n) continue;
+    const before = await sim.ledgerGet(2, A);
+    const piece = 12_345_678n;                                           // 0.12345678 VHP first, then the rest
+    if (all > piece && !(await act(p.key, "withdraw", { to: A, amount: String(piece) }))) exitOk = false;
+    if (!(await act(p.key, "withdraw", { to: A, amount: String(all > piece ? all - piece : all) }))) exitOk = false;
+    if ((await sim.ledgerGet(2, A)) - before !== all) exitOk = false;
+  }
+  const T2 = (await sim.read("get_state", {})).totals;
+  check(exitOk && BigInt(T2.total_stake ?? 0) === 0n, "every player withdrew everything, decimals included (0.12345678 first, then the rest), and got back exactly their stake");
+  const ownerA = owner.getAddress(), seedA = seedOwner.getAddress();
+  const feeBefore = await sim.ledgerGet(1, ownerA), shareBefore = await sim.ledgerGet(2, ownerA);
+  const feeOk = await act(owner, "claim_creator_fee", { to: ownerA });
+  const shareOk = BigInt(T2.owner_share ?? 0) === 0n || await act(owner, "claim_owner_share", { to: ownerA, amount: String(T2.owner_share) });
+  check(feeOk && shareOk && (await sim.ledgerGet(1, ownerA)) - feeBefore === BigInt(T2.creator_fee ?? 0) && (await sim.ledgerGet(2, ownerA)) - shareBefore === BigInt(T2.owner_share ?? 0),
+    `the owner collected exactly the creator fee (${showKoin(T2.creator_fee)} KOIN) and the owner share (${showKoin(T2.owner_share)} VHP)`);
+  const seedV0 = await sim.ledgerGet(2, seedA), seedK0 = await sim.ledgerGet(1, seedA);
+  const req = await act(seedOwner, "request_seed_withdrawal", { vhp: String(T2.seed_vhp), koin: String(T2.seed_koin) });
+  const early = await act(seedOwner, "execute_seed_withdrawal", {});
+  const tNow = N((await sim.read("get_state", {})).time);
+  sim.setHeight(sim.height + 60_000, tNow + 48 * HOUR_MS + 60_000);
+  for (let i = 0; i < 3; i++) {
+    const s = (await sim.read("get_state", {})).totals;
+    if (BigInt(s.seed_vhp ?? 0) === 0n && BigInt(s.seed_koin ?? 0) === 0n) break;
+    await act(seedOwner, "execute_seed_withdrawal", {});
+  }
+  check(req && !early && (await sim.ledgerGet(2, seedA)) - seedV0 === BigInt(T2.seed_vhp) && (await sim.ledgerGet(1, seedA)) - seedK0 === BigInt(T2.seed_koin),
+    "the seed could not leave before its 48-hour timelock, then came back in full (170,000 VHP + 20,000 KOIN)");
+  const s3 = await sim.read("get_state", {});
+  const owed3 = ["total_stake", "seed_vhp", "seed_koin", "owner_share", "creator_fee", "pots_outstanding"].reduce((s, k) => s + BigInt(s3.totals[k] ?? 0), 0n);
+  check(BigInt(s3.vhp_balance) + BigInt(s3.koin_balance) >= owed3,
+    `after everyone left, the contract still covers every unclaimed reward (${showKoin(BigInt(s3.vhp_balance) + BigInt(s3.koin_balance))} ≥ ${showKoin(owed3)})`);
   check(alarmsDuringOutage >= 1, `the 3-hour outage of the pool's node raised the email alarm (${alarmsDuringOutage} hourly run(s) flagged it)`);
   check(falseAlarms === 0, `no false production alarms in ${ticks} hourly runs`);
   check(otherProblems.length === 0, `no other problems were reported${otherProblems.length ? ": " + otherProblems.slice(0, 3).join("; ") : ""}`);

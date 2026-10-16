@@ -245,3 +245,11 @@ dialog h2 { margin-bottom: 6px; }
 .ticker-foot a { color: inherit; text-decoration: underline; }
 .free-note { margin-top: 10px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--violet-soft); color: var(--ink); font-size: .92rem; }
 .badge-free { background: var(--violet-soft); color: var(--violet); }
+
+/* amount + "Withdraw all" on one line */
+.amount-row { display: flex; gap: 8px; align-items: stretch; }
+.amount-row input { flex: 1; min-width: 0; }
+.btn-small { padding: 0 12px; font-size: 0.85rem; white-space: nowrap; }
+
+/* the hidden attribute always wins over display rules */
+[hidden] { display: none !important; }

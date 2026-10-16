@@ -13,7 +13,9 @@ export default {
     };
     const instance = instantiate(binary, createImports(myImports));
     instance.then((result) => {
-      result.exports.memory.grow(512);
+      // Reserve plenty of memory up front: the test runtime never frees, and the simulated chain keeps views of the
+      // memory that a later grow would invalidate.
+      result.exports.memory.grow(2048);
       mockVM.setInstance(result);
     });
     return instance;

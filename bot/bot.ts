@@ -216,8 +216,8 @@ async function healthPass(ctx: Ctx, bs: BotState) {
   // 3. Changes only the owner should ever make. If the admin key were stolen, these are the first signs; the
   //    48-hour timelock gives everyone time to react (players can always withdraw).
   const up = st.raw.upgrade ?? {}, wd = st.raw.seed_withdrawal ?? {};
-  if (num(up.eta) > 0) ctx.problems.push(`A code upgrade is scheduled (possible from block ${up.eta}). If you did not do this, your admin key may be compromised.`);
-  if (num(wd.eta) > 0) ctx.problems.push(`A seed withdrawal is scheduled (possible from block ${wd.eta}). If you did not do this, your admin key may be compromised.`);
+  if (num(up.eta) > 0) ctx.problems.push(`A code upgrade is scheduled (possible from ${utc(num(up.eta))}). If you did not do this, your admin key may be compromised.`);
+  if (num(wd.eta) > 0) ctx.problems.push(`A seed withdrawal is scheduled (possible from ${utc(num(wd.eta))}). If you did not do this, your admin key may be compromised.`);
   if (st.c.pending_owner) ctx.problems.push(`An ownership transfer to ${st.c.pending_owner} is pending. If you did not do this, your admin key may be compromised.`);
   if (st.c.operator && st.c.operator !== ctx.operator.getAddress() && ctx.chain.kind === "koinos" && E.OPERATOR_WIF)
     ctx.problems.push(`The contract's operator is ${st.c.operator}, not this bot (${ctx.operator.getAddress()}).`);
@@ -639,7 +639,7 @@ export function units(amount: string): string {
   return (BigInt(m[1]) * 100_000_000n + BigInt((m[2] ?? "").padEnd(8, "0"))).toString();
 }
 
-/** Stakes are whole numbers only (1, 2, 3 …), as the contract requires. */
+/** Deposits are whole numbers only (1, 2, 3 …), as the contract requires. (Withdrawals may be any amount.) */
 export function whole(amount: string): string {
   if (!/^\d+$/.test(String(amount).trim())) throw new Error(`Stakes are whole numbers only (like 1 or 25), not "${amount}".`);
   return units(amount);
@@ -713,7 +713,20 @@ async function friendly(cmd: string, a: string[], send: boolean): Promise<boolea
     case "seed-koin": await act("seed", "seed_deposit_koin", { amount: units(need(0, "amount")) }, send); return true;
     case "deposit": await act("player", "deposit_vhp", { from: me("player"), amount: whole(need(0, "amount")) }, send); return true;
     case "deposit-koin": await act("player", "deposit_koin", { from: me("player"), amount: whole(need(0, "amount")) }, send); return true;
-    case "withdraw": await act("player", "withdraw", { to: me("player"), amount: whole(need(0, "amount")) }, send); return true;
+    case "withdraw": {
+      // Any amount down to the last unit (0.12345678), or "all" for everything (active stake + any pending top-up).
+      const amt = need(0, "amount (or: all)");
+      let amount: string;
+      if (amt.toLowerCase() === "all") {
+        const dep = readJson(paths(E.GEN_DIR ?? "game-data").deployment, null);
+        if (!dep?.contract) throw new Error("game-data/deployment.json not found — deploy first.");
+        const pl = (await new KoinosChain(E.RPC ?? dep.rpc, dep.contract).read("get_player", { player: me("player"), week: "0" })).player ?? {};
+        amount = (BigInt(pl.stake ?? 0) + BigInt(pl.pending ?? 0)).toString();
+        if (amount === "0") throw new Error("This wallet has nothing staked in the game.");
+        log(`Withdrawing everything: ${showKoin(amount)} VHP`);
+      } else amount = units(amt);
+      await act("player", "withdraw", { to: me("player"), amount }, send); return true;
+    }
     case "answer": {
       const letter = need(1, "the option letter (A, B, C …)").toUpperCase();
       await act("player", "answer", { player: me("player"), question_id: Number(need(0, "question number")), option: letter.charCodeAt(0) - 65 }, send); return true;

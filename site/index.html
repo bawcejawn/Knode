@@ -131,7 +131,7 @@
         <p class="muted">A weekly game about the Koinos chain. Your stake keeps producing blocks for the pool the whole time.</p>
       </div>
       <ol class="steps">
-        <li><h3>Play free, or stake VHP</h3><p>Anyone can answer and climb the leaderboard for free. To share in the rewards, stake at least 1 VHP (whole numbers only), or KOIN, which is burned into VHP. A stake counts from the next week. You can withdraw any time, but withdrawing during a week cancels that week's answers.</p></li>
+        <li><h3>Play free, or stake VHP</h3><p>Anyone can answer and climb the leaderboard for free. To share in the rewards, stake at least 1 VHP (whole numbers only), or KOIN, which is burned into VHP. A stake counts from the next week. You can withdraw any amount at any time, down to the last decimal, but withdrawing during a week cancels that week's answers (taking back only a top-up that hasn't started counting yet doesn't).</p></li>
         <li><h3>Answer daily questions</h3><p>About 20 questions a week: new ones every Monday to Saturday at 12:00 UTC, and answers close at 00:00 UTC, 12 hours later, before the blocks they ask about are produced. Every correct answer is one point. Sunday is results day.</p></li>
         <li><h3>The week closes</h3><p>Weeks run Monday 00:00 to Monday 00:00 UTC. After 12 hours for any corrections, the week closes, and on Tuesday at 12:00 UTC the winners are final. The pool's block rewards for the week are split: 93% to the winners, 5% creator fee, 2% kept by the owner. Players with the most points who together hold 30% of the stake win, and ties at the line win too. You need at least 2 counted answers.</p></li>
         <li><h3>Collect your reward</h3><p>Your share is the pot × your points × your stake ÷ the same total over all winners, paid in VHP. Unclaimed rewards wait for you, and keep producing for the pool meanwhile.</p></li>
@@ -162,7 +162,7 @@
     <form method="dialog" id="stake-form">
       <h2 id="stake-title">Stake</h2>
       <p class="muted" id="stake-help"></p>
-      <label class="field"><span id="stake-label">Amount</span><input id="stake-amount" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="e.g. 25" required></label>
+      <label class="field"><span id="stake-label">Amount</span><span class="amount-row"><input id="stake-amount" inputmode="numeric" autocomplete="off" placeholder="e.g. 25" required><button class="btn btn-ghost btn-small" id="stake-max" type="button" hidden>Withdraw all</button></span></label>
       <div class="seg" id="stake-token" role="radiogroup" aria-label="Token">
         <label><input type="radio" name="tok" value="VHP" checked><span>VHP</span></label>
         <label><input type="radio" name="tok" value="KOIN"><span>KOIN</span></label>
