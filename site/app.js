@@ -419,7 +419,9 @@
     const holdings = big(st.vhp_balance) + big(st.koin_balance);
     const owed = ["total_stake", "seed_vhp", "seed_koin", "owner_share", "creator_fee", "pots_outstanding"].reduce((s, k) => s + big(t[k]), 0n);
     const earned = holdings > owed ? holdings - owed : 0n;
-    $("#stat-pot").textContent = `${amount((earned * 93n) / 100n)} VHP`;
+    // 95% of new earnings go to the winners; a pot carried over from a week with no winners is added in full.
+    const carried = big(t.rolled_over) < earned ? big(t.rolled_over) : earned;
+    $("#stat-pot").textContent = `${amount(carried + ((earned - carried) * 95n) / 100n)} VHP`;
     $("#stat-players").textContent = S.boardWeek === S.week && S.board[S.week] ? String(S.board[S.week].scored.length) : "…";
 
     const open = S.questions.filter((q) => now < q.lockTime).sort((a, b) => a.lockTime - b.lockTime);
@@ -440,11 +442,14 @@
         el("div", { class: "row-btns" }, el("button", { class: "btn btn-primary", type: "button", onclick: connect }, "Connect Kondor")));
     } else {
       const p = S.player || {};
+      const total = big(p.stake) + big(p.pending), active = S.activeStake ?? big(p.stake);
+      const joining = total > active ? total - active : 0n;
       const pts = S.board[S.week]?.scored.find((s) => s.address === S.account);
       you.replaceChildren(...[
-        el("div", { class: "you-big" }, el("b", {}, amount(S.activeStake ?? p.stake)), el("span", { class: "muted" }, "VHP playing this week")),
+        el("div", { class: "you-big" }, el("b", {}, amount(S.activeStake ?? p.stake)), el("span", { class: "muted" }, nowMs() < S.genesis ? "VHP playing in week 1 (starts Monday)" : "VHP playing this week")),
         (S.activeStake ?? 0n) < UNIT ? el("p", { class: "free-note" }, "You're playing free: your points count on the leaderboard. Stake at least 1 VHP to share in the rewards (a stake counts from the next week).") : null,
-        big(p.pending) > 0n ? el("p", { class: "muted" }, `+ ${amount(p.pending)} VHP joining next week`) : null,
+        // Only the part that doesn't count yet. (Deposits made before the game starts already count for week 1.)
+        joining > 0n ? el("p", { class: "muted" }, `+ ${amount(joining)} VHP joining next week`) : null,
         el("dl", { class: "facts", style: "margin-top:14px" },
           el("dt", {}, "Points this week"), el("dd", {}, pts ? String(pts.pts) : "0"),
           el("dt", {}, "Answers given"), el("dd", {}, String((S.entry?.answers || []).length)),
@@ -465,7 +470,7 @@
       el("dt", {}, "Players' stake"), el("dd", {}, `${amount(t.total_stake, 0)} VHP`),
       el("dt", {}, "Seed VHP (never plays)"), el("dd", {}, `${amount(t.seed_vhp, 0)} VHP`),
       el("dt", {}, "Earned this week"), el("dd", {}, `${amount(earned)} VHP`),
-      el("dt", {}, "Winners get"), el("dd", {}, "93%"),
+      el("dt", {}, "Winners get"), el("dd", {}, "95%"),
       el("dt", {}, "Waiting to be collected"), el("dd", {}, `${amount(t.pots_outstanding)} VHP`));
     const btn = $("#connect");
     btn.textContent = S.account ? short(S.account) : "Connect Kondor";

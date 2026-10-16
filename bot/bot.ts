@@ -472,8 +472,8 @@ export async function status(ctx: Ctx) {
     : `Week ${w + 1}: ends ${utc(weekEnd(st, w))} (in ${inH(weekEnd(st, w))}); results final ${utc(weekEnd(st, w) + st.closeDelay)}`);
   log(`Weeks closed ${st.weeksClosed}, finalized ${st.weeksFinalized}; questions posted ${st.nextId}`);
   log(`Holdings  ${showKoin(holdings)}  (VHP ${showKoin(st.raw.vhp_balance)} + KOIN ${showKoin(st.raw.koin_balance)})   contract Mana ${showKoin(st.raw.mana)}`);
-  log(`Owed      ${showKoin(owed)}  = stakes ${showKoin(t.total_stake)} + seed ${showKoin(big(t.seed_vhp) + big(t.seed_koin))} + fee ${showKoin(t.creator_fee)} + owner share ${showKoin(t.owner_share)} + unclaimed pots ${showKoin(t.pots_outstanding)}`);
-  log(`Earned since the last close (not yet split): ${showKoin(holdings - owed)}`);
+  log(`Owed      ${showKoin(owed)}  = stakes ${showKoin(t.total_stake)} + seed ${showKoin(big(t.seed_vhp) + big(t.seed_koin))} + producer fee ${showKoin(t.creator_fee)} + unclaimed pots ${showKoin(t.pots_outstanding)}${big(t.owner_share) > 0n ? ` + old owner share ${showKoin(t.owner_share)}` : ""}`);
+  log(`Earned since the last close (not yet split): ${showKoin(holdings - owed)}${big(t.rolled_over) > 0n ? `  (includes ${showKoin(t.rolled_over)} carried over from a week with no winners; no fee on that part)` : ""}`);
   for (let k = Math.max(0, st.weeksClosed - 2); k <= Math.min(w, st.weeksClosed); k++) {
     const r = await ctx.chain.read("get_week", { week: String(k) });
     const wk = r.week ?? {};
@@ -817,7 +817,6 @@ async function friendly(cmd: string, a: string[], send: boolean): Promise<boolea
     }
     case "claim": await act("player", "claim", { player: me("player"), week: need(0, "week number") }, send); return true;
     case "claim-fee": await act("owner", "claim_creator_fee", { to: a[0] && !a[0].startsWith("--") ? a[0] : me("owner") }, send); return true;
-    case "claim-share": await act("owner", "claim_owner_share", { to: a[1] && !a[1].startsWith("--") ? a[1] : me("owner"), amount: units(need(0, "amount")) }, send); return true;
     case "void": await act("owner", "correct_question", { id: Number(need(0, "question number")), outcome: 1000, data_hash: "0x" + sha256hex(`voided by the owner: ${a.slice(1).filter((x) => !x.startsWith("--")).join(" ") || "no reason given"}`) }, send); return true;
     case "sponsor-limit": await act("owner", "set_sponsor_limit", { max_sponsor_rc: units(need(0, "KOIN of Mana (0 = off)")) }, send); return true;
     case "pause": await act("owner", "set_paused", { paused: need(0, "on or off") === "on" }, send); return true;
@@ -895,7 +894,7 @@ function keys() {
 
 The private keys are ONLY in: ${file}
   • Back up OWNER_WIF and CONTRACT_WIF offline (write them on paper or a password manager). Lose OWNER_WIF and nobody
-    can claim the fee/owner share, correct a question or upgrade the code.
+    can claim the producer fee, correct a question or upgrade the code.
   • Never paste a private key in a chat, email or GitHub. Only OPERATOR_WIF ever goes into GitHub (as a secret).
   • Open the file with:  notepad .env`);
 }

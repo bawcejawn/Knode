@@ -4,7 +4,8 @@
  * Players stake VHP (or KOIN, burned into VHP). The pooled VHP produces blocks through the game's node. Every week
  * the operator posts multiple-choice questions about the chain; players answer for free (the contract pays the
  * Mana); the operator resolves them from block data (hashes published so anyone can re-check). After the week:
- *   close_week     measures the pool's gain and splits it: 5% creator fee (KOIN), 2% owner share (VHP), 93% pot
+ *   close_week     measures the pool's gain and splits it: 5% producer fee (KOIN), 95% winners' pot (a pot with no
+ *                  winners rolls into the next week's pot without being charged the fee again)
  *   settle         counts each player's points (anyone can call it, for anyone, free)
  *   finalize_week  finds the winners: the top 30% of eligible stake by points, everyone tied at the cutoff included
  *   claim          pays each winner pot × (points × stake) / (sum of points × stake over winners), in VHP
@@ -14,7 +15,7 @@
  *   players     deposit (whole numbers), withdraw any amount at any time (voids that week's answers), answer, settle, claim
  *   operator    post and resolve questions — cannot move any funds
  *   owner       correct a resolution before its week closes, set operator, pause NEW deposits, register the node key,
- *               claim the creator fee / owner share, schedule an upgrade (uploadable only after the timelock)
+ *               claim the producer fee, schedule an upgrade (uploadable only after the timelock)
  *   seed owner  add seed VHP/KOIN; withdraw it only after an announced timelock
  *   nobody      can take players' stakes or rewards, or the seed — not the owner, not the deploy key
  */
@@ -24,8 +25,7 @@ import { Tokens } from "./Tokens";
 
 const VOID: u32 = 1000;
 const MAX_QUESTIONS_PER_WEEK: u32 = 64;
-const FEE_BPS: u64 = 500;       // 5% creator fee (KOIN)
-const RETAIN_BPS: u64 = 200;    // 2% owner share (VHP)
+const FEE_BPS: u64 = 500;       // 5% producer fee (KOIN), charged once on everything the pool earns
 const CUTOFF_BPS: u64 = 3000;   // winners = top 30% of eligible stake
 const RESOLVE_MARGIN: u64 = 60; // resolve only after the window's blocks are irreversible (~3 minutes)
 // Weeks and answer deadlines follow the block timestamps (ms, UTC), so they land on exact calendar times. The blocks a
@@ -562,11 +562,13 @@ export class Kpred {
     const holdings = Tokens.vhpBalance(this.contractId) + Tokens.koinBalance(this.contractId);
     const owed = this.liabilities(t);
     const gain = holdings > owed ? holdings - owed : 0;
-    const fee = bps(gain, FEE_BPS);
-    const retained = bps(gain, RETAIN_BPS);
-    const pot = gain - fee - retained;
+    // A pot that had no winners was already charged the fee when it was first earned: it rolls in fee-free.
+    const carried = t.rolled_over < gain ? t.rolled_over : gain;
+    const fee = bps(gain - carried, FEE_BPS);
+    const retained: u64 = 0;                          // the owner share is retired
+    const pot = gain - fee;
+    t.rolled_over = 0;
     t.creator_fee += fee;
-    t.owner_share += retained;
     t.pots_outstanding += pot;
     t.total_gain += gain;
     t.weeks_closed += 1;
@@ -629,6 +631,7 @@ export class Kpred {
       wk.rolled_over = true;
       const t = this.totals.get()!;
       t.pots_outstanding -= wk.pot;
+      t.rolled_over += wk.pot;
       this.totals.put(t);
     }
     this.weeks.put(wkKey, wk);
@@ -834,6 +837,7 @@ export class Kpred {
     System.require(this.isOwner(c), "owner only");
     System.require(isAddress(args.to), "address required");
     const t = this.totals.get()!;
+    // Retired: no new owner share is ever created. Anything recorded before the change could still be taken here.
     System.require(args.amount > 0 && args.amount <= t.owner_share, "more than the owner share");
     t.owner_share -= args.amount;
     this.totals.put(t);

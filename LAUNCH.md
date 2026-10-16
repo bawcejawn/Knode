@@ -267,8 +267,7 @@ If KOIN comes back short (moving KOIN needs Mana), run `execute` again after the
 npm run bot -- status
 npm run bot -- node-status
 npm run bot -- void 12 "reason"       # VOID open question #12 (before its week closes)
-npm run bot -- claim-fee              # 5% creator fee (KOIN) to the admin wallet
-npm run bot -- claim-share 10         # 10 VHP of the 2% owner share
+npm run bot -- claim-fee              # the 5% producer fee (KOIN) to the admin wallet
 npm run bot -- sponsor-limit 0        # stop paying players' Mana (players use their own / Kondor's free Mana)
 npm run bot -- pause on|off           # pause NEW deposits (withdrawals and claims always work)
 ```

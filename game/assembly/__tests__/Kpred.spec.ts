@@ -293,7 +293,7 @@ describe("questions and answers", () => {
 });
 
 describe("a full week", () => {
-  it("measures the gain, splits it 5/2/93, finds the top 30% with ties, and pays points × stake", () => {
+  it("measures the gain, splits it 5% producer fee / 95% pot, finds the top 30% with ties, and pays points × stake", () => {
     const k = setup();
     as(SEED);
     k.seed_deposit_vhp(new kpred.seed_deposit_vhp_arguments(1000 * VHP));
@@ -338,13 +338,14 @@ describe("a full week", () => {
     const w0 = k.get_week(new kpred.get_week_arguments(0)).week!;
     expect(w0.closed).toBe(true);
     expect(w0.gain).toBe(100 * VHP);
-    expect(w0.pot).toBe(93 * VHP);
+    expect(w0.pot).toBe(95 * VHP);
     at(2210);
     nobody();
     let s = k.get_state(new kpred.get_state_arguments());
     expect(s.totals!.creator_fee).toBe(5 * VHP);
-    expect(s.totals!.owner_share).toBe(2 * VHP);
-    expect(s.totals!.pots_outstanding).toBe(93 * VHP);
+    expect(s.totals!.owner_share).toBe(0);              // the owner share is retired
+    expect(w0.retained).toBe(0);
+    expect(s.totals!.pots_outstanding).toBe(95 * VHP);
 
     // Settlement: anyone can settle anyone.
     const sa = k.settle(new kpred.settle_arguments(A, 0));
@@ -370,16 +371,16 @@ describe("a full week", () => {
     expect(fw.cutoff).toBe(3);
     expect(fw.winners).toBe(2);
 
-    // Claims: A gets 93 × 300/330, E gets 93 × 30/330. Spare KOIN is burned to VHP on demand.
+    // Claims: A gets 95 × 300/330, E gets 95 × 30/330. Spare KOIN is burned to VHP on demand.
     const aBefore = Tokens.testGet(VHP_TAG, A);
     as(A);
     const ra = k.claim(new kpred.claim_arguments(A, 0)).reward;
-    expect(ra).toBe(<u64>(u64(93 * VHP) * 300 / 330));
+    expect(ra).toBe(<u64>(u64(95 * VHP) * 300 / 330));
     expect(Tokens.testGet(VHP_TAG, A) - aBefore).toBe(ra);
     as(E);
     const re = k.claim(new kpred.claim_arguments(E, 0)).reward;
-    expect(re).toBe(<u64>(u64(93 * VHP) * 30 / 330));
-    expect(ra + re <= 93 * VHP).toBe(true);
+    expect(re).toBe(<u64>(u64(95 * VHP) * 30 / 330));
+    expect(ra + re <= 95 * VHP).toBe(true);
     // C (2 points) is below the cutoff; B too; no double claims.
     gWho = C;
     as(C);
@@ -392,12 +393,14 @@ describe("a full week", () => {
     expect(() => { gK!.claim(new kpred.claim_arguments(gWho, 0)); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("already claimed");
 
-    // Owner takes the 5% fee in KOIN and the 2% share in VHP; the Mana reserve (seed KOIN) stays.
+    // Owner takes the 5% producer fee in KOIN; the Mana reserve (seed KOIN) stays. There is no owner share to take.
     as(OWNER);
     expect(k.claim_creator_fee(new kpred.claim_creator_fee_arguments(OWNER)).amount).toBe(5 * VHP);
-    k.claim_owner_share(new kpred.claim_owner_share_arguments(OWNER, 2 * VHP));
     expect(Tokens.testGet(KOIN_TAG, OWNER)).toBe(5 * VHP);
-    expect(Tokens.testGet(VHP_TAG, OWNER)).toBe(2 * VHP);
+    gK = k;
+    MockVM.commitTransaction();
+    expect(() => { gK!.claim_owner_share(new kpred.claim_owner_share_arguments(OWNER, 1)); }).toThrow();
+    expect(Tokens.testGet(VHP_TAG, OWNER)).toBe(0);
     s = k.get_state(new kpred.get_state_arguments());
     expect(s.koin_balance >= 200 * VHP).toBe(true);
 
@@ -434,8 +437,8 @@ describe("a full week", () => {
     const ra = k.claim(new kpred.claim_arguments(A, 0)).reward;
     as(B);
     const rb = k.claim(new kpred.claim_arguments(B, 0)).reward;
-    expect(ra).toBe(<u64>(u64(93 * VHP) * 20 / 50));  // weights: A 2×10 = 20, B 1×30 = 30
-    expect(rb).toBe(<u64>(u64(93 * VHP) * 30 / 50));
+    expect(ra).toBe(<u64>(u64(95 * VHP) * 20 / 50));  // weights: A 2×10 = 20, B 1×30 = 30
+    expect(rb).toBe(<u64>(u64(95 * VHP) * 30 / 50));
   });
 
   it("with no scorers the pot rolls into the next week's gain", () => {
@@ -454,10 +457,47 @@ describe("a full week", () => {
     at(2200);
     k.finalize_week(new kpred.finalize_week_arguments(0));
     expect(k.get_week(new kpred.get_week_arguments(0)).week!.rolled_over).toBe(true);
-    // Next week: no new rewards, but last week's 93 comes back as gain.
+    // Next week: no new rewards, but last week's 95 comes back, whole: the fee was already taken once.
+    expect(k.get_state(new kpred.get_state_arguments()).totals!.rolled_over).toBe(95 * VHP);
     at(3010);
     const cw = k.close_week(new kpred.close_week_arguments(1));
-    expect(cw.gain).toBe(93 * VHP);
+    expect(cw.gain).toBe(95 * VHP);
+    expect(cw.pot).toBe(95 * VHP);
+    const st = k.get_state(new kpred.get_state_arguments()).totals!;
+    expect(st.creator_fee).toBe(5 * VHP);           // still only the first week's fee
+    expect(st.rolled_over).toBe(0);
+  });
+
+  it("a rolled-over pot plus new earnings: the fee is charged only on the new earnings", () => {
+    const k = setup();
+    deposit(k, A, 10 * VHP);
+    at(1100);
+    const q0 = post(k, 2, 1300, 1301, 1400);
+    const q1 = post(k, 2, 1300, 1301, 1400);
+    at(1200);
+    answer(k, A, q0, 0); answer(k, A, q1, 0);         // both wrong: nobody scores in week 0
+    at(1500); resolve(k, q0, 1); resolve(k, q1, 1);
+    give(KOIN_TAG, CONTRACT, 100 * VHP); give(MANA_TAG, CONTRACT, 100 * VHP);
+    at(2010);
+    k.close_week(new kpred.close_week_arguments(0));  // gain 100 → fee 5, pot 95
+    k.settle(new kpred.settle_arguments(A, 0));
+    at(2100);
+    const r0 = post(k, 2, 2300, 2301, 2400);
+    const r1 = post(k, 2, 2300, 2301, 2400);
+    at(2200);
+    k.finalize_week(new kpred.finalize_week_arguments(0));   // no winners: 95 rolls over
+    answer(k, A, r0, 1); answer(k, A, r1, 1);         // both right in week 1
+    at(2500); resolve(k, r0, 1); resolve(k, r1, 1);
+    give(KOIN_TAG, CONTRACT, 40 * VHP); give(MANA_TAG, CONTRACT, 40 * VHP);   // week 1 earns 40 new
+    at(3010);
+    const cw = k.close_week(new kpred.close_week_arguments(1));
+    expect(cw.gain).toBe(135 * VHP);
+    expect(cw.pot).toBe(133 * VHP);                    // 95 + 40 − 5% of the new 40 only
+    expect(k.get_state(new kpred.get_state_arguments()).totals!.creator_fee).toBe(7 * VHP);
+    k.settle(new kpred.settle_arguments(A, 1));
+    at(3200);
+    as(A);
+    expect(k.claim(new kpred.claim_arguments(A, 1)).reward).toBe(133 * VHP);
   });
 
   it("weeks close in order", () => {
@@ -1181,8 +1221,8 @@ describe("extreme edge cases", () => {
     at(7000);
     as(A);
     const before = Tokens.testGet(VHP_TAG, A);
-    expect(k.claim(new kpred.claim_arguments(A, 0)).reward).toBe(93 * VHP);
-    expect(Tokens.testGet(VHP_TAG, A) - before).toBe(93 * VHP);
+    expect(k.claim(new kpred.claim_arguments(A, 0)).reward).toBe(95 * VHP);
+    expect(Tokens.testGet(VHP_TAG, A) - before).toBe(95 * VHP);
     const w0 = k.get_week(new kpred.get_week_arguments(0)).week!;
     expect(w0.cutoff).toBe(64);
     expect(w0.winners).toBe(1);
@@ -1218,8 +1258,8 @@ describe("extreme edge cases", () => {
     k.compound(new kpred.compound_arguments());               // closes week 1 (no questions, no new rewards)
     const w1 = k.get_week(new kpred.get_week_arguments(1)).week!;
     expect(w1.closed).toBe(true);
-    expect(w1.gain).toBe(93 * VHP);                          // the rolled-over pot, counted once more, nothing else
-    expect(w1.pot).toBe(93 * VHP - bpsT(93 * VHP, 500) - bpsT(93 * VHP, 200));
+    expect(w1.gain).toBe(95 * VHP);                          // the rolled-over pot, counted once more, nothing else
+    expect(w1.pot).toBe(95 * VHP);                           // and not charged the fee a second time
   });
 
   it("option and timing boundaries are exact: 16 options max, answers until lock−1, resolve from window_end+61", () => {
@@ -1301,7 +1341,7 @@ describe("extreme edge cases", () => {
     const ra = k.claim(new kpred.claim_arguments(A, 0)).reward;
     as(B);
     const rb = k.claim(new kpred.claim_arguments(B, 0)).reward;
-    const pot: u64 = 930_000 * VHP;
+    const pot: u64 = 950_000 * VHP;                 // 95% of the 1,000,000 earned
     // shares 1e9 : 1 of the pot (both have 2 points), rounded down, never more than the pot
     expect(rb).toBe(<u64>(<f64>0) + pot / 1_000_000_001);
     expect(ra + rb <= pot).toBe(true);

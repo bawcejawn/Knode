@@ -194,14 +194,14 @@
       "argument": "kpred.claim_creator_fee_arguments",
       "return": "kpred.claim_creator_fee_result",
       "read_only": false,
-      "description": "Claim the 5% creator fee in KOIN (owner only; limited by the contract's Mana)."
+      "description": "Claim the 5% producer fee in KOIN (owner only; limited by the contract's Mana)."
     },
     "claim_owner_share": {
       "entry_point": 930930124,
       "argument": "kpred.claim_owner_share_arguments",
       "return": "kpred.claim_owner_share_result",
       "read_only": false,
-      "description": "Claim the 2% owner share in VHP (owner only)."
+      "description": "Retired: the 2% owner share no longer exists (kept so old calls fail cleanly)."
     },
     "seed_deposit_vhp": {
       "entry_point": 1909552177,
@@ -386,6 +386,13 @@
               "weeks_finalized": {
                 "type": "uint64",
                 "id": 10,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "rolled_over": {
+                "type": "uint64",
+                "id": 11,
                 "options": {
                   "jstype": "JS_STRING"
                 }

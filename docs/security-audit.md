@@ -10,10 +10,9 @@ Focus: can anyone's tokens ever be lost, stuck or taken?
 | Players' stakes | VHP | Only the player, to their own wallet | Any amount up to their stake, at any time. Never pausable. |
 | Players' rewards | VHP | Only the winning player | Exactly pot × points × stake ÷ total, rounded down |
 | Seed (soft launch and full) | VHP + KOIN | Only the seed owner | Only after a 48-hour public timelock, never more than the seed |
-| Creator fee (5%) | KOIN | Only the owner | Never more than the fee earned |
-| Owner share (2%) | VHP | Only the owner | Never more than the share earned |
+| Producer fee (5%) | KOIN | Only the owner | Never more than the fee earned; charged once (a carried-over pot isn't charged again) |
 
-After every reward, fee or share payout the contract re-checks that it still holds everything it owes ("solvency
+After every reward or fee payout the contract re-checks that it still holds everything it owes ("solvency
 check"). If a bug ever tried to pay out more than was earned, the whole transaction would be cancelled.
 
 ## 2. Keys and what each one can do
@@ -21,7 +20,7 @@ check"). If a bug ever tried to pay out more than was earned, the whole transact
 | Key | Where it lives | Can do | Cannot do |
 |---|---|---|---|
 | Contract key (`CONTRACT_WIF`) | `.env` on your PC | Sign the first setup (`init`) during deploy | Anything after deploy: the contract refuses it for token moves, code changes and fees |
-| Admin / owner (`OWNER_WIF`) | `.env` on your PC, back up offline | Correct a result before the week closes, change the bot, pause **new** deposits, collect fee and share, schedule a code change | Touch players' stakes or rewards; change code without 48 hours' notice |
+| Admin / owner (`OWNER_WIF`) | `.env` on your PC, back up offline | Correct a result before the week closes, change the bot, pause **new** deposits, collect the producer fee, schedule a code change | Touch players' stakes or rewards; change code without 48 hours' notice |
 | Bot / operator (`OPERATOR_WIF`) | `.env` + GitHub secret | Post and resolve questions | Move any tokens |
 | Player | The player's own wallet | Deposit, withdraw, answer, collect | Act for anyone else |
 
@@ -62,8 +61,8 @@ check"). If a bug ever tried to pay out more than was earned, the whole transact
 - A stake can't be withdrawn twice; the contract subtracts before it sends.
 - Rewards can't be claimed twice, and the total paid for a week can never exceed its pot.
 - Free players (no stake) are never eligible and can never be paid.
-- Fees, the owner share and the seed are tracked separately from players' money; compounding never burns the seed KOIN
-  or the unpaid creator fee.
+- The producer fee and the seed are tracked separately from players' money; compounding never burns the seed KOIN
+  or the unpaid producer fee.
 - Weeks close, settle and finalise in order, with the time windows enforced by block time.
 - The pool pays Mana only for one valid answer, settle or claim by a staked player, with a 10 KOIN cap per transaction.
 - The registered block-producer key can't redirect rewards: blocks are always credited to the contract's address.
@@ -89,4 +88,4 @@ check"). If a bug ever tried to pay out more than was earned, the whole transact
   overflow, the seed KOIN shortfall and the seed VHP + KOIN withdrawal.
 - Offline checks: all pass.
 - Two-week rehearsal on real Koinos block history, ending with a full exit (every player withdraws everything, the owner
-  collects fee and share, the seed leaves after its timelock): see the latest run in the deploy notes.
+  collects the producer fee, the seed leaves after its timelock): see the latest run in the deploy notes.

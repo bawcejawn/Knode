@@ -18,9 +18,8 @@ anyone can re-check against the chain.
    correct a resolution.
 4. **Close.** After the week ends (plus a correction delay), anyone can close it. The contract measures the
    pool's gain (everything it holds minus everything it owes) and splits it:
-   - 5% creator fee, in KOIN
-   - 2% owner share, in VHP
-   - 93% winners' pot
+   - 5% producer fee, in KOIN
+   - 95% winners' pot (a pot with no winners carries into the next week without a second fee)
 5. **Settle.** During the settlement window, anyone can settle any player (it's free). This counts their
    correct answers and adds their stake to a points table kept on-chain. A player is eligible if they
    answered more than one non-void question, kept at least the minimum stake, and didn't withdraw that week.
@@ -43,14 +42,14 @@ call `close_week` or `finalize_week` by hand (they still exist as a backup, and 
 ## Why claim/withdraw timing can't change anyone's rewards
 
 - At every close the contract measures `gain = holdings − liabilities`. Liabilities are all stake, seed,
-  fee and owner share not yet taken, and every pot not yet claimed. Right after a close, holdings equal
+  producer fee not yet taken, and every pot not yet claimed. Right after a close, holdings equal
   liabilities exactly, so each unit of block reward is counted **once**, in the week it arrived.
 - A claim or withdrawal lowers holdings and liabilities by the same amount, so it can never create or erase
   gain for any week.
 - Unclaimed rewards are liabilities, but the VHP behind them keeps producing. That production is new gain
   for the pool, shared by everyone in later weeks.
 - Rounding dust stays in the contract as a liability (it never over-pays).
-- After every payout of a reward, fee or owner share the contract checks it still holds at least what it
+- After every payout of a reward or the fee the contract checks it still holds at least what it
   owes, and refuses the transaction otherwise.
 
 ## Who can do what
@@ -59,7 +58,7 @@ call `close_week` or `finalize_week` by hand (they still exist as a backup, and 
 |---|---|---|
 | Player | deposit, withdraw, answer (free), settle, claim (free) | answer without stake; act for another wallet |
 | Operator (bot key) | post and resolve questions | move any funds or change settings |
-| Owner | correct resolutions before close, set operator, pause **new** deposits, register the node key, claim the 5% fee and 2% share, schedule an upgrade | take players' stakes or rewards, or the seed; upload code without the timelock |
+| Owner | correct resolutions before close, set operator, pause **new** deposits, register the node key, claim the 5% producer fee, schedule an upgrade | take players' stakes or rewards, or the seed; upload code without the timelock |
 | Seed owner | add seed VHP/KOIN, withdraw it after an announced timelock | anything else |
 
 The contract's own deploy key is powerless after setup: it can't move tokens or replace the code. Code
@@ -96,12 +95,12 @@ is deployed.
 - Questions: operator only; answers must close before the week ends; the window starts after answers close;
   one answer per question; options checked; deadline enforced.
 - Resolutions only after the window's blocks are final; operator can't overwrite; owner can correct before close.
-- A full week: gain 100 → fee 5, owner share 2, pot 93. Top-30% cutoff with a tie at the top; a cutoff that
+- A full week: gain 100 → producer fee 5, pot 95. Top-30% cutoff with a tie at the top; a cutoff that
   descends to lower scores; points × stake payouts exact to the unit; no double claims; below-cutoff refused.
 - No scorers → the pot rolls over. Weeks close in order. Zero-gain weeks still close.
 - Seed withdrawal only by the seed owner and only after the timelock.
 - Owner-only functions refuse everyone else; two-step ownership transfer; the owner can't take more than the
-  2% share.
+  producer fee earned; a pot with no winners rolls over without a second fee.
 - Sponsorship: pays for a valid answer, settle or claim; refuses a too-high rc_limit, two operations, invalid
   answers, no stake, someone else's answer or claim, already-settled entries, and every other entry point.
 - Automatic progression: weeks close and finalize as a side effect of ordinary play; returning players are

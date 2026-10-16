@@ -38,9 +38,9 @@ the numbers that decide the platform's pool economics, void thresholds, question
 | `--days` | 7 | How far back to scan |
 | `--rpc` | https://api.koinos.io | Public JSON-RPC endpoint |
 | `--seed` | 0 | Koinos Federation seed in KOIN (95% burned into VHP, 5% kept as KOIN for Mana) |
-| `--retain-bps` | 200 | Creator's owner share of each week's gain, kept producing as VHP (200 = 2%) |
+| `--retain-bps` | 0 | Retired owner share (the game now takes only the 5% producer fee) |
 | `--pools` | 10000,100000,1000000,2000000,5000000,10000000 | Total player VHP deposited (any split across wallets — every 1 VHP is one entry) |
-| `--fee-bps` | 500 | Creator fee on the gain, paid in KOIN (500 = 5%) |
+| `--fee-bps` | 500 | Producer fee on the gain, paid in KOIN (500 = 5%) |
 | `--koin`, `--vhp` | mainnet addresses | Verify at docs.koinos.io |
 | `--concurrency` | 2 | Parallel requests; use 1 if the node rate-limits you |
 | `--from-cache` | — | Reuse a previous download |
@@ -71,7 +71,7 @@ Printed report, plus files in `step0-output/`:
   producers — the same rule the void check will use at question release.
 - **Pool projection**: block rewards are fixed per block, so the pool earns its share of all producer
   rewards, and adding VHP dilutes everyone (the table accounts for it). For each deposit level it shows the
-  weekly gain, the 5% creator fee (KOIN), the 2% owner share (VHP), the 93% winners' pot, what 1 VHP earns solo, and what an
+  weekly gain, the 5% producer fee (KOIN), the 95% winners' pot, what 1 VHP earns solo, and what an
   average winner earns per VHP (winners hold 30% of eligible stake, so ≈ 3.1× solo before any seed).
 - **Concentration markers**: no cap, but the report shows the pool size at which our node would hold a third
   and half of producing VHP, the points where splitting across several nodes matters.

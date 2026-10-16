@@ -40,7 +40,7 @@ const DEFAULTS = {
   seed: 0, // Koinos Federation seed in KOIN: 95% is burned into VHP, 5% kept as KOIN for Mana
   pools: "10000,100000,1000000,2000000,5000000,10000000", // total player VHP deposited (any split across wallets)
   feeBps: 500, // creator fee on the gain, held back as KOIN: 500 = 5%
-  retainBps: 200, // creator's owner share of each week's gain, kept producing as VHP: 200 = 2%
+  retainBps: 0, // (retired) owner share of each week's gain, kept producing as VHP: 200 = 2%
   out: "step0-output",
   fromCache: "",
 };

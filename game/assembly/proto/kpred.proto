@@ -26,13 +26,14 @@ message totals_object {
   uint64 total_stake = 1 [jstype = JS_STRING];        // all players' stake + pending deposits (VHP)
   uint64 seed_vhp = 2 [jstype = JS_STRING];
   uint64 seed_koin = 3 [jstype = JS_STRING];          // kept as KOIN: the Mana reserve that sponsors players
-  uint64 owner_share = 4 [jstype = JS_STRING];        // 2% owner share, VHP, claimable
-  uint64 creator_fee = 5 [jstype = JS_STRING];        // 5% creator fee, KOIN, claimable
+  uint64 owner_share = 4 [jstype = JS_STRING];        // retired (was a 2% owner share); always 0 from v2
+  uint64 creator_fee = 5 [jstype = JS_STRING];        // 5% producer fee, KOIN, claimable
   uint64 pots_outstanding = 6 [jstype = JS_STRING];   // weekly pots not yet claimed (VHP)
   uint64 weeks_closed = 7 [jstype = JS_STRING];       // number of weeks closed so far (= next week to close)
   uint32 next_question_id = 8;
   uint64 total_gain = 9 [jstype = JS_STRING];         // all-time gain distributed
   uint64 weeks_finalized = 10 [jstype = JS_STRING];   // number of weeks finalized so far (= next week to finalize)
+  uint64 rolled_over = 11 [jstype = JS_STRING];       // pots with no winners, waiting to be paid at the next close (no second fee)
 }
 
 message player_object {
@@ -393,7 +394,7 @@ message set_sponsor_limit_arguments {
 
 message set_sponsor_limit_result {}
 
-// @description Claim the 5% creator fee in KOIN (owner only; limited by the contract's Mana).
+// @description Claim the 5% producer fee in KOIN (owner only; limited by the contract's Mana).
 // @read-only false
 message claim_creator_fee_arguments {
   bytes to = 1 [(koinos.btype) = ADDRESS];
@@ -403,7 +404,7 @@ message claim_creator_fee_result {
   uint64 amount = 1 [jstype = JS_STRING];
 }
 
-// @description Claim the 2% owner share in VHP (owner only).
+// @description Retired: the 2% owner share no longer exists (kept so old calls fail cleanly).
 // @read-only false
 message claim_owner_share_arguments {
   bytes to = 1 [(koinos.btype) = ADDRESS];
