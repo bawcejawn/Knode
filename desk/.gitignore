@@ -1,0 +1,10 @@
+node_modules/
+build/
+abi/*
+!abi/desk.koilib.json
+.env
+deploy-state.json
+assembly/index.ts
+assembly/*.boilerplate.ts
+assembly/proto/*.ts
+desk.pb

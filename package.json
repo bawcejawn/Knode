@@ -9,7 +9,8 @@
     "backtest": "tsx backtest.ts",
     "generate": "tsx generator.ts",
     "export-blocks": "tsx export-blocks.ts",
-    "bot": "tsx bot/bot.ts"
+    "bot": "tsx bot/bot.ts",
+    "desk": "tsx bot/desk.ts"
   },
   "dependencies": {
     "koilib": "9.4.1"
