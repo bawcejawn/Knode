@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Node dashboard · Knode</title>
+  <title>Producer lookup · Knode</title>
   <meta name="description" content="Block production for any Koinos producer address: recent blocks, share of the network, and projections.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,10 +21,10 @@
     .nd-status { margin: 16px 2px 0; color: var(--muted); min-height: 1.4em; }
     .nd-bar { height: 6px; background: var(--line); border-radius: 99px; overflow: hidden; margin-top: 8px; }
     .nd-bar i { display: block; height: 100%; width: 0; background: var(--violet); transition: width .2s; }
-    .nd-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 22px 0; }
+    .nd-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 22px 0; }
     .tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: 14px 16px; box-shadow: var(--shadow); }
     .tile .k { font-size: 13px; color: var(--muted); }
-    .tile .v { font-family: var(--display); font-size: 26px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .tile .v { font-family: var(--display); font-size: 30px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
     .tile .s { font-size: 13px; color: var(--muted); margin-top: 2px; }
     .good { color: var(--mint); } .bad { color: var(--rose); }
     .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; box-shadow: var(--shadow); margin-bottom: 16px; }
@@ -42,7 +42,12 @@
     .mono { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
     a { color: var(--violet); }
     .note { font-size: 13px; color: var(--muted); margin-top: 10px; }
-    .scroll { max-height: 360px; overflow: auto; }
+    .scroll { max-height: 420px; overflow: auto; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 0; }
+    .stats div { background: var(--paper); border-radius: var(--r-sm); padding: 10px 12px; }
+    .stats dt { font-size: 12px; color: var(--muted); } .stats dd { margin: 2px 0 0; font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; }
+    button.link { font: inherit; background: none; border: 0; padding: 0; color: var(--violet); cursor: pointer; text-decoration: underline; }
+    .range { color: var(--muted); font-weight: 400; }
     .periods td, .periods th { padding: 9px 6px; }
     .periods td:first-child { font-weight: 700; }
     .pill { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--paper); color: var(--muted); margin-left: 6px; }
@@ -63,32 +68,31 @@
   </header>
 
   <main class="nd">
-    <h1>Node dashboard</h1>
-    <p class="lede" style="margin-bottom:8px">Put in any Koinos block-producer address to see what it produced, its share of the active producing VHP, and what to expect per day, week, month and year. Everything is read live from the Koinos chain.</p>
-    <p style="margin:0 0 20px;font-size:14px"><a href="burn.html">Burn KOIN into VHP</a> · <a href="producer.html">Register a producer key</a></p>
+    <h1>Producer lookup</h1>
+    <p class="lede" style="margin-bottom:8px">How many blocks should a producer make, and is it on track? Use it to check your own node, and to size up producers before answering Knode questions. Read live from the Koinos chain.</p>
+    <p style="margin:0 0 20px;font-size:14px"><a href="./">Play Knode</a> · <a href="burn.html">Burn KOIN into VHP</a> · <a href="producer.html">Register a producer key</a></p>
 
     <form class="nd-form" id="form">
       <input id="addr" placeholder="Producer address (starts with 1…)" autocomplete="off" spellcheck="false" aria-label="Producer address">
-      <select id="win" aria-label="Time window">
-        <option value="7200">Last 6 hours</option>
+      <select id="win" aria-label="Look back over">
         <option value="28800" selected>Last 24 hours</option>
-        <option value="week">This Knode week (since Mon 00:00 UTC)</option>
+        <option value="week">This Knode week</option>
         <option value="86400">Last 3 days</option>
         <option value="201600">Last 7 days</option>
       </select>
-      <button class="btn" type="submit">Show</button>
+      <button class="btn" type="submit">Look up</button>
     </form>
     <div class="nd-quick" id="quick"></div>
-    <div class="nd-status" id="status" role="status">Enter an address.</div>
+    <div class="nd-status" id="status" role="status">Enter an address, or pick one from the list below once it loads.</div>
     <div class="nd-bar" id="bar" hidden><i></i></div>
 
     <section id="out" hidden>
       <div class="nd-tiles" id="tiles"></div>
 
       <div class="card">
-        <h2>Per day, week, month and year</h2>
-        <p class="sub" id="per-sub"></p>
-        <table class="periods"><thead><tr><th></th><th class="r">Expected blocks</th><th class="r">Actual pace</th><th class="r">Expected KOIN</th><th class="r">KOIN at actual pace</th></tr></thead><tbody id="periods"></tbody></table>
+        <h2>What to expect</h2>
+        <p class="sub" id="fc-sub"></p>
+        <table class="periods"><thead><tr><th></th><th class="r">Expected blocks</th><th class="r">Likely range</th><th class="r">KOIN earned</th></tr></thead><tbody id="forecast"></tbody></table>
       </div>
 
       <div class="card chart">
@@ -96,22 +100,22 @@
         <p class="sub" id="chart-sub"></p>
         <div id="chart"></div>
         <div class="axis"><span id="ax-l"></span><span>now</span></div>
-        <div class="legend"><span><i></i>produced</span><span><i class="exp"></i>expected from VHP share</span></div>
+        <div class="legend"><span><i></i>produced</span><span><i class="exp"></i>expected</span></div>
       </div>
 
-      <div class="cols">
-        <div class="card">
-          <h2>Recent blocks</h2>
-          <p class="sub">Produced by this address in the window</p>
-          <div class="scroll"><table><thead><tr><th>Block</th><th>When</th><th class="r">Gap before</th></tr></thead><tbody id="recent"></tbody></table></div>
-        </div>
-        <div class="card">
-          <h2>Active producers</h2>
-          <p class="sub">Same window, all of Koinos. "Luck" = share of blocks ÷ share of VHP.</p>
-          <div class="scroll"><table><thead><tr><th>#</th><th>Producer</th><th class="r">Blocks</th><th class="r">VHP</th><th class="r">VHP share</th><th class="r">Luck</th></tr></thead><tbody id="top"></tbody></table></div>
-        </div>
+      <div class="card">
+        <h2>All active producers</h2>
+        <p class="sub">Click one to look it up. "Per 10,000" is how many of the next 10,000 blocks it should sign. "Luck" compares its blocks with its VHP share (100% = exactly as expected).</p>
+        <div class="scroll"><table><thead><tr><th>#</th><th>Producer</th><th class="r">Blocks</th><th class="r">VHP share</th><th class="r">Per 10,000</th><th class="r">Luck</th></tr></thead><tbody id="top"></tbody></table></div>
       </div>
-      <p class="note">How the numbers work: each block goes to a producer at random, in proportion to its VHP among the producers that are running. "Expected" uses this address's current share of the active producing VHP; "actual pace" extrapolates what it really produced in the window. Short windows swing a lot, so trust a day or more. KOIN per block is the network's recent average block reward (KOIN minted to the producer minus the VHP its block used). The page keeps the blocks it has read in this browser, so the next visit only reads new blocks.</p>
+
+      <div class="card">
+        <h2>The network in this window</h2>
+        <p class="sub">The same things Knode's network questions ask about.</p>
+        <dl class="stats" id="net"></dl>
+      </div>
+
+      <p class="note">Each block goes to a running producer at random, in proportion to its VHP, so counts swing: the likely range covers 8 times out of 10. Shares use the VHP each producer holds now. KOIN per block is the network's recent average reward after the VHP a block uses. Blocks already read are kept in this browser, so later visits only read new ones.</p>
     </section>
   </main>
 
@@ -124,9 +128,10 @@
     const KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK";
     const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq";
     const EXPLORER = "https://koinosscan.com/address/";
-    const UNIT = 1e8, MAX_BLOCKS = 201600, WORKERS = 6, REORG = 60, STORE = "nd-blocks-v1";
+    const UNIT = 1e8, MAX_BLOCKS = 201600, WORKERS = 6, REORG = 60, STORE = "nd-blocks-v2";
     const NAMES = { "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "Knode pool" };
     const QUICK = [["Knode pool", "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr"]];
+    try { localStorage.removeItem("nd-blocks-v1"); } catch {}
 
     const provider = new lib.Provider([RPC]);
     const types = { nested: { t: { nested: {
@@ -138,43 +143,51 @@
     const ser = new lib.Serializer(types);
     const vhpToken = new lib.Contract({ id: VHP, provider, abi: { methods: { balance_of: { entry_point: 0x5c721497, argument: "t.balance_of_arguments", return: "t.balance_of_result", read_only: true } }, koilib_types: types } });
 
-    // ── tiny helpers ──
+    // ── helpers ──
     const $ = (id) => document.getElementById(id);
     const el = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); for (const c of kids) if (c != null) e.append(c); return e; };
     const fmt = (n, d = 0) => (Number.isFinite(n) ? Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }) : "—");
     const sig = (n) => (!Number.isFinite(n) ? "—" : n >= 100 ? fmt(n, 0) : n >= 10 ? fmt(n, 1) : fmt(n, 2));
     const short = (a) => NAMES[a] || a.slice(0, 6) + "…" + a.slice(-4);
-    const dur = (ms) => { const m = ms / 60000; return m < 90 ? `${Math.round(m)} min` : m < 2880 ? `${(m / 60).toFixed(1)} h` : `${(m / 1440).toFixed(1)} days`; };
+    const dur = (ms) => { const s = ms / 1000; return s < 120 ? `${fmt(s, s < 10 ? 1 : 0)} s` : s < 5400 ? `${Math.round(s / 60)} min` : s < 172800 ? `${(s / 3600).toFixed(1)} h` : `${(s / 86400).toFixed(1)} days`; };
     const isAddr = (a) => /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
     const say = (t) => { $("status").textContent = t; };
     const progress = (f) => { $("bar").hidden = f == null; if (f != null) $("bar").firstElementChild.style.width = `${Math.round(f * 100)}%`; };
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const lastMondayUtc = () => { const d = new Date(); const day = (d.getUTCDay() + 6) % 7; return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day); };
+    /** The count a Poisson(mean) stays at or below with probability p. */
+    function poissonQ(mean, p) {
+      if (!(mean > 0)) return 0;
+      if (mean > 300) { const z = p < 0.5 ? -1.2816 : 1.2816; return Math.max(0, Math.round(mean + z * Math.sqrt(mean))); }
+      let k = 0, pk = Math.exp(-mean), cum = pk;
+      while (cum < p && k < 10000) { k++; pk *= mean / k; cum += pk; }
+      return k;
+    }
 
-    // ── block store: heights from..top, signer index + timestamp each (kept in this browser) ──
-    let B = null; // { from, top, signers: [], sig: [], ts: [] }
+    // ── blocks kept in this browser: signer index, timestamp and transaction count per height ──
+    let B = null; // { from, top, signers, sig, ts, ntx }
+    const sIdx = new Map();
     function loadStore() {
       try {
-        const raw = JSON.parse(localStorage.getItem(STORE) || "null");
-        if (!raw || !raw.sig || raw.sig.length !== raw.dts.length) return null;
-        const ts = new Array(raw.dts.length); let t = raw.t0;
-        for (let i = 0; i < ts.length; i++) { t += raw.dts[i]; ts[i] = t; }
-        return { from: raw.from, top: raw.from + raw.sig.length - 1, signers: raw.signers, sig: raw.sig, ts };
+        const r = JSON.parse(localStorage.getItem(STORE) || "null");
+        if (!r || !r.sig || r.sig.length !== r.dts.length || r.sig.length !== r.ntx.length) return null;
+        const ts = new Array(r.dts.length); let t = r.t0;
+        for (let i = 0; i < ts.length; i++) { t += r.dts[i]; ts[i] = t; }
+        return { from: r.from, top: r.from + r.sig.length - 1, signers: r.signers, sig: r.sig, ts, ntx: r.ntx };
       } catch { return null; }
     }
     function saveStore() {
       try {
         const dts = new Array(B.ts.length); let prev = B.ts[0];
         for (let i = 0; i < B.ts.length; i++) { dts[i] = B.ts[i] - prev; prev = B.ts[i]; }
-        localStorage.setItem(STORE, JSON.stringify({ from: B.from, signers: B.signers, sig: B.sig, t0: B.ts[0], dts }));
-      } catch { /* storage full or blocked: the page still works, it just re-reads next time */ }
+        localStorage.setItem(STORE, JSON.stringify({ from: B.from, signers: B.signers, sig: B.sig, t0: B.ts[0], dts, ntx: B.ntx }));
+      } catch { /* storage full or blocked: still works, just re-reads next time */ }
     }
-    const sIdx = new Map();
     function signerIndex(a) { let i = sIdx.get(a); if (i === undefined) { i = B.signers.length; B.signers.push(a); sIdx.set(a, i); } return i; }
 
-    /** Read blocks a..b (inclusive) into flat arrays. Newest batches first, a few in parallel, batch size adapts. */
+    /** Read blocks a..b into flat arrays: newest first, several requests at once, oversized requests split. */
     async function readRange(a, b, headId, note) {
-      const n = b - a + 1, signers = new Array(n), ts = new Array(n);
+      const n = b - a + 1, signers = new Array(n), ts = new Array(n), ntx = new Array(n);
       const queue = []; for (let e = b; e >= a; e -= 200) queue.push([Math.max(a, e - 199), e]);
       let done = 0;
       const worker = async () => {
@@ -184,7 +197,7 @@
           for (let tries = 0; ; tries++) {
             try { res = await provider.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(s), num_blocks: e - s + 1, return_block: true, return_receipt: false }); break; }
             catch (err) {
-              if (e - s >= 50) { const m = Math.floor((s + e) / 2); queue.push([s, m], [m + 1, e]); res = null; break; } // too big for the node: split it
+              if (e - s >= 50) { const m = Math.floor((s + e) / 2); queue.push([s, m], [m + 1, e]); break; }
               if (tries >= 4) throw err;
               await sleep(700 * (tries + 1));
             }
@@ -192,51 +205,47 @@
           if (!res) continue;
           let got = 0;
           for (const it of res.block_items || []) {
-            const h = Number(it.block_height), i = h - a;
-            if (i < 0 || i >= n) continue;
-            signers[i] = it.block.header.signer; ts[i] = Number(it.block.header.timestamp); got++;
+            const i = Number(it.block_height) - a;
+            if (i < 0 || i >= n || signers[i] !== undefined) continue;
+            signers[i] = it.block.header.signer; ts[i] = Number(it.block.header.timestamp); ntx[i] = (it.block.transactions || []).length; got++;
           }
-          if (got < e - s + 1) { // the node returned fewer than asked: fetch the rest
-            let k = s; while (k <= e && signers[k - a] !== undefined) k++;
-            if (k <= e && got > 0) queue.push([k, e]); else if (got === 0) throw new Error(`no blocks returned at ${s}`);
-          }
+          if (got === 0) throw new Error(`no blocks returned at ${s}`);
+          let k = s; while (k <= e && signers[k - a] !== undefined) k++;
+          if (k <= e) queue.push([k, e]); // the node sent fewer than asked: get the rest
           done += got; progress(Math.min(1, done / n)); say(`${note} ${fmt(done)} of ${fmt(n)} blocks…`);
         }
       };
       await Promise.all(Array.from({ length: WORKERS }, worker));
-      return { signers, ts };
+      return { signers, ts, ntx };
     }
 
     async function ensureBlocks(needFrom, head) {
       const top = Number(head.head_topology.height), headId = head.head_topology.id;
       needFrom = Math.max(needFrom, top - MAX_BLOCKS + 1);
       if (!B) B = loadStore();
-      if (B) { sIdx.clear(); B.signers.forEach((a, i) => sIdx.set(a, i)); }
-      // Unusable store (too old, or a gap): start fresh.
-      if (!B || B.top < needFrom - 1 || B.top > top || B.sig.length === 0) { B = { from: top + 1, top, signers: [], sig: [], ts: [] }; sIdx.clear(); }
-      else {
-        // The newest ~60 blocks can still change: drop and re-read them.
-        const keep = Math.max(0, Math.min(B.sig.length, B.sig.length - REORG));
-        B.sig.length = keep; B.ts.length = keep; B.top = B.from + keep - 1;
+      sIdx.clear(); if (B) B.signers.forEach((a, i) => sIdx.set(a, i));
+      if (!B || B.top < needFrom - 1 || B.top > top || B.sig.length === 0) { B = { from: top + 1, top, signers: [], sig: [], ts: [], ntx: [] }; sIdx.clear(); }
+      else { // the newest ~60 blocks can still change: re-read them
+        const keep = Math.max(0, B.sig.length - REORG);
+        B.sig.length = keep; B.ts.length = keep; B.ntx.length = keep; B.top = B.from + keep - 1;
       }
       if (B.top < top) {
         const a = B.sig.length ? B.top + 1 : needFrom, r = await readRange(a, top, headId, "Reading new blocks:");
         if (B.sig.length === 0) B.from = a;
-        for (let i = 0; i < r.signers.length; i++) { B.sig.push(signerIndex(r.signers[i])); B.ts.push(r.ts[i]); }
+        for (let i = 0; i < r.signers.length; i++) { B.sig.push(signerIndex(r.signers[i])); B.ts.push(r.ts[i]); B.ntx.push(r.ntx[i]); }
         B.top = top;
       }
       if (needFrom < B.from) {
         const r = await readRange(needFrom, B.from - 1, headId, "Reading older blocks:");
-        B.sig = r.signers.map(signerIndex).concat(B.sig); B.ts = r.ts.concat(B.ts); B.from = needFrom;
+        B.sig = r.signers.map(signerIndex).concat(B.sig); B.ts = r.ts.concat(B.ts); B.ntx = r.ntx.concat(B.ntx); B.from = needFrom;
       }
-      // Keep at most 7 days.
       const cut = B.sig.length - MAX_BLOCKS;
-      if (cut > 0) { B.sig.splice(0, cut); B.ts.splice(0, cut); B.from += cut; }
+      if (cut > 0) { B.sig.splice(0, cut); B.ts.splice(0, cut); B.ntx.splice(0, cut); B.from += cut; }
       progress(null);
       saveStore();
     }
 
-    // ── network reward per block, from the receipts of the latest blocks (read once) ──
+    // ── network block reward (median of the latest blocks; read once) ──
     let rewardCache = null;
     async function networkReward(head) {
       if (rewardCache) return rewardCache;
@@ -255,8 +264,7 @@
       }
       if (!nets.length) return NaN;
       nets.sort((x, y) => x - y);
-      rewardCache = nets[Math.floor(nets.length / 2)]; // median: robust to an odd block
-      return rewardCache;
+      return (rewardCache = nets[Math.floor(nets.length / 2)]);
     }
 
     const bal = new Map();
@@ -272,14 +280,14 @@
     const tile = (k, v, s, cls = "") => el("div", { class: "tile" }, el("div", { class: "k" }, k), el("div", { class: `v ${cls}` }, v), s ? el("div", { class: "s" }, s) : null);
 
     function chart(first, last, mineTs, expPerHour, spanH) {
-      const bucketH = spanH <= 8 ? 0.5 : spanH <= 30 ? 1 : spanH <= 80 ? 3 : 6;
+      const bucketH = spanH <= 30 ? 1 : spanH <= 80 ? 3 : 6;
       const size = bucketH * 3.6e6, N = Math.max(1, Math.ceil((last - first) / size));
       const counts = new Array(N).fill(0);
       for (const t of mineTs) counts[Math.min(N - 1, Math.floor((t - first) / size))]++;
       const exp = expPerHour * bucketH, max = Math.max(1, exp * 1.4, ...counts), W = 1000, H = 150, bw = W / N;
       const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg");
       svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("preserveAspectRatio", "none");
-      svg.setAttribute("role", "img"); svg.setAttribute("aria-label", `Blocks per ${bucketH} hours, with the expected level`);
+      svg.setAttribute("role", "img"); svg.setAttribute("aria-label", `Blocks per ${bucketH} hour${bucketH === 1 ? "" : "s"}, with the expected level`);
       counts.forEach((c, i) => {
         const h = c ? Math.max(4, (c / max) * (H - 6)) : 2, r = document.createElementNS(ns, "rect");
         r.setAttribute("x", i * bw + bw * 0.12); r.setAttribute("width", Math.max(1, bw * 0.76)); r.setAttribute("y", H - h); r.setAttribute("height", h); r.setAttribute("rx", 2);
@@ -294,7 +302,7 @@
         svg.append(line);
       }
       $("chart").replaceChildren(svg);
-      $("chart-sub").textContent = `Each bar is ${bucketH < 1 ? "30 minutes" : bucketH === 1 ? "1 hour" : `${bucketH} hours`}. Expected about ${sig(exp)} block${exp === 1 ? "" : "s"} per bar.`;
+      $("chart-sub").textContent = `Each bar is ${bucketH === 1 ? "1 hour" : `${bucketH} hours`}; the dashed line is the expected ${sig(exp)} per bar.`;
       $("ax-l").textContent = new Date(first).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     }
 
@@ -309,71 +317,79 @@
         await ensureBlocks(top - n + 1, head);
         if (!quiet) say("Reading VHP balances…");
 
-        // The window
         let i0 = Math.max(0, (top - n + 1) - B.from);
         if (mode === "week") while (i0 < B.ts.length && B.ts[i0] < monday) i0++;
         const total = B.sig.length - i0;
         if (total < 10) throw new Error("not enough blocks in this window yet");
         const t0 = B.ts[i0], t1 = B.ts[B.sig.length - 1], spanH = Math.max(0.1, (t1 - t0) / 3.6e6);
         const me = sIdx.get(addr);
-        const counts = new Map(), mineTs = [], mineH = [];
+        const counts = new Map(), mineTs = [];
+        let maxGap = 0, empty = 0, txs = 0;
         for (let i = i0; i < B.sig.length; i++) {
           const s = B.sig[i]; counts.set(s, (counts.get(s) || 0) + 1);
-          if (s === me) { mineTs.push(B.ts[i]); mineH.push(B.from + i); }
+          if (s === me) mineTs.push(B.ts[i]);
+          if (i > i0) maxGap = Math.max(maxGap, B.ts[i] - B.ts[i - 1]);
+          if (B.ntx[i] === 0) empty++; txs += B.ntx[i] || 0;
         }
         const producers = [...counts.entries()].map(([s, c]) => [B.signers[s], c]).sort((x, y) => y[1] - x[1]);
-        const list = producers.slice(0, 80).map(([a]) => a); if (!list.includes(addr)) list.push(addr);
-        const vals = []; for (let i = 0; i < list.length; i += 8) vals.push(...(await Promise.all(list.slice(i, i + 8).map(vhpOf))));
+        const list = producers.map(([a]) => a); if (!list.includes(addr)) list.push(addr);
+        const vals = []; for (let i = 0; i < list.length; i += 8) { vals.push(...(await Promise.all(list.slice(i, i + 8).map(vhpOf)))); }
         const vhp = new Map(list.map((a, i) => [a, vals[i]]));
         let reward = NaN; try { reward = await networkReward(head); } catch { /* shown as — */ }
 
         const myVhp = vhp.get(addr) || 0;
         const activeVhp = producers.reduce((s, [a]) => s + (vhp.get(a) || 0), 0) + (counts.has(me) ? 0 : myVhp);
         const share = activeVhp ? myVhp / activeVhp : 0;
-        const netPerDay = total / spanH * 24;
-        const expDay = share * netPerDay, actDay = mineTs.length / spanH * 24, expWin = share * total;
-        const koinDay = expDay * reward, apr = myVhp ? koinDay * 365 / myVhp * 100 : NaN;
-        const lastTs = mineTs[mineTs.length - 1], since = lastTs ? now - lastTs : NaN, every = expDay > 0 ? 24 / expDay : NaN;
-        const luck = expWin > 0 ? mineTs.length / expWin : NaN;
-        const weekMine = mode === "week" || t0 <= monday ? mineTs.filter((t) => t >= monday).length : NaN;
-        const weekExp = expDay * (now - monday) / 8.64e7;
-        const winName = $("win").selectedOptions[0].textContent.replace(/^Last /, "").replace(/ \(.*\)$/, "");
+        const perDay = total / spanH * 24; // network blocks a day
+        const mine = mineTs.length, expWin = share * total, luck = expWin > 0 ? mine / expWin : NaN;
+        const lastTs = mineTs[mine - 1], since = lastTs ? now - lastTs : NaN, every = share > 0 ? 8.64e7 / (share * perDay) : NaN;
+        const late = lastTs ? since > every * 3 : expWin >= 3;
+        const winName = $("win").selectedOptions[0].textContent.replace(/^Last /, "");
+        const name = NAMES[addr] ? `${NAMES[addr]} (${addr.slice(0, 6)}…${addr.slice(-4)})` : short(addr);
 
         $("tiles").replaceChildren(
-          tile("VHP producing", fmt(myVhp, 0), `${fmt(share * 100, share < 0.001 ? 4 : 3)}% of the active producing VHP (${fmt(activeVhp / 1e6, 1)}M)`),
-          tile(`Blocks, ${winName}`, `${fmt(mineTs.length)} / ${sig(expWin)}`, `actual / expected · ${Number.isFinite(luck) ? `${fmt(luck * 100, 0)}% of expected` : "no VHP"}`, !Number.isFinite(luck) || expWin < 3 ? "" : luck >= 0.8 ? "good" : luck < 0.5 ? "bad" : ""),
-          tile("Blocks per day", `${sig(actDay)} / ${sig(expDay)}`, "actual pace / expected"),
-          tile("This Knode week", Number.isFinite(weekMine) ? `${fmt(weekMine)} / ${sig(weekExp)}` : "—", Number.isFinite(weekMine) ? "since Mon 00:00 UTC, actual / expected" : "choose a window that reaches Monday"),
-          tile("Last block", lastTs ? `${dur(since)} ago` : "none in window", Number.isFinite(every) ? `expected about every ${dur(every * 3.6e6)}${lastTs && since > every * 3.6e6 * 3 ? " · longer than usual" : ""}` : "", lastTs && since > every * 3.6e6 * 3 ? "bad" : ""),
-          tile("Chance of a block in 24 h", !Number.isFinite(expDay) ? "—" : expDay > 7 ? ">99.9%" : `${fmt((1 - Math.exp(-expDay)) * 100, expDay > 3 ? 1 : 0)}%`, "from the VHP share alone"),
-          tile("Est. KOIN a day", sig(koinDay), Number.isFinite(reward) ? `${fmt(reward, 3)} KOIN a block · ~${fmt(apr, 1)}% a year on VHP` : "block reward unavailable"),
+          tile("Share of active VHP", share > 0 ? `${fmt(share * 100, share < 0.01 ? 3 : 2)}%` : "0%", `${fmt(myVhp, 0)} VHP of ${fmt(activeVhp / 1e6, 1)}M producing`),
+          tile(`Blocks, ${mode === "week" ? "this Knode week" : winName.toLowerCase()}`, `${fmt(mine)}`, expWin > 0 ? `expected ${sig(expWin)} · ${fmt(luck * 100, 0)}% of expected` : "no VHP, so no blocks expected", !Number.isFinite(luck) || expWin < 3 ? "" : luck >= 0.8 ? "good" : luck < 0.5 ? "bad" : ""),
+          tile("Last block", lastTs ? `${dur(since)} ago` : "none in window", Number.isFinite(every) ? `usually one every ${dur(every)}${late ? " · overdue, check the node" : ""}` : "", late && share > 0 ? "bad" : ""),
         );
 
-        const P = [["Day", 1], ["Week", 7], ["Month", 30], ["Year", 365]];
-        $("periods").replaceChildren(...P.map(([name, d]) => el("tr", {},
-          el("td", {}, name), el("td", { class: "r" }, sig(expDay * d)), el("td", { class: "r" }, spanH >= 6 ? sig(actDay * d) : "—"),
-          el("td", { class: "r" }, sig(koinDay * d)), el("td", { class: "r" }, spanH >= 6 ? sig(actDay * d * reward) : "—"))));
-        $("per-sub").textContent = `Network: ${fmt(netPerDay, 0)} blocks a day, ${producers.length} active producers in this window.${spanH < 6 ? " Actual pace needs a window of 6 hours or more." : ""}`;
+        const rows = [["Next 1,000 blocks", 1000], ["Next 5,000 blocks", 5000], ["Next 10,000 blocks", 10000], ["Next 20,000 blocks", 20000],
+          ["A day", perDay], ["A week", perDay * 7], ["A month", perDay * 30], ["A year", perDay * 365]];
+        $("forecast").replaceChildren(...rows.map(([label, blocks]) => {
+          const m = share * blocks, lo = poissonQ(m, 0.1), hi = poissonQ(m, 0.9);
+          const hint = /blocks/.test(label) ? ` (~${dur(blocks / perDay * 8.64e7)})` : "";
+          return el("tr", {}, el("td", {}, label, el("span", { class: "range" }, hint)), el("td", { class: "r" }, sig(m)),
+            el("td", { class: "r" }, m > 0 ? (lo === hi ? fmt(lo) : `${fmt(lo)} – ${fmt(hi)}`) : "—"), el("td", { class: "r" }, sig(m * reward)));
+        }));
+        const apr = myVhp > 0 ? share * perDay * reward * 365 / myVhp * 100 : NaN;
+        $("fc-sub").textContent = `${name}, if VHP stays as it is now. Knode's block questions use windows of 5,000–20,000 blocks.${Number.isFinite(apr) ? ` Earnings ≈ ${fmt(apr, 1)}% a year on its VHP (${fmt(reward, 3)} KOIN a block).` : ""}`;
 
-        chart(t0, t1, mineTs, expDay / 24, spanH);
+        chart(t0, t1, mineTs, share * perDay / 24, spanH);
 
-        $("recent").replaceChildren(...(mineTs.length ? mineTs.map((t, i) => [t, mineH[i], i ? t - mineTs[i - 1] : NaN]).reverse().slice(0, 300).map(([t, h, gap]) => el("tr", {},
-          el("td", {}, `#${fmt(h)}`), el("td", {}, new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })), el("td", { class: "r" }, Number.isFinite(gap) ? dur(gap) : "—")))
-          : [el("tr", {}, el("td", { colspan: "3" }, "No blocks from this address in this window."))]));
-
-        const rows = producers.slice(0, 40); if (!rows.some(([a]) => a === addr)) rows.push([addr, 0]);
-        $("top").replaceChildren(...rows.map(([a, c]) => {
+        const shown = producers.slice(0, 60); if (!shown.some(([a]) => a === addr)) shown.push([addr, 0]);
+        $("top").replaceChildren(...shown.map(([a, c]) => {
           const v = vhp.get(a), vs = v != null && activeVhp ? v / activeVhp : NaN, l = vs > 0 ? (c / total) / vs : NaN;
           const rank = producers.findIndex(([x]) => x === a);
+          const pick = el("button", { type: "button", class: "link mono", title: a }, short(a));
+          pick.onclick = () => { $("addr").value = a; go(); window.scrollTo({ top: 0, behavior: "smooth" }); };
           return el("tr", { class: a === addr ? "me" : "" },
-            el("td", {}, rank >= 0 ? String(rank + 1) : "–"),
-            el("td", {}, el("a", { href: EXPLORER + a, target: "_blank", rel: "noopener", class: "mono", title: a }, short(a))),
-            el("td", { class: "r" }, fmt(c)), el("td", { class: "r" }, v != null ? fmt(v, 0) : "—"),
-            el("td", { class: "r" }, Number.isFinite(vs) ? `${fmt(vs * 100, 2)}%` : "—"),
-            el("td", { class: "r" }, Number.isFinite(l) ? `${fmt(l * 100, 0)}%` : "—"));
+            el("td", {}, rank >= 0 ? String(rank + 1) : "–"), el("td", {}, pick),
+            el("td", { class: "r" }, fmt(c)), el("td", { class: "r" }, Number.isFinite(vs) ? `${fmt(vs * 100, 2)}%` : "—"),
+            el("td", { class: "r" }, Number.isFinite(vs) ? sig(vs * 10000) : "—"),
+            el("td", { class: "r" }, Number.isFinite(l) && c + vs * total >= 3 ? `${fmt(l * 100, 0)}%` : "—"));
         }));
 
-        say(`Blocks #${fmt(B.from + i0)} to #${fmt(top)} (${fmt(total)} blocks, ${dur(t1 - t0)}). Updated ${new Date().toLocaleTimeString()}; refreshes every 5 minutes.`);
+        const stat = (k, v) => el("div", {}, el("dt", {}, k), el("dd", {}, v));
+        $("net").replaceChildren(
+          stat("Average time between blocks", dur((t1 - t0) / (total - 1))),
+          stat("Longest gap between blocks", dur(maxGap)),
+          stat("Blocks with no transactions", `${fmt(empty / total * 100, 1)}%`),
+          stat("Transactions per 10,000 blocks", fmt(txs / total * 10000, 0)),
+          stat("Active producers", fmt(producers.length)),
+          stat("Blocks a day", fmt(perDay, 0)),
+        );
+
+        say(`${name} · ${fmt(total)} blocks over ${dur(t1 - t0)}, to block #${fmt(top)}. Updated ${new Date().toLocaleTimeString()}, refreshes every 5 minutes.`);
         $("out").hidden = false;
       } catch (e) {
         progress(null);
@@ -393,12 +409,12 @@
     }
     $("form").addEventListener("submit", (e) => { e.preventDefault(); go(); });
     $("win").addEventListener("change", () => { if (isAddr($("addr").value.trim())) go(); });
-    $("quick").replaceChildren(el("span", {}, "Try:"), ...QUICK.map(([name, a]) => { const b = el("button", { type: "button" }, name); b.onclick = () => { $("addr").value = a; go(); }; return b; }));
+    $("quick").replaceChildren(el("span", {}, "Try:"), ...QUICK.map(([label, a]) => { const b = el("button", { type: "button" }, label); b.onclick = () => { $("addr").value = a; go(); }; return b; }));
     setInterval(() => { if (current && !document.hidden) show(current.addr, current.mode, true); }, 300000);
     const q = new URLSearchParams(location.search);
-    const a0 = q.get("a") || recall("nd-addr"), w0 = q.get("w") || recall("nd-win");
+    const a0 = q.get("a") || recall("nd-addr") || QUICK[0][1], w0 = q.get("w") || recall("nd-win");
     if (w0 && [...$("win").options].some((o) => o.value === w0)) $("win").value = w0;
-    if (a0) { $("addr").value = a0; go(); }
+    $("addr").value = a0; go();
   })();
   </script>
 </body>
