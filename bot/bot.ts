@@ -826,11 +826,16 @@ async function friendly(cmd: string, a: string[], send: boolean): Promise<boolea
       await act("owner", "register_key", { public_key: pub }, send); return true;
     }
     case "node-key": {
+      if (a[0] === "personal") {
+        const pub = nodePublicKey(PERSONAL_KEY_FILE);
+        log(`Your PERSONAL node's PUBLIC key (safe to share):\n  ${pub}\n\nRegister it for your own address on https://bawcejawn.github.io/Knode/site/producer.html (signed in Kondor).\nDo NOT register this one for the game contract.`);
+        return true;
+      }
       const pub = nodePublicKey(a[0] && !a[0].startsWith("--") ? a[0] : undefined);
       log(`The project node's PUBLIC key (safe to share):\n  ${pub}\n\nRegister it for the game contract with:\n  npm run bot -- register-key node          (dry run)\n  npm run bot -- register-key node --send`);
       return true;
     }
-    case "node-status": await nodeStatus(); return true;
+    case "node-status": await nodeStatus(a[0] === "personal"); return true;
     case "seed-vhp": await act("seed", "seed_deposit_vhp", { amount: units(need(0, "amount")) }, send); return true;
     case "seed-koin": await act("seed", "seed_deposit_koin", { amount: units(need(0, "amount")) }, send); return true;
     case "seed-withdraw": {
@@ -874,6 +879,7 @@ async function friendly(cmd: string, a: string[], send: boolean): Promise<boolea
 // ═══════════════════════════════ the project's node ═══════════════════════════════
 
 const NODE_KEY_FILE = "C:\\kpred-node\\basedir\\block_producer\\private.key";
+const PERSONAL_KEY_FILE = "C:\\koinos-personal\\basedir\\block_producer\\private.key";
 
 /** Reads the node's block-producer key file on this PC and returns only its PUBLIC key (base64url). The private
  *  key never leaves this function and is never printed. */
@@ -890,7 +896,7 @@ export function nodePublicKey(file = E.NODE_KEY_FILE ?? NODE_KEY_FILE): string {
 }
 
 /** Is the project's node running and caught up with the chain? */
-async function nodeStatus() {
+async function nodeStatus(personal = false) {
   if (TESTNET) {
     // No public testnet node to compare with: a node is caught up when its newest block is only seconds old.
     const local = new Provider([E.NODE_RPC!]);
@@ -902,13 +908,14 @@ async function nodeStatus() {
     log(ageMin < 2 ? "✔ The testnet node is caught up." : `… still syncing: about ${ageMin < 120 ? `${ageMin.toFixed(0)} minutes` : `${(ageMin / 60 / 24).toFixed(1)} days`} of testnet chain to go.`);
     return;
   }
-  const local = new Provider([E.NODE_RPC ?? "http://127.0.0.1:8080"]);
+  const localRpc = personal ? "http://127.0.0.1:8090" : (E.NODE_RPC ?? "http://127.0.0.1:8080");
+  const local = new Provider([localRpc]);
   const pub = new Provider([E.RPC ?? "https://api.koinos.io"]);
   const p: any = await pub.getHeadInfo();
   const ph = Number(p.head_topology.height);
   let lh = 0;
   try { lh = Number(((await local.getHeadInfo()) as any).head_topology.height); }
-  catch { log("The project node doesn't answer on 127.0.0.1:8080. Is Docker running? In C:\\kpred-node\\koinos run: docker compose up -d"); process.exitCode = 1; return; }
+  catch { log(personal ? "Your personal node doesn't answer on 127.0.0.1:8090. Is Docker running? In C:\\koinos-personal\\koinos run: docker compose up -d" : "The project node doesn't answer on 127.0.0.1:8080. Is Docker running? In C:\\kpred-node\\koinos run: docker compose up -d"); process.exitCode = 1; return; }
   const behind = ph - lh;
   log(`Network block ${ph.toLocaleString()} — your node ${lh.toLocaleString()}`);
   if (behind <= 20) log("✔ Your node is caught up. The block producer can produce.");
