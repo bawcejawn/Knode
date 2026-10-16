@@ -113,6 +113,17 @@ players are never paid. Deposits are whole numbers only (1, 2, 3 VHP …); withd
 decimal, so everyone can always take out every unit. The pool only pays Mana for staked players;
 free players use their own Mana or Kondor's free Mana.
 
+## Step 4b — Lock the exact library versions
+
+`npm install` wrote two `package-lock.json` files that record the exact version of every library. Commit them, so
+GitHub's bot installs exactly what you tested (a surprise new library version never runs next to a key):
+```
+cd C:\kprediction
+git add package-lock.json game/package-lock.json
+git commit -m "Lock library versions"
+git push
+```
+
 ## Step 5 — Deploy the contract
 
 ```
@@ -199,6 +210,47 @@ See `docs/security-audit.md` for the full audit. The short version:
 
 The 1-hour alarm: the bot raises it after 1 hour without a block. While the pool is small and normally goes
 longer than that between blocks, it waits until the silence is unusual instead.
+
+## Changing the website (no waiting)
+
+The website is just files in the `site/` folder, served free by GitHub Pages. Any change you commit and push is live
+within a few minutes. There's no timelock: the website can't touch anyone's money, it only asks Kondor to sign
+transactions that the contract then checks.
+
+## Ads
+
+Edit `site/ads.json` (on github.com you can click the file, then the pencil icon), replace `null` for a slot, and
+commit. Two kinds:
+- **Direct sponsor:** put their image in `site/ads/` and fill in `image`, `link` and `alt`.
+- **Ad network** (A-Ads and similar): paste the ad link from the network's dashboard as `src`, with its width and height.
+
+Ads always run walled off from the page: they can't see or touch the wallet connection. Only `https` links are accepted.
+
+## Fixing the contract later (48-hour upgrade)
+
+```
+cd game
+npm test ; npm run check            # build and test the fixed code
+cd ..
+npm run bot -- upgrade status       # what is announced, and does it match your build
+npm run bot -- upgrade schedule --send
+#   ... 48 hours: the bot emails you (expected), players can see it and leave if they want ...
+npm run bot -- upgrade apply        # dry run
+npm run bot -- upgrade apply --send
+git add game-data/deployment.json ; git commit -m "Upgraded" ; git push
+```
+All stakes, weeks, results and the seed carry over. `npm run bot -- upgrade cancel --send` withdraws an announcement.
+
+## Emergency levers (instant) and how to undo them
+
+| Lever | Undo | Notes |
+|---|---|---|
+| `pause on --send` (no new deposits) | `pause off --send` | Withdrawals and collecting rewards keep working |
+| `sponsor-limit 0 --send` (stop paying players' Mana) | `sponsor-limit 2 --send` | |
+| `void 12 "reason" --send` | can't be undone | That question just doesn't count |
+| `admin set_operator operator=<new bot address> --as owner --send` | same command with the old address | Then update the `OPERATOR_WIF` secret on GitHub |
+
+Players' withdrawals can never be paused, on purpose: a stolen admin key can never lock anyone's money.
 
 ## Everyday owner commands (dry run unless `--send`)
 

@@ -282,6 +282,37 @@
     await opOf(writer(), "claim", { player: S.account, week: String(week) }),
   ]);
 
+  // ═══════════════ ads (site/ads.json) ═══════════════
+  // Ads never get access to this page: network ads run in a sandboxed frame (no access to the page, the wallet or
+  // cookies), and sponsor ads are a plain image and link. Only https links are accepted.
+  let ADS = {};
+  const httpsUrl = (u) => { try { const x = new URL(String(u), location.href); return x.protocol === "https:" || x.origin === location.origin ? x.href : null; } catch { return null; } };
+  function fillAd(slot) {
+    const a = ADS[slot.dataset.adSlot];
+    if (!a || typeof a !== "object") return;
+    const label = el("small", { class: "ad-label" }, "Sponsored");
+    if (a.type === "sponsor") {
+      const link = httpsUrl(a.link), img = httpsUrl(a.image);
+      if (!link || !img) return;
+      slot.replaceChildren(el("a", { href: link, target: "_blank", rel: "sponsored noopener noreferrer", class: "ad-link" },
+        el("img", { src: img, alt: String(a.alt || "Sponsor"), loading: "lazy" })), label);
+      slot.classList.add("ad-filled");
+    } else if (a.type === "iframe") {
+      const src = httpsUrl(a.src);
+      if (!src) return;
+      const f = el("iframe", { src, title: "Advertisement", loading: "lazy", referrerpolicy: "no-referrer", scrolling: "no",
+        sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox" });
+      f.width = String(Number(a.width) || 300); f.height = String(Number(a.height) || 250);
+      slot.replaceChildren(f, label);
+      slot.classList.add("ad-filled");
+    }
+  }
+  async function loadAds() {
+    if (S.demo) return;
+    try { const r = await fetch("ads.json", { cache: "no-cache" }); if (r.ok) ADS = await r.json(); } catch { ADS = {}; }
+    document.querySelectorAll("[data-ad-slot]").forEach(fillAd);
+  }
+
   // ═══════════════ stake dialog ═══════════════
   function openStake(mode) {
     const d = $("#stake-dialog");
@@ -390,7 +421,11 @@
     const locked = S.questions.filter((q) => now >= q.lockTime && !outcomeOf(q)).sort((a, b) => a.windowEnd - b.windowEnd);
     const oq = $("#open-questions");
     oq.replaceChildren(...(open.length ? open.map((q) => questionCard(q, "open")) : [el("div", { class: "empty" }, `No open questions right now. New questions arrive Monday to Saturday at ${localHour(12)} your time.`)]));
-    if (open.length > 2) oq.insertBefore(el("aside", { class: "ad ad-inline", "data-ad-slot": "in-feed", "aria-label": "Advertisement" }, el("span", {}, "Ad space"), el("small", {}, "in-feed")), oq.children[2]);
+    if (open.length > 2) {
+      // One slot element for the page's lifetime, so re-rendering never reloads the ad (no inflated impressions).
+      if (!S.inFeedAd) { S.inFeedAd = el("aside", { class: "ad ad-inline", "data-ad-slot": "in-feed", "aria-label": "Advertisement" }, el("span", {}, "Ad space"), el("small", {}, "in-feed")); fillAd(S.inFeedAd); }
+      oq.insertBefore(S.inFeedAd, oq.children[2]);
+    }
     $("#locked-questions").replaceChildren(...(locked.length ? locked.map((q) => questionCard(q, "locked")) : [el("div", { class: "empty" }, "Nothing waiting. Answered questions show up here until their result is in.")]));
 
     // you
@@ -585,6 +620,7 @@
     $("#producers-link").href = EXPLORER_PRODUCERS;
     $("#schedule").textContent = `Your time: new questions ${localHour(12)} Monday to Saturday, answers close ${localHour(0)}. Winners are final Tuesdays at ${localHour(12)}.`;
     renderAll();
+    loadAds();
     renderBoard(S.week).then(() => renderPlay()).catch(() => {});
     ticker();
     setInterval(ticker, S.demo ? 3000 : 6000);

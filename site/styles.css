@@ -253,3 +253,10 @@ dialog h2 { margin-bottom: 6px; }
 
 /* the hidden attribute always wins over display rules */
 [hidden] { display: none !important; }
+
+/* filled ad slots */
+.ad.ad-filled { border-style: solid; background: none; padding: 6px; gap: 4px; }
+.ad-link { display: block; line-height: 0; }
+.ad-link img { max-width: 100%; height: auto; border: 0; border-radius: 8px; }
+.ad iframe { display: block; max-width: 100%; border: 0; border-radius: 8px; }
+.ad-label { font-size: .7rem; letter-spacing: .04em; text-transform: uppercase; }

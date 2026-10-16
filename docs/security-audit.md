@@ -49,6 +49,13 @@ check"). If a bug ever tried to pay out more than was earned, the whole transact
 7. **Bot:** `withdraw <amount>` accepts decimals, `withdraw all` takes everything; alert emails show dates instead of
    raw numbers for scheduled upgrades and seed withdrawals.
 
+8. **Library versions pinned.** The contract build tools and wallet library are fixed to exact versions, and the
+   lockfiles are committed. A malicious "latest" release of a library can't slip onto the PC that holds the keys.
+9. **Ads are walled off.** Network ads run in a sandboxed frame with no access to the page or the wallet; sponsor ads
+   are a plain image and link; only https (or the site's own) links are accepted.
+10. **Upgrade tool** (`npm run bot -- upgrade …`): it refuses to upload anything except the exact announced code, after
+    the 48 hours, signed by the owner, with the contract's protections switched on, and it clears the notice afterwards.
+
 ## 4. Checked and found safe
 
 - Nobody can withdraw, claim or answer for another wallet (each action requires that wallet's signature).
@@ -61,6 +68,8 @@ check"). If a bug ever tried to pay out more than was earned, the whole transact
 - The pool pays Mana only for one valid answer, settle or claim by a staked player, with a 10 KOIN cap per transaction.
 - The registered block-producer key can't redirect rewards: blocks are always credited to the contract's address.
 - Numbers can't overflow: the reward maths uses 128-bit arithmetic.
+- The website never builds HTML from text it loads (no `innerHTML`), so question data can't inject code into the page.
+- Withdrawing or settling or claiming in a different order or timing never changes how much any week earned (tested).
 
 ## 5. Risks that remain (by design), and how they're covered
 
@@ -69,6 +78,9 @@ check"). If a bug ever tried to pay out more than was earned, the whole transact
 | The admin key is stolen | Code changes and seed withdrawals take 48 hours, and the bot emails you at once. Players' stakes stay withdrawable throughout. Keep the key offline. |
 | The bot key is stolen | It can't move tokens. It could post wrong results; the owner can correct them before the week closes (12-hour window), and anyone can recheck results from the published block data. Replace it with `set_operator`. |
 | The pool's node is down | No funds at risk, only lower rewards. The bot emails after 1 hour of silence. |
+| The bot is down for more than a day around Monday–Tuesday | Players who keep playing are settled automatically. Others who don't act during the 24-hour settle window miss that week's reward (the rest of the winners share it). The email alert fires after 1 hour. |
+| A staked player spams answer attempts that fail | Each one costs the pool at most the sponsor limit (2 Mana) and only while it's still in the queue. `sponsor-limit 0` stops it instantly. |
+| Ownership transfer isn't timelocked | It needs both the current owner and the new owner to sign, and the bot emails you as soon as one is proposed. Even a new owner still faces the 48-hour wait for any code change. |
 | Withdrawal needs VHP that is momentarily held as KOIN | The contract burns spare KOIN back into VHP first. In the rare case Mana is short, the message says to try again shortly. |
 
 ## 6. Test results

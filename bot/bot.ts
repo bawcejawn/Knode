@@ -630,6 +630,81 @@ async function deploy(send: boolean) {
   log(`Next (see LAUNCH.md): commit game-data/deployment.json, add the seed (seed-vhp / seed-koin), register the node key (register-key node), turn on the bot.`);
 }
 
+// ═══════════════════════════════ upgrade (code fix after the 48-hour notice) ═══════════════════════════════
+// The contract only accepts new code that (1) was announced by its sha256 with schedule_upgrade, (2) is uploaded after
+// the 48-hour timelock, (3) is signed by the owner, and (4) keeps the contract in charge of its own account. All data
+// (stakes, weeks, the seed) stays. Steps:
+//   upgrade status            what is announced, and whether the local build matches it
+//   upgrade schedule          announce the local build (game/build/release/contract.wasm); the 48 hours start
+//   upgrade apply             after the 48 hours: upload exactly that build, then clear the notice
+//   upgrade cancel            withdraw the announcement
+async function upgrade(sub: string | undefined, send: boolean) {
+  const P = paths(E.GEN_DIR ?? "game-data");
+  const dep = readJson(P.deployment, null);
+  if (!dep?.contract) throw new Error(`${P.deployment} not found — deploy first.`);
+  const rpc = E.RPC ?? dep.rpc;
+  const mainnet = !/harbinger/i.test(rpc);
+  if (send && mainnet && E.CONFIRM_MAINNET !== "yes") throw new Error("MAINNET: add CONFIRM_MAINNET=yes to .env first.");
+  if (!fs.existsSync(WASM)) throw new Error(`${WASM} not found — in the game folder run: npm test && npm run check`);
+  const wasm = fs.readFileSync(WASM);
+  if (wasm.indexOf(Buffer.from("TEST LEDGER", "utf16le")) !== -1) throw new Error("This is the TEST build (simulated token ledger). Run `npm run build` in the game folder.");
+  const local = "0x" + sha256hex(wasm);
+  const chain = new KoinosChain(rpc, dep.contract);
+  const st = await chain.read("get_state", {});
+  const up = st.upgrade ?? {};
+  const announced = up.hash ? String(up.hash).toLowerCase() : "";
+  const eta = Number(up.eta ?? 0);
+  const now = Number(st.time ?? Date.now());
+  log(`Contract           ${dep.contract} on ${rpc}${mainnet ? "  ⚠ MAINNET" : ""}`);
+  log(`Local build        ${WASM}, ${(wasm.length / 1024).toFixed(1)} KB, sha256 ${local}`);
+  log(eta > 0 ? `Announced          sha256 ${announced}, can be uploaded from ${utc(eta)}${now >= eta ? " (now)" : ` (in ${((eta - now) / HOUR_MS).toFixed(1)} h)`}` : "Announced          nothing");
+  if (eta > 0) log(announced === local ? "                   ✔ matches the local build" : "                   ✖ does NOT match the local build");
+
+  if (!sub || sub === "status") return;
+  if (sub === "schedule") {
+    if (eta > 0 && announced === local) { log("\nThis build is already announced."); return; }
+    log(`\nThis announces the local build. Players see it on chain (and the bot emails you): they have 48 hours to withdraw if they disagree.`);
+    return act("owner", "schedule_upgrade", { hash: local }, send);
+  }
+  if (sub === "cancel") return act("owner", "cancel_upgrade", {}, send);
+  if (sub !== "apply") throw new Error("upgrade status | schedule | apply | cancel");
+
+  if (eta === 0) throw new Error("Nothing is announced. Run: npm run bot -- upgrade schedule --send   (then wait 48 hours)");
+  if (announced !== local) throw new Error("The announced code is not this build. Rebuild the exact announced version, or cancel and schedule this one.");
+  if (now < eta) throw new Error(`Too early: the upload is accepted from ${utc(eta)}.`);
+  if (!E.OWNER_WIF || !E.OPERATOR_WIF) throw new Error("OWNER_WIF and OPERATOR_WIF are needed in .env (owner authorizes, the bot wallet pays the Mana).");
+  const provider = new Provider([rpc]);
+  const owner = Signer.fromWif(E.OWNER_WIF), operator = Signer.fromWif(E.OPERATOR_WIF);
+  owner.provider = provider; operator.provider = provider;
+  if (owner.getAddress() !== st.config?.owner) throw new Error(`OWNER_WIF is ${owner.getAddress()}, but the contract's owner is ${st.config?.owner}.`);
+  const abiText = JSON.stringify(loadAbi());
+  const opMana = BigInt(await provider.getAccountRc(operator.getAddress()));
+  const rcLimit = (opMana * 95n) / 100n;
+  log(`Pays the Mana      bot wallet ${operator.getAddress()} (has ${showKoin(opMana)} Mana; an upload needs about 60)`);
+  if (opMana < toSat(60)) throw new Error("The bot wallet needs about 60 Mana for the upload. Send it more KOIN and let the Mana refill.");
+  if (!send) { log("\nDry run only — nothing was sent. Add --send to upload."); return; }
+  log("\n1/2 Uploading the announced code (owner authorizes, bot wallet pays) ...");
+  const c = new Contract({ id: dep.contract, abi: loadAbi(), provider, signer: owner, bytecode: new Uint8Array(wasm) });
+  // The three switches must stay on: the contract refuses any upload that turns one off.
+  const { operation } = await c.deploy({ abi: abiText, authorizesCallContract: true, authorizesTransactionApplication: true, authorizesUploadContract: true, onlyOperation: true } as any);
+  const tx = new (await import("koilib")).Transaction({ signer: operator, provider, options: { payer: operator.getAddress(), payee: operator.getAddress(), rcLimit: rcLimit.toString() } });
+  await tx.pushOperation(operation);
+  await tx.prepare();
+  let t: any = tx.transaction;
+  t = await operator.signTransaction(t);
+  t = await owner.signTransaction(t);
+  const { receipt, transaction } = await provider.sendTransaction(t);
+  if ((receipt as any)?.reverted) throw new Error(`upload reverted: ${JSON.stringify((receipt as any).logs)}`);
+  await transaction.wait("byBlock", 300_000).catch(() => { throw new Error("Sent but not confirmed within 5 minutes. Check `npm run bot -- upgrade status` before trying again."); });
+  log(`    uploaded — Mana used ${showKoin((receipt as any).rc_used)}`);
+  log("2/2 Clearing the notice ...");
+  await act("owner", "cancel_upgrade", {}, true);
+  dep.wasmSha256 = local.slice(2);
+  dep.upgradedAt = new Date().toISOString();
+  writeJson(P.deployment, dep);
+  log(`\nDone. Commit ${P.deployment}. Check everything with: npm run bot -- status`);
+}
+
 // ═══════════════════════════════ actions with your own keys (owner / seed / player) ═══════════════════════════════
 
 /** Whole-token amount ("1000", "0.5") → the chain's 8-decimal units, exactly (no floating point). */
@@ -883,6 +958,7 @@ async function main() {
     for (const kv of rest.slice(1)) { const m = kv.match(/^([a-z_]+)=(.*)$/); if (m) args[m[1]] = m[2]; }
     return act(opt("--as", "owner")!, rest[0], args, flag("--send"));
   }
+  if (cmd === "upgrade") return upgrade(rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined, flag("--send"));
   if (await friendly(cmd, rest, flag("--send"))) return;
   if (cmd === "rehearse") { const { rehearse } = await import("./rehearse.ts"); return rehearse({ weeks: Number(opt("--weeks", "3")), verbose: flag("--verbose") }); }
   throw new Error(`Unknown command "${cmd}". See bot/README.md for the list of commands.`);
