@@ -1,0 +1,692 @@
+{
+  "methods": {
+    "get_state": {
+      "entry_point": 1023583049,
+      "argument": "desk.get_state_arguments",
+      "return": "desk.get_state_result",
+      "read_only": true,
+      "description": "The desk's settings, totals and how much KOIN can be swapped out right now."
+    },
+    "authorize": {
+      "entry_point": 1244511632,
+      "argument": "koinos.chain.authorize_arguments",
+      "return": "koinos.chain.authorize_result",
+      "read_only": false,
+      "description": "Check if authorized"
+    },
+    "quote": {
+      "entry_point": 1663509596,
+      "argument": "desk.quote_arguments",
+      "return": "desk.quote_result",
+      "read_only": true,
+      "description": "What a swap of this many VHP would pay right now."
+    },
+    "get_recent": {
+      "entry_point": 1019654186,
+      "argument": "desk.get_recent_arguments",
+      "return": "desk.get_recent_result",
+      "read_only": true,
+      "description": "The most recent swaps, newest first."
+    },
+    "init": {
+      "entry_point": 3142846090,
+      "argument": "desk.init_arguments",
+      "return": "desk.init_result",
+      "read_only": false,
+      "description": "One-time setup, signed by the contract's own key."
+    },
+    "swap": {
+      "entry_point": 3662136052,
+      "argument": "desk.swap_arguments",
+      "return": "desk.swap_result",
+      "read_only": false,
+      "description": "Swap VHP for KOIN. Approve this contract for the VHP in the same transaction. Fails instead of paying less than min_koin_out."
+    },
+    "withdraw_koin": {
+      "entry_point": 3351521879,
+      "argument": "desk.withdraw_koin_arguments",
+      "return": "desk.withdraw_koin_result",
+      "read_only": false,
+      "description": "Send KOIN from the desk to the treasury (owner only; capped by the desk's Mana)."
+    },
+    "withdraw_vhp": {
+      "entry_point": 3244363197,
+      "argument": "desk.withdraw_vhp_arguments",
+      "return": "desk.withdraw_vhp_result",
+      "read_only": false,
+      "description": "Send VHP from the desk to the treasury (owner only)."
+    },
+    "set_fee": {
+      "entry_point": 4038230021,
+      "argument": "desk.set_fee_arguments",
+      "return": "desk.set_fee_result",
+      "read_only": false,
+      "description": "Set the fee in basis points, at most 1000 = 10% (owner only)."
+    },
+    "set_limits": {
+      "entry_point": 148863102,
+      "argument": "desk.set_limits_arguments",
+      "return": "desk.set_limits_result",
+      "read_only": false,
+      "description": "Set the smallest and largest single swap in VHP units; max 0 = no fixed cap (owner only)."
+    },
+    "set_paused": {
+      "entry_point": 905688855,
+      "argument": "desk.set_paused_arguments",
+      "return": "desk.set_paused_result",
+      "read_only": false,
+      "description": "Pause or resume swaps (owner only)."
+    },
+    "register_key": {
+      "entry_point": 2765249345,
+      "argument": "desk.register_key_arguments",
+      "return": "desk.register_key_result",
+      "read_only": false,
+      "description": "Register the desk's block-producer key with Proof-of-Burn (owner only)."
+    },
+    "schedule_treasury": {
+      "entry_point": 2864153417,
+      "argument": "desk.schedule_treasury_arguments",
+      "return": "desk.schedule_treasury_result",
+      "read_only": false,
+      "description": "Announce a new treasury address; it takes effect with apply_treasury after the timelock (owner only)."
+    },
+    "apply_treasury": {
+      "entry_point": 77639752,
+      "argument": "desk.apply_treasury_arguments",
+      "return": "desk.apply_treasury_result",
+      "read_only": false,
+      "description": "Make the announced treasury change after its timelock (owner only)."
+    },
+    "cancel_treasury": {
+      "entry_point": 585026693,
+      "argument": "desk.cancel_treasury_arguments",
+      "return": "desk.cancel_treasury_result",
+      "read_only": false,
+      "description": "Cancel an announced treasury change (owner only)."
+    },
+    "schedule_upgrade": {
+      "entry_point": 2777493725,
+      "argument": "desk.schedule_upgrade_arguments",
+      "return": "desk.schedule_upgrade_result",
+      "read_only": false,
+      "description": "Announce a code upgrade by the sha256 of its bytecode; it can be uploaded after the timelock (owner only)."
+    },
+    "cancel_upgrade": {
+      "entry_point": 187647932,
+      "argument": "desk.cancel_upgrade_arguments",
+      "return": "desk.cancel_upgrade_result",
+      "read_only": false,
+      "description": "Cancel an announced code upgrade (owner only)."
+    }
+  },
+  "koilib_types": {
+    "nested": {
+      "desk": {
+        "nested": {
+          "config_object": {
+            "fields": {
+              "owner": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "treasury": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "fee_bps": {
+                "type": "uint32",
+                "id": 3
+              },
+              "min_swap": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "max_swap": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "paused": {
+                "type": "bool",
+                "id": 6
+              },
+              "timelock_length": {
+                "type": "uint64",
+                "id": 7,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "totals_object": {
+            "fields": {
+              "swaps": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "vhp_in": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "koin_out": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "next_slot": {
+                "type": "uint32",
+                "id": 4
+              }
+            }
+          },
+          "swap_record": {
+            "fields": {
+              "account": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "vhp_in": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "koin_out": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "time": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "timelock_object": {
+            "fields": {
+              "hash": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              },
+              "address": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "eta": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "ledger_object": {
+            "fields": {
+              "amount": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "get_state_arguments": {
+            "fields": {}
+          },
+          "get_state_result": {
+            "fields": {
+              "config": {
+                "type": "config_object",
+                "id": 1
+              },
+              "totals": {
+                "type": "totals_object",
+                "id": 2
+              },
+              "koin_balance": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "vhp_balance": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "mana": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "available": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "max_vhp_in": {
+                "type": "uint64",
+                "id": 7,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "time": {
+                "type": "uint64",
+                "id": 8,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "upgrade": {
+                "type": "timelock_object",
+                "id": 9
+              },
+              "treasury_change": {
+                "type": "timelock_object",
+                "id": 10
+              }
+            }
+          },
+          "quote_arguments": {
+            "fields": {
+              "vhp_amount": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "quote_result": {
+            "fields": {
+              "koin_out": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "fee": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "problem": {
+                "type": "string",
+                "id": 3
+              }
+            }
+          },
+          "get_recent_arguments": {
+            "fields": {}
+          },
+          "get_recent_result": {
+            "fields": {
+              "swaps": {
+                "rule": "repeated",
+                "type": "swap_record",
+                "id": 1
+              }
+            }
+          },
+          "init_arguments": {
+            "fields": {
+              "owner": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "treasury": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "fee_bps": {
+                "type": "uint32",
+                "id": 3
+              },
+              "min_swap": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "max_swap": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "timelock_length": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "init_result": {
+            "fields": {}
+          },
+          "swap_arguments": {
+            "fields": {
+              "from": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "vhp_amount": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "min_koin_out": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "swap_result": {
+            "fields": {
+              "koin_out": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "fee": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "withdraw_koin_arguments": {
+            "fields": {
+              "amount": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "withdraw_koin_result": {
+            "fields": {
+              "amount": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "withdraw_vhp_arguments": {
+            "fields": {
+              "amount": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "withdraw_vhp_result": {
+            "fields": {}
+          },
+          "set_fee_arguments": {
+            "fields": {
+              "fee_bps": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "set_fee_result": {
+            "fields": {}
+          },
+          "set_limits_arguments": {
+            "fields": {
+              "min_swap": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "max_swap": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "set_limits_result": {
+            "fields": {}
+          },
+          "set_paused_arguments": {
+            "fields": {
+              "paused": {
+                "type": "bool",
+                "id": 1
+              }
+            }
+          },
+          "set_paused_result": {
+            "fields": {}
+          },
+          "register_key_arguments": {
+            "fields": {
+              "public_key": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "BASE64"
+                }
+              }
+            }
+          },
+          "register_key_result": {
+            "fields": {}
+          },
+          "schedule_treasury_arguments": {
+            "fields": {
+              "treasury": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "schedule_treasury_result": {
+            "fields": {
+              "eta": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "apply_treasury_arguments": {
+            "fields": {}
+          },
+          "apply_treasury_result": {
+            "fields": {}
+          },
+          "cancel_treasury_arguments": {
+            "fields": {}
+          },
+          "cancel_treasury_result": {
+            "fields": {}
+          },
+          "schedule_upgrade_arguments": {
+            "fields": {
+              "hash": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              }
+            }
+          },
+          "schedule_upgrade_result": {
+            "fields": {
+              "eta": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "cancel_upgrade_arguments": {
+            "fields": {}
+          },
+          "cancel_upgrade_result": {
+            "fields": {}
+          }
+        }
+      },
+      "koinos": {
+        "nested": {
+          "chain": {
+            "options": {
+              "go_package": "github.com/koinos/koinos-proto-golang/koinos/chain"
+            },
+            "nested": {
+              "authorization_type": {
+                "values": {
+                  "contract_call": 0,
+                  "transaction_application": 1,
+                  "contract_upload": 2
+                }
+              },
+              "call_target": {
+                "fields": {
+                  "contract_id": {
+                    "type": "bytes",
+                    "id": 1,
+                    "options": {
+                      "(btype)": "ADDRESS"
+                    }
+                  },
+                  "entry_point": {
+                    "type": "uint32",
+                    "id": 2
+                  }
+                }
+              },
+              "authorize_arguments": {
+                "oneofs": {
+                  "_call": {
+                    "oneof": [
+                      "call"
+                    ]
+                  }
+                },
+                "fields": {
+                  "type": {
+                    "type": "authorization_type",
+                    "id": 1
+                  },
+                  "call": {
+                    "type": "call_target",
+                    "id": 2,
+                    "options": {
+                      "proto3_optional": true
+                    }
+                  }
+                }
+              },
+              "authorize_result": {
+                "fields": {
+                  "value": {
+                    "type": "bool",
+                    "id": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
