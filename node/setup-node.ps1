@@ -14,10 +14,16 @@
 
   Your other node (the 600k one) is not touched: this is a separate folder, a separate Docker project
   ("kpred-node") and a separate block-producer key.
+
+  The same script also sets up your PERSONAL node next to it, in its own folder, Docker project and ports:
+      powershell -ExecutionPolicy Bypass -File node\setup-node.ps1 -Producer <your own address> -Root C:\koinos-personal -Project koinos-personal -PortOffset 10
+  (RPC 8090, P2P 8898 for that one; the game node keeps 8080 / 8888.)
 #>
 param(
   [Parameter(Mandatory = $true)][string]$Producer,
   [string]$Root = "C:\kpred-node",
+  [string]$Project = "kpred-node",
+  [int]$PortOffset = 0,
   [switch]$KeepArchive
 )
 $ErrorActionPreference = "Stop"
@@ -63,12 +69,22 @@ function SetEnv($key, $value) {
   WriteNoBom (Join-Path $repo ".env") (($lines -join "`n") + "`n")
 }
 SetEnv "BASEDIR" ($basedir -replace '\\', '/')
-SetEnv "COMPOSE_PROJECT_NAME" "kpred-node"
+SetEnv "COMPOSE_PROJECT_NAME" $Project
 SetEnv "COMPOSE_PROFILES" "block_producer,jsonrpc"
-Ok "settings in $repo\.env (data folder $basedir)"
+if ($PortOffset -ne 0) {
+  # A second node on the same PC needs its own ports (the game node keeps the standard ones: RPC 8080, P2P 8888).
+  SetEnv "JSONRPC_PORT" (8080 + $PortOffset)
+  SetEnv "P2P_PORT" (8888 + $PortOffset)
+  SetEnv "AMQP_PORT" (5672 + $PortOffset)
+  SetEnv "AMQP_ADMIN_PORT" (15672 + $PortOffset)
+  SetEnv "GRPC_PORT" (50051 + $PortOffset)
+  SetEnv "REST_PORT" (3000 + $PortOffset)
+  Ok ("own ports for this node: RPC {0}, P2P {1}" -f (8080 + $PortOffset), (8888 + $PortOffset))
+}
+Ok "settings in $repo\.env (data folder $basedir, Docker project $Project)"
 
 # ------------- 3. producer address -------------
-Step "3/5 Block producer for the game contract"
+Step "3/5 Block producer address"
 $cfgPath = Join-Path $repo "config\config.yml"
 $cfg = Get-Content $cfgPath -Raw
 if ($cfg -notmatch '(?m)^block_producer:[ \t]*\r?$') { throw "config.yml has no 'block_producer:' section - tell Claude what the file looks like." }
