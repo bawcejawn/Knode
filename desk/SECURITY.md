@@ -2,7 +2,7 @@
 
 This file is for you and for outside auditors. It lists what could go wrong, what stops it, and which test proves it. All tests run on GitHub on every push ("Desk contract tests").
 
-Latest results: **25/25 tests passed**, **34/34 offline checks passed**. Release build: 29.3 KB, sha256 `ee56217b…`.
+Latest results: **25/25 tests passed**, **34/34 offline checks passed**. Release build: 29.6 KB, sha256 `05039d74…`.
 
 ## Whose money is at risk, and how it's protected
 
@@ -20,7 +20,7 @@ Latest results: **25/25 tests passed**, **34/34 offline checks passed**. Release
 | 10 | A stolen owner key drains the desk. | Withdrawals go only to the treasury. Changing the treasury takes 48 h, and you empty the desk before then. | "a stolen owner key…" |
 | 11 | Someone moves the desk's tokens directly, including with the deploy key. | `authorize` refuses every outside token move and every Mana payment. | "nobody can act as the desk's account…" |
 | 12 | Malicious new code is uploaded. | An upload needs the owner's signature, the exact announced code, and the 48 h wait. The new code must keep these protections switched on. | same test (4 checks) |
-| 13 | Swapping before setup, or setting up twice. | `not initialised` / `already initialised`. On chain, setup must be signed by the desk's own key. | "before setup…", "initialises once…" |
+| 13 | Swapping before setup, setting up twice, or the desk set as its own owner or treasury. | `not initialised` / `already initialised` / "must be a wallet". On chain, setup must be signed by the desk's own key. | "before setup…", "initialises once…" |
 | 14 | Bad settings break the desk. | Fee max 10%, min swap > 0, max ≥ min, 33-byte producer key, 32-byte upgrade hash. | "refuses bad settings" |
 | 15 | Pausing traps funds. | Pause stops swaps only; withdrawals to the treasury still work. | "pausing stops swaps but never stops withdrawals…" |
 
