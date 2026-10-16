@@ -28,7 +28,7 @@ anyone can re-check against the chain.
 7. **Claim.** Each winner claims `pot × (points × stake) ÷ (Σ points × stake over all winners)`, paid in VHP
    to their wallet. If nobody scored, the pot rolls into the next week.
 
-Withdraw any time. Withdrawing during a week voids that week's answers. Unclaimed rewards stay in the
+Withdraw any amount any time. Withdrawing part of this week's stake keeps you in the week at the lower stake; withdrawing all of it takes you out of that week. Unclaimed rewards stay in the
 pool and keep producing until claimed, but they are not stake until you claim and re-stake them.
 
 ## Weeks advance by themselves

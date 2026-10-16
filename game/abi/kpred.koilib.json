@@ -396,6 +396,41 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "acc_player_hi": {
+                "type": "uint64",
+                "id": 12,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "acc_player_lo": {
+                "type": "uint64",
+                "id": 13,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "acc_house_hi": {
+                "type": "uint64",
+                "id": 14,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "acc_house_lo": {
+                "type": "uint64",
+                "id": 15,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "acc_time": {
+                "type": "uint64",
+                "id": 16,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
@@ -672,6 +707,48 @@
               "max_points": {
                 "type": "uint32",
                 "id": 19
+              },
+              "pot_a": {
+                "type": "uint64",
+                "id": 20,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pot_b": {
+                "type": "uint64",
+                "id": 21,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "house_ppm": {
+                "type": "uint64",
+                "id": 22,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "sum_w": {
+                "type": "uint64",
+                "id": 23,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "bw_hi": {
+                "type": "uint64",
+                "id": 24,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "bw_lo": {
+                "type": "uint64",
+                "id": 25,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
@@ -687,6 +764,13 @@
               "players": {
                 "type": "uint32",
                 "id": 2
+              },
+              "sum_w": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },

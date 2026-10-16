@@ -34,6 +34,13 @@ message totals_object {
   uint64 total_gain = 9 [jstype = JS_STRING];         // all-time gain distributed
   uint64 weeks_finalized = 10 [jstype = JS_STRING];   // number of weeks finalized so far (= next week to finalize)
   uint64 rolled_over = 11 [jstype = JS_STRING];       // pots with no winners, waiting to be paid at the next close (no second fee)
+  // Who produced this week's rewards: VHP × milliseconds since the last close, for players' stake and for the house
+  // (the seed plus unclaimed pots). 128-bit, split into high and low halves.
+  uint64 acc_player_hi = 12 [jstype = JS_STRING];
+  uint64 acc_player_lo = 13 [jstype = JS_STRING];
+  uint64 acc_house_hi = 14 [jstype = JS_STRING];
+  uint64 acc_house_lo = 15 [jstype = JS_STRING];
+  uint64 acc_time = 16 [jstype = JS_STRING];          // time (ms) the accumulators were last brought up to date
 }
 
 message player_object {
@@ -94,11 +101,19 @@ message week_object {
   uint32 winners = 17;
   bool rolled_over = 18;                              // no winners: the pot went back into the pool
   uint32 max_points = 19;
+  // v3 payouts
+  uint64 pot_a = 20 [jstype = JS_STRING];             // basket A: 65% of the house's earnings, shared by rank only
+  uint64 pot_b = 21 [jstype = JS_STRING];             // basket B: the rest, shared by rank × stake
+  uint64 house_ppm = 22 [jstype = JS_STRING];         // share of the week's new earnings produced by the house (parts per million)
+  uint64 sum_w = 23 [jstype = JS_STRING];             // sum of the rank weights of all winners
+  uint64 bw_hi = 24 [jstype = JS_STRING];             // sum of rank weight × stake over winners (128-bit)
+  uint64 bw_lo = 25 [jstype = JS_STRING];
 }
 
 message bucket_object {
   uint64 stake = 1 [jstype = JS_STRING];
   uint32 players = 2;
+  uint64 sum_w = 3 [jstype = JS_STRING];              // sum of the rank weights of the places this score group holds
 }
 
 message timelock_object {

@@ -211,6 +211,18 @@ See `docs/security-audit.md` for the full audit. The short version:
 The 1-hour alarm: the bot raises it after 1 hour without a block. While the pool is small and normally goes
 longer than that between blocks, it waits until the silence is unusual instead.
 
+## Testnet (try changes before mainnet, no real money)
+
+A second, separate node on this PC for the Koinos testnet (Harbinger). It never touches the mainnet node, keys or game.
+```
+powershell -ExecutionPolicy Bypass -File node\setup-testnet.ps1     # once; the first sync can take hours
+npm run bot -- node-status --testnet                                # wait for "caught up"
+npm run bot -- keys --testnet                                       # brand-new TEST wallets in .env.testnet
+```
+Get free test KOIN for the bot, admin and player wallets in the Koinos Discord (#faucet): `!faucet <address>`.
+Then every command works on the testnet by adding `--testnet`, for example `npm run bot -- deploy --testnet --send`.
+On the testnet a "week" lasts 1 hour (5-minute corrections, 10-minute settling, 10-minute upgrade wait).
+
 ## Changing the website (no waiting)
 
 The website is just files in the `site/` folder, served free by GitHub Pages. Any change you commit and push is live

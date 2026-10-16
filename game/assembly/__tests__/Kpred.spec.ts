@@ -3,7 +3,7 @@
  * Run with: npm test
  */
 import { Base58, MockVM, authority, chain, Protobuf, System, protocol, value, Crypto } from "@koinos/sdk-as";
-import { Kpred } from "../Kpred";
+import { Kpred, rankWeight } from "../Kpred";
 import { Tokens } from "../Tokens";
 import { kpred } from "../proto/kpred";
 
@@ -16,6 +16,11 @@ const B = Base58.decode("1HGh4rQvYYcm4fGiU1C7vQoSxnUiGa9Ah7");
 const C = Base58.decode("12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq");
 const D = Base58.decode("19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK");
 const E = Base58.decode("159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv");
+const P6 = Base58.decode("128NayuVt5K2r2C2upFG5rzkL1KcsFKsT8");
+const P7 = Base58.decode("185Djfb4GWSnvNhiTugz3za5pJKqfzcEWv");
+const P8 = Base58.decode("1GN9xyV95FD5jthuzmQJjo9rBxWL5tRhjx");
+const P9 = Base58.decode("19B5aaeahBD9HX1V64Wq3sXJw9XkckEp46");
+const P10 = Base58.decode("1pWpb9BdnDQoZR1nzrWe9WhRJKENNu6KL");
 
 const VHP: u64 = 100_000_000;
 const KOIN_TAG: u8 = 1, VHP_TAG: u8 = 2, MANA_TAG: u8 = 3;
@@ -32,6 +37,7 @@ function as(acct: Uint8Array): void {
   MockVM.setAuthorities([new MockVM.MockAuthority(authority.authorization_type.contract_call, acct, true)]);
 }
 function nobody(): void { MockVM.setAuthorities([]); }
+function near(a: u64, b: u64): bool { return a > b ? a - b <= 2 : b - a <= 2; }
 function hash32(n: u8): Uint8Array { const h = new Uint8Array(32); h.fill(n); return h; }
 function give(tag: u8, who: Uint8Array, amount: u64): void { Tokens.testSet(tag, who, Tokens.testGet(tag, who) + amount); }
 
@@ -143,7 +149,7 @@ describe("staking", () => {
     expect(MockVM.getErrorMessage()).toBe("new deposits are paused");
   });
 
-  it("withdraw returns VHP, takes pending first, and voids the week's answers", () => {
+  it("withdraw returns VHP and takes pending first; part lowers the week's stake, all of it leaves the week", () => {
     const k = setup();
     deposit(k, A, 100 * VHP);
     at(1100);
@@ -155,13 +161,19 @@ describe("staking", () => {
     const p = k.get_player(new kpred.get_player_arguments(A, 1));
     expect(p.player!.pending).toBe(0);               // 20 pending taken first
     expect(p.player!.stake).toBe(90 * VHP);          // then 10 from stake
-    expect(p.entry == null).toBe(true);
-    const e = k.get_player(new kpred.get_player_arguments(A, 0)).entry!;
-    expect(e.voided).toBe(true);
+    let e = k.get_player(new kpred.get_player_arguments(A, 0)).entry!;
+    expect(e.voided).toBe(false);                    // a partial withdrawal keeps the player in the week …
+    expect(e.stake).toBe(90 * VHP);                  // … with the lower stake as their multiplier
     expect(Tokens.testGet(VHP_TAG, A)).toBe((1000 - 100 - 20 + 30) * VHP);
-    // and no more answers this week
     const q2 = post(k, 2, 1300, 1301, 1400);
-    gK = k; gId = q2;
+    answer(k, A, q2, 1);                             // still allowed to answer
+    as(A);
+    k.withdraw(new kpred.withdraw_arguments(A, 90 * VHP));   // now everything
+    e = k.get_player(new kpred.get_player_arguments(A, 0)).entry!;
+    expect(e.voided).toBe(true);
+    // and no more answers this week
+    const q3 = post(k, 2, 1300, 1301, 1400);
+    gK = k; gId = q3;
     as(A);
     MockVM.commitTransaction();
     expect(() => { gK!.answer(new kpred.answer_arguments(A, gId, 0)); }).toThrow();
@@ -293,7 +305,7 @@ describe("questions and answers", () => {
 });
 
 describe("a full week", () => {
-  it("measures the gain, splits it 5% producer fee / 95% pot, finds the top 30% with ties, and pays points × stake", () => {
+  it("measures the gain, splits it 5% fee / 95% pot into the two baskets, finds the top 30% of players with ties, and pays", () => {
     const k = setup();
     as(SEED);
     k.seed_deposit_vhp(new kpred.seed_deposit_vhp_arguments(1000 * VHP));
@@ -361,8 +373,8 @@ describe("a full week", () => {
     expect(() => { gK!.settle(new kpred.settle_arguments(gWho, 0)); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("already settled");
 
-    // Finalize after the settlement window: eligible stake 190 (A100 B50 C30 E10); 30% = 57.
-    // 3 points: A+E = 110 ≥ 57 → cutoff 3, winners A and E (tie included).
+    // Finalize after the settlement window: 4 eligible players (A B C E; D answered once); 30% of 4 → 2 places.
+    // 3 points: A and E fill both places (tied) → cutoff 3, winners A and E.
     MockVM.commitTransaction();
     expect(() => { gK!.finalize_week(new kpred.finalize_week_arguments(0)); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("settlement window still open");
@@ -371,16 +383,23 @@ describe("a full week", () => {
     expect(fw.cutoff).toBe(3);
     expect(fw.winners).toBe(2);
 
-    // Claims: A gets 95 × 300/330, E gets 95 × 30/330. Spare KOIN is burned to VHP on demand.
+    // Baskets: the house (1,000 seed VHP) produced 1000/1210 of the week, players' stake (210 VHP) the rest.
+    const wf = k.get_week(new kpred.get_week_arguments(0)).week!;
+    expect(wf.house_ppm).toBe(826446);                         // 1000 / 1210, in parts per million
+    const houseNet = u64(95 * VHP) * 826446 / 1_000_000;
+    expect(wf.pot_a).toBe(houseNet * 6500 / 10000);            // basket A: 65% of the house's earnings
+    expect(wf.pot_a + wf.pot_b).toBe(95 * VHP);
+    // A and E tie for places 1 and 2: basket A splits evenly; basket B by stake (A 100, E 10). Spare KOIN → VHP on demand.
     const aBefore = Tokens.testGet(VHP_TAG, A);
     as(A);
     const ra = k.claim(new kpred.claim_arguments(A, 0)).reward;
-    expect(ra).toBe(<u64>(u64(95 * VHP) * 300 / 330));
+    expect(near(ra, wf.pot_a / 2 + wf.pot_b * 100 / 110)).toBe(true);
     expect(Tokens.testGet(VHP_TAG, A) - aBefore).toBe(ra);
     as(E);
     const re = k.claim(new kpred.claim_arguments(E, 0)).reward;
-    expect(re).toBe(<u64>(u64(95 * VHP) * 30 / 330));
+    expect(near(re, wf.pot_a / 2 + wf.pot_b * 10 / 110)).toBe(true);
     expect(ra + re <= 95 * VHP).toBe(true);
+    expect(95 * VHP - ra - re < 4).toBe(true);                 // only rounding dust stays behind
     // C (2 points) is below the cutoff; B too; no double claims.
     gWho = C;
     as(C);
@@ -410,9 +429,9 @@ describe("a full week", () => {
     expect(s.totals!.pots_outstanding < 10).toBe(true);
   });
 
-  it("descends below the top score until 30% of eligible stake is covered", () => {
+  it("winners are the top 30% of staked players by headcount: a big stake does not buy a place", () => {
     const k = setup();
-    deposit(k, A, 10 * VHP);                          // top scorer holds only 10 of 100 eligible
+    deposit(k, A, 10 * VHP);                          // top scorer holds only 10 of 100 staked
     deposit(k, B, 30 * VHP);
     deposit(k, C, 60 * VHP);
     at(1100);
@@ -422,6 +441,7 @@ describe("a full week", () => {
     answer(k, A, q0, 1); answer(k, A, q1, 1);        // 2 points
     answer(k, B, q0, 1); answer(k, B, q1, 0);        // 1 point
     answer(k, C, q0, 0); answer(k, C, q1, 0);        // 0 points
+    answer(k, D, q0, 1); answer(k, D, q1, 1);        // 2 points, but never staked: free play takes no place
     at(1500); resolve(k, q0, 1); resolve(k, q1, 1);
     give(KOIN_TAG, CONTRACT, 100 * VHP); give(MANA_TAG, CONTRACT, 100 * VHP);
     at(2010);
@@ -429,16 +449,89 @@ describe("a full week", () => {
     k.settle(new kpred.settle_arguments(A, 0));
     k.settle(new kpred.settle_arguments(B, 0));
     k.settle(new kpred.settle_arguments(C, 0));
+    k.settle(new kpred.settle_arguments(D, 0));
     at(2200);
     const fw = k.finalize_week(new kpred.finalize_week_arguments(0));
-    expect(fw.cutoff).toBe(1);                       // 10 < 30, 10+30 = 40 ≥ 30
-    expect(fw.winners).toBe(2);
+    expect(fw.cutoff).toBe(2);                       // 3 staked players → 30% → 1 place
+    expect(fw.winners).toBe(1);
     as(A);
     const ra = k.claim(new kpred.claim_arguments(A, 0)).reward;
-    as(B);
-    const rb = k.claim(new kpred.claim_arguments(B, 0)).reward;
-    expect(ra).toBe(<u64>(u64(95 * VHP) * 20 / 50));  // weights: A 2×10 = 20, B 1×30 = 30
-    expect(rb).toBe(<u64>(u64(95 * VHP) * 30 / 50));
+    expect(95 * VHP - ra < 3).toBe(true);            // the whole pot (no seed here: all of it is basket B)
+    gK = k; gWho = D;
+    as(D);
+    MockVM.commitTransaction();
+    expect(() => { gK!.claim(new kpred.claim_arguments(gWho, 0)); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("not eligible that week");
+  });
+
+  it("the rank curve: 1st > 2nd > 3rd …, a small staker on top beats a whale below in basket A, and stake still pays in B", () => {
+    const k = setup();
+    as(SEED);
+    k.seed_deposit_vhp(new kpred.seed_deposit_vhp_arguments(5000 * VHP));
+    // 10 staked players with 10 different scores; 30% → 3 winners
+    const who: Uint8Array[] = [A, B, C, D, E, P6, P7, P8, P9, P10];
+    for (let i = 0; i < who.length; i++) { give(VHP_TAG, who[i], 2000 * VHP); give(MANA_TAG, who[i], 10 * VHP); }
+    deposit(k, A, 1 * VHP);                          // 1st place with the minimum stake
+    deposit(k, B, 1000 * VHP);                       // 2nd place, a whale
+    deposit(k, C, 10 * VHP);                         // 3rd place
+    for (let i = 3; i < who.length; i++) deposit(k, who[i], 5 * VHP);
+    at(1100);
+    const qs: u32[] = [];
+    for (let i = 0; i < 10; i++) qs.push(post(k, 2, 1300, 1301, 1400));
+    at(1200);
+    for (let i = 0; i < who.length; i++) {
+      for (let j = 0; j < 10; j++) answer(k, who[i], qs[j], j < 10 - i ? 1 : 0);   // player i scores 10 − i
+    }
+    at(1500);
+    for (let j = 0; j < 10; j++) resolve(k, qs[j], 1);
+    give(KOIN_TAG, CONTRACT, 1000 * VHP); give(MANA_TAG, CONTRACT, 1000 * VHP);
+    at(2010);
+    k.close_week(new kpred.close_week_arguments(0));
+    for (let i = 0; i < who.length; i++) k.settle(new kpred.settle_arguments(who[i], 0));
+    at(2200);
+    const fw = k.finalize_week(new kpred.finalize_week_arguments(0));
+    expect(fw.winners).toBe(3);
+    expect(fw.cutoff).toBe(8);
+    const wk = k.get_week(new kpred.get_week_arguments(0)).week!;
+    expect(wk.sum_w).toBe(rankWeight(1) + rankWeight(2) + rankWeight(3));
+    as(A); const ra = k.claim(new kpred.claim_arguments(A, 0)).reward;
+    as(B); const rb = k.claim(new kpred.claim_arguments(B, 0)).reward;
+    as(C); const rc = k.claim(new kpred.claim_arguments(C, 0)).reward;
+    // Basket A alone: 1st > 2nd > 3rd, in the 1/√rank ratio.
+    const pa = <f64>wk.pot_a, sw = <f64>wk.sum_w;
+    const a1 = <u64>(pa * <f64>rankWeight(1) / sw), a2 = <u64>(pa * <f64>rankWeight(2) / sw), a3 = <u64>(pa * <f64>rankWeight(3) / sw);
+    expect(a1 > a2 && a2 > a3).toBe(true);
+    // Basket B: rank weight × stake, so the whale's 1,000 VHP earns it the most of B.
+    const bwT = rankWeight(1) * 1 + rankWeight(2) * 1000 + rankWeight(3) * 10;
+    expect(near(ra, a1 + <u64>(<f64>wk.pot_b * <f64>(rankWeight(1) * 1) / <f64>bwT))).toBe(true);
+    expect(near(rb, a2 + <u64>(<f64>wk.pot_b * <f64>(rankWeight(2) * 1000) / <f64>bwT))).toBe(true);
+    expect(near(rc, a3 + <u64>(<f64>wk.pot_b * <f64>(rankWeight(3) * 10) / <f64>bwT))).toBe(true);
+    // With the seed producing most of the week, the 1-VHP leader still takes far more than their stake earned.
+    expect(ra > 50 * VHP).toBe(true);
+    expect(ra + rb + rc <= wk.pot).toBe(true);
+  });
+
+  it("a deposit just before the close barely moves the basket split (production is weighted by time)", () => {
+    const k = setup();
+    as(SEED);
+    k.seed_deposit_vhp(new kpred.seed_deposit_vhp_arguments(1000 * VHP));
+    deposit(k, A, 10 * VHP);
+    at(1100);
+    const q0 = post(k, 2, 1300, 1301, 1400);
+    const q1 = post(k, 2, 1300, 1301, 1400);
+    at(1200);
+    answer(k, A, q0, 1); answer(k, A, q1, 1);
+    at(1500); resolve(k, q0, 1); resolve(k, q1, 1);
+    give(VHP_TAG, B, 100_000 * VHP);
+    at(2009);
+    deposit(k, B, 100_000 * VHP);                    // a whale arrives one block before the close
+    give(KOIN_TAG, CONTRACT, 100 * VHP); give(MANA_TAG, CONTRACT, 100 * VHP);
+    at(2010);
+    k.close_week(new kpred.close_week_arguments(0));
+    const wk = k.get_week(new kpred.get_week_arguments(0)).week!;
+    // Without time weighting the house share would be 1000/101,010 ≈ 1%; with it, it stays near 1000/1010 ≈ 99%.
+    // (one block at 100,010 VHP still counts: ≈ 94%, against ≈ 1% if only the balance at the close counted)
+    expect(wk.house_ppm > 900_000).toBe(true);
   });
 
   it("with no scorers the pot rolls into the next week's gain", () => {
@@ -844,22 +937,30 @@ describe("safety valves", () => {
 });
 
 describe("edge cases", () => {
-  it("a withdrawal after answering makes the week ineligible at settlement", () => {
+  it("withdrawing everything after answering makes the week ineligible; withdrawing part keeps it, at the lower stake", () => {
     const k = setup();
     deposit(k, A, 10 * VHP);
+    deposit(k, B, 10 * VHP);
     at(1100);
     const q0 = post(k, 2, 1300, 1301, 1400);
     const q1 = post(k, 2, 1300, 1301, 1400);
     at(1200);
     answer(k, A, q0, 1); answer(k, A, q1, 1);
+    answer(k, B, q0, 1); answer(k, B, q1, 1);
     as(A);
-    k.withdraw(new kpred.withdraw_arguments(A, 1 * VHP));
+    k.withdraw(new kpred.withdraw_arguments(A, 10 * VHP));   // all of it
+    as(B);
+    k.withdraw(new kpred.withdraw_arguments(B, 6 * VHP));    // part of it
     at(1500); resolve(k, q0, 1); resolve(k, q1, 1);
     at(2010);
     k.close_week(new kpred.close_week_arguments(0));
-    const r = k.settle(new kpred.settle_arguments(A, 0));
-    expect(r.eligible).toBe(false);
-    expect(r.points).toBe(0);
+    const ra = k.settle(new kpred.settle_arguments(A, 0));
+    expect(ra.eligible).toBe(false);
+    expect(ra.points).toBe(0);
+    const rb = k.settle(new kpred.settle_arguments(B, 0));
+    expect(rb.eligible).toBe(true);
+    expect(rb.points).toBe(2);
+    expect(k.get_player(new kpred.get_player_arguments(B, 0)).entry!.stake).toBe(4 * VHP);
   });
 
   it("taking back only a not-yet-active top-up leaves this week's answers counting", () => {
