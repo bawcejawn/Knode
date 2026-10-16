@@ -12,6 +12,7 @@
  *   npm run desk -- limits <min> <max> [--send]  smallest / largest single swap in VHP (max 0 = no fixed cap)
  *   npm run desk -- pause on|off [--send]        stop or restart swaps
  *   npm run desk -- node-key                     the desk node's PUBLIC key (read from its key file)
+ *   npm run desk -- node-status                  is the desk's node (RPC 8100) caught up with the chain?
  *   npm run desk -- register-key node [--send]   register the desk node's key, so the desk's VHP produces blocks
  *   npm run desk -- treasury schedule <address> | apply | cancel [--send]   change the treasury (48 h timelock)
  *   npm run desk -- upgrade status | schedule | apply | cancel [--send]     replace the code (48 h timelock)
@@ -19,7 +20,7 @@
  * Keys come from the root .env (never GitHub):
  *   DESK_CONTRACT_WIF   the desk contract's own key — only for deploy; the address must be EMPTY before deploying
  *   OWNER_WIF           the admin wallet: owns the desk (fee, limits, pause, node key, withdrawals, upgrades)
- *   OPERATOR_WIF        the bot wallet: pays the Mana for the upload
+ *   OPERATOR_WIF        the bot wallet: pays the Mana for the upload (or set DESK_PAYER=owner to let the admin wallet pay)
  *   DESK_TREASURY       optional: where withdrawals go (default: the owner's address)
  *   DESK_NODE_KEY_FILE  optional: the desk node's key file (default C:\kpred-desk-node\basedir\block_producer\private.key)
  */
@@ -100,7 +101,9 @@ async function deploy(send: boolean) {
   const mainnet = isMainnet(rpc);
   if (send && mainnet && E.CONFIRM_MAINNET !== "yes") throw new Error(`RPC is ${rpc} (MAINNET, real KOIN). Add CONFIRM_MAINNET=yes to .env if you really mean it.`);
   const contractKey = Signer.fromWif(need("DESK_CONTRACT_WIF"));
-  const operator = Signer.fromWif(need("OPERATOR_WIF"));
+  // Who pays the upload Mana: the bot wallet by default, or the admin wallet (DESK_PAYER=owner) so the game bot keeps its Mana.
+  const payerOwner = (E.DESK_PAYER ?? "").toLowerCase() === "owner";
+  const operator = Signer.fromWif(need(payerOwner ? "OWNER_WIF" : "OPERATOR_WIF"));
   const owner = E.OWNER_ADDRESS ?? (E.OWNER_WIF ? Signer.fromWif(E.OWNER_WIF).getAddress() : undefined);
   if (!owner) throw new Error("OWNER_WIF (or OWNER_ADDRESS) is missing from .env");
   const treasury = E.DESK_TREASURY ?? owner;
@@ -118,7 +121,16 @@ async function deploy(send: boolean) {
   const tok = (id: string) => new Contract({ id, abi: tokenAbi as any, provider });
   const bal = async (id: string, a: string) => BigInt(((await (tok(id).functions as any).balance_of({ owner: a })).result?.value) ?? 0);
   const opMana = BigInt(await provider.getAccountRc(operator.getAddress()));
-  const estimate = toSat(Math.ceil((wasm.length + abiText.length) / 1024 * 0.8 + 10));
+  // Upload cost from the chain's current resource prices (same method as the game's deploy; the game's 25 KB upload used 18.7).
+  const bytes = wasm.length + abiText.length;
+  let estimate = toSat(Math.ceil(bytes / 1024 * 0.8 + 10));
+  try {
+    const d: any = ((await provider.call("chain.get_resource_limits", {})) as any)?.resource_limit_data ?? {};
+    const disk = BigInt(d.disk_storage_cost ?? 0) * BigInt(bytes + 2_000);
+    const net = BigInt(d.network_bandwidth_cost ?? 0) * BigInt(Math.ceil(bytes * 1.4) + 4_000);
+    const comp = BigInt(d.compute_bandwidth_cost ?? 0) * 8_000_000n;
+    if (disk + net + comp > 0n) estimate = disk + net + comp;
+  } catch {}
   const init = {
     owner, treasury, fee_bps: FEE_BPS, min_swap: String(toSat(1)), max_swap: "0",
     timelock_length: String(mainnet ? 48 * HOUR_MS : 10 * 60_000),
@@ -129,11 +141,11 @@ async function deploy(send: boolean) {
   log(`Owner              ${owner}`);
   log(`Treasury           ${treasury}   (the ONLY address withdrawals can go to)`);
   log(`Settings           fee ${pct(FEE_BPS)}, smallest swap 1 VHP, no fixed largest swap, timelock ${mainnet ? "48 h" : "10 min"}`);
-  log(`Pays the Mana      bot wallet ${operator.getAddress()} (has ${showKoin(opMana)}; the upload needs about ${showKoin(estimate)} + ~1 for setup)`);
+  log(`Pays the Mana      ${payerOwner ? "admin" : "bot"} wallet ${operator.getAddress()} (has ${showKoin(opMana)}; the upload needs about ${showKoin(estimate)} + ~1 for setup)`);
   if (!prior?.uploaded) {
     const [k, v] = [await bal(tokens.koin, C), await bal(tokens.vhp, C)];
     if (k > 0n || v > 0n) throw new Error("The desk address already holds tokens. Use a fresh DESK_CONTRACT_WIF and fund it AFTER deploying.");
-    if (opMana < (estimate * 13n) / 10n + toSat(1)) throw new Error(`The bot wallet needs about ${showKoin((estimate * 13n) / 10n + toSat(1))} Mana but has ${showKoin(opMana)}.`);
+    if (opMana < (estimate * 13n) / 10n + toSat(1)) throw new Error(`The ${payerOwner ? "admin" : "bot"} wallet needs about ${showKoin((estimate * 13n) / 10n + toSat(1))} Mana but has ${showKoin(opMana)}.`);
   }
   if (!send) { log(`\nDry run only. Nothing was sent. Run again with --send to deploy.`); return; }
 
@@ -290,6 +302,18 @@ async function main() {
     }
     case "node-key": {
       log(`The desk node's PUBLIC key (safe to share):\n  ${nodePublicKey(DESK_NODE_KEY_FILE)}\n\nRegister it for the desk with:\n  npm run desk -- register-key node          (dry run)\n  npm run desk -- register-key node --send`);
+      return;
+    }
+    case "node-status": {
+      const rpc = E.DESK_NODE_RPC ?? "http://127.0.0.1:8100";
+      const pub: any = await new Provider([E.RPC ?? "https://api.koinos.io"]).getHeadInfo();
+      const ph = Number(pub.head_topology.height);
+      let lh = 0;
+      try { lh = Number(((await new Provider([rpc]).getHeadInfo()) as any).head_topology.height); }
+      catch { log(`The desk node doesn't answer on ${rpc}. Is Docker running? In C:\\kpred-desk-node\\koinos run: docker compose up -d`); process.exitCode = 1; return; }
+      const behind = ph - lh;
+      log(`Network block ${ph.toLocaleString()} — desk node ${lh.toLocaleString()}`);
+      log(behind <= 20 ? "✔ The desk node is caught up. It can produce once its key is registered." : `… the desk node is ${behind.toLocaleString()} blocks behind (~${(behind * 3 / 3600).toFixed(1)} h of chain). It catches up much faster than real time.`);
       return;
     }
     case "register-key": {
