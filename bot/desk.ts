@@ -85,8 +85,8 @@ async function status() {
   log(`  Owner          ${c.owner}`);
   log(`  Treasury       ${c.treasury}  (withdrawals can only go here)`);
   const now = Number(st.time ?? Date.now());
-  if (st.treasury_change?.address) log(`  ⚠ Treasury change announced → ${st.treasury_change.address}, possible from ${utc(Number(st.treasury_change.eta))}${Number(st.treasury_change.eta) <= now ? " (now)" : ""}`);
-  if (st.upgrade?.hash) log(`  ⚠ Code upgrade announced (sha256 ${st.upgrade.hash}), possible from ${utc(Number(st.upgrade.eta))}`);
+  if (st.treasury_change?.address && Number(st.treasury_change.eta ?? 0) > 0) log(`  ⚠ Treasury change announced → ${st.treasury_change.address}, possible from ${utc(Number(st.treasury_change.eta))}${Number(st.treasury_change.eta) <= now ? " (now)" : ""}`);
+  if (st.upgrade?.hash && String(st.upgrade.hash).length > 2 && Number(st.upgrade.eta ?? 0) > 0) log(`  ⚠ Code upgrade announced (sha256 ${st.upgrade.hash}), possible from ${utc(Number(st.upgrade.eta))}`);
   if (BigInt(st.vhp_balance ?? 0) > 0n) {
     try {
       const head: any = await chain.provider.getHeadInfo();
@@ -224,7 +224,7 @@ async function upgrade(sub: string | undefined, send: boolean) {
   const st = await readDesk(chain, abi, "get_state");
   const wasm = readBuild();
   const local = "0x" + sha256hex(wasm);
-  const announced = st.upgrade?.hash ? String(st.upgrade.hash) : "";
+  const announced = st.upgrade?.hash && String(st.upgrade.hash).length > 2 ? String(st.upgrade.hash) : "";
   if (!sub || sub === "status") {
     log(announced ? `Announced: ${announced}, possible from ${utc(Number(st.upgrade.eta))}\nLocal build: ${local} ${announced === local ? "(matches)" : "(DIFFERENT)"}` : `No upgrade announced. Local build: ${local}`);
     return;
