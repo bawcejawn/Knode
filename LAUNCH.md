@@ -1,4 +1,4 @@
-# Kprediction — launch guide
+# Knode — launch guide
 
 Follow the steps in order. Every command goes into **PowerShell**. Any command that sends something is a dry run
 unless you add `--send`, so you can always check first.
@@ -19,7 +19,7 @@ unless you add `--send`, so you can always check first.
 OneDrive uploads its folders to the cloud, including `.env` files that hold keys. Make a clean copy outside it:
 
 ```
-git clone https://github.com/bawcejawn/Kprediction.git C:\kprediction
+git clone https://github.com/bawcejawn/Knode.git C:\kprediction
 Copy-Item "C:\Users\cpada\OneDrive\Desktop\kprediction-git\probes\.env" "C:\kprediction\probes\.env"
 cd C:\kprediction
 ```
@@ -153,12 +153,12 @@ npm run bot -- status
 
 ## Step 8 — Turn on the bot and the website (GitHub)
 
-On github.com/bawcejawn/Kprediction:
+On github.com/bawcejawn/Knode:
 1. **Settings → Secrets and variables → Actions**
    - New repository secret `OPERATOR_WIF`. The value is the `OPERATOR_WIF` line from `.env`, only the part after `=`.
    - On the Variables tab, add `BOT_ENABLED` = `true`.
 2. **Settings → Pages**: Source "Deploy from a branch", branch `main`, folder `/ (root)`, then Save.
-   The site appears at **https://bawcejawn.github.io/Kprediction/** within a few minutes. To preview it with sample data
+   The site appears at **https://bawcejawn.github.io/Knode/** within a few minutes. To preview it with sample data
    at any time, add `?demo` to the address.
 3. **Actions → Kpred bot → Run workflow** starts the first run by hand. The first one takes several minutes.
 4. Emails: click your picture → **Settings → Notifications → Actions**, then tick **"Notify on failed workflows only"**.

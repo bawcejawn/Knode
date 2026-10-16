@@ -1,4 +1,4 @@
-/* Kprediction website — a static page: everything is read from the Koinos chain and the bot's public
+/* Knode website — a static page: everything is read from the Koinos chain and the bot's public
    question files (game-data/), and every action is signed by the player's own Kondor wallet.
    With no deployment yet (or ?demo in the address), it runs a preview on sample data. */
 (() => {
@@ -541,14 +541,14 @@
     const isNew = (b) => b.h > tickerTop && tickerTop !== 0;
     list.replaceChildren(...blocks.slice(0, 7).map((b) => el("li", {
       class: `blk${b.signer === S.dep?.contract ? " ours" : ""}${isNew(b) ? " new" : ""}`, style: `--c: hsl(${hue(b.signer)} 70% 58%)`,
-    }, el("span", { class: "cube", "aria-hidden": "true" }), el("span", { class: "who" }, b.signer === S.dep?.contract ? "Kprediction pool" : short(b.signer)), el("span", { class: "h" }, `#${b.h.toLocaleString()}`))));
+    }, el("span", { class: "cube", "aria-hidden": "true" }), el("span", { class: "who" }, b.signer === S.dep?.contract ? "Knode pool" : short(b.signer)), el("span", { class: "h" }, `#${b.h.toLocaleString()}`))));
     tickerTop = blocks[0].h;
   }
 
   // ═══════════════ demo data ═══════════════
   let demoTop = 0, demoSeed = 7;
   const drnd = () => ((demoSeed = (demoSeed * 16807) % 2147483647) / 2147483647);
-  const DEMO_PRODUCERS = ["1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW", "1KoinosNodeA9xQ2sPp3rX7mW1vD4k8Lz", "13mJx9ZbYqT2wE5rU8iO1pA4sD7fG0hJ", "1Burn4ndChi11FoGata3PoolQ8vX2nM5", "1Kprediction9PooL4demoXXXXXXXXXXX"];
+  const DEMO_PRODUCERS = ["1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW", "1KoinosNodeA9xQ2sPp3rX7mW1vD4k8Lz", "13mJx9ZbYqT2wE5rU8iO1pA4sD7fG0hJ", "1Burn4ndChi11FoGata3PoolQ8vX2nM5", "1Knode9PooL4demoXXXXXXXXXXXXXXXXX"];
   function demoBlocks() {
     if (!demoTop) demoTop = S.height;
     demoTop += 1;

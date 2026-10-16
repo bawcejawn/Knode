@@ -1,4 +1,4 @@
-# Kprediction
+# Knode
 Predictions on Block Producers — Koinos. A weekly prediction game about the Koinos chain: players answer
 multiple-choice questions about block producers and network data; top scorers share the staking rewards.
 
