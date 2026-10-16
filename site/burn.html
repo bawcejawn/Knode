@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Burn KOIN into VHP · Knode</title>
+  <meta name="description" content="Connect Kondor and burn KOIN into VHP for your own wallet.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .bn { max-width: 620px; margin: 0 auto; padding: 28px 16px 60px; }
+    .bn h1 { font-family: var(--display); font-size: clamp(28px, 4vw, 38px); margin: 0 0 6px; }
+    .bn .lede { color: var(--muted); margin: 0 0 20px; }
+    .tools { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; margin-bottom: 18px; }
+    .tools a { color: var(--violet); }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; box-shadow: var(--shadow); margin-bottom: 16px; }
+    .bal { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0 4px; }
+    .bal div { background: var(--paper); border-radius: var(--r-sm); padding: 10px 12px; }
+    .bal .k { font-size: 12px; color: var(--muted); }
+    .bal .v { font-family: var(--display); font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; word-break: break-all; }
+    label { display: block; font-weight: 700; margin: 16px 0 6px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    input { flex: 1 1 160px; min-width: 0; padding: 11px 14px; font: inherit; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+    .chip { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+    .help { font-size: 13px; color: var(--muted); margin-top: 6px; }
+    .msg { margin-top: 16px; padding: 12px 14px; border-radius: var(--r-sm); background: var(--paper); white-space: pre-wrap; word-break: break-word; }
+    .addr { font-family: ui-monospace, Consolas, monospace; font-size: 13px; word-break: break-all; color: var(--muted); }
+    @media (max-width: 480px) { .bal { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href="./" aria-label="Knode home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="brand-name">Knode</span>
+      </a>
+      <a class="btn btn-wallet" href="./">Play Knode</a>
+    </div>
+  </header>
+  <main class="bn">
+    <h1>Burn KOIN into VHP</h1>
+    <p class="lede">For your own wallet, e.g. the one your node produces for. Block rewards arrive as KOIN; burning them back into VHP (1:1) keeps your producing power growing. Kondor signs; this page never sees a key.</p>
+    <nav class="tools"><a href="node.html">Node dashboard</a><a href="producer.html">Register a producer key</a></nav>
+
+    <div class="card">
+      <div class="row"><button class="btn" id="connect" type="button">Connect Kondor</button><span class="addr" id="who">Not connected</span></div>
+      <div class="bal">
+        <div><div class="k">KOIN</div><div class="v" id="b-koin">–</div></div>
+        <div><div class="k">VHP</div><div class="v" id="b-vhp">–</div></div>
+        <div><div class="k">Mana</div><div class="v" id="b-mana">–</div></div>
+      </div>
+      <label for="keep">Keep as KOIN (for Mana)</label>
+      <div class="row"><input id="keep" type="number" min="0" step="any" value="5"></div>
+      <p class="help">Every transaction costs a little Mana, and Mana comes from KOIN. Keep a few KOIN so the wallet can still send transactions (for a node, 5–10 is plenty).</p>
+      <label for="amt">KOIN to burn</label>
+      <div class="row"><input id="amt" type="number" min="0" step="any" placeholder="0"><button class="chip" id="max" type="button">Max</button></div>
+      <p class="help" id="max-help">Max = KOIN minus what you keep, and never more than your current Mana (Koinos only lets KOIN move up to the Mana you have right now).</p>
+      <div class="row" style="margin-top:16px"><button class="btn btn-sun" id="burn" type="button" disabled>Burn into VHP</button></div>
+      <div class="msg" id="msg">Connect Kondor to start.</div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js"></script>
+  <script>
+  (() => {
+    "use strict";
+    const lib = window.koilib || window.koinos || window;
+    const RPC = "https://api.koinos.io";
+    const KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK", VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", POB = "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv";
+    const UNIT = 100000000n;
+    const ADDR = { type: "bytes", options: { "(koinos.btype)": "ADDRESS" } };
+    const U64 = { type: "uint64", options: { jstype: "JS_STRING" } };
+    const types = { nested: { t: { nested: {
+      balance_of_arguments: { fields: { owner: { ...ADDR, id: 1 } } },
+      balance_of_result: { fields: { value: { ...U64, id: 1 } } },
+      approve_arguments: { fields: { owner: { ...ADDR, id: 1 }, spender: { ...ADDR, id: 2 }, value: { ...U64, id: 3 } } },
+      approve_result: { fields: {} },
+      burn_arguments: { fields: { token_amount: { ...U64, id: 1 }, burn_address: { ...ADDR, id: 2 }, vhp_address: { ...ADDR, id: 3 } } },
+      burn_result: { fields: {} },
+    } } } };
+    const tokenAbi = { methods: {
+      balance_of: { entry_point: 0x5c721497, argument: "t.balance_of_arguments", return: "t.balance_of_result", read_only: true },
+      approve: { entry_point: 0x74e21680, argument: "t.approve_arguments", return: "t.approve_result", read_only: false },
+    }, koilib_types: types };
+    const pobAbi = { methods: { burn: { entry_point: 0x859facc5, argument: "t.burn_arguments", return: "t.burn_result", read_only: false } }, koilib_types: types };
+
+    const provider = new lib.Provider([RPC]);
+    const $ = (id) => document.getElementById(id);
+    const say = (t) => { $("msg").textContent = t; };
+    let account = null, bal = { koin: 0n, vhp: 0n, mana: 0n };
+
+    const show = (u) => { const s = (u < 0n ? 0n : u).toString().padStart(9, "0"); const i = s.slice(0, -8), f = s.slice(-8).replace(/0+$/, ""); return Number(i).toLocaleString() + (f ? "." + f.slice(0, 4) : ""); };
+    function toUnits(text) {
+      const m = String(text).trim().match(/^(\d*)(?:\.(\d{0,8})\d*)?$/);
+      if (!m || (m[1] === "" && !m[2])) return null;
+      return BigInt(m[1] || "0") * UNIT + BigInt((m[2] || "").padEnd(8, "0"));
+    }
+
+    async function refresh() {
+      const tk = (id) => new lib.Contract({ id, abi: tokenAbi, provider });
+      const get = async (id) => BigInt(((await tk(id).functions.balance_of({ owner: account })).result || {}).value || "0");
+      const [koin, vhp, rc] = await Promise.all([get(KOIN), get(VHP), provider.getAccountRc(account)]);
+      bal = { koin, vhp, mana: BigInt(rc || "0") };
+      $("b-koin").textContent = show(koin); $("b-vhp").textContent = show(vhp); $("b-mana").textContent = show(bal.mana);
+    }
+    function maxBurn() {
+      const keep = toUnits($("keep").value || "0") ?? 0n;
+      let m = bal.koin - keep;
+      const manaCap = bal.mana - UNIT / 2n; // leave ~0.5 Mana for this transaction itself
+      if (m > manaCap) m = manaCap;
+      return m > 0n ? m : 0n;
+    }
+
+    $("connect").onclick = async () => {
+      if (!window.kondor) return say("Kondor didn't load. Is the Kondor extension installed? Refresh and try again.");
+      try {
+        const accounts = await window.kondor.getAccounts();
+        if (!accounts || !accounts.length) return say("Kondor shared no account. Open Kondor and allow this site.");
+        account = accounts[0].address;
+        $("who").textContent = account;
+        await refresh();
+        $("burn").disabled = false;
+        say("Connected. Check this is the right wallet, enter an amount (or Max), then Burn.");
+      } catch (e) { say(String(e.message || e)); }
+    };
+    $("max").onclick = () => {
+      if (!account) return say("Connect Kondor first.");
+      const m = maxBurn();
+      $("amt").value = m > 0n ? (Number(m) / 1e8).toFixed(8).replace(/\.?0+$/, "") : "0";
+      if (m === 0n) say("Nothing to burn: your KOIN is at or below what you keep, or your Mana is low (it refills over about 5 days).");
+    };
+
+    $("burn").onclick = async () => {
+      if (!account) return say("Connect Kondor first.");
+      const amt = toUnits($("amt").value);
+      if (!amt || amt <= 0n) return say("Enter how much KOIN to burn.");
+      if (amt > bal.koin) return say("That is more KOIN than this wallet has.");
+      if (amt > bal.mana - UNIT / 2n) return say(`That's more than your Mana allows right now (${show(bal.mana)}). Use Max, or wait for Mana to refill.`);
+      try {
+        say(`Confirm burning ${show(amt)} KOIN in Kondor…`);
+        const signer = window.kondor.getSigner(account);
+        try { signer.provider = provider; } catch {}
+        const koin = new lib.Contract({ id: KOIN, abi: tokenAbi, provider, signer });
+        const pob = new lib.Contract({ id: POB, abi: pobAbi, provider, signer });
+        const value = amt.toString();
+        const op1 = (await koin.functions.approve({ owner: account, spender: POB, value }, { onlyOperation: true })).operation;
+        const op2 = (await pob.functions.burn({ token_amount: value, burn_address: account, vhp_address: account }, { onlyOperation: true })).operation;
+        const tx = new lib.Transaction({ signer, provider });
+        await tx.pushOperation(op1); await tx.pushOperation(op2);
+        const receipt = await tx.send();
+        if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "refused"));
+        say("Sent. Waiting for the next block…");
+        const id = tx.transaction && tx.transaction.id;
+        try { await provider.wait(id, "byBlock", 90000); say(`Done: ${show(amt)} KOIN burned into VHP.\nTransaction: ${id}`); }
+        catch { say(`Sent, not yet seen in a block. Check Kondor's history in a minute.\nTransaction: ${id}`); }
+        $("amt").value = "";
+        await refresh().catch(() => {});
+      } catch (e) {
+        const m = String(e.message || e);
+        say(/reject|denied|cancel/i.test(m) ? "Cancelled in Kondor." : /mana|rc/i.test(m) ? "Not enough Mana. Burn a bit less, or wait for Mana to refill." : "Not sent: " + m.slice(0, 300));
+      }
+    };
+  })();
+  </script>
+</body>
+</html>

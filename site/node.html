@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Node dashboard · Knode</title>
+  <meta name="description" content="Block production for any Koinos producer address: recent blocks, share of the network, and projections.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .nd { max-width: 1040px; margin: 0 auto; padding: 28px 16px 60px; }
+    .nd h1 { font-family: var(--display); font-size: clamp(28px, 4vw, 40px); margin: 0 0 6px; }
+    .nd .lede { color: var(--muted); margin: 0 0 22px; max-width: 62ch; }
+    .nd-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 14px; box-shadow: var(--shadow); }
+    .nd-form input { flex: 1 1 340px; min-width: 0; padding: 11px 14px; font: inherit; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+    .nd-form select { padding: 10px 12px; font: inherit; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+    .nd-quick { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 2px 0; font-size: 14px; color: var(--muted); }
+    .nd-quick button { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+    .nd-status { margin: 16px 2px 0; color: var(--muted); min-height: 1.4em; }
+    .nd-bar { height: 6px; background: var(--line); border-radius: 99px; overflow: hidden; margin-top: 8px; }
+    .nd-bar i { display: block; height: 100%; width: 0; background: var(--violet); transition: width .2s; }
+    .nd-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 22px 0; }
+    .tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: 14px 16px; box-shadow: var(--shadow); }
+    .tile .k { font-size: 13px; color: var(--muted); }
+    .tile .v { font-family: var(--display); font-size: 26px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .tile .s { font-size: 13px; color: var(--muted); margin-top: 2px; }
+    .good { color: var(--mint); } .bad { color: var(--rose); }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; box-shadow: var(--shadow); margin-bottom: 16px; }
+    .card h2 { font-family: var(--display); font-size: 20px; margin: 0 0 4px; }
+    .card .sub { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+    .chart svg { width: 100%; height: 150px; display: block; }
+    .chart .axis { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+    th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 600; font-size: 13px; }
+    td.r, th.r { text-align: right; }
+    tr.me td { background: var(--violet-soft); font-weight: 700; }
+    .mono { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+    a { color: var(--violet); }
+    .note { font-size: 13px; color: var(--muted); margin-top: 10px; }
+    .scroll { max-height: 360px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href="./" aria-label="Knode home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="brand-name">Knode</span>
+      </a>
+      <a class="btn btn-wallet" href="./">Play Knode</a>
+    </div>
+  </header>
+
+  <main class="nd">
+    <h1>Node dashboard</h1>
+    <p class="lede" style="margin-bottom:8px">Put in any Koinos block-producer address to see the blocks it produced, its share of the network, and what to expect per day, week and month. Everything is read live from the Koinos chain.</p>
+    <p style="margin:0 0 20px;font-size:14px"><a href="burn.html">Burn KOIN into VHP</a> · <a href="producer.html">Register a producer key</a></p>
+
+    <form class="nd-form" id="form">
+      <input id="addr" placeholder="Producer address (starts with 1…)" autocomplete="off" spellcheck="false" aria-label="Producer address">
+      <select id="win" aria-label="Time window">
+        <option value="7200">Last 6 hours</option>
+        <option value="28800" selected>Last 24 hours</option>
+        <option value="86400">Last 3 days</option>
+        <option value="201600">Last 7 days (slow)</option>
+      </select>
+      <button class="btn" type="submit">Show</button>
+    </form>
+    <div class="nd-quick" id="quick"></div>
+    <div class="nd-status" id="status">Enter an address.</div>
+    <div class="nd-bar" id="bar" hidden><i></i></div>
+
+    <section id="out" hidden>
+      <div class="nd-tiles" id="tiles"></div>
+      <div class="card chart">
+        <h2>Blocks over time</h2>
+        <p class="sub" id="chart-sub"></p>
+        <div id="chart"></div>
+        <div class="axis"><span id="ax-l"></span><span id="ax-r">now</span></div>
+      </div>
+      <div class="cols">
+        <div class="card">
+          <h2>Recent blocks</h2>
+          <p class="sub">Produced by this address in the window</p>
+          <div class="scroll"><table><thead><tr><th>Block</th><th>When</th><th class="r">Reward (KOIN)</th></tr></thead><tbody id="recent"></tbody></table></div>
+        </div>
+        <div class="card">
+          <h2>Top producers</h2>
+          <p class="sub">Same window, all of Koinos</p>
+          <div class="scroll"><table><thead><tr><th>#</th><th>Producer</th><th class="r">Blocks</th><th class="r">Share</th><th class="r">VHP</th></tr></thead><tbody id="top"></tbody></table></div>
+        </div>
+      </div>
+      <p class="note">Projections assume this address keeps its current VHP and the other producers keep theirs. Block production is random, so short windows swing a lot: compare "expected" with "produced" over a day or more. The reward is what each block pays the producer after the VHP it uses (KOIN minted minus VHP burned).</p>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js"></script>
+  <script>
+  (() => {
+    "use strict";
+    const lib = window.koilib || window.koinos || window;
+    const RPC = "https://api.koinos.io";
+    const KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK";
+    const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq";
+    const EXPLORER = "https://koinosscan.com/address/";
+    const DAY = 28800, UNIT = 1e8, BATCH = 100, WORKERS = 4;
+    const QUICK = [["Knode pool", "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr"]];
+
+    const provider = new lib.Provider([RPC]);
+    const types = { nested: { t: { nested: {
+      balance_of_arguments: { fields: { owner: { type: "bytes", id: 1, options: { "(koinos.btype)": "ADDRESS" } } } },
+      balance_of_result: { fields: { value: { type: "uint64", id: 1, options: { jstype: "JS_STRING" } } } },
+      mint_event: { fields: { to: { type: "bytes", id: 1, options: { "(koinos.btype)": "ADDRESS" } }, value: { type: "uint64", id: 2, options: { jstype: "JS_STRING" } } } },
+      burn_event: { fields: { from: { type: "bytes", id: 1, options: { "(koinos.btype)": "ADDRESS" } }, value: { type: "uint64", id: 2, options: { jstype: "JS_STRING" } } } },
+    } } } };
+    const ser = new lib.Serializer(types);
+    const vhpAbi = { methods: { balance_of: { entry_point: 0x5c721497, argument: "t.balance_of_arguments", return: "t.balance_of_result", read_only: true } }, koilib_types: types };
+    const vhp = new lib.Contract({ id: VHP, abi: vhpAbi, provider });
+
+    const $ = (id) => document.getElementById(id);
+    const el = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); for (const c of kids) if (c != null) e.append(c); return e; };
+    const fmt = (n, d = 0) => Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+    const short = (a) => a.slice(0, 6) + "…" + a.slice(-4);
+    const ago = (ms) => { const m = Math.round((Date.now() - ms) / 60000); return m < 60 ? `${m} min ago` : m < 2880 ? `${(m / 60).toFixed(1)} h ago` : `${(m / 1440).toFixed(1)} days ago`; };
+    const isAddr = (a) => /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
+    const say = (t) => { $("status").textContent = t; };
+    const progress = (f) => { $("bar").hidden = f == null; if (f != null) $("bar").firstElementChild.style.width = `${Math.round(f * 100)}%`; };
+
+    // ── fetch blocks (cached, so switching address is instant) ──
+    let cache = null; // { head, from, blocks: [{h, ts, signer, mint, burn}] }
+    async function decode(name, data) { try { return await ser.deserialize(data, name); } catch { return null; } }
+    async function toBlock(it) {
+      const hd = it.block.header, signer = hd.signer;
+      let mint = 0, burn = 0;
+      for (const ev of (it.receipt && it.receipt.events) || []) {
+        if (ev.source === KOIN && /mint/i.test(ev.name || "")) { const d = await decode("t.mint_event", ev.data); if (d && d.to === signer) mint += Number(d.value) / UNIT; }
+        else if (ev.source === VHP && /burn/i.test(ev.name || "")) { const d = await decode("t.burn_event", ev.data); if (d && d.from === signer) burn += Number(d.value) / UNIT; }
+      }
+      return { h: Number(it.block_height), ts: Number(hd.timestamp), signer, mint, burn };
+    }
+    async function loadBlocks(n) {
+      const head = await provider.getHeadInfo();
+      const top = Number(head.head_topology.height), from = top - n + 1;
+      if (cache && cache.n === n && top - cache.top < 100) return cache;
+      const starts = []; for (let s = from; s <= top; s += BATCH) starts.push(s);
+      const total = starts.length; let done = 0; const out = [];
+      const worker = async () => {
+        while (starts.length) {
+          const s = starts.shift(), count = Math.min(BATCH, top - s + 1);
+          let res, tries = 0;
+          for (;;) {
+            try { res = await provider.call("block_store.get_blocks_by_height", { head_block_id: head.head_topology.id, ancestor_start_height: String(s), num_blocks: count, return_block: true, return_receipt: true }); break; }
+            catch (e) { if (++tries > 4) throw e; await new Promise((r) => setTimeout(r, 800 * tries)); }
+          }
+          for (const it of res.block_items || []) out.push(await toBlock(it));
+          done++; progress(done / total); say(`Reading blocks from the chain… ${fmt(done * BATCH > n ? n : done * BATCH)} of ${fmt(n)}`);
+        }
+      };
+      await Promise.all(Array.from({ length: WORKERS }, worker));
+      out.sort((a, b) => a.h - b.h);
+      cache = { n, top, from, blocks: out };
+      return cache;
+    }
+    const balCache = new Map();
+    async function vhpOf(a) {
+      if (balCache.has(a)) return balCache.get(a);
+      const r = await vhp.functions.balance_of({ owner: a });
+      const v = Number((r.result && r.result.value) || 0) / UNIT;
+      balCache.set(a, v); return v;
+    }
+
+    // ── render ──
+    function tile(k, v, s, cls = "") { return el("div", { class: "tile" }, el("div", { class: "k" }, k), el("div", { class: `v ${cls}` }, v), s ? el("div", { class: "s" }, s) : null); }
+
+    function chart(blocks, addr, n) {
+      const BUCKETS = n <= 7200 ? 24 : n <= 28800 ? 24 : n <= 86400 ? 36 : 42;
+      const first = blocks[0].h, span = blocks[blocks.length - 1].h - first + 1, size = Math.ceil(span / BUCKETS);
+      const mine = new Array(BUCKETS).fill(0);
+      for (const b of blocks) if (b.signer === addr) mine[Math.min(BUCKETS - 1, Math.floor((b.h - first) / size))]++;
+      const max = Math.max(1, ...mine), W = 1000, H = 150, bw = W / BUCKETS;
+      const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg");
+      svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("preserveAspectRatio", "none");
+      svg.setAttribute("role", "img"); svg.setAttribute("aria-label", `Blocks produced per ${fmt(size * 3 / 3600, 1)} hours`);
+      mine.forEach((c, i) => {
+        const h = c ? Math.max(4, (c / max) * (H - 18)) : 2;
+        const r = document.createElementNS(ns, "rect");
+        r.setAttribute("x", i * bw + bw * 0.12); r.setAttribute("width", bw * 0.76); r.setAttribute("y", H - h); r.setAttribute("height", h); r.setAttribute("rx", 3);
+        r.setAttribute("fill", c ? "var(--violet)" : "var(--line)");
+        const t = document.createElementNS(ns, "title"); t.textContent = `${c} block${c === 1 ? "" : "s"}`; r.append(t);
+        svg.append(r);
+      });
+      $("chart").replaceChildren(svg);
+      $("chart-sub").textContent = `Each bar is about ${fmt(size * 3 / 3600, 1)} hours. Tallest bar: ${max} block${max === 1 ? "" : "s"}.`;
+      $("ax-l").textContent = new Date(blocks[0].ts).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+    }
+
+    async function show(addr, n) {
+      $("out").hidden = true;
+      try {
+        const { blocks } = await loadBlocks(n);
+        progress(null);
+        say("Reading balances…");
+        const count = new Map();
+        for (const b of blocks) count.set(b.signer, (count.get(b.signer) || 0) + 1);
+        const producers = [...count.entries()].sort((a, b) => b[1] - a[1]);
+        const list = producers.slice(0, 60).map(([a]) => a);
+        if (!list.includes(addr)) list.push(addr);
+        const bals = []; for (let i = 0; i < list.length; i += 6) bals.push(...(await Promise.all(list.slice(i, i + 6).map(vhpOf))));
+        const vhpMap = new Map(list.map((a, i) => [a, bals[i]]));
+        const activeVhp = producers.reduce((s, [a]) => s + (vhpMap.get(a) || 0), 0) + (count.has(addr) ? 0 : vhpMap.get(addr) || 0);
+
+        const mine = blocks.filter((b) => b.signer === addr);
+        const myVhp = vhpMap.get(addr) || 0;
+        const total = blocks.length, hours = (blocks[total - 1].ts - blocks[0].ts) / 3.6e6 || 1;
+        const perDayNet = total / hours * 24;
+        const share = activeVhp ? myVhp / activeVhp : 0;
+        const expWin = share * total, expDay = share * perDayNet;
+        const allRewards = blocks.filter((b) => b.mint > 0);
+        const rewardOf = (b) => b.mint - b.burn;
+        const avgReward = (mine.length ? mine : allRewards).reduce((s, b) => s + rewardOf(b), 0) / Math.max(1, (mine.length ? mine : allRewards).length);
+        // Rewards scale with the producer's VHP burned per block; use this address's own blocks when it has some.
+        const koinDay = mine.length ? expDay * avgReward : NaN;
+        const apr = myVhp > 0 && mine.length ? (koinDay * 365 / myVhp) * 100 : NaN;
+        const last = mine[mine.length - 1];
+        const luck = expWin > 0 ? mine.length / expWin : NaN;
+        const winLabel = $("win").selectedOptions[0].textContent.replace("Last ", "").replace(" (slow)", "");
+
+        $("tiles").replaceChildren(
+          tile("VHP (producing power)", fmt(myVhp, 0), `${fmt(share * 100, 3)}% of active producers' VHP`),
+          tile(`Blocks, ${winLabel}`, fmt(mine.length), `expected ${fmt(expWin, 1)}`, isNaN(luck) ? "" : luck >= 0.8 ? "good" : luck < 0.5 ? "bad" : ""),
+          tile("Expected per day", fmt(expDay, 1), `${fmt(expDay * 7, 0)} a week · ${fmt(expDay * 30, 0)} a month`),
+          tile("Last block", last ? ago(last.ts) : "none in window", last ? `#${fmt(last.h)}` : expDay > 0 ? `about 1 every ${fmt(24 / expDay, 1)} h expected` : "no VHP"),
+          tile("Reward per block", mine.length ? `${fmt(avgReward, 4)}` : "—", mine.length ? "KOIN, net of VHP used" : "shown once it produces"),
+          tile("Projected KOIN", isNaN(koinDay) ? "—" : fmt(koinDay, 2), isNaN(koinDay) ? "needs a block in the window" : `a day · ${fmt(koinDay * 30, 1)} a month${isNaN(apr) ? "" : ` · ~${fmt(apr, 1)}% a year`}`),
+        );
+        chart(blocks, addr, n);
+        $("recent").replaceChildren(...(mine.length ? mine.slice().reverse().slice(0, 200).map((b) => el("tr", {},
+          el("td", {}, `#${fmt(b.h)}`), el("td", {}, new Date(b.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })), el("td", { class: "r" }, fmt(rewardOf(b), 4))))
+          : [el("tr", {}, el("td", { colspan: "3" }, "No blocks from this address in this window."))]));
+        const rows = producers.slice(0, 25);
+        if (!rows.some(([a]) => a === addr)) rows.push([addr, 0]);
+        $("top").replaceChildren(...rows.map(([a, c]) => el("tr", { class: a === addr ? "me" : "" },
+          el("td", {}, String(producers.findIndex(([x]) => x === a) + 1 || "–")),
+          el("td", {}, el("a", { href: EXPLORER + a, target: "_blank", rel: "noopener", class: "mono", title: a }, a === QUICK[0][1] ? "Knode pool" : short(a))),
+          el("td", { class: "r" }, fmt(c)), el("td", { class: "r" }, `${fmt(c / total * 100, 2)}%`), el("td", { class: "r" }, vhpMap.has(a) ? fmt(vhpMap.get(a), 0) : "…"))));
+        say(`${fmt(total)} blocks read (#${fmt(blocks[0].h)} to #${fmt(blocks[total - 1].h)}), ${producers.length} producers active. Updated ${new Date().toLocaleTimeString()}.`);
+        $("out").hidden = false;
+      } catch (e) { progress(null); say(`Couldn't read the chain: ${e.message || e}. Try again in a minute.`); }
+    }
+
+    // ── wiring ──
+    const remember = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+    const recall = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+    function go() {
+      const a = $("addr").value.trim(), n = Number($("win").value);
+      if (!isAddr(a)) return say("That doesn't look like a Koinos address (it starts with 1 and has 26–35 characters).");
+      remember("nd-addr", a); remember("nd-win", String(n));
+      history.replaceState(null, "", `?a=${a}&w=${n}`);
+      show(a, n);
+    }
+    $("form").addEventListener("submit", (e) => { e.preventDefault(); go(); });
+    $("quick").replaceChildren(el("span", {}, "Try:"), ...QUICK.map(([name, a]) => { const b = el("button", { type: "button" }, name); b.onclick = () => { $("addr").value = a; go(); }; return b; }));
+    const q = new URLSearchParams(location.search);
+    const a0 = q.get("a") || recall("nd-addr"), w0 = q.get("w") || recall("nd-win");
+    if (w0 && [...$("win").options].some((o) => o.value === w0)) $("win").value = w0;
+    if (a0) { $("addr").value = a0; go(); }
+  })();
+  </script>
+</body>
+</html>
