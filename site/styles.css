@@ -300,3 +300,5 @@ dialog h2 { margin-bottom: 6px; }
 .ad.ad-house .house-cta { color: var(--c); font-weight: 700; }
 .ad.ad-house .house-mark { color: #fff; font-weight: 800; }
 @media (max-width: 640px) { .eco-grid { grid-template-columns: 1fr 1fr; } .eco-item span { display: none; } }
+.tabs a.tab-start { color: var(--violet); font-weight: 700; }
+a.btn { text-decoration: none; display: inline-flex; align-items: center; }

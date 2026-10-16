@@ -1,0 +1,39 @@
+/* "Start here" page — builds on styles.css tokens */
+.start { padding-bottom: 20px; }
+.start-hero { margin: 40px 0 24px; max-width: 760px; }
+.start-hero h1 { font: 800 clamp(2.2rem, 6vw, 3.6rem)/1.02 var(--display); letter-spacing: -0.03em; margin: 12px 0 14px; }
+.start-hero .lede { font-size: 1.12rem; color: var(--muted); }
+.start-sec { margin-top: 44px; }
+.sec-title { font: 800 1.7rem/1.1 var(--display); letter-spacing: -0.02em; margin-bottom: 16px; }
+.small { font-size: .88rem; margin-top: 12px; }
+
+.song { margin-top: 8px; }
+.song-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; }
+.song-head h2 { font: 800 1.5rem/1.1 var(--display); margin: 0 0 4px; }
+.song audio { width: min(420px, 100%); }
+.lyrics { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 4px; }
+.lyrics li { padding: 6px 12px; border-radius: 10px; color: var(--muted); font-weight: 600; cursor: pointer; transition: background .15s ease, color .15s ease, transform .15s ease; }
+.lyrics li.chorus { color: var(--ink); }
+.lyrics li.gap { margin-top: 12px; }
+.lyrics li:hover { background: color-mix(in srgb, var(--violet) 8%, transparent); }
+.lyrics li.now { background: var(--violet); color: var(--violet-ink); transform: translateX(4px); }
+
+.routes { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; }
+.route { background: var(--surface); border-radius: var(--r-lg); padding: 22px; box-shadow: var(--shadow); }
+.route h3 { font-size: 1.15rem; margin: 10px 0 14px; }
+.route-tag { display: inline-block; font-size: .75rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--violet); background: var(--violet-soft, color-mix(in srgb, var(--violet) 12%, transparent)); padding: 4px 10px; border-radius: 999px; }
+.flow { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.flow li { position: relative; display: flex; flex-direction: column; padding: 10px 12px 10px 34px; }
+.flow li::before { content: ""; position: absolute; left: 10px; top: 16px; width: 12px; height: 12px; border-radius: 50%; background: var(--violet); }
+.flow li:not(:last-child)::after { content: ""; position: absolute; left: 15px; top: 30px; bottom: -14px; width: 2px; background: color-mix(in srgb, var(--violet) 35%, var(--line)); }
+.flow li:last-child::before { background: var(--mint, #22c55e); }
+.flow span { color: var(--muted); font-size: .9rem; }
+
+.bridge { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; align-items: start; }
+.bridge-steps { margin: 0; padding: 0; list-style: none; counter-reset: b; display: grid; gap: 10px; }
+.bridge-steps li { counter-increment: b; position: relative; background: var(--surface); border-radius: var(--r-md); padding: 14px 16px 14px 54px; box-shadow: var(--shadow); }
+.bridge-steps li::before { content: counter(b); position: absolute; left: 14px; top: 12px; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; background: var(--violet); color: var(--violet-ink); font: 800 .95rem/1 var(--display); }
+.bridge-note h3, .safety h2 { margin-bottom: 8px; }
+.bridge-note ul, .safety ul { margin: 0; padding-left: 18px; display: grid; gap: 8px; color: var(--muted); }
+.safety b { color: var(--ink); }
+@media (max-width: 760px) { .bridge { grid-template-columns: 1fr; } .top-row .tabs { overflow-x: auto; } }
