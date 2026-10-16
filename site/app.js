@@ -250,13 +250,18 @@
     try {
       toast(`Confirm “${label}” in Kondor…`, 20000);
       const signer = window.kondor.getSigner(S.account);
+      try { signer.provider = S.provider; } catch {}
       const tx = new lib.Transaction({ signer, provider: S.provider });
       for (const op of await build()) await tx.pushOperation(op);
-      await tx.send();
-      toast("Sent. Waiting for the next block…", 20000);
-      await tx.wait();
-      toast(`Done: ${label}`);
-      await loadLive();
+      const receipt = await tx.send();
+      if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "the contract refused it"));
+      // Sent. Watch for it with our own connection to the chain (Kondor's own "wait" needs a provider it may not have).
+      toast("Sent. Waiting for the next block…", 30000);
+      const id = tx.transaction && tx.transaction.id;
+      let confirmed = false;
+      if (id) { try { await S.provider.wait(id, "byBlock", 90000); confirmed = true; } catch {} }
+      toast(confirmed ? `Done: ${label}` : `Sent: ${label}. It may take a minute to show; the page refreshes by itself.`, 8000);
+      await loadLive().catch(() => {});
       renderAll();
       return true;
     } catch (e) {
