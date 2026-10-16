@@ -13,6 +13,7 @@
  *   npm run desk -- pause on|off [--send]        stop or restart swaps
  *   npm run desk -- node-key                     the desk node's PUBLIC key (read from its key file)
  *   npm run desk -- node-status                  is the desk's node (RPC 8100) caught up with the chain?
+ *   npm run desk -- key-status                   which producer key Proof-of-Burn has on record for the desk
  *   npm run desk -- register-key node [--send]   register the desk node's key, so the desk's VHP produces blocks
  *   npm run desk -- treasury schedule <address> | apply | cancel [--send]   change the treasury (48 h timelock)
  *   npm run desk -- upgrade status | schedule | apply | cancel [--send]     replace the code (48 h timelock)
@@ -30,6 +31,7 @@ import crypto from "node:crypto";
 import { Signer, Provider, Contract, Transaction } from "koilib";
 import { KoinosChain, Call, showKoin, toSat } from "./chain.ts";
 import { tokenAbi } from "./token-abi.ts";
+import { pobAbi } from "../probes/scripts/abi.ts";
 import { units, normalizeKey, nodePublicKey, isMainnet, utc, HOUR_MS } from "./bot.ts";
 
 const E = process.env;
@@ -304,6 +306,23 @@ async function main() {
     }
     case "node-key": {
       log(`The desk node's PUBLIC key (safe to share):\n  ${nodePublicKey(DESK_NODE_KEY_FILE)}\n\nRegister it for the desk with:\n  npm run desk -- register-key node          (dry run)\n  npm run desk -- register-key node --send`);
+      return;
+    }
+    case "key-status": {
+      // Reads Proof-of-Burn's record for the desk address (the same read the probes proved on mainnet).
+      const { dep, chain } = deployed();
+      const pob = new Contract({ id: dep.pob ?? MAINNET_TOKENS.pob, abi: pobAbi as any, provider: chain.provider });
+      const bytes = (b64: string) => Buffer.from(String(b64).replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("hex");
+      let onChain = "";
+      try { onChain = String(((await (pob.functions as any).get_public_key({ producer: dep.contract })).result ?? {}).value ?? ""); } catch { onChain = ""; }
+      let local = "";
+      try { local = nodePublicKey(DESK_NODE_KEY_FILE); } catch {}
+      log(`Desk address (the producer)  ${dep.contract}`);
+      log(`Key on record with PoB       ${onChain || "none yet"}`);
+      if (local) log(`Desk node's key              ${local}`);
+      if (!onChain) log("\n… not registered yet. Run: npm run desk -- register-key node --send");
+      else if (local && bytes(onChain) === bytes(local)) log("\n✔ Registered: the desk node signs blocks for the desk address.");
+      else if (local) { log("\n✖ A DIFFERENT key is on record. Run: npm run desk -- register-key node --send"); process.exitCode = 1; }
       return;
     }
     case "node-status": {
