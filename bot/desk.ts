@@ -6,6 +6,7 @@
  *   npm run desk -- status                       the desk right now: KOIN available, VHP producing, swaps, settings
  *   npm run desk -- deploy [--send]              upload and set up the desk contract (fee 3%, timelock 48 h)
  *   npm run desk -- fund koin|vhp <amount> [--send]      send KOIN or VHP from the admin wallet into the desk
+ *   npm run desk -- try-swap <vhp> [--send]      swap from the test player wallet (PLAYER_WIF), like a visitor would
  *   npm run desk -- withdraw koin|vhp <amount> [--send]  move KOIN or VHP out — always to the treasury address
  *   npm run desk -- fee <percent> [--send]       e.g. fee 3   (never above 10)
  *   npm run desk -- limits <min> <max> [--send]  smallest / largest single swap in VHP (max 0 = no fixed cap)
@@ -248,6 +249,26 @@ async function main() {
       const t = token(0), amt = units(arg(1, "amount"));
       return asOwner(`Send ${showKoin(amt)} ${t.toUpperCase()} from the admin wallet into the desk.${t === "koin" ? " (Moving KOIN needs this wallet's Mana ≥ the amount; the Mana moves with it.)" : ""}`,
         (o, d) => [{ contract: t === "koin" ? d.koin : d.vhp, abi: tokenAbi, method: "transfer", args: { from: o, to: d.contract, value: amt } }], send);
+    }
+    case "try-swap": {
+      // Exactly what the website does: approve the VHP + swap, in one transaction, never accepting less than quoted.
+      const { dep, rpc, chain, abi } = deployed();
+      if (send && isMainnet(rpc) && E.CONFIRM_MAINNET !== "yes") throw new Error("MAINNET: add CONFIRM_MAINNET=yes to .env first.");
+      const player = Signer.fromWif(need("PLAYER_WIF"));
+      player.provider = chain.provider;
+      const amt = units(arg(0, "VHP amount"));
+      const q = await readDesk(chain, abi, "quote", { vhp_amount: amt });
+      log(`Test swap from ${player.getAddress()}: ${showKoin(amt)} VHP → ${showKoin(q.koin_out)} KOIN (fee ${showKoin(q.fee)} VHP)`);
+      if (q.problem) throw new Error(`The desk would refuse it: ${q.problem}`);
+      if (!send) { log("\nDry run only — nothing was sent. Add --send to send it."); return; }
+      const before = await chain.mana(player.getAddress());
+      const r = await chain.send([
+        { contract: dep.vhp, abi: tokenAbi, method: "approve", args: { owner: player.getAddress(), spender: dep.contract, value: amt } },
+        { contract: dep.contract, abi, method: "swap", args: { from: player.getAddress(), vhp_amount: amt, min_koin_out: q.koin_out } },
+      ], [player], { rcLimitKoin: 3 });
+      log(r.ok ? `✔ swapped (Mana used ${showKoin(r.rcUsed)}, player had ${showKoin(before)})  transaction ${r.txId}` : `✖ ${r.error}`);
+      if (!r.ok) process.exitCode = 1;
+      return;
     }
     case "withdraw": {
       const t = token(0), amt = units(arg(1, "amount"));

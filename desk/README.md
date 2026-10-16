@@ -72,26 +72,22 @@ The bot wallet pays the Mana for the upload, about 20 KOIN of Mana. The desk sta
 - 48-hour timelock
 - treasury = your admin address, or `DESK_TREASURY` in `.env`
 
-**5. Publish the page.** Commit and push `desk-data/deployment.json`. `site/swap.html` reads it and goes live from preview mode within minutes.
-
-**6. Fund it**
+**5. Small trial first (the page stays unpublished)**
 ```
-npm run desk -- fund koin 500 --send    ← the liquidity people swap into
-npm run desk -- fund vhp 1000 --send    ← optional: VHP that starts producing right away
+npm run desk -- fund koin 20 --send       ← a little liquidity
+npm run desk -- try-swap 1 --send         ← swap 1 VHP from your test player wallet, exactly like the website would
+npm run desk -- status                    ← 1 swap, 0.97 KOIN out, 1 VHP in
+npm run desk -- withdraw koin 5 --send    ← lands in the treasury
 ```
-Moving KOIN needs Mana at least equal to the amount, and the Mana moves with the KOIN.
 
-**7. Start producing**
+**6. Start producing**
 ```
 npm run desk -- node-key
 npm run desk -- register-key node --send
 ```
+Then watch the desk produce its first blocks on https://koinosscan.com.
 
-**8. Check and try it**
-```
-npm run desk -- status
-```
-Then open `site/swap.html`, connect Kondor with your test player wallet, and swap 1 VHP.
+**7. Go public — only when you're satisfied.** Merge the `swap-desk` branch into `main` and commit `desk-data/deployment.json`. GitHub Pages then publishes `site/swap.html`. Fund it properly at that point (`fund koin …`).
 
 ## Day-to-day commands
 
