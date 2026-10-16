@@ -10,3 +10,4 @@ game-data/blocks.csv
 rehearsal-data/
 .env.testnet
 testnet-data/
+game/kpred.pb
