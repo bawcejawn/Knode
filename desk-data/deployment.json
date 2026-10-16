@@ -1,0 +1,13 @@
+{
+  "network": "mainnet",
+  "rpc": "https://api.koinos.io",
+  "contract": "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR",
+  "owner": "1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717",
+  "treasury": "1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717",
+  "koin": "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK",
+  "vhp": "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq",
+  "pob": "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv",
+  "wasmSha256": "05039d743d383538d0078a89e3bfde56e052c0eb478cf14dad63afd366b761e4",
+  "uploaded": true,
+  "deployedAt": "2026-10-16T23:20:00.000Z"
+}

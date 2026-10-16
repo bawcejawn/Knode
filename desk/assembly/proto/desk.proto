@@ -1,0 +1,201 @@
+syntax = "proto3";
+
+package desk;
+
+import "koinos/options.proto";
+
+// ════════════════════════════ Stored objects ════════════════════════════
+
+message config_object {
+  bytes owner = 1 [(koinos.btype) = ADDRESS];          // runs the desk: fee, limits, pause, node key, upgrades
+  bytes treasury = 2 [(koinos.btype) = ADDRESS];       // the ONLY address the desk's KOIN/VHP can ever be withdrawn to
+  uint32 fee_bps = 3;                                  // fee in basis points: 300 = 3%
+  uint64 min_swap = 4 [jstype = JS_STRING];            // smallest swap in VHP units (1 VHP = 100000000)
+  uint64 max_swap = 5 [jstype = JS_STRING];            // largest single swap in VHP units; 0 = only limited by what is available
+  bool paused = 6;                                     // stops swaps (withdrawals to the treasury still work)
+  uint64 timelock_length = 7 [jstype = JS_STRING];     // delay (ms) for treasury changes and code upgrades
+}
+
+message totals_object {
+  uint64 swaps = 1 [jstype = JS_STRING];               // number of swaps
+  uint64 vhp_in = 2 [jstype = JS_STRING];              // all VHP received from swaps
+  uint64 koin_out = 3 [jstype = JS_STRING];            // all KOIN paid out by swaps
+  uint32 next_slot = 4;                                // where the next swap goes in the recent-swaps list
+}
+
+message swap_record {
+  bytes account = 1 [(koinos.btype) = ADDRESS];
+  uint64 vhp_in = 2 [jstype = JS_STRING];
+  uint64 koin_out = 3 [jstype = JS_STRING];
+  uint64 time = 4 [jstype = JS_STRING];                // block time (ms)
+}
+
+message timelock_object {
+  bytes hash = 1 [(koinos.btype) = HEX];               // upgrades: sha256 of the announced bytecode
+  bytes address = 2 [(koinos.btype) = ADDRESS];        // treasury change: the new treasury
+  uint64 eta = 3 [jstype = JS_STRING];                 // time (ms) from which it can be carried out
+}
+
+message ledger_object {                               // test builds only: simulated token balances
+  uint64 amount = 1 [jstype = JS_STRING];
+}
+
+// ════════════════════════════ Read-only ════════════════════════════
+
+// @description The desk's settings, totals and how much KOIN can be swapped out right now.
+// @read-only true
+message get_state_arguments {}
+
+message get_state_result {
+  config_object config = 1;
+  totals_object totals = 2;
+  uint64 koin_balance = 3 [jstype = JS_STRING];
+  uint64 vhp_balance = 4 [jstype = JS_STRING];
+  uint64 mana = 5 [jstype = JS_STRING];
+  uint64 available = 6 [jstype = JS_STRING];           // most KOIN one swap can pay out right now
+  uint64 max_vhp_in = 7 [jstype = JS_STRING];          // largest VHP amount one swap can take right now
+  uint64 time = 8 [jstype = JS_STRING];
+  timelock_object upgrade = 9;
+  timelock_object treasury_change = 10;
+}
+
+// @description What a swap of this many VHP would pay right now.
+// @read-only true
+message quote_arguments {
+  uint64 vhp_amount = 1 [jstype = JS_STRING];
+}
+
+message quote_result {
+  uint64 koin_out = 1 [jstype = JS_STRING];
+  uint64 fee = 2 [jstype = JS_STRING];
+  string problem = 3;                                  // empty when the swap would go through
+}
+
+// @description The most recent swaps, newest first.
+// @read-only true
+message get_recent_arguments {}
+
+message get_recent_result {
+  repeated swap_record swaps = 1;
+}
+
+// ════════════════════════════ Setup ════════════════════════════
+
+// @description One-time setup, signed by the contract's own key.
+// @read-only false
+message init_arguments {
+  bytes owner = 1 [(koinos.btype) = ADDRESS];
+  bytes treasury = 2 [(koinos.btype) = ADDRESS];
+  uint32 fee_bps = 3;
+  uint64 min_swap = 4 [jstype = JS_STRING];
+  uint64 max_swap = 5 [jstype = JS_STRING];
+  uint64 timelock_length = 6 [jstype = JS_STRING];
+}
+
+message init_result {}
+
+// ════════════════════════════ Swapping ════════════════════════════
+
+// @description Swap VHP for KOIN. Approve this contract for the VHP in the same transaction. Fails instead of paying less than min_koin_out.
+// @read-only false
+message swap_arguments {
+  bytes from = 1 [(koinos.btype) = ADDRESS];
+  uint64 vhp_amount = 2 [jstype = JS_STRING];
+  uint64 min_koin_out = 3 [jstype = JS_STRING];
+}
+
+message swap_result {
+  uint64 koin_out = 1 [jstype = JS_STRING];
+  uint64 fee = 2 [jstype = JS_STRING];
+}
+
+// ════════════════════════════ Owner ════════════════════════════
+
+// @description Send KOIN from the desk to the treasury (owner only; capped by the desk's Mana).
+// @read-only false
+message withdraw_koin_arguments {
+  uint64 amount = 1 [jstype = JS_STRING];
+}
+
+message withdraw_koin_result {
+  uint64 amount = 1 [jstype = JS_STRING];
+}
+
+// @description Send VHP from the desk to the treasury (owner only).
+// @read-only false
+message withdraw_vhp_arguments {
+  uint64 amount = 1 [jstype = JS_STRING];
+}
+
+message withdraw_vhp_result {}
+
+// @description Set the fee in basis points, at most 1000 = 10% (owner only).
+// @read-only false
+message set_fee_arguments {
+  uint32 fee_bps = 1;
+}
+
+message set_fee_result {}
+
+// @description Set the smallest and largest single swap in VHP units; max 0 = no fixed cap (owner only).
+// @read-only false
+message set_limits_arguments {
+  uint64 min_swap = 1 [jstype = JS_STRING];
+  uint64 max_swap = 2 [jstype = JS_STRING];
+}
+
+message set_limits_result {}
+
+// @description Pause or resume swaps (owner only).
+// @read-only false
+message set_paused_arguments {
+  bool paused = 1;
+}
+
+message set_paused_result {}
+
+// @description Register the desk's block-producer key with Proof-of-Burn (owner only).
+// @read-only false
+message register_key_arguments {
+  bytes public_key = 1 [(koinos.btype) = BASE64];
+}
+
+message register_key_result {}
+
+// @description Announce a new treasury address; it takes effect with apply_treasury after the timelock (owner only).
+// @read-only false
+message schedule_treasury_arguments {
+  bytes treasury = 1 [(koinos.btype) = ADDRESS];
+}
+
+message schedule_treasury_result {
+  uint64 eta = 1 [jstype = JS_STRING];
+}
+
+// @description Make the announced treasury change after its timelock (owner only).
+// @read-only false
+message apply_treasury_arguments {}
+
+message apply_treasury_result {}
+
+// @description Cancel an announced treasury change (owner only).
+// @read-only false
+message cancel_treasury_arguments {}
+
+message cancel_treasury_result {}
+
+// @description Announce a code upgrade by the sha256 of its bytecode; it can be uploaded after the timelock (owner only).
+// @read-only false
+message schedule_upgrade_arguments {
+  bytes hash = 1 [(koinos.btype) = HEX];
+}
+
+message schedule_upgrade_result {
+  uint64 eta = 1 [jstype = JS_STRING];
+}
+
+// @description Cancel an announced code upgrade (owner only).
+// @read-only false
+message cancel_upgrade_arguments {}
+
+message cancel_upgrade_result {}

@@ -1,0 +1,44 @@
+# On every push: build the swap desk contract, run its tests on the simulated chain, and run the offline safety check.
+name: Desk contract tests
+
+on:
+  push:
+    paths: ["desk/**", ".github/workflows/desk-test.yml"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+      - name: npm test
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test.log
+      - name: Show what failed (as annotations on the run page)
+        if: failure()
+        run: |
+          sed 's/\x1b\[[0-9;]*m//g' test.log | grep -E "❌|\[Actual\]|\[Expected\]|ERROR|Error|error|Tests\]" | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+      - name: npm run check
+        run: |
+          set -o pipefail
+          npm run check 2>&1 | tee check.log
+      # A short summary on the run page (readable without opening the logs).
+      - name: Summary
+        if: always()
+        run: |
+          strip() { sed 's/\x1b\[[0-9;]*m//g' "$1" 2>/dev/null; }
+          echo "::notice title=Tests::$(strip test.log | grep -E '\[(Groups|Result|Tests|Files)\]' | tr -s ' ' | tr '\n' ' ')"
+          echo "::notice title=Offline check::$(strip check.log | grep -cE '^PASS') PASS, $(strip check.log | grep -cE '^FAIL') FAIL — $(strip check.log | grep -E 'contract size' | head -1)"
+          strip check.log | grep -E '^FAIL' | while IFS= read -r l; do echo "::error title=Offline check::$l"; done
+          sha=$(sha256sum build/release/contract.wasm 2>/dev/null | cut -d' ' -f1); echo "::notice title=Release build sha256::$sha"

@@ -1,0 +1,21 @@
+{
+  "name": "kpred-desk",
+  "version": "0.1.0",
+  "description": "Knode swap desk: swap VHP for the desk's KOIN at 1:1 minus a 3% fee. The desk's VHP produces blocks, which refills its KOIN.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prebuild": "node scripts/prebuild.cjs",
+    "build": "koinos-sdk-as-cli build-all release 0 desk.proto --generate_authorize && node scripts/make-abi.cjs",
+    "test": "npm run build && node node_modules/@as-pect/cli/bin/asp.js --config as-pect.config.js",
+    "check": "tsx scripts/check.ts"
+  },
+  "dependencies": {
+    "koilib": "9.4.1"
+  },
+  "devDependencies": {
+    "@koinos/sdk-as": "1.5.1",
+    "@koinos/sdk-as-cli": "1.0.2",
+    "tsx": "4.23.15"
+  }
+}
