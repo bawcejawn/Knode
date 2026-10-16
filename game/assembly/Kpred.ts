@@ -903,11 +903,13 @@ export class Kpred {
     s.koin -= koinAmt;
     if (s.vhp == 0 && s.koin == 0) s.eta = 0;
     this.seedWd.put(s);
+    // KOIN first: topping up VHP below may burn spare KOIN, and the KOIN being returned is no longer counted as
+    // seed, so it must already be gone before that happens.
+    Tokens.sendKoin(c.seed_owner!, koinAmt);
     if (vhpAmt > 0) {
       this.ensureVhp(vhpAmt);
       Tokens.sendVhp(c.seed_owner!, vhpAmt);
     }
-    Tokens.sendKoin(c.seed_owner!, koinAmt);
     const r = new kpred.execute_seed_withdrawal_result();
     r.vhp = vhpAmt;
     r.koin = koinAmt;

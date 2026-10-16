@@ -393,17 +393,21 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   check(feeOk && shareOk && (await sim.ledgerGet(1, ownerA)) - feeBefore === BigInt(T2.creator_fee ?? 0) && (await sim.ledgerGet(2, ownerA)) - shareBefore === BigInt(T2.owner_share ?? 0),
     `the owner collected exactly the creator fee (${showKoin(T2.creator_fee)} KOIN) and the owner share (${showKoin(T2.owner_share)} VHP)`);
   const seedV0 = await sim.ledgerGet(2, seedA), seedK0 = await sim.ledgerGet(1, seedA);
-  const req = await act(seedOwner, "request_seed_withdrawal", { vhp: String(T2.seed_vhp), koin: String(T2.seed_koin) });
+  let lastErr = "";
+  const actE = async (who: Signer, method: string, args: any) => { const r = await sim.sendAs([{ method, args }], [who.getAddress()], false); if (!r.ok) lastErr = `${method}: ${r.error}`; return r.ok; };
+  const req = await actE(seedOwner, "request_seed_withdrawal", { vhp: String(T2.seed_vhp), koin: String(T2.seed_koin) });
   const early = await act(seedOwner, "execute_seed_withdrawal", {});
   const tNow = N((await sim.read("get_state", {})).time);
   sim.setHeight(sim.height + 60_000, tNow + 48 * HOUR_MS + 60_000);
   for (let i = 0; i < 3; i++) {
     const s = (await sim.read("get_state", {})).totals;
     if (BigInt(s.seed_vhp ?? 0) === 0n && BigInt(s.seed_koin ?? 0) === 0n) break;
-    await act(seedOwner, "execute_seed_withdrawal", {});
+    await actE(seedOwner, "execute_seed_withdrawal", {});
   }
   check(req && !early && (await sim.ledgerGet(2, seedA)) - seedV0 === BigInt(T2.seed_vhp) && (await sim.ledgerGet(1, seedA)) - seedK0 === BigInt(T2.seed_koin),
-    "the seed could not leave before its 48-hour timelock, then came back in full (170,000 VHP + 20,000 KOIN)");
+    "the seed could not leave before its 48-hour timelock, then came back in full (170,000 VHP + 20,000 KOIN)" +
+    ` [request ${req}, early ${early}, VHP back ${showKoin((await sim.ledgerGet(2, seedA)) - seedV0)}, KOIN back ${showKoin((await sim.ledgerGet(1, seedA)) - seedK0)}, ` +
+    `left ${JSON.stringify((({ seed_vhp, seed_koin }) => ({ seed_vhp, seed_koin }))((await sim.read("get_state", {})).totals))}, last error ${lastErr || "none"}]`);
   const s3 = await sim.read("get_state", {});
   const owed3 = ["total_stake", "seed_vhp", "seed_koin", "owner_share", "creator_fee", "pots_outstanding"].reduce((s, k) => s + BigInt(s3.totals[k] ?? 0), 0n);
   check(BigInt(s3.vhp_balance) + BigInt(s3.koin_balance) >= owed3,

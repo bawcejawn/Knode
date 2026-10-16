@@ -507,6 +507,24 @@ describe("seed", () => {
     expect(k.get_state(new kpred.get_state_arguments()).totals!.seed_vhp).toBe(600 * VHP);
   });
 
+  it("the whole seed (VHP and KOIN together) comes back even when production has turned some VHP into KOIN", () => {
+    const k = setup();
+    as(SEED);
+    k.seed_deposit_vhp(new kpred.seed_deposit_vhp_arguments(100 * VHP));
+    k.seed_deposit_koin(new kpred.seed_deposit_koin_arguments(50 * VHP));
+    // block production turned 30 of the seed's VHP into KOIN (plus a 1 KOIN reward)
+    Tokens.testSet(VHP_TAG, CONTRACT, 70 * VHP);
+    give(KOIN_TAG, CONTRACT, 31 * VHP);
+    give(MANA_TAG, CONTRACT, 31 * VHP);
+    const eta = k.request_seed_withdrawal(new kpred.request_seed_withdrawal_arguments(100 * VHP, 50 * VHP)).eta;
+    at(eta / MS);
+    const r = k.execute_seed_withdrawal(new kpred.execute_seed_withdrawal_arguments());
+    expect(r.vhp).toBe(100 * VHP);
+    expect(r.koin).toBe(50 * VHP);
+    expect(Tokens.testGet(VHP_TAG, SEED)).toBe(5000 * VHP);
+    expect(Tokens.testGet(KOIN_TAG, SEED)).toBe(500 * VHP);
+  });
+
   it("a KOIN seed withdrawal pays what KOIN is on hand and the rest later, never more than the seed", () => {
     const k = setup();
     as(SEED);

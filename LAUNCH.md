@@ -33,7 +33,7 @@ cd C:\kprediction
 npm install
 cd game
 npm install
-npm test                 # expect: [Tests]: 43 / 43  ✔ Pass!
+npm test                 # expect: [Tests]: 44 / 44  ✔ Pass!
 npm run check            # expect: All offline checks passed.
 npm run build:sim
 cd ..

@@ -38,6 +38,10 @@ check"). If a bug ever tried to pay out more than was earned, the whole transact
    bot can post questions, and the owner could always void one, so this was low risk.)
 4. **Seed KOIN withdrawal can't get stuck.** If part of the seed KOIN was temporarily held as VHP, the withdrawal now
    pays what's on hand and the rest later, instead of failing.
+   Also found by the rehearsal's new "everyone leaves" test: when the seed's VHP **and** KOIN were withdrawn together,
+   the contract topped up its VHP by burning KOIN *before* sending the KOIN back, so the KOIN transfer then failed and
+   the whole withdrawal was refused. Nothing was lost (a failed transaction changes nothing), but the seed could have
+   been stuck. It now sends the KOIN first. A test reproduces the old failure and passes with the fix.
 5. **Fairer withdrawals mid-week.** Taking back only a top-up that hasn't started counting yet no longer cancels that
    week's answers. Touching the stake that counts this week still does.
 6. **Website:** withdraw accepts decimals and has a "Withdraw all" button; the stake/KOIN choice is hidden when
@@ -69,8 +73,8 @@ check"). If a bug ever tried to pay out more than was earned, the whole transact
 
 ## 6. Test results
 
-- Contract tests: **43 / 43 pass**, including the new ones for decimal withdrawals, upgrade protections, the window
-  overflow and the seed KOIN shortfall.
+- Contract tests: **44 / 44 pass**, including the new ones for decimal withdrawals, upgrade protections, the window
+  overflow, the seed KOIN shortfall and the seed VHP + KOIN withdrawal.
 - Offline checks: all pass.
 - Two-week rehearsal on real Koinos block history, ending with a full exit (every player withdraws everything, the owner
   collects fee and share, the seed leaves after its timelock): see the latest run in the deploy notes.
