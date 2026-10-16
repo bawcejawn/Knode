@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New to Koinos? Start here · Knode</title>
+  <meta name="description" content="From dollars in the bank to playing Knode: get a wallet, get KOIN, cross the Vortex Bridge, and explore Koinos.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="start.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href="./" aria-label="Knode home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="brand-name">Knode</span>
+      </a>
+      <nav class="tabs" aria-label="Sections">
+        <a href="#song">The song</a>
+        <a href="#routes">Ways in</a>
+        <a href="#steps">Step by step</a>
+        <a href="#bridge">The bridge</a>
+        <a href="#explore">Explore</a>
+      </nav>
+      <a class="btn btn-wallet" href="./">Play Knode</a>
+    </div>
+  </header>
+
+  <main class="wrap start">
+    <section class="start-hero">
+      <p class="week-pill">New to Koinos?</p>
+      <h1>From the bank to the block.</h1>
+      <p class="lede">Koinos is a blockchain where using apps is free: instead of paying a fee for every action, your KOIN gives you <b>Mana</b>, which refills on its own. Here's how to get from dollars (or the crypto you already have) onto Koinos, and what to do once you're there.</p>
+    </section>
+
+    <!-- the song -->
+    <section class="panel song" id="song" aria-labelledby="song-title">
+      <div class="song-head">
+        <div>
+          <h2 id="song-title">“Get on Koinos”</h2>
+          <p class="muted">Press play and sing along. Every line is a step.</p>
+        </div>
+        <audio id="song-audio" controls preload="metadata" src="media/get-on-koinos.mp3"></audio>
+      </div>
+      <ol class="lyrics" id="lyrics"></ol>
+    </section>
+
+    <!-- routes -->
+    <section id="routes" class="start-sec" aria-labelledby="routes-title">
+      <h2 id="routes-title" class="sec-title">Three ways in</h2>
+      <div class="routes">
+        <article class="route">
+          <span class="route-tag">From dollars</span>
+          <h3>Bank → exchange → bridge</h3>
+          <ol class="flow">
+            <li><b>Bank account</b><span>dollars</span></li>
+            <li><b>A regulated exchange</b><span>buy ETH or USDT (e.g. Coinbase, Kraken)</span></li>
+            <li><b>MetaMask</b><span>send it to your Ethereum wallet</span></li>
+            <li><b>Vortex Bridge</b><span>cross to Koinos</span></li>
+            <li><b>Kondor</b><span>swap to KOIN on KoinDX or Trade Koinos</span></li>
+          </ol>
+        </article>
+        <article class="route">
+          <span class="route-tag">Already in crypto</span>
+          <h3>Ethereum → Koinos</h3>
+          <ol class="flow">
+            <li><b>ETH, USDT or KOIN on Ethereum</b><span>KOIN trades on Uniswap too</span></li>
+            <li><b>Vortex Bridge</b><span>MetaMask on one side, Kondor on the other</span></li>
+            <li><b>Kondor</b><span>your tokens arrive on Koinos</span></li>
+          </ol>
+        </article>
+        <article class="route">
+          <span class="route-tag">Shortest path</span>
+          <h3>Exchange → Kondor</h3>
+          <ol class="flow">
+            <li><b>An exchange that lists KOIN</b><span>e.g. MEXC; LCX (KOIN/EUR, not open to US residents)</span></li>
+            <li><b>Withdraw KOIN</b><span>to your Kondor address, on the Koinos network</span></li>
+          </ol>
+        </article>
+      </div>
+      <p class="muted small">Exchange listings change: check that an exchange is available where you live before signing up. This is general information, not financial advice.</p>
+    </section>
+
+    <!-- steps -->
+    <section id="steps" class="start-sec" aria-labelledby="steps-title">
+      <h2 id="steps-title" class="sec-title">Step by step</h2>
+      <ol class="steps">
+        <li><h3>Get a Koinos wallet</h3><p>Install the <a href="https://chromewebstore.google.com/search/kondor" target="_blank" rel="noopener">Kondor</a> browser extension, or create a free, sponsored account at <a href="https://usekoinos.com/wallet" target="_blank" rel="noopener">Use Koinos</a>. Write your secret recovery words on paper and keep them offline.</p></li>
+        <li><h3>Get some crypto</h3><p>On a regulated exchange, link your bank and buy ETH or USDT. Or buy KOIN directly where it's listed. Start small while you learn.</p></li>
+        <li><h3>Cross the bridge</h3><p>Use <a href="https://vortexbridge.io/bridge" target="_blank" rel="noopener">Vortex Bridge</a> to move ETH, USDT or KOIN from Ethereum to Koinos. The walkthrough is below.</p></li>
+        <li><h3>Swap to KOIN</h3><p>If you bridged ETH or USDT, swap it for KOIN on <a href="https://koindx.com/" target="_blank" rel="noopener">KoinDX</a> or <a href="https://tradekoinos.com/" target="_blank" rel="noopener">Trade Koinos</a>.</p></li>
+        <li><h3>Mana: free actions</h3><p>Holding KOIN gives you Mana, which pays for your transactions and refills over a few days. Low on Mana? Kondor has a free-Mana option.</p></li>
+        <li><h3>Play Knode</h3><p>Open <a href="./">Knode</a>, connect Kondor and stake at least 1 VHP. You can stake KOIN too; it's turned into VHP for you. Then answer the daily questions.</p></li>
+      </ol>
+    </section>
+
+    <!-- bridge walkthrough -->
+    <section id="bridge" class="start-sec" aria-labelledby="bridge-title">
+      <h2 id="bridge-title" class="sec-title">Crossing the Vortex Bridge</h2>
+      <div class="bridge">
+        <ol class="bridge-steps">
+          <li><b>Open the bridge</b> at vortexbridge.io/bridge and choose the direction: Ethereum → Koinos to come in, Koinos → Ethereum to go out.</li>
+          <li><b>Connect both wallets:</b> MetaMask for Ethereum, Kondor for Koinos. The receiving address fills in by itself. Check it is yours.</li>
+          <li><b>Pick the token and amount</b> (KOIN, ETH or USDT), then submit and confirm in your wallet.</li>
+          <li><b>Wait for the guardians.</b> Independent guardian nodes watch both chains; 5 of 7 must sign. About 15 minutes from Ethereum, about 3 minutes from Koinos.</li>
+          <li><b>Claim, then redeem</b> on the receiving side. Your tokens arrive in that wallet.</li>
+        </ol>
+        <aside class="bridge-note panel">
+          <h3>Good to know</h3>
+          <ul>
+            <li>Ethereum charges a gas fee (in ETH) for the Ethereum side. The Koinos side uses Mana.</li>
+            <li>Bridged ETH and USDT on Koinos are separate tokens: add them in Kondor to see them.</li>
+            <li>Only use the bridge through its official address, and send a small test amount first.</li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+
+    <!-- explore -->
+    <section id="explore" class="start-sec" aria-labelledby="explore-title">
+      <h2 id="explore-title" class="sec-title">Explore Koinos</h2>
+      <div class="eco-grid" id="eco-grid"></div>
+    </section>
+
+    <section class="start-sec">
+      <div class="panel safety">
+        <h2>Stay safe</h2>
+        <ul>
+          <li><b>Never share your recovery words or private key.</b> No app, team member or support chat needs them. Knode never asks.</li>
+          <li>Type addresses of sites yourself or use the links here. Scam copies of popular sites are common.</li>
+          <li>Before sending, check the network (Koinos or Ethereum) and the first and last characters of the address.</li>
+          <li>Start with a small amount until each step feels familiar.</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-row">
+      <span>Knode runs fully on Koinos. Open source.</span>
+      <a href="./">Back to the game</a>
+    </div>
+  </footer>
+
+  <script>
+  (function () {
+    var LINES = [{"t": 4.0, "text": "Got some dollars in the bank? Let's make 'em move,", "part": "verse"}, {"t": 8.0, "text": "buy a little ETH and you're in the groove.", "part": "verse"}, {"t": 12.0, "text": "MetaMask on Ethereum, Kondor on Koinos,", "part": "verse"}, {"t": 16.0, "text": "Vortex in the middle, now watch your coins go!", "part": "verse"}, {"t": 20.0, "text": "Bank to the bridge, bridge to the block,", "part": "chorus"}, {"t": 24.0, "text": "Kondor in my pocket and I never stop,", "part": "chorus"}, {"t": 28.0, "text": "burn a little KOIN, watch the VHP grow,", "part": "chorus"}, {"t": 32.0, "text": "call the next block: Knode, let's go!", "part": "chorus"}, {"t": 36.0, "text": "Swap it on KoinDX, trade it on the book,", "part": "verse"}, {"t": 40.0, "text": "paint a little pixel art, take another look.", "part": "verse"}, {"t": 44.0, "text": "Mana fills right back, no gas to pay,", "part": "verse"}, {"t": 48.0, "text": "stake it on Knode and play every day!", "part": "verse"}, {"t": 52.0, "text": "Bank to the bridge, bridge to the block,", "part": "chorus"}, {"t": 56.0, "text": "Kondor in my pocket and I never stop,", "part": "chorus"}, {"t": 60.0, "text": "burn a little KOIN, watch the VHP grow,", "part": "chorus"}, {"t": 64.0, "text": "call the next block: Knode, let's go!", "part": "chorus"}];
+    var ol = document.getElementById("lyrics"), audio = document.getElementById("song-audio"), items = [];
+    LINES.forEach(function (l, i) {
+      var li = document.createElement("li");
+      li.textContent = l.text;
+      li.className = l.part;
+      if (i > 0 && LINES[i - 1].part !== l.part) li.classList.add("gap");
+      li.addEventListener("click", function () { audio.currentTime = l.t; audio.play(); });
+      ol.appendChild(li); items.push(li);
+    });
+    function tick() {
+      var t = audio.currentTime, cur = -1;
+      for (var i = 0; i < LINES.length; i++) if (t >= LINES[i].t) cur = i;
+      if (cur >= 0 && t > LINES[cur].t + 4.2) cur = -1;
+      items.forEach(function (li, i) { li.classList.toggle("now", i === cur); });
+    }
+    audio.addEventListener("timeupdate", tick);
+    audio.addEventListener("seeked", tick);
+    // the same Koinos project list as the game page (site/ads.json)
+    fetch("ads.json", { cache: "no-cache" }).then(function (r) { return r.ok ? r.json() : {}; }).then(function (a) {
+      var list = (a.ecosystem || []).concat(a.featured ? [a.featured] : []), grid = document.getElementById("eco-grid");
+      list.forEach(function (h) {
+        try { var u = new URL(h.link); if (u.protocol !== "https:") return; } catch (e) { return; }
+        var x = document.createElement("a"); x.className = "eco-item"; x.href = h.link; x.target = "_blank"; x.rel = "noopener";
+        var b = document.createElement("b"); b.textContent = h.name; var s = document.createElement("span"); s.textContent = h.tagline;
+        x.appendChild(b); x.appendChild(s); grid.appendChild(x);
+      });
+    }).catch(function () {});
+  })();
+  </script>
+</body>
+</html>
