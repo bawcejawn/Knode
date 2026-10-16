@@ -59,8 +59,8 @@ function loadGame(): Game {
       rpc: "https://api.koinos.io",
       weekOneStart: nextMonday(),
       lockBlocks: 14400,
-      // Monday..Sunday. 20 questions a week, Monday to Saturday; Sunday is results day.
-      questionsPerDay: [4, 4, 3, 3, 3, 3, 0],
+      // Monday..Sunday. 30 questions a week: 5 a day Monday to Saturday; Sunday is results day.
+      questionsPerDay: [5, 5, 5, 5, 5, 5, 0],
       tierByDay: ["Easy", "Easy", "Medium", "Medium", "Hard", "Hard", "Easy"],
       menus: { Easy: ["E1s", "E3", "E2s"], Medium: ["M1", "M9", "M10", "M4", "M5", "M6", "M7"], Hard: ["H1", "H3"] },
       // From the 120-day backtest (model v5). E3/M9 are fair but void ~6% (smaller nodes have more outages).

@@ -290,7 +290,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   check(offSchedule === 0, "every question's answers closed at exactly 00:00 UTC (Mon–Sat questions) and its blocks were all produced after that");
   const perWeek = new Map<number, number>();
   for (const q of posted) perWeek.set(q.week, (perWeek.get(q.week) ?? 0) + 1);
-  check([...perWeek.entries()].filter(([w]) => w < W).every(([, n]) => n >= 18 && n <= 20), `about 20 questions each week (${[...perWeek.entries()].filter(([w]) => w < W).map(([w, n]) => `week ${w + 1}: ${n}`).join(", ")})`);
+  check([...perWeek.entries()].filter(([w]) => w < W).every(([, n]) => n >= 28 && n <= 31), `about 30 questions each week (${[...perWeek.entries()].filter(([w]) => w < W).map(([w, n]) => `week ${w + 1}: ${n}`).join(", ")})`);
   let strayVoid = false;
   for (let id = 0; id < nq; id++) { const q = (await sim.read("get_question", { id })).question; if (String(q.params_hash) === strayHash) strayVoid = N(q.outcome) === 1000; }
   check(strayVoid, "the stray question was resolved as VOID, so its week could close");
