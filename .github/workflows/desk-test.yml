@@ -29,4 +29,16 @@ jobs:
         if: failure()
         run: |
           sed 's/\x1b\[[0-9;]*m//g' test.log | grep -E "❌|\[Actual\]|\[Expected\]|ERROR|Error|error|Tests\]" | head -40 | while IFS= read -r l; do echo "::error::$l"; done
-      - run: npm run check
+      - name: npm run check
+        run: |
+          set -o pipefail
+          npm run check 2>&1 | tee check.log
+      # A short summary on the run page (readable without opening the logs).
+      - name: Summary
+        if: always()
+        run: |
+          strip() { sed 's/\x1b\[[0-9;]*m//g' "$1" 2>/dev/null; }
+          echo "::notice title=Tests::$(strip test.log | grep -E '\[(Groups|Result|Tests|Files)\]' | tr -s ' ' | tr '\n' ' ')"
+          echo "::notice title=Offline check::$(strip check.log | grep -cE '^PASS') PASS, $(strip check.log | grep -cE '^FAIL') FAIL — $(strip check.log | grep -E 'contract size' | head -1)"
+          strip check.log | grep -E '^FAIL' | while IFS= read -r l; do echo "::error title=Offline check::$l"; done
+          sha=$(sha256sum build/release/contract.wasm 2>/dev/null | cut -d' ' -f1); echo "::notice title=Release build sha256::$sha"

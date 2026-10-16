@@ -308,3 +308,193 @@ describe("owner", () => {
     expect(d.authorize(up).value).toBe(false);       // cancelled
   });
 });
+
+// ═══════════════════════ edge cases and fund safety ═══════════════════════
+
+const C = Base58.decode("19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK");
+let seed: u64 = 12345;
+function rnd(n: u64): u64 { seed = seed * 6364136223846793005 + 1442695040888963407; return (seed >> 33) % n; }
+function totalOf(tag: u8): u64 {
+  return bal(tag, CONTRACT) + bal(tag, A) + bal(tag, B) + bal(tag, C) + bal(tag, THIEF) + bal(tag, TREASURY) + bal(tag, OWNER);
+}
+
+describe("fund safety", () => {
+  it("200 random swaps: no token is created or lost, every fee is exactly 3% rounded up, totals add up", () => {
+    const d = setup();
+    give(KOIN_TAG, CONTRACT, 9000 * VHP); give(MANA_TAG, CONTRACT, 9000 * VHP);   // 10,000 KOIN of liquidity
+    give(VHP_TAG, C, 2000 * VHP);
+    const koinBefore = totalOf(KOIN_TAG), vhpBefore = totalOf(VHP_TAG);
+    const deskKoin0 = bal(KOIN_TAG, CONTRACT), deskVhp0 = bal(VHP_TAG, CONTRACT);
+    let sumIn: u64 = 0, sumOut: u64 = 0;
+    for (let i = 0; i < 200; i++) {
+      const who = rnd(3) == 0 ? A : rnd(2) == 0 ? B : C;
+      const amount = VHP + rnd(40 * VHP);                         // 1 to 41 VHP, any number of decimals
+      const userKoin = bal(KOIN_TAG, who), userVhp = bal(VHP_TAG, who);
+      const r = swap(d, who, amount, 0);
+      // the fee is the smallest whole unit amount that is at least 3%
+      expect(r.fee * 10000 >= amount * 300).toBe(true);
+      expect((r.fee - 1) * 10000 < amount * 300).toBe(true);
+      expect(r.koin_out + r.fee).toBe(amount);
+      expect(bal(KOIN_TAG, who)).toBe(userKoin + r.koin_out);
+      expect(bal(VHP_TAG, who)).toBe(userVhp - amount);
+      sumIn += amount; sumOut += r.koin_out;
+    }
+    expect(totalOf(KOIN_TAG)).toBe(koinBefore);                    // nothing created, nothing lost
+    expect(totalOf(VHP_TAG)).toBe(vhpBefore);
+    expect(bal(KOIN_TAG, CONTRACT)).toBe(deskKoin0 - sumOut);
+    expect(bal(VHP_TAG, CONTRACT)).toBe(deskVhp0 + sumIn);
+    const t = d.get_state(new desk.get_state_arguments()).totals!;
+    expect(t.swaps).toBe(200);
+    expect(t.vhp_in).toBe(sumIn);
+    expect(t.koin_out).toBe(sumOut);
+    expect(bal(ALLOW_TAG, A) + bal(ALLOW_TAG, B) + bal(ALLOW_TAG, C)).toBe(0);  // every approval used up exactly
+  });
+
+  it("every owner action is refused for anyone else", () => {
+    const d = setup();
+    gD = d;
+    as(THIEF);
+    MockVM.commitTransaction();
+    expect(() => { gD!.withdraw_koin(new desk.withdraw_koin_arguments(VHP)); }).toThrow();
+    expect(() => { gD!.withdraw_vhp(new desk.withdraw_vhp_arguments(VHP)); }).toThrow();
+    expect(() => { gD!.set_fee(new desk.set_fee_arguments(0)); }).toThrow();
+    expect(() => { gD!.set_limits(new desk.set_limits_arguments(1, 0)); }).toThrow();
+    expect(() => { gD!.set_paused(new desk.set_paused_arguments(true)); }).toThrow();
+    expect(() => { const k = new Uint8Array(33); k[0] = 2; gD!.register_key(new desk.register_key_arguments(k)); }).toThrow();
+    expect(() => { gD!.schedule_treasury(new desk.schedule_treasury_arguments(Base58.decode("12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq"))); }).toThrow();
+    expect(() => { gD!.apply_treasury(new desk.apply_treasury_arguments()); }).toThrow();
+    expect(() => { gD!.cancel_treasury(new desk.cancel_treasury_arguments()); }).toThrow();
+    expect(() => { gD!.schedule_upgrade(new desk.schedule_upgrade_arguments(new Uint8Array(32))); }).toThrow();
+    expect(() => { gD!.cancel_upgrade(new desk.cancel_upgrade_arguments()); }).toThrow();
+    expect(bal(KOIN_TAG, CONTRACT)).toBe(1000 * VHP);
+    expect(bal(VHP_TAG, CONTRACT)).toBe(5000 * VHP);
+    expect(bal(KOIN_TAG, THIEF) + bal(VHP_TAG, THIEF)).toBe(0);
+  });
+
+  it("a leftover approval cannot be used by anyone else", () => {
+    const d = setup();
+    give(ALLOW_TAG, A, 200 * VHP);                    // A approved 200 but swaps only 100
+    as(A);
+    d.swap(new desk.swap_arguments(A, 100 * VHP, 0));
+    expect(bal(ALLOW_TAG, A)).toBe(100 * VHP);
+    as(THIEF);
+    gD = d; gWho = A; gAmt = 100 * VHP; gMin = 0;
+    MockVM.commitTransaction();
+    expect(() => { tryThrow(); }).toThrow();
+    expect(bal(VHP_TAG, A)).toBe(1900 * VHP);
+  });
+
+  it("a fee raised just before a swap lands cannot take more than the user agreed to", () => {
+    const d = setup();
+    const q = d.quote(new desk.quote_arguments(100 * VHP));   // the page shows 97 KOIN
+    as(OWNER);
+    d.set_fee(new desk.set_fee_arguments(1000));               // owner raises the fee to 10% in between
+    give(ALLOW_TAG, A, 100 * VHP);
+    as(A);
+    gD = d; gWho = A; gAmt = 100 * VHP; gMin = q.koin_out;
+    MockVM.commitTransaction();
+    expect(() => { tryThrow(); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("the price changed: you would receive less than your minimum");
+    expect(bal(VHP_TAG, A)).toBe(2000 * VHP);
+  });
+
+  it("the exact last KOIN can be swapped out; with no Mana nothing can", () => {
+    const d = setup();
+    Tokens.testSet(MANA_TAG, CONTRACT, 97 * VHP);
+    expect(swap(d, A, 100 * VHP, 97 * VHP).koin_out).toBe(97 * VHP);  // pays out exactly everything Mana allows
+    const s = d.get_state(new desk.get_state_arguments());
+    expect(s.available).toBe(0);
+    expect(s.max_vhp_in).toBe(0);
+    expect(d.quote(new desk.quote_arguments(VHP)).problem).toBe("not enough KOIN available right now");
+    // the owner can't withdraw KOIN without Mana either
+    as(OWNER);
+    gD = d;
+    MockVM.commitTransaction();
+    expect(() => { gD!.withdraw_koin(new desk.withdraw_koin_arguments(VHP)); }).toThrow();
+  });
+
+  it("tiny amounts never pay out for free; huge amounts never overflow", () => {
+    const d = setup();
+    as(OWNER);
+    d.set_limits(new desk.set_limits_arguments(1, 0));
+    const q = d.quote(new desk.quote_arguments(1));
+    expect(q.fee).toBe(1);
+    expect(q.koin_out).toBe(0);
+    expect(q.problem).toBe("amount too small");
+    expect(d.quote(new desk.quote_arguments(34)).koin_out).toBe(32);   // fee 1.02 → 2
+    expect(feeOf(u64.MAX_VALUE, 1000)).toBe(1844674407370955162);
+    expect(d.quote(new desk.quote_arguments(u64.MAX_VALUE)).problem).toBe("not enough KOIN available right now");
+    expect(d.quote(new desk.quote_arguments(0)).problem).toBe("amount must be positive");
+  });
+
+  it("pausing stops swaps but never stops withdrawals to the treasury", () => {
+    const d = setup();
+    as(OWNER);
+    d.set_paused(new desk.set_paused_arguments(true));
+    d.withdraw_vhp(new desk.withdraw_vhp_arguments(10 * VHP));
+    expect(d.withdraw_koin(new desk.withdraw_koin_arguments(10 * VHP)).amount).toBe(10 * VHP);
+    expect(bal(VHP_TAG, TREASURY)).toBe(10 * VHP);
+    expect(bal(KOIN_TAG, TREASURY)).toBe(10 * VHP);
+  });
+
+  it("refuses bad settings", () => {
+    const d = setup();
+    as(OWNER);
+    gD = d;
+    MockVM.commitTransaction();
+    expect(() => { gD!.set_limits(new desk.set_limits_arguments(0, 0)); }).toThrow();
+    expect(() => { gD!.set_limits(new desk.set_limits_arguments(10 * VHP, 5 * VHP)); }).toThrow();
+    expect(() => { gD!.schedule_treasury(new desk.schedule_treasury_arguments(new Uint8Array(3))); }).toThrow();
+    expect(() => { gD!.apply_treasury(new desk.apply_treasury_arguments()); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("no treasury change announced");
+    expect(() => { gD!.register_key(new desk.register_key_arguments(new Uint8Array(20))); }).toThrow();
+    expect(() => { gD!.schedule_upgrade(new desk.schedule_upgrade_arguments(new Uint8Array(5))); }).toThrow();
+    expect(() => { gD!.withdraw_vhp(new desk.withdraw_vhp_arguments(0)); }).toThrow();
+    expect(() => { gD!.withdraw_koin(new desk.withdraw_koin_arguments(0)); }).toThrow();
+  });
+
+  it("before setup nothing works except reading; setup refuses a fee above 10%", () => {
+    MockVM.reset();
+    MockVM.setContractId(CONTRACT);
+    MockVM.setContractArguments(CONTRACT);
+    MockVM.setEntryPoint(0);
+    MockVM.setCaller(new chain.caller_data(new Uint8Array(0), chain.privilege.user_mode));
+    MockVM.setContractMetadata(new chain.contract_metadata_object(new Uint8Array(0), false, false, false, false));
+    MockVM.setHeadInfo(new chain.head_info(null, 0, 1));
+    at(1_000_000);
+    const d = new Desk();
+    expect(d.get_state(new desk.get_state_arguments()).max_vhp_in).toBe(0);
+    expect(d.authorize(new authority.authorize_arguments(authority.authorization_type.contract_upload)).value).toBe(false);
+    give(ALLOW_TAG, A, VHP);
+    give(VHP_TAG, A, VHP);
+    as(A);
+    gD = d; gWho = A; gAmt = VHP; gMin = 0;
+    MockVM.commitTransaction();
+    expect(() => { tryThrow(); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("not initialised");
+    expect(() => { gD!.init(new desk.init_arguments(OWNER, TREASURY, 1001, VHP, 0, TIMELOCK)); }).toThrow();
+    expect(() => { gD!.init(new desk.init_arguments(OWNER, TREASURY, 300, 0, 0, TIMELOCK)); }).toThrow();
+    expect(() => { gD!.init(new desk.init_arguments(OWNER, TREASURY, 300, VHP, 0, 0)); }).toThrow();
+    expect(() => { gD!.init(new desk.init_arguments(OWNER, new Uint8Array(0), 300, VHP, 0, TIMELOCK)); }).toThrow();
+  });
+
+  it("a stolen owner key: the thief can only pay the real treasury, and the owner empties the desk before a treasury change", () => {
+    const d = setup();
+    swap(d, A, 100 * VHP, 0);
+    as(OWNER);                                         // ← the thief, holding a copy of the owner key
+    d.withdraw_koin(new desk.withdraw_koin_arguments(100 * VHP));
+    expect(bal(KOIN_TAG, TREASURY)).toBe(100 * VHP);   // …only reaches YOUR treasury
+    expect(bal(KOIN_TAG, THIEF)).toBe(0);
+    const eta = d.schedule_treasury(new desk.schedule_treasury_arguments(THIEF)).eta;  // tries to redirect
+    // You see the alert and, well within the 48 h, move everything out to the treasury:
+    at(eta - 1);
+    const left = bal(KOIN_TAG, CONTRACT);
+    d.withdraw_koin(new desk.withdraw_koin_arguments(left));
+    d.withdraw_vhp(new desk.withdraw_vhp_arguments(bal(VHP_TAG, CONTRACT)));
+    at(eta);
+    d.apply_treasury(new desk.apply_treasury_arguments());
+    expect(bal(KOIN_TAG, CONTRACT) + bal(VHP_TAG, CONTRACT)).toBe(0);  // nothing left to take
+    expect(bal(KOIN_TAG, THIEF) + bal(VHP_TAG, THIEF)).toBe(0);
+    expect(bal(VHP_TAG, TREASURY)).toBe(5100 * VHP);
+  });
+});
