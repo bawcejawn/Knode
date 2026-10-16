@@ -260,3 +260,43 @@ dialog h2 { margin-bottom: 6px; }
 .ad-link img { max-width: 100%; height: auto; border: 0; border-radius: 8px; }
 .ad iframe { display: block; max-width: 100%; border: 0; border-radius: 8px; }
 .ad-label { font-size: .7rem; letter-spacing: .04em; text-transform: uppercase; }
+
+/* Koinos ecosystem ads (fill unsold slots) */
+.ad.ad-house { border: 0; background: none; padding: 0; align-items: stretch; }
+.house { --c: hsl(var(--h) 70% 52%); display: flex; align-items: center; gap: 16px; padding: 14px 18px; min-height: 76px; width: 100%;
+  border-radius: var(--r-md); text-decoration: none; color: var(--ink);
+  background: linear-gradient(120deg, color-mix(in srgb, var(--c) 20%, var(--surface)), var(--surface) 70%);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--c) 40%, var(--line)); transition: transform .12s ease, box-shadow .12s ease; }
+.house:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1.5px var(--c); }
+.house-mark { flex: none; display: grid; place-items: center; width: 48px; height: 48px; border-radius: 14px; background: var(--c);
+  color: #fff; font: 800 1.5rem/1 var(--display, inherit); }
+.house-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.house-text b { font-size: 1.05rem; }
+.house-text span { color: var(--muted); font-size: .92rem; }
+.house-cta { flex: none; font-weight: 700; color: var(--c); white-space: nowrap; }
+.ad-box.ad-house .house { flex-direction: column; justify-content: center; text-align: center; min-height: 250px; }
+.ad-box.ad-house .house-text { flex: none; }
+.ad.ad-house .ad-label { align-self: center; margin-top: 4px; }
+@media (max-width: 640px) { .house { flex-wrap: wrap; } .house-cta { width: 100%; } }
+
+/* fixed spot: run your own node */
+.kit-card { display: flex; flex-direction: column; gap: 6px; text-decoration: none; color: var(--ink);
+  box-shadow: inset 0 0 0 2px var(--violet); }
+.kit-card:hover { filter: brightness(1.04); }
+.kit-kicker { font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--violet); }
+.kit-card b { font-size: 1.2rem; }
+.kit-cta { font-weight: 700; color: var(--violet); }
+
+/* footer: every Koinos project */
+.eco { margin: 28px 0 8px; }
+.eco h2 { font-size: 1.1rem; margin: 0 0 12px; }
+.eco-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.eco-item { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: var(--r-md); text-decoration: none;
+  color: var(--ink); background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--line); }
+.eco-item:hover { box-shadow: inset 0 0 0 1.5px var(--violet); }
+.eco-item span { color: var(--muted); font-size: .85rem; }
+.ad.ad-house span { opacity: 1; font-weight: inherit; color: inherit; }
+.ad.ad-house .house-text span { color: var(--muted); font-weight: 500; }
+.ad.ad-house .house-cta { color: var(--c); font-weight: 700; }
+.ad.ad-house .house-mark { color: #fff; font-weight: 800; }
+@media (max-width: 640px) { .eco-grid { grid-template-columns: 1fr 1fr; } .eco-item span { display: none; } }

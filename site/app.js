@@ -312,10 +312,40 @@
       slot.classList.add("ad-filled");
     }
   }
+  // Koinos projects fill any slot nobody has bought, in a fresh random order on every page load.
+  function houseAd(slot, h) {
+    const link = httpsUrl(h.link);
+    if (!link) return;
+    const hueOf = (t) => { let x = 0; for (const c of t) x = (x * 31 + c.charCodeAt(0)) % 360; return x; };
+    slot.replaceChildren(el("a", { href: link, target: "_blank", rel: "noopener", class: "house", style: `--h: ${hueOf(h.name)}` },
+      el("span", { class: "house-mark", "aria-hidden": "true" }, h.name.slice(0, 1)),
+      el("span", { class: "house-text" }, el("b", {}, h.name), el("span", {}, h.tagline)),
+      el("span", { class: "house-cta" }, `${h.cta || "Visit"} →`)), el("small", { class: "ad-label" }, "Koinos ecosystem"));
+    slot.classList.add("ad-filled", "ad-house");
+  }
+  function shuffle(list) { const a = list.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+  let houseQueue = [];
+  function nextHouse() { if (!houseQueue.length) houseQueue = shuffle((ADS.ecosystem || []).filter((h) => h && h.name && h.link)); return houseQueue.shift(); }
+  function fillSlot(slot) {
+    fillAd(slot);
+    if (!slot.classList.contains("ad-filled")) { const h = nextHouse(); if (h) houseAd(slot, h); }
+  }
   async function loadAds() {
-    if (S.demo) return;
     try { const r = await fetch("ads.json", { cache: "no-cache" }); if (r.ok) ADS = await r.json(); } catch { ADS = {}; }
-    document.querySelectorAll("[data-ad-slot]").forEach(fillAd);
+    document.querySelectorAll("[data-ad-slot]").forEach(fillSlot);
+    // fixed spot: run your own node
+    const f = ADS.featured, kit = $("#kit-card"), fl = f && httpsUrl(f.link);
+    if (fl) {
+      kit.href = fl;
+      kit.replaceChildren(el("span", { class: "kit-kicker" }, "Run your own node"), el("b", {}, f.name), el("span", { class: "muted" }, f.tagline), el("span", { class: "kit-cta" }, `${f.cta || "Visit"} →`));
+      kit.hidden = false;
+    }
+    // footer: every project
+    const eco = (ADS.ecosystem || []).concat(f ? [f] : []).filter((h) => h && h.name && httpsUrl(h.link));
+    if (eco.length) {
+      $("#eco-grid").replaceChildren(...eco.map((h) => el("a", { href: httpsUrl(h.link), target: "_blank", rel: "noopener", class: "eco-item" }, el("b", {}, h.name), el("span", {}, h.tagline))));
+      document.querySelector(".eco").hidden = false;
+    }
   }
 
   // ═══════════════ stake dialog ═══════════════
@@ -430,7 +460,7 @@
     oq.replaceChildren(...(open.length ? open.map((q) => questionCard(q, "open")) : [el("div", { class: "empty" }, `No open questions right now. New questions arrive Monday to Saturday at ${localHour(12)} your time.`)]));
     if (open.length > 2) {
       // One slot element for the page's lifetime, so re-rendering never reloads the ad (no inflated impressions).
-      if (!S.inFeedAd) { S.inFeedAd = el("aside", { class: "ad ad-inline", "data-ad-slot": "in-feed", "aria-label": "Advertisement" }, el("span", {}, "Ad space"), el("small", {}, "in-feed")); fillAd(S.inFeedAd); }
+      if (!S.inFeedAd) { S.inFeedAd = el("aside", { class: "ad ad-inline", "data-ad-slot": "in-feed", "aria-label": "Advertisement" }, el("span", {}, "Ad space"), el("small", {}, "in-feed")); if (ADS.ecosystem) fillSlot(S.inFeedAd); }
       oq.insertBefore(S.inFeedAd, oq.children[2]);
     }
     $("#locked-questions").replaceChildren(...(locked.length ? locked.map((q) => questionCard(q, "locked")) : [el("div", { class: "empty" }, "Nothing waiting. Answered questions show up here until their result is in.")]));

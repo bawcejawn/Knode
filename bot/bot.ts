@@ -71,6 +71,8 @@ type BotState = {
   checkedUpTo: number; orphans: number[]; lastCompound: number; warnings: string[];
   /** Block production by the pool: last block it produced, and blocks produced per day (day = height / 28,800). */
   lastProduced: number; producedByDay: Record<string, number>; producerScannedTo: number;
+  /** Owner-only changes already emailed about (so each one fails a run, and emails you, once — not every hour). */
+  notified?: string[];
 };
 type DayFile = { date: string; week: number; day: number; questions: any[]; skipped?: string };
 
@@ -215,10 +217,18 @@ async function healthPass(ctx: Ctx, bs: BotState) {
 
   // 3. Changes only the owner should ever make. If the admin key were stolen, these are the first signs; the
   //    48-hour timelock gives everyone time to react (players can always withdraw).
+  //    Each one emails you once (the first run that sees it fails); later runs only mention it in the log.
   const up = st.raw.upgrade ?? {}, wd = st.raw.seed_withdrawal ?? {};
-  if (num(up.eta) > 0) ctx.problems.push(`A code upgrade is scheduled (possible from ${utc(num(up.eta))}). If you did not do this, your admin key may be compromised.`);
-  if (num(wd.eta) > 0) ctx.problems.push(`A seed withdrawal is scheduled (possible from ${utc(num(wd.eta))}). If you did not do this, your admin key may be compromised.`);
-  if (st.c.pending_owner) ctx.problems.push(`An ownership transfer to ${st.c.pending_owner} is pending. If you did not do this, your admin key may be compromised.`);
+  const seen = new Set(bs.notified ?? []), still = new Set<string>();
+  const ownerAlert = (key: string, text: string) => {
+    still.add(key);
+    if (seen.has(key)) { if (!ctx.quiet) log(`  (already emailed) ${text}`); }
+    else ctx.problems.push(text);
+  };
+  if (num(up.eta) > 0) ownerAlert(`upgrade:${up.hash}:${up.eta}`, `A code upgrade is scheduled (possible from ${utc(num(up.eta))}). If you did not do this, your admin key may be compromised.`);
+  if (num(wd.eta) > 0) ownerAlert(`seed:${wd.vhp}:${wd.koin}:${wd.eta}`, `A seed withdrawal is scheduled (possible from ${utc(num(wd.eta))}). If you did not do this, your admin key may be compromised.`);
+  if (st.c.pending_owner) ownerAlert(`owner:${st.c.pending_owner}`, `An ownership transfer to ${st.c.pending_owner} is pending. If you did not do this, your admin key may be compromised.`);
+  bs.notified = [...still];
   if (st.c.operator && st.c.operator !== ctx.operator.getAddress() && ctx.chain.kind === "koinos" && E.OPERATOR_WIF)
     ctx.problems.push(`The contract's operator is ${st.c.operator}, not this bot (${ctx.operator.getAddress()}).`);
 
@@ -954,6 +964,8 @@ async function main() {
     await status(ctx);
     if (ctx.problems.length) {
       log(`\n⚠ NEEDS ATTENTION (${ctx.problems.length}):\n${ctx.problems.map((p) => "  • " + p).join("\n")}`);
+      // On GitHub, also show each one on the run's summary page (and in the email), not only inside the log.
+      if (process.env.GITHUB_ACTIONS) for (const p of ctx.problems) console.log(`::error title=Needs attention::${p.replace(/\r?\n/g, " ")}`);
       process.exitCode = 1; // a failed scheduled run makes GitHub email you
     }
     return;
