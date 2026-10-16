@@ -1,9 +1,11 @@
 {
   "checkedUpTo": 0,
   "orphans": [],
-  "lastCompound": 0,
+  "lastCompound": 40249819,
   "warnings": [],
-  "lastProduced": 0,
-  "producedByDay": {},
-  "producerScannedTo": 40248482
+  "lastProduced": 40248781,
+  "producedByDay": {
+    "1397": 1
+  },
+  "producerScannedTo": 40249761
 }
