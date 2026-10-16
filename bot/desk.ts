@@ -110,6 +110,8 @@ async function deploy(send: boolean) {
   const provider = new Provider([rpc]);
   contractKey.provider = provider; operator.provider = provider;
   const C = contractKey.getAddress();
+  if (treasury === C) throw new Error(`DESK_TREASURY in .env is the desk's own address (${C}). The treasury must be a separate WALLET that receives withdrawals — e.g. a new Kondor account. Fix the line in .env (or delete it to use the admin wallet).`);
+  if (owner === C) throw new Error("The owner can't be the desk's own address.");
   const prior = readJson(DEPLOYMENT);
   if (prior?.contract && prior.contract !== C) throw new Error(`${DEPLOYMENT} already records desk ${prior.contract}. Move it away to deploy a new one.`);
   if (E.CONTRACT_WIF && Signer.fromWif(E.CONTRACT_WIF).getAddress() === C) throw new Error("DESK_CONTRACT_WIF is the GAME contract's key. The desk needs its own new key.");

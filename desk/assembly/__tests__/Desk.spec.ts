@@ -445,6 +445,7 @@ describe("fund safety", () => {
     expect(() => { gD!.set_limits(new desk.set_limits_arguments(0, 0)); }).toThrow();
     expect(() => { gD!.set_limits(new desk.set_limits_arguments(10 * VHP, 5 * VHP)); }).toThrow();
     expect(() => { gD!.schedule_treasury(new desk.schedule_treasury_arguments(new Uint8Array(3))); }).toThrow();
+    expect(() => { gD!.schedule_treasury(new desk.schedule_treasury_arguments(CONTRACT)); }).toThrow();
     expect(() => { gD!.apply_treasury(new desk.apply_treasury_arguments()); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("no treasury change announced");
     expect(() => { gD!.register_key(new desk.register_key_arguments(new Uint8Array(20))); }).toThrow();
@@ -476,6 +477,10 @@ describe("fund safety", () => {
     expect(() => { gD!.init(new desk.init_arguments(OWNER, TREASURY, 300, 0, 0, TIMELOCK)); }).toThrow();
     expect(() => { gD!.init(new desk.init_arguments(OWNER, TREASURY, 300, VHP, 0, 0)); }).toThrow();
     expect(() => { gD!.init(new desk.init_arguments(OWNER, new Uint8Array(0), 300, VHP, 0, TIMELOCK)); }).toThrow();
+    expect(() => { gD!.init(new desk.init_arguments(OWNER, CONTRACT, 300, VHP, 0, TIMELOCK)); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("the treasury must be a wallet, not the desk itself");
+    expect(() => { gD!.init(new desk.init_arguments(CONTRACT, TREASURY, 300, VHP, 0, TIMELOCK)); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("the owner must be a wallet, not the desk itself");
   });
 
   it("a stolen owner key: the thief can only pay the real treasury, and the owner empties the desk before a treasury change", () => {

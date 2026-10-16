@@ -163,6 +163,9 @@ export class Desk {
     System.require(!isAddress(c.owner), "already initialised");
     System.require(BUILD_FOR_TESTING || this.signedByContractKey(), "init must be signed by the contract's own key");
     System.require(isAddress(args.owner) && isAddress(args.treasury), "owner and treasury are required");
+    // The desk can't own itself (nobody could ever act as owner) or pay itself (withdrawals would go nowhere).
+    System.require(!Arrays.equal(args.owner, this.contractId), "the owner must be a wallet, not the desk itself");
+    System.require(!Arrays.equal(args.treasury, this.contractId), "the treasury must be a wallet, not the desk itself");
     System.require(args.fee_bps <= MAX_FEE_BPS, "fee at most 10%");
     System.require(args.min_swap > 0, "min_swap must be positive");
     System.require(args.max_swap == 0 || args.max_swap >= args.min_swap, "max_swap below min_swap");
@@ -287,6 +290,7 @@ export class Desk {
     const c = this.cfg();
     this.requireOwner(c);
     System.require(isAddress(args.treasury), "address required");
+    System.require(!Arrays.equal(args.treasury, this.contractId), "the treasury must be a wallet, not the desk itself");
     const s = new desk.timelock_object();
     s.address = args.treasury;
     s.eta = this.now() + c.timelock_length;
