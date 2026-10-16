@@ -786,6 +786,15 @@ async function friendly(cmd: string, a: string[], send: boolean): Promise<boolea
     case "node-status": await nodeStatus(); return true;
     case "seed-vhp": await act("seed", "seed_deposit_vhp", { amount: units(need(0, "amount")) }, send); return true;
     case "seed-koin": await act("seed", "seed_deposit_koin", { amount: units(need(0, "amount")) }, send); return true;
+    case "seed-withdraw": {
+      // seed-withdraw <VHP> [KOIN]   announce taking the seed back (48-hour timelock starts; the bot will email you)
+      // seed-withdraw execute        after the 48 hours: send it to the seed owner (run again if KOIN is capped by Mana)
+      if (a[0] === "execute") { await act("seed", "execute_seed_withdrawal", {}, send); return true; }
+      const vhp = units(need(0, "VHP amount (or: execute)")), koin = units(a[1] && !a[1].startsWith("--") ? a[1] : "0");
+      log("This starts the 48-hour timelock. Players can see it on chain, and the bot will email you about it (expected).");
+      log("After 48 hours run:  npm run bot -- seed-withdraw execute --send");
+      await act("seed", "request_seed_withdrawal", { vhp, koin }, send); return true;
+    }
     case "deposit": await act("player", "deposit_vhp", { from: me("player"), amount: whole(need(0, "amount")) }, send); return true;
     case "deposit-koin": await act("player", "deposit_koin", { from: me("player"), amount: whole(need(0, "amount")) }, send); return true;
     case "withdraw": {

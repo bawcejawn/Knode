@@ -252,6 +252,15 @@ All stakes, weeks, results and the seed carry over. `npm run bot -- upgrade canc
 
 Players' withdrawals can never be paused, on purpose: a stolen admin key can never lock anyone's money.
 
+## Taking the seed back
+
+The seed can only go back to the seed owner, and only after a public 48-hour notice:
+```
+npm run bot -- seed-withdraw 1000 50 --send     # announce: 1,000 VHP + 50 KOIN (the bot emails you; that's expected)
+npm run bot -- seed-withdraw execute --send     # 48 hours later: send it
+```
+If KOIN comes back short (moving KOIN needs Mana), run `execute` again after the contract's Mana refills.
+
 ## Everyday owner commands (dry run unless `--send`)
 
 ```
