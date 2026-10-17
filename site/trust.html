@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trust · Knode</title>
+  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="media/icon-180.png">
+  <meta name="theme-color" content="#5a43e6">
+  <meta name="description" content="Check Knode yourself: live holdings vs what is owed, every address, code fingerprints and audit status, read straight from Koinos.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Knode">
+  <meta property="og:title" content="Trust · Knode">
+  <meta property="og:description" content="Check Knode yourself: live holdings vs what is owed, every address, code fingerprints and audit status, read straight from Koinos.">
+  <meta property="og:url" content="https://bawcejawn.github.io/Knode/site/trust.html">
+  <meta property="og:image" content="https://bawcejawn.github.io/Knode/site/media/og-knode.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://bawcejawn.github.io/Knode/site/media/og-knode.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="start.css">
+  <link rel="stylesheet" href="pages.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href="./" aria-label="Knode home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="brand-name">Knode</span>
+      </a>
+      <nav class="tabs" aria-label="Sections">
+        <a href="./">Play</a>
+        <a href="swap.html">Swap</a>
+        <a href="trust.html" aria-current="page">Trust</a>
+        <a href="terms.html">Terms</a>
+      </nav>
+      <a class="btn btn-wallet" href="./">Play Knode</a>
+    </div>
+  </header>
+
+  <main id="main" class="wrap start">
+    <section class="start-hero">
+      <p class="week-pill">Don't trust, verify</p>
+      <h1>Check everything yourself.</h1>
+      <p class="lede">Every number below is read live from the Koinos blockchain the moment you open this page, not typed in by us. Click any address to see it on Koinosscan.</p>
+    </section>
+
+    <section class="start-sec">
+      <h2 class="sec-title">Are the funds all there?</h2>
+      <div class="trust-grid">
+        <article class="panel" id="game-card">
+          <h2>Game pool</h2>
+          <p class="muted">Loading from the chain…</p>
+        </article>
+        <article class="panel" id="desk-card">
+          <h2>Knode Swap desk</h2>
+          <p class="muted">Loading from the chain…</p>
+        </article>
+      </div>
+      <p class="muted small" id="as-of"></p>
+    </section>
+
+    <section class="start-sec">
+      <h2 class="sec-title">Announced changes</h2>
+      <article class="panel" id="changes"><p class="muted">Loading…</p></article>
+      <p class="muted small">Code changes, seed withdrawals and treasury changes must be announced on the chain 48 hours before they can happen, so anyone can see them coming and withdraw first. Players' stakes can always be withdrawn.</p>
+    </section>
+
+    <section class="start-sec">
+      <h2 class="sec-title">Addresses</h2>
+      <div class="table-scroll">
+        <table class="addr-table">
+          <thead><tr><th>What</th><th>Address</th><th>What it can do</th></tr></thead>
+          <tbody id="addr-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="start-sec">
+      <h2 class="sec-title">Security status</h2>
+      <article class="panel">
+        <ul class="checks">
+          <li><span>Open source: every line of both contracts, the website and the bot is public on <a href="https://github.com/bawcejawn/Knode" target="_blank" rel="noopener">GitHub</a>.</span></li>
+          <li><span>Automated tests run on every change: 47 for the game, 25 for the swap desk (<a href="https://github.com/bawcejawn/Knode/actions" target="_blank" rel="noopener">see the latest runs</a>).</span></li>
+          <li><span>Internal security reviews: <a href="https://github.com/bawcejawn/Knode/blob/main/game/SECURITY.md" target="_blank" rel="noopener">game</a> and <a href="https://github.com/bawcejawn/Knode/blob/main/desk/SECURITY.md" target="_blank" rel="noopener">swap desk</a>, each listing every risk, what stops it and the test that proves it.</span></li>
+          <li><span>Tried on mainnet with small amounts before going public.</span></li>
+          <li class="pending"><span><b>Independent audit: in progress.</b> Until it's done, please stake and swap only what you could afford to lose (<a href="terms.html">Terms &amp; risks</a>).</span></li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="start-sec">
+      <h2 class="sec-title">Code fingerprints</h2>
+      <article class="panel">
+        <p class="muted">Anyone can rebuild the contracts from the public code and get exactly these fingerprints (SHA-256), proving the code on the chain is the code on GitHub. How: <a href="https://github.com/bawcejawn/Knode/blob/main/AUDIT.md" target="_blank" rel="noopener">AUDIT.md</a>.</p>
+        <dl class="facts" id="prints" style="margin-top:12px"></dl>
+      </article>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-row">
+      <span>Knode runs fully on Koinos. Open source.</span>
+      <span><a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a> · <a href="./">Back to the game</a></span>
+    </div>
+  </footer>
+  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js"></script>
+  <script src="trust.js"></script>
+</body>
+</html>

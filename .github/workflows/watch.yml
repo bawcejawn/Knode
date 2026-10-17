@@ -1,0 +1,46 @@
+# Every 15 minutes: is the personal node still producing blocks? If it has been silent for 30+ minutes, this run fails
+# and GitHub emails you. All three nodes share one PC, so this is the early warning for all of them.
+# Setup: Settings → Secrets and variables → Actions → Variables → New repository variable
+#   PERSONAL_PRODUCER = your personal node's producer address (the wallet it produces for)
+name: Node watchdog
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Which outage was already emailed (so one outage = one email, plus a reminder every 3 hours).
+      - uses: actions/cache/restore@v4
+        with:
+          path: watch-state.json
+          key: watch-state-${{ github.run_id }}
+          restore-keys: watch-state-
+      - name: Check the personal node
+        run: node bot/watch.mjs
+        env:
+          WATCH_PRODUCER: ${{ vars.PERSONAL_PRODUCER }}
+          WATCH_LABEL: personal node
+          WATCH_MINUTES: "30"
+      - run: test -f watch-state.json || echo '{}' > watch-state.json
+        if: always()
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: watch-state.json
+          key: watch-state-${{ github.run_id }}

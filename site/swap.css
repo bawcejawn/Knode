@@ -35,7 +35,18 @@
 .faq summary { cursor: pointer; font-weight: 700; }
 .faq p { margin-top: 8px; color: var(--muted); }
 
+/* swap now or wait */
+.compare { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.cmp { background: var(--surface); border-radius: var(--r-lg); padding: 18px 20px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 6px; }
+.cmp-best { outline: 2px solid var(--mint); }
+.cmp-tag { font-size: .8rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.cmp-best .cmp-tag { color: var(--mint); }
+.cmp-big { font: 800 1.7rem/1.1 var(--display); }
+.cmp-when { color: var(--muted); font-size: .92rem; }
+#cmp-note { margin-top: 10px; }
+
 @media (max-width: 860px) {
+  .compare { grid-template-columns: 1fr; }
   .swap-hero { grid-template-columns: 1fr; gap: 24px; margin-top: 20px; }
   .recent li { grid-template-columns: 1fr auto; }
   .recent .when { grid-column: 1 / -1; }

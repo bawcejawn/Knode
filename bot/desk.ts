@@ -13,6 +13,7 @@
  *   npm run desk -- pause on|off [--send]        stop or restart swaps
  *   npm run desk -- node-key                     the desk node's PUBLIC key (read from its key file)
  *   npm run desk -- node-status                  is the desk's node (RPC 8100) caught up with the chain?
+ *   npm run desk -- chain-rate [blocks]          how fast producers turn VHP back into KOIN (what the swap page shows)
  *   npm run desk -- key-status                   which producer key Proof-of-Burn has on record for the desk
  *   npm run desk -- register-key node [--send]   register the desk node's key, so the desk's VHP produces blocks
  *   npm run desk -- treasury schedule <address> | apply | cancel [--send]   change the treasury (48 h timelock)
@@ -28,7 +29,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { Signer, Provider, Contract, Transaction } from "koilib";
+import { Signer, Provider, Contract, Transaction, utils } from "koilib";
 import { KoinosChain, Call, showKoin, toSat } from "./chain.ts";
 import { tokenAbi } from "./token-abi.ts";
 import { pobAbi } from "../probes/scripts/abi.ts";
@@ -271,6 +272,58 @@ async function keyStatus() {
   else { log("✖ A DIFFERENT key is on record than the desk node's key file. Run: npm run desk -- register-key node --send"); process.exitCode = 1; }
 }
 
+// ═══════════════════════════════ VHP → KOIN rate (same method as the swap page) ═══════════════════════════════
+/** Each block burns some of the signer's VHP and mints it back as KOIN plus the reward. Weekly conversion =
+ *  VHP burned from signers per week ÷ VHP held by the producers seen. */
+async function chainRate(n: number) {
+  const { dep, chain } = deployed();
+  const p = chain.provider;
+  const enc = (u: Uint8Array) => utils.encodeBase58(u);
+  const decode = (b64: string) => {
+    const buf = Buffer.from(b64, "base64"); let pos = 0, who: string | null = null, value = 0n;
+    const varint = () => { let r = 0n, sh = 0n; for (;;) { const b = buf[pos++]; r |= BigInt(b & 0x7f) << sh; if (!(b & 0x80)) return r; sh += 7n; } };
+    while (pos < buf.length) {
+      const tag = Number(varint()), field = tag >> 3, wire = tag & 7;
+      if (wire === 0) { const v = varint(); if (field === 2) value = v; }
+      else if (wire === 2) { const len = Number(varint()); if (field === 1) who = enc(new Uint8Array(buf.subarray(pos, pos + len))); pos += len; }
+      else break;
+    }
+    return { who, value };
+  };
+  const head: any = await p.getHeadInfo();
+  const top = Number(head.last_irreversible_block);
+  let burned = 0n, minted = 0n, blocks = 0, t0 = 0, t1 = 0;
+  const signers = new Set<string>();
+  log(`Reading the last ${n.toLocaleString()} irreversible blocks …`);
+  for (let start = top - n + 1; start <= top; start += 100) {
+    const res: any = await p.call("block_store.get_blocks_by_height", { head_block_id: head.head_topology.id, ancestor_start_height: String(start), num_blocks: Math.min(100, top - start + 1), return_block: true, return_receipt: true });
+    for (const it of res.block_items ?? []) {
+      const h = it.block?.header ?? {}, signer = h.signer;
+      if (!signer) continue;
+      blocks++; signers.add(signer);
+      const ts = Number(h.timestamp); if (!t0 || ts < t0) t0 = ts; if (ts > t1) t1 = ts;
+      for (const e of it.receipt?.events ?? []) {
+        if (!e.data) continue;
+        if (e.source === dep.vhp && /burn_event$/.test(e.name ?? "")) { const d = decode(e.data); if (d.who === signer) burned += d.value; }
+        if (e.source === dep.koin && /mint_event$/.test(e.name ?? "")) { const d = decode(e.data); if (d.who === signer) minted += d.value; }
+      }
+    }
+  }
+  const vhp = new Contract({ id: dep.vhp, abi: tokenAbi as any, provider: p });
+  let held = 0n;
+  for (const a of signers) held += BigInt(((await (vhp.functions as any).balance_of({ owner: a })).result?.value) ?? 0);
+  const perWeek = blocks / ((t1 - t0) / 604800000);
+  const weekly = (Number(burned) / blocks) * perWeek / Number(held);
+  const reward = (Number(minted - burned) / blocks) * perWeek / Number(held);
+  const yrs = (w: number) => (w / 52.18).toFixed(1);
+  log(`Blocks ${blocks.toLocaleString()} (${((t1 - t0) / 3600000).toFixed(1)} h), ${signers.size} producers holding ${showKoin(held)} VHP`);
+  log(`Per block: ${showKoin(burned / BigInt(blocks))} VHP burned from the signer, ${showKoin(minted / BigInt(blocks))} KOIN minted to it`);
+  log(`→ producers turn ${(weekly * 100).toFixed(3)}% of their VHP back into KOIN per week`);
+  log(`→ block rewards ≈ ${(reward * 52.18 * 100).toFixed(2)}% a year on top`);
+  log(`→ for a producer: half its VHP back in ~${yrs(Math.log(0.5) / Math.log(1 - weekly))} years, 97% back in ~${yrs(Math.log(0.03) / Math.log(1 - weekly))} years`);
+  log(`\nCheck it against a node you run: your producer's VHP should drop by about ${(weekly * 100).toFixed(3)}% a week (before re-burning any KOIN).`);
+}
+
 // ═══════════════════════════════ commands ═══════════════════════════════
 async function main() {
   const [cmd = "status", ...a] = process.argv.slice(2);
@@ -329,6 +382,7 @@ async function main() {
       return;
     }
     case "key-status": return keyStatus();
+    case "chain-rate": return chainRate(Number(a[0] && !a[0].startsWith("--") ? a[0] : 3000));
     case "node-status": {
       const rpc = E.DESK_NODE_RPC ?? "http://127.0.0.1:8100";
       const pub: any = await new Provider([E.RPC ?? "https://api.koinos.io"]).getHeadInfo();

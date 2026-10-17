@@ -4,6 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Knode Swap</title>
+  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="media/icon-180.png">
+  <meta name="theme-color" content="#5a43e6">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Knode">
+  <meta property="og:title" content="Knode Swap: get your KOIN back today">
+  <meta property="og:description" content="Swap VHP for KOIN instantly, 1:1 minus 3%. No waiting for blocks.">
+  <meta property="og:url" content="https://bawcejawn.github.io/Knode/site/swap.html">
+  <meta property="og:image" content="https://bawcejawn.github.io/Knode/site/media/og-swap.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Knode Swap: get your KOIN back today">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Knode Swap: get your KOIN back today">
+  <meta name="twitter:description" content="Swap VHP for KOIN instantly, 1:1 minus 3%. No waiting for blocks.">
+  <meta name="twitter:image" content="https://bawcejawn.github.io/Knode/site/media/og-swap.png">
   <meta name="description" content="Swap your VHP back into KOIN instantly. 1:1 minus 3%, paid from KOIN our node produces block by block.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -24,6 +40,7 @@
         <a href="index.html">Play</a>
         <a href="swap.html" aria-current="page">Swap</a>
         <a href="#how">How it works</a>
+        <a href="trust.html">Trust</a>
       </nav>
       <button class="btn btn-wallet" id="connect" type="button">Connect Kondor</button>
     </div>
@@ -71,9 +88,34 @@
         </dl>
         <p class="warn" id="warn" hidden></p>
         <button class="btn btn-primary swap-go" id="go" type="submit">Connect Kondor</button>
-        <p class="muted fine">One transaction: you approve the VHP and the desk pays the KOIN together. If the price changed before it lands, nothing moves. Needs a little Mana; if you have none, tick Kondor's free Mana option.</p>
+        <p class="muted fine">One transaction: you approve the VHP and the desk pays the KOIN together. If the price changed before it lands, nothing moves. Needs a little Mana; if you have none, tick Kondor's free Mana option. <a href="terms.html" target="_blank" rel="noopener">Terms &amp; risks</a></p>
       </form>
     </div>
+
+    <section class="swap-section" id="wait">
+      <div class="section-head">
+        <h2>Swap now, or wait?</h2>
+        <p class="muted">VHP only turns back into KOIN when its owner produces blocks. Here's what that means for <b id="cmp-amt">100 VHP</b>.</p>
+      </div>
+      <div class="compare">
+        <article class="cmp cmp-best">
+          <span class="cmp-tag">Knode Swap</span>
+          <b class="cmp-big" id="cmp-swap">97 KOIN</b>
+          <span class="cmp-when">today, in one transaction</span>
+        </article>
+        <article class="cmp">
+          <span class="cmp-tag">Run your own producing node</span>
+          <b class="cmp-big" id="cmp-node">…</b>
+          <span class="cmp-when" id="cmp-node-when">measuring the chain…</span>
+        </article>
+        <article class="cmp">
+          <span class="cmp-tag">Just hold it</span>
+          <b class="cmp-big">0 KOIN</b>
+          <span class="cmp-when">VHP in a wallet with no node never turns back into KOIN</span>
+        </article>
+      </div>
+      <p class="muted fine" id="cmp-note">Measured live from recent Koinos blocks.</p>
+    </section>
 
     <section class="swap-section">
       <div class="section-head">
@@ -104,7 +146,7 @@
   <footer class="foot">
     <div class="wrap">
       <div class="foot-row">
-        <span>Knode Swap runs fully on Koinos. Open source.</span>
+        <span>Knode Swap runs fully on Koinos. Open source. · <a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a></span>
         <span id="foot-contract"></span>
       </div>
     </div>

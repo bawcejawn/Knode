@@ -302,3 +302,5 @@ dialog h2 { margin-bottom: 6px; }
 @media (max-width: 640px) { .eco-grid { grid-template-columns: 1fr 1fr; } .eco-item span { display: none; } }
 .tabs a.tab-start { color: var(--violet); font-weight: 700; }
 a.btn { text-decoration: none; display: inline-flex; align-items: center; }
+
+.fine-print { font-size: .82rem; margin-top: 10px; }
