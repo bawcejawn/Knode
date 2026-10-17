@@ -1,5 +1,5 @@
 /* Knode website — a static page: everything is read from the Koinos chain and the bot's public
-   question files (game-data/), and every action is signed by the player's own Kondor wallet.
+   question files (game-data/), and every action is signed by the player's own wallet (Kondor or KOIN Vault).
    With no deployment yet (or ?demo in the address), it runs a preview on sample data. */
 (() => {
   "use strict";
@@ -262,8 +262,14 @@
     return res;
   }
 
-  // ═══════════════ wallet (Kondor) ═══════════════
-  const withTimeout = (p, ms, msg) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
+  // ═══════════════ wallet (Kondor on a computer, KOIN Vault on a phone: see wallet.js) ═══════════════
+  async function afterConnect() {
+    toast(`Connected ${short(S.account)} with ${window.KWallet.label()}`);
+    await loadPlayer().catch(() => {});
+    S.board = {};
+    renderAll();
+    renderBoard(S.week).then(renderPlay).catch(() => {});
+  }
 
   async function connect() {
     if (S.demo) {
@@ -274,48 +280,29 @@
       toast("Demo wallet connected");
       return;
     }
-    if (!window.kondor) return toast("Kondor didn't load. Refresh the page and try again.");
-    try {
-      const accounts = await withTimeout(window.kondor.getAccounts(), 15000, "No answer from Kondor. Is the Kondor extension installed and unlocked?");
-      if (!accounts || !accounts.length) return toast("Kondor shared no account. Open Kondor and allow this site.");
-      S.account = accounts[0].address;
-      toast(`Connected ${short(S.account)}`);
-      await loadPlayer();
-      S.board = {};
-      renderAll();
-      renderBoard(S.week).then(renderPlay).catch(() => {});
-    } catch (e) { toast(e.message || String(e), 7000); }
+    if (!window.KWallet) return toast("The wallet code didn't load. Refresh the page and try again.");
+    await window.KWallet.connect(); // onChange (in start) picks up the address
   }
 
   function writer() {
-    const signer = window.kondor.getSigner(S.account);
-    return new lib.Contract({ id: S.dep.contract, abi: S.abi, provider: S.provider, signer });
+    return new lib.Contract({ id: S.dep.contract, abi: S.abi, provider: S.provider });
   }
 
-  /** Send one or more operations in one transaction, signed in Kondor. */
+  /** Send one or more operations in one transaction, signed in the player's wallet. */
   async function send(label, build) {
-    if (S.demo) { toast(`Demo: this would open Kondor to confirm “${label}”.`); return false; }
+    if (S.demo) { toast(`Demo: this would ask your wallet to confirm “${label}”.`); return false; }
     if (!S.account) { await connect(); if (!S.account) return false; }
     try {
-      toast(`Confirm “${label}” in Kondor…`, 20000);
-      const signer = window.kondor.getSigner(S.account);
-      try { signer.provider = S.provider; } catch {}
-      const tx = new lib.Transaction({ signer, provider: S.provider });
-      for (const op of await build()) await tx.pushOperation(op);
-      const receipt = await tx.send();
-      if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "the contract refused it"));
-      // Sent. Watch for it with our own connection to the chain (Kondor's own "wait" needs a provider it may not have).
-      toast("Sent. Waiting for the next block…", 30000);
-      const id = tx.transaction && tx.transaction.id;
-      let confirmed = false;
-      if (id) { try { await S.provider.wait(id, "byBlock", 90000); confirmed = true; } catch {} }
-      toast(confirmed ? `Done: ${label}` : `Sent: ${label}. It may take a minute to show; the page refreshes by itself.`, 8000);
+      const ops = await build();
+      toast(`Confirm “${label}” in ${window.KWallet.label()}…`, 20000);
+      const id = await window.KWallet.send(label, ops);
+      toast(id ? `Done: ${label}` : `Sent: ${label}. It may take a minute to show; the page refreshes by itself.`, 8000);
       await loadLive().catch(() => {});
       renderAll();
       return true;
     } catch (e) {
       const msg = String(e.message || e);
-      toast(/reject|denied|cancel/i.test(msg) ? "Cancelled in Kondor." : `Not sent: ${friendlyError(msg)}`, 8000);
+      toast(/reject|denied|cancel/i.test(msg) ? `Cancelled in ${window.KWallet.label()}.` : `Not sent: ${friendlyError(msg)}`, 9000);
       return false;
     }
   }
@@ -324,7 +311,7 @@
   function friendlyError(msg) {
     const m = msg.match(/"([^"]{6,140})"/);
     const text = m ? m[1] : msg;
-    if (/insufficient|mana|rc/i.test(text)) return "not enough Mana. Tick Kondor's free Mana option, or wait for your Mana to refill.";
+    if (/insufficient|mana|rc/i.test(text)) return "not enough Mana. In Kondor, tick the free Mana option; in KOIN Vault, hold a little KOIN; or wait for Mana to refill.";
     return text.slice(0, 160);
   }
 
@@ -483,7 +470,7 @@
     }));
     const foot = el("div", { class: "q-foot" },
       el("span", {}, `Question #${q.chainId}`),
-      mine !== null ? el("span", {}, `Your answer: ${String.fromCharCode(65 + mine)}`) : mode === "open" ? el("span", {}, S.account ? "Pick an option" : "Connect Kondor to answer") : null,
+      mine !== null ? el("span", {}, `Your answer: ${String.fromCharCode(65 + mine)}`) : mode === "open" ? el("span", {}, S.account ? "Pick an option" : "Connect a wallet to answer") : null,
       q.result && q.result.value ? el("span", {}, `Actual: ${q.result.value}`) : null);
     return el("article", { class: "q" }, top, el("h3", {}, ...linkify(q.text)), opts, foot);
   }
@@ -514,8 +501,8 @@
     // you
     const you = $("#you-body");
     if (!S.account) {
-      you.replaceChildren(el("p", { class: "muted" }, "Connect Kondor to stake and answer. Answering is free with Kondor's free Mana."),
-        el("div", { class: "row-btns" }, el("button", { class: "btn btn-primary", type: "button", onclick: connect }, "Connect Kondor")));
+      you.replaceChildren(el("p", { class: "muted" }, "Connect a wallet to stake and answer: Kondor on a computer, or KOIN Vault on your phone (fingerprint or face, no extension)."),
+        el("div", { class: "row-btns" }, el("button", { class: "btn btn-primary", type: "button", onclick: connect }, "Connect wallet")));
     } else {
       const p = S.player || {};
       const total = big(p.stake) + big(p.pending), active = S.activeStake ?? big(p.stake);
@@ -553,7 +540,7 @@
       el("dt", {}, "Winners get"), el("dd", {}, "95%"),
       el("dt", {}, "Waiting to be collected"), el("dd", {}, `${amount(t.pots_outstanding)} VHP`));
     const btn = $("#connect");
-    btn.textContent = S.account ? short(S.account) : "Connect Kondor";
+    btn.textContent = S.account ? short(S.account) : "Connect wallet";
     btn.classList.toggle("connected", !!S.account);
     $("#foot-contract").textContent = S.dep?.contract ? `Contract ${S.dep.contract}` : "";
   }
@@ -697,7 +684,19 @@
 
   // ═══════════════ start ═══════════════
   async function start() {
-    $("#connect").addEventListener("click", () => (S.account ? toast(`Connected as ${S.account}`) : connect()));
+    let armed = 0;
+    $("#connect").addEventListener("click", () => {
+      if (!S.account) return connect();
+      if (S.demo || Date.now() - armed > 5000) { armed = Date.now(); return toast(`Connected with ${S.demo ? "the demo wallet" : window.KWallet.label()}: ${S.account}. Tap again to disconnect.`, 5000); }
+      armed = 0; window.KWallet.disconnect();
+    });
+    const initWallet = () => window.KWallet && window.KWallet.init({
+      provider: S.provider, toast,
+      onChange: (addr) => {
+        S.account = addr; S.player = null; S.entry = null; S.activeStake = null; S.balances = null; S.claims = [];
+        if (addr) afterConnect(); else { toast("Wallet disconnected"); S.board = {}; renderAll(); }
+      },
+    });
     route();
     const wantDemo = /[?&]demo\b/.test(location.search);
     let dep = null;
@@ -708,6 +707,7 @@
       S.dep = dep;
       S.abi = await fetchJson(ABI_URL);
       S.provider = new lib.Provider([dep.rpc || RPC]);
+      initWallet();
       S.game = new lib.Contract({ id: dep.contract, abi: S.abi, provider: S.provider });
       try { await loadLive(); } catch (e) { toast(`Couldn't reach the Koinos network: ${e.message}`, 8000); }
       setInterval(async () => { try { await loadLive(); S.board[S.week] = undefined; renderPlay(); } catch {} }, 60000);

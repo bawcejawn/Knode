@@ -43,7 +43,7 @@
         <a href="swap.html">Swap</a>
         <a href="start.html" class="tab-start">Learn</a>
       </nav>
-      <button class="btn btn-wallet" id="connect" type="button">Connect Kondor</button>
+      <button class="btn btn-wallet" id="connect" type="button">Connect wallet</button>
     </div>
   </header>
 
@@ -95,7 +95,7 @@
         <aside class="col-side">
           <section class="panel" id="panel-you">
             <h2>Your game</h2>
-            <div id="you-body"><p class="muted">Connect Kondor to stake and answer. Answering is free with Kondor's free Mana.</p></div>
+            <div id="you-body"><p class="muted">Connect a wallet to stake and answer: Kondor on a computer, or KOIN Vault on your phone.</p></div>
           </section>
           <section class="panel" id="panel-claim" hidden>
             <h2>Rewards to collect</h2>
@@ -148,7 +148,7 @@
       </ol>
       <div class="faq">
         <details><summary>Who decides the right answer?</summary><p>The blocks do. After a question's window ends and the blocks are final, the answer is computed from them and published with a hash of the exact blocks used. If a producer in a question goes offline, the question is voided and doesn't count for anyone.</p></details>
-        <details><summary>Does it cost anything to play?</summary><p>No fees. Koinos uses Mana, which refills on its own. If your Mana is low, tick Kondor's free Mana option when you confirm.</p></details>
+        <details><summary>Does it cost anything to play?</summary><p>No fees. Koinos uses Mana, which refills on its own. If your Mana is low, tick Kondor's free Mana option when you confirm. With KOIN Vault on your phone, holding a little KOIN gives you the Mana.</p></details>
         <details><summary>Can anyone take my stake?</summary><p>No. The contract only sends your stake back to you. The owner can't move players' stakes or rewards, and code changes must be announced 48 hours ahead so anyone can withdraw first.</p></details>
       </div>
     </section>
@@ -182,7 +182,7 @@
       <p class="muted fine-print">Staking is optional; rewards aren't guaranteed and audits are in progress. <a href="terms.html" target="_blank" rel="noopener">Terms &amp; risks</a></p>
       <div class="dialog-actions">
         <button class="btn btn-ghost" value="cancel" type="submit" formnovalidate>Cancel</button>
-        <button class="btn btn-primary" id="stake-go" value="go" type="submit">Continue in Kondor</button>
+        <button class="btn btn-primary" id="stake-go" value="go" type="submit">Continue in your wallet</button>
       </div>
     </form>
   </dialog>
@@ -190,6 +190,7 @@
   <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js"></script>
   <script src="demo-data.js"></script>
+  <script src="wallet.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

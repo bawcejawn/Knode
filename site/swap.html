@@ -42,7 +42,7 @@
         <a href="#how">How it works</a>
         <a href="trust.html">Trust</a>
       </nav>
-      <button class="btn btn-wallet" id="connect" type="button">Connect Kondor</button>
+      <button class="btn btn-wallet" id="connect" type="button">Connect wallet</button>
     </div>
   </header>
 
@@ -65,7 +65,7 @@
 
       <form class="swap-card" id="swap-form" autocomplete="off" novalidate>
         <div class="swap-leg">
-          <div class="leg-top"><span>You send</span><span class="muted" id="bal-line">Connect Kondor to see your VHP</span></div>
+          <div class="leg-top"><span>You send</span><span class="muted" id="bal-line">Connect a wallet to see your VHP</span></div>
           <div class="leg-row">
             <input id="amount" inputmode="decimal" placeholder="0" aria-label="VHP to swap">
             <button class="btn btn-ghost btn-small" id="max" type="button">Max</button>
@@ -86,8 +86,8 @@
           <dt>Largest swap right now</dt><dd id="q-max">—</dd>
         </dl>
         <p class="warn" id="warn" hidden></p>
-        <button class="btn btn-primary swap-go" id="go" type="submit">Connect Kondor</button>
-        <p class="muted fine">One transaction: you approve the VHP and the desk pays the KOIN together. If the price changed before it lands, nothing moves. Needs a little Mana; if you have none, tick Kondor's free Mana option. <a href="terms.html" target="_blank" rel="noopener">Terms &amp; risks</a></p>
+        <button class="btn btn-primary swap-go" id="go" type="submit">Connect wallet</button>
+        <p class="muted fine">One transaction: you approve the VHP and the desk pays the KOIN together. If the price changed before it lands, nothing moves. Needs a little Mana; if you have none, tick Kondor's free Mana option (KOIN Vault may cover it). <a href="terms.html" target="_blank" rel="noopener">Terms &amp; risks</a></p>
       </form>
     </div>
 
@@ -130,6 +130,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js"></script>
+  <script src="wallet.js"></script>
   <script src="swap.js"></script>
 </body>
 </html>

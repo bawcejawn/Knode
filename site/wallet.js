@@ -1,0 +1,265 @@
+/* Knode wallet layer: one way to connect and sign, two wallets.
+ *   - Kondor: the browser extension (desktop).
+ *   - KOIN Vault: passkey smart accounts on the phone (https://koinvault.app), via its website connection API
+ *     (docs/website-integration.md in therexdev/koin-vault). The user approves every transaction in KOIN Vault;
+ *     this page never sees a key or a passkey.
+ * Usage: KWallet.init({ provider, onChange(address) }); await KWallet.connect(); await KWallet.send(label, ops).
+ * `ops` are koilib operations ({ call_contract: { contract_id, entry_point, args } }), built with onlyOperation. */
+(() => {
+  "use strict";
+  const VAULT = "https://koinvault.app";
+  const lib = window.koilib || window.koinos || window;
+  const store = {
+    get: (s, k) => { try { return s.getItem(k); } catch { return null; } },
+    set: (s, k, v) => { try { v == null ? s.removeItem(k) : s.setItem(k, v); } catch {} },
+  };
+  const W = { kind: null, address: null, provider: null, onChange: () => {}, session: null, poll: null };
+  const isPhone = () => /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const withTimeout = (p, ms, msg) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
+
+  // ── tiny modal ──
+  const css = `
+  .kw-back{position:fixed;inset:0;background:rgba(10,12,30,.55);display:flex;align-items:flex-end;justify-content:center;z-index:1000;padding:0}
+  @media(min-width:560px){.kw-back{align-items:center;padding:16px}}
+  .kw-box{background:var(--surface,#fff);color:var(--ink,#181b34);width:100%;max-width:420px;border-radius:22px 22px 0 0;padding:22px 20px 26px;box-shadow:0 20px 60px rgba(0,0,0,.35);max-height:92vh;overflow:auto}
+  @media(min-width:560px){.kw-box{border-radius:22px}}
+  .kw-box h3{font-family:var(--display,inherit);font-size:21px;margin:0 0 6px}
+  .kw-box p{margin:6px 0;color:var(--muted,#5d6283);font-size:14px;line-height:1.45}
+  .kw-opt{display:flex;gap:12px;align-items:center;width:100%;text-align:left;font:inherit;padding:14px;margin-top:10px;border-radius:14px;border:1px solid var(--line,#e2e4ef);background:var(--paper,#f4f5fb);color:inherit;cursor:pointer}
+  .kw-opt b{display:block;font-size:16px}.kw-opt span{font-size:13px;color:var(--muted,#5d6283)}
+  .kw-opt .kw-ic{font-size:26px;line-height:1}
+  .kw-tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 7px;border-radius:99px;background:var(--violet-soft,#ece9ff);color:var(--violet,#5a43e6);margin-left:6px;vertical-align:2px}
+  .kw-go{display:block;text-align:center;margin-top:14px;padding:13px;border-radius:99px;background:var(--violet,#5a43e6);color:var(--violet-ink,#fff);font-weight:700;text-decoration:none}
+  .kw-qr{display:flex;justify-content:center;margin:14px 0 4px}.kw-qr svg,.kw-qr img{width:200px;height:200px;background:#fff;padding:8px;border-radius:12px}
+  .kw-status{margin-top:12px;font-size:14px;color:var(--ink,#181b34);min-height:1.3em}
+  .kw-x{float:right;font:inherit;font-size:22px;line-height:1;border:0;background:none;color:var(--muted,#5d6283);cursor:pointer;padding:0 0 0 10px}
+  .kw-link{font:inherit;background:none;border:0;color:var(--violet,#5a43e6);text-decoration:underline;cursor:pointer;padding:0;font-size:14px}`;
+  function ensureCss() { if (!document.getElementById("kw-css")) { const s = document.createElement("style"); s.id = "kw-css"; s.textContent = css; document.head.append(s); } }
+  function h(tag, attrs = {}, ...kids) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) { if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v); }
+    for (const c of kids) if (c != null) e.append(c);
+    return e;
+  }
+  let modal = null;
+  function open(...content) {
+    ensureCss(); close();
+    const box = h("div", { class: "kw-box", role: "dialog", "aria-modal": "true" }, h("button", { class: "kw-x", type: "button", "aria-label": "Close", onclick: () => close(true) }, "×"), ...content);
+    modal = h("div", { class: "kw-back", onclick: (e) => { if (e.target === modal) close(true); } }, box);
+    document.body.append(modal);
+    return box;
+  }
+  let onClose = null;
+  function close(byUser = false) { if (modal) { modal.remove(); modal = null; } const f = onClose; onClose = null; if (byUser && f) f(); }
+
+  // ── KOIN Vault API ──
+  async function vaultApi(path, { body, query } = {}) {
+    const url = new URL("/api/dapp/" + path, VAULT);
+    if (query) url.search = new URLSearchParams(query).toString();
+    const res = await fetch(url, {
+      method: body === undefined ? "GET" : "POST",
+      headers: body === undefined ? {} : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer",
+    });
+    let data = {}; try { data = await res.json(); } catch { /* hosting error page */ }
+    if (!res.ok || data.ok !== true) { const e = new Error(data.error || `KOIN Vault answered ${res.status}`); e.status = res.status; throw e; }
+    return data;
+  }
+  const creds = () => ({ sessionId: W.session.sessionId, secret: W.session.secret });
+
+  function setAddress(kind, address) {
+    const changed = address !== W.address;
+    W.kind = address ? kind : null; W.address = address || null;
+    store.set(localStorage, "kw-kind", W.kind);
+    if (changed) W.onChange(W.address, W.kind);
+  }
+  function dropVault(reason) {
+    if (W.poll) { clearTimeout(W.poll); W.poll = null; }
+    W.session = null; store.set(sessionStorage, "kw-vault", null);
+    if (W.kind === "vault") setAddress(null, null);
+    if (reason && W.toast) W.toast(reason, 7000);
+  }
+  /** Keep checking the KOIN Vault session so a disconnect or expiry in the wallet also clears this page. */
+  function watchVault() {
+    if (W.poll) clearTimeout(W.poll);
+    let fails = 0;
+    const tick = async () => {
+      if (!W.session) return;
+      if (Date.now() > W.session.expiresAt) return dropVault("KOIN Vault connection expired (they last 30 minutes). Connect again.");
+      if (!document.hidden) {
+        try {
+          const st = await vaultApi("status", { query: creds() }); fails = 0;
+          if (!st.connected || (W.address && st.address !== W.address)) return dropVault("KOIN Vault disconnected. Connect again to keep playing.");
+        } catch (e) {
+          if (e.status === 404 || e.status === 410) return dropVault("KOIN Vault connection ended. Connect again.");
+          fails++;
+        }
+      }
+      W.poll = setTimeout(tick, Math.min(30000, 5000 * (1 + fails)));
+    };
+    W.poll = setTimeout(tick, 5000);
+  }
+
+  let qrLib = null;
+  function loadQr() {
+    if (window.qrcode) return Promise.resolve(window.qrcode);
+    if (!qrLib) qrLib = new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js";
+      s.onload = () => res(window.qrcode); s.onerror = () => rej(new Error("QR code didn't load"));
+      document.head.append(s);
+    });
+    return qrLib;
+  }
+
+  async function connectVault() {
+    const status = h("div", { class: "kw-status", role: "status" }, "Starting a secure connection…");
+    const go = h("a", { class: "kw-go", href: VAULT, target: "_blank", rel: "noopener noreferrer", referrerpolicy: "no-referrer", hidden: "" }, "Open KOIN Vault");
+    const qr = h("div", { class: "kw-qr" });
+    const box = open(h("h3", {}, "Connect KOIN Vault"),
+      h("p", {}, isPhone() ? "Tap Open KOIN Vault, approve Knode with your fingerprint or face, then come back to this tab." : "Scan with your phone (or use Connect inside KOIN Vault), approve Knode with your passkey, and this page connects by itself."),
+      qr, go, status,
+      h("p", {}, "No KOIN Vault yet? ", h("a", { href: VAULT, target: "_blank", rel: "noopener" }, "Create one at koinvault.app"), " in a minute, no extension needed."));
+    let cancelled = false; onClose = () => { cancelled = true; };
+    try {
+      const s = await vaultApi("create", { body: { name: "Knode" } });
+      const link = new URL(s.uri);
+      if (link.origin !== VAULT || link.pathname !== "/") throw new Error("unexpected wallet address");
+      go.href = s.uri; go.hidden = false;
+      if (!isPhone()) {
+        loadQr().then((q) => { const c = q(0, "M"); c.addData(s.uri); c.make(); qr.innerHTML = c.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); }).catch(() => {});
+      }
+      status.textContent = "Waiting for your approval in KOIN Vault…";
+      const until = Math.min(s.expiresAt, Date.now() + 10 * 60000);
+      while (!cancelled && Date.now() < until) {
+        await sleep(2000);
+        if (cancelled) break;
+        let st; try { st = await vaultApi("status", { query: { sessionId: s.sessionId, secret: s.secret } }); }
+        catch (e) { if (e.status === 404 || e.status === 410) throw new Error("The connection expired. Try again."); status.textContent = "Connection hiccup, still waiting…"; continue; }
+        if (st.connected && st.address) {
+          W.session = { sessionId: s.sessionId, secret: s.secret, expiresAt: s.expiresAt };
+          store.set(sessionStorage, "kw-vault", JSON.stringify({ ...W.session, address: st.address }));
+          setAddress("vault", st.address);
+          watchVault();
+          close();
+          return st.address;
+        }
+      }
+      if (!cancelled) throw new Error("No approval arrived. Try again.");
+      return null;
+    } catch (e) {
+      if (box.isConnected) status.textContent = /Failed to fetch|NetworkError|Load failed/i.test(String(e.message)) ? "Couldn't reach KOIN Vault. Check your connection and try again." : String(e.message || e);
+      return null;
+    }
+  }
+
+  async function connectKondor() {
+    close();
+    if (!window.kondor) { W.toast && W.toast("Kondor isn't installed in this browser. On a phone, use KOIN Vault.", 7000); return null; }
+    const accounts = await withTimeout(window.kondor.getAccounts(), 15000, "No answer from Kondor. Is the extension installed and unlocked?");
+    if (!accounts || !accounts.length) { W.toast && W.toast("Kondor shared no account. Open Kondor and allow this site.", 7000); return null; }
+    setAddress("kondor", accounts[0].address);
+    return W.address;
+  }
+
+  /** Ask which wallet, then connect it. Resolves to the address, or null if cancelled. */
+  function connect() {
+    return new Promise((resolve) => {
+      const phone = isPhone();
+      const pick = (fn) => async () => { onClose = null; try { resolve(await fn()); } catch (e) { W.toast && W.toast(String(e.message || e), 7000); resolve(null); } };
+      const kondor = h("button", { class: "kw-opt", type: "button", onclick: pick(connectKondor) }, h("span", { class: "kw-ic", "aria-hidden": "true" }, "🧩"),
+        h("div", {}, h("b", {}, "Kondor", !phone && window.kondor ? h("span", { class: "kw-tag" }, "found") : null), h("span", {}, "Browser extension, on a computer")));
+      const vault = h("button", { class: "kw-opt", type: "button", onclick: pick(connectVault) }, h("span", { class: "kw-ic", "aria-hidden": "true" }, "📱"),
+        h("div", {}, h("b", {}, "KOIN Vault", phone ? h("span", { class: "kw-tag" }, "for phones") : null), h("span", {}, "Fingerprint or face, no extension. Works on any phone")));
+      open(h("h3", {}, "Connect a wallet"), h("p", {}, "Your wallet signs everything. Knode never sees a key."), ...(phone ? [vault, kondor] : [kondor, vault]));
+      onClose = () => resolve(null);
+    });
+  }
+
+  function disconnect() {
+    if (W.kind === "vault" && W.session) vaultApi("disconnect", { body: creds() }).catch(() => {});
+    if (W.kind === "vault") dropVault(); else setAddress(null, null);
+  }
+
+  /** Sign and send. Returns the transaction id once the network has it in a block (or null when it isn't seen yet).
+   *  Throws on rejection or failure, with a readable message. */
+  async function send(label, ops) {
+    if (!W.address) throw new Error("Connect a wallet first.");
+    return W.kind === "vault" ? sendVault(label, ops) : sendKondor(label, ops);
+  }
+
+  async function sendKondor(label, ops) {
+    const signer = window.kondor.getSigner(W.address);
+    try { signer.provider = W.provider; } catch {}
+    const tx = new lib.Transaction({ signer, provider: W.provider });
+    for (const op of ops) await tx.pushOperation(op);
+    W.status && W.status(`Confirm “${label}” in Kondor…`);
+    const receipt = await tx.send();
+    if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "the contract refused it"));
+    const id = tx.transaction && tx.transaction.id;
+    W.status && W.status("Sent. Waiting for the next block…");
+    if (id) { try { await W.provider.wait(id, "byBlock", 90000); return id; } catch { return null; } }
+    return null;
+  }
+
+  async function sendVault(label, ops) {
+    if (!W.session) { dropVault(); throw new Error("KOIN Vault isn't connected any more. Connect again."); }
+    const operations = ops.map((o) => ({ call_contract: { contract_id: o.call_contract.contract_id, entry_point: Number(o.call_contract.entry_point), args: o.call_contract.args } }));
+    let req;
+    try { req = await vaultApi("request", { body: { ...creds(), operations, mana: "auto" } }); }
+    catch (e) {
+      if (e.status === 404 || e.status === 410) { dropVault(); throw new Error("KOIN Vault connection expired. Connect again, then retry."); }
+      throw new Error(e.status === 409 ? `${e.message} (KOIN Vault)` : e.message);
+    }
+    const status = h("div", { class: "kw-status", role: "status" }, "Waiting for your approval in KOIN Vault…");
+    open(h("h3", {}, `Approve in KOIN Vault`), h("p", {}, `“${label}”. Open KOIN Vault, check the details and approve with your fingerprint or face, then come back here.`),
+      h("a", { class: "kw-go", href: VAULT + "/", target: "_blank", rel: "noopener noreferrer", referrerpolicy: "no-referrer" }, "Open KOIN Vault"), status,
+      h("p", {}, req.funding && req.funding.payer === "sponsor" ? "Mana for this one is covered by KOIN Vault." : "This uses your wallet's own Mana (from the KOIN it holds)."));
+    let stop = false; onClose = () => { stop = true; };
+    const until = Math.min(req.expiresAt || Infinity, Date.now() + 10 * 60000);
+    try {
+      while (Date.now() < until) {
+        await sleep(2000);
+        let r; try { r = await vaultApi("request-status", { query: { ...creds(), requestId: req.requestId } }); }
+        catch (e) { if (e.status === 404 || e.status === 410) throw new Error("The request expired before it was approved."); continue; }
+        if (r.status === "pending") { if (stop) throw new Error("Still waiting in KOIN Vault. Approve or reject it there; don't send it again from here."); continue; }
+        if (r.status === "submitting") { status.textContent = "Approved. Sending…"; continue; }
+        if (r.status === "rejected") throw new Error("Cancelled in KOIN Vault.");
+        if (r.status === "failed") throw new Error(r.error || "KOIN Vault couldn't send it.");
+        if (r.status === "approved") {
+          status.textContent = "Sent. Waiting for the next block…";
+          W.status && W.status("Sent. Waiting for the next block…");
+          close();
+          if (r.txid) { try { await W.provider.wait(r.txid, "byBlock", 90000); return r.txid; } catch { /* not seen in a block yet */ } }
+          return null;
+        }
+      }
+      throw new Error("No answer from KOIN Vault in time. Check the wallet before trying again.");
+    } finally { close(); }
+  }
+
+  function init({ provider, onChange, toast, status } = {}) {
+    W.provider = provider; W.onChange = onChange || (() => {}); W.toast = toast; W.status = status;
+    // Restore a KOIN Vault connection from this tab (sessions live 30 minutes), checked again before use.
+    const saved = store.get(sessionStorage, "kw-vault");
+    if (saved) {
+      try {
+        const s = JSON.parse(saved);
+        if (s && s.expiresAt > Date.now()) {
+          W.session = { sessionId: s.sessionId, secret: s.secret, expiresAt: s.expiresAt };
+          vaultApi("status", { query: creds() }).then((st) => {
+            if (st.connected && st.address === s.address) { setAddress("vault", st.address); watchVault(); } else dropVault();
+          }).catch((e) => { if (e.status === 404 || e.status === 410) dropVault(); });
+        } else store.set(sessionStorage, "kw-vault", null);
+      } catch { store.set(sessionStorage, "kw-vault", null); }
+    }
+  }
+
+  window.KWallet = {
+    init, connect, disconnect, send, isPhone,
+    get address() { return W.address; }, get kind() { return W.kind; },
+    label: () => (W.kind === "vault" ? "KOIN Vault" : W.kind === "kondor" ? "Kondor" : "your wallet"),
+  };
+})();

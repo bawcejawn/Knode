@@ -1,5 +1,5 @@
 /* Knode Swap — swap VHP for the desk's KOIN, 1:1 minus the fee.
-   A static page: it reads the desk contract on the Koinos chain, and the swap is signed by the visitor's own Kondor
+   A static page: it reads the desk contract on the Koinos chain, and the swap is signed by the visitor's own wallet (Kondor or KOIN Vault, see wallet.js)
    wallet as ONE transaction (approve the VHP + swap). With no desk deployed yet (or ?demo), it runs a preview. */
 (() => {
   "use strict";
@@ -136,21 +136,14 @@
       renderAll();
       return;
     }
-    if (!window.kondor) return toast("Kondor didn't load. Install the Kondor extension, then refresh.");
-    try {
-      const accounts = await withTimeout(window.kondor.getAccounts(), 15000, "No answer from Kondor. Is the Kondor extension installed and unlocked?");
-      if (!accounts || !accounts.length) return toast("Kondor shared no account. Open Kondor and allow this site.");
-      S.account = accounts[0].address;
-      toast(`Connected ${short(S.account)}`);
-      await loadBalance();
-      renderAll();
-    } catch (e) { toast(e.message || String(e), 7000); }
+    if (!window.KWallet) return toast("The wallet code didn't load. Refresh the page and try again.");
+    await window.KWallet.connect(); // onChange (in start) picks up the address
   }
 
   function friendlyError(msg) {
     const m = msg.match(/"([^"]{6,160})"/);
     const text = m ? m[1] : msg;
-    if (/insufficient|mana|rc_limit/i.test(text)) return "not enough Mana. Tick Kondor's free Mana option, or wait for your Mana to refill.";
+    if (/insufficient|mana|rc_limit/i.test(text)) return "not enough Mana. In Kondor, tick the free Mana option; in KOIN Vault, hold a little KOIN; or wait for Mana to refill.";
     return text.slice(0, 180);
   }
 
@@ -185,7 +178,7 @@
     w.textContent = q.problem;
     w.hidden = !q.problem;
     const go = $("#go");
-    if (!S.account) { go.textContent = "Connect Kondor"; go.disabled = false; }
+    if (!S.account) { go.textContent = "Connect wallet"; go.disabled = false; }
     else if (!q.units) { go.textContent = "Enter an amount"; go.disabled = true; }
     else { go.textContent = q.problem ? "Can't swap this amount" : `Swap for ${amount(q.out, 4)} KOIN`; go.disabled = !!q.problem; }
   }
@@ -197,32 +190,26 @@
     const q = quote();
     if (!q.units || q.problem) return renderQuote();
     const label = `swap ${exact(q.units)} VHP for ${exact(q.out)} KOIN`;
-    if (S.demo) return toast(`Demo: this would open Kondor to confirm “${label}”.`, 6000);
+    if (S.demo) return toast(`Demo: this would ask your wallet to confirm “${label}”.`, 6000);
     const go = $("#go");
     go.disabled = true;
     try {
-      toast(`Confirm “${label}” in Kondor…`, 20000);
-      const signer = window.kondor.getSigner(S.account);
-      try { signer.provider = S.provider; } catch {}
-      const vhp = new lib.Contract({ id: S.dep.vhp, abi: TOKEN_ABI, provider: S.provider, signer });
-      const desk = new lib.Contract({ id: S.dep.contract, abi: DESK_ABI, provider: S.provider, signer });
+      const vhp = new lib.Contract({ id: S.dep.vhp, abi: TOKEN_ABI, provider: S.provider });
+      const desk = new lib.Contract({ id: S.dep.contract, abi: DESK_ABI, provider: S.provider });
       const op = async (c, fn, args) => (await c.functions[fn](args, { onlyOperation: true })).operation;
-      const tx = new lib.Transaction({ signer, provider: S.provider });
       // 1) let the desk take exactly this much VHP, 2) swap — never accept less than the KOIN quoted here
-      await tx.pushOperation(await op(vhp, "approve", { owner: S.account, spender: S.dep.contract, value: q.units.toString() }));
-      await tx.pushOperation(await op(desk, "swap", { from: S.account, vhp_amount: q.units.toString(), min_koin_out: q.out.toString() }));
-      const receipt = await tx.send();
-      if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "the desk refused it"));
-      toast("Sent. Waiting for the next block…", 30000);
-      const id = tx.transaction && tx.transaction.id;
-      let confirmed = false;
-      if (id) { try { await S.provider.wait(id, "byBlock", 90000); confirmed = true; } catch {} }
+      const ops = [
+        await op(vhp, "approve", { owner: S.account, spender: S.dep.contract, value: q.units.toString() }),
+        await op(desk, "swap", { from: S.account, vhp_amount: q.units.toString(), min_koin_out: q.out.toString() }),
+      ];
+      toast(`Confirm “${label}” in ${window.KWallet.label()}…`, 20000);
+      const confirmed = !!(await window.KWallet.send(label, ops));
       toast(confirmed ? `Done: you received ${exact(q.out)} KOIN.` : "Sent. It may take a minute to show.", 9000);
       $("#amount").value = "";
       await loadLive().catch(() => {});
     } catch (e) {
       const msg = String(e.message || e);
-      toast(/reject|denied|cancel/i.test(msg) ? "Cancelled in Kondor." : `Not sent: ${friendlyError(msg)}`, 9000);
+      toast(/reject|denied|cancel/i.test(msg) ? `Cancelled in ${window.KWallet.label()}.` : `Not sent: ${friendlyError(msg)}`, 9000);
     } finally {
       renderAll();
     }
@@ -248,9 +235,9 @@
 
   function renderWallet() {
     const btn = $("#connect");
-    btn.textContent = S.account ? short(S.account) : "Connect Kondor";
+    btn.textContent = S.account ? short(S.account) : "Connect wallet";
     btn.classList.toggle("connected", !!S.account);
-    $("#bal-line").textContent = S.account && S.vhp !== null ? `Balance: ${amount(S.vhp, 4)} VHP` : "Connect Kondor to see your VHP";
+    $("#bal-line").textContent = S.account && S.vhp !== null ? `Balance: ${amount(S.vhp, 4)} VHP` : "Connect a wallet to see your VHP";
   }
 
   function renderAll() { renderWallet(); renderStats(); renderQuote(); renderRecent(); }
@@ -289,7 +276,12 @@
 
   // ═══════════════ start ═══════════════
   async function start() {
-    $("#connect").addEventListener("click", () => (S.account ? toast(`Connected as ${S.account}`) : connect()));
+    let armed = 0;
+    $("#connect").addEventListener("click", () => {
+      if (!S.account) return connect();
+      if (S.demo || Date.now() - armed > 5000) { armed = Date.now(); return toast(`Connected with ${S.demo ? "the demo wallet" : window.KWallet.label()}: ${S.account}. Tap again to disconnect.`, 5000); }
+      armed = 0; window.KWallet.disconnect();
+    });
     $("#swap-form").addEventListener("submit", doSwap);
     $("#amount").addEventListener("input", renderQuote);
     $("#max").addEventListener("click", setMax);
@@ -300,6 +292,15 @@
     } else {
       S.dep = dep;
       S.provider = new lib.Provider([dep.rpc || RPC]);
+      if (window.KWallet) window.KWallet.init({
+        provider: S.provider, toast,
+        onChange: async (addr) => {
+          S.account = addr; S.vhp = null;
+          if (addr) { toast(`Connected ${short(addr)} with ${window.KWallet.label()}`); await loadBalance().catch(() => {}); }
+          else toast("Wallet disconnected");
+          renderAll();
+        },
+      });
       S.desk = new lib.Contract({ id: dep.contract, abi: DESK_ABI, provider: S.provider });
       $("#foot-contract").replaceChildren("Desk contract ", el("a", { href: EXPLORER_ADDRESS + dep.contract, target: "_blank", rel: "noopener" }, short(dep.contract)));
       try { await loadLive(); } catch (e) { toast(`Couldn't reach the Koinos network: ${e.message}`, 8000); }

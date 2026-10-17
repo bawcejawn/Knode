@@ -22,14 +22,14 @@
   <main class="pk">
     <h1>Register your node's producer key</h1>
     <p>For your <strong>own</strong> block-producing node. This tells Koinos: "blocks signed by this node's key produce for
-      my address, using my VHP." Kondor signs it; this page never sees a private key.</p>
+      my address, using my VHP." Your wallet signs it (Kondor or KOIN Vault); this page never sees a private key.</p>
     <p>Paste only the <strong>public</strong> key (from <code>npm run bot -- node-key personal</code>). Never paste
       the contents of <code>private.key</code>.</p>
 
     <p><a href="node.html">Producer lookup</a> · <a href="burn.html">Burn KOIN into VHP</a></p>
-    <div class="row"><button class="btn" id="connect">Connect Kondor</button></div>
-    <label>Producer address (the connected Kondor account)</label>
-    <input id="addr" readonly placeholder="connect Kondor first">
+    <div class="row"><button class="btn" id="connect">Connect wallet</button></div>
+    <label>Producer address (the connected wallet)</label>
+    <input id="addr" readonly placeholder="connect a wallet first">
     <label for="key">Node PUBLIC key</label>
     <input id="key" placeholder="A… (44 characters)" autocomplete="off" spellcheck="false">
     <div class="row"><button class="btn" id="send" disabled>Register key</button></div>
@@ -38,6 +38,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js"></script>
+  <script src="wallet.js"></script>
   <script>
   (() => {
     "use strict";
@@ -67,39 +68,32 @@
       } catch { return false; }
     }
 
+    const W = window.KWallet;
+    W.init({ provider, toast: (t) => say(t), onChange: (addr) => {
+      account = addr;
+      $("addr").value = addr || "";
+      $("connect").textContent = addr ? "Disconnect" : "Connect wallet";
+      $("send").disabled = !addr;
+      say(addr ? `Connected with ${W.label()}. Check the address above is the one your node produces for, paste the public key, then Register.` : "Not connected.");
+    } });
     $("connect").onclick = async () => {
-      if (!window.kondor) return say("Kondor didn't load. Is the Kondor extension installed? Refresh and try again.");
-      try {
-        const accounts = await window.kondor.getAccounts();
-        if (!accounts || !accounts.length) return say("Kondor shared no account. Open Kondor and allow this site.");
-        account = accounts[0].address;
-        $("addr").value = account;
-        $("send").disabled = false;
-        say("Connected. Check the address above is your NEW personal node address, paste the public key, then Register.");
-      } catch (e) { say(String(e.message || e)); }
+      if (account) return W.disconnect();
+      try { await W.connect(); } catch (e) { say(String(e.message || e)); }
     };
 
     $("send").onclick = async () => {
       const key = $("key").value.trim();
-      if (!account) return say("Connect Kondor first.");
+      if (!account) return say("Connect a wallet first.");
       if (!keyBytesOk(key)) return say("That isn't a node PUBLIC key (33 bytes, base64url, starts with A). Copy it again from node-key.");
       try {
-        say("Confirm in Kondor…");
-        const signer = window.kondor.getSigner(account);
-        try { signer.provider = provider; } catch {}
-        const pob = new lib.Contract({ id: POB, abi: ABI, provider, signer });
+        const pob = new lib.Contract({ id: POB, abi: ABI, provider });
         const { operation } = await pob.functions.register_public_key({ producer: account, public_key: key }, { onlyOperation: true });
-        const tx = new lib.Transaction({ signer, provider });
-        await tx.pushOperation(operation);
-        const receipt = await tx.send();
-        if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "refused"));
-        say("Sent. Waiting for the next block…");
-        const id = tx.transaction && tx.transaction.id;
-        try { await provider.wait(id, "byBlock", 90000); say("Done. The key becomes active in about a minute.\nTransaction: " + id); }
-        catch { say("Sent, not yet seen in a block. Check Kondor's history in a minute.\nTransaction: " + id); }
+        say(`Confirm in ${W.label()}…`);
+        const id = await W.send("register this node key", [operation]);
+        say(id ? "Done. The key becomes active in about a minute.\nTransaction: " + id : "Sent, not yet seen in a block. Check your wallet's history in a minute.");
       } catch (e) {
         const m = String(e.message || e);
-        say(/reject|denied|cancel/i.test(m) ? "Cancelled in Kondor." : "Not sent: " + m.slice(0, 300));
+        say(/reject|denied|cancel/i.test(m) ? `Cancelled in ${W.label()}.` : "Not sent: " + m.slice(0, 300));
       }
     };
   })();
