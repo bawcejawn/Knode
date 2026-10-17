@@ -229,112 +229,11 @@
   }
 
 
-  // ═══════════════ swap now, or wait? ═══════════════
-  // VHP turns back into KOIN only when its owner produces a block: each block burns some of the producer's VHP and
-  // mints it back as KOIN (plus the block reward). We measure the rate live from recent irreversible blocks:
-  //   weekly conversion = VHP burned from block signers per week ÷ VHP held by the producers seen.
-  // A producer converts that share of its VHP each week (on average, in proportion to its stake), so its VHP decays
-  // exponentially: time to get a share p back = ln(1 − p) / ln(1 − weekly).
-  const MEASURE_BLOCKS = 1000, MEASURE_KEY = "knode-vhp-rate-v1", MEASURE_TTL = 6 * 3600_000;
-  let rate = null, measuring = null;
-
-  function b64bytes(b64) { const bin = atob(String(b64).replace(/-/g, "+").replace(/_/g, "/")); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }
-  /** burn_event / mint_event = { address: bytes = 1; value: uint64 = 2 } (hand-decoded, as in the repo's step0 tool). */
-  function decodeAddrValue(b64) {
-    const buf = b64bytes(b64); let pos = 0, who = null, value = 0n;
-    const varint = () => { let r = 0n, sh = 0n; for (;;) { const b = buf[pos++]; r |= BigInt(b & 0x7f) << sh; if (!(b & 0x80)) return r; sh += 7n; } };
-    while (pos < buf.length) {
-      const tag = Number(varint()), field = tag >> 3, wire = tag & 7;
-      if (wire === 0) { const v = varint(); if (field === 2) value = v; }
-      else if (wire === 2) { const len = Number(varint()); if (field === 1) who = buf.slice(pos, pos + len); pos += len; }
-      else break;
-    }
-    return { who: who && lib.utils ? lib.utils.encodeBase58(who) : null, value };
-  }
-
-  async function measureRate() {
-    try { const c = JSON.parse(localStorage.getItem(MEASURE_KEY) || "null"); if (c && Date.now() - c.at < MEASURE_TTL) return c; } catch {}
-    const head = await S.provider.getHeadInfo();
-    const lib_h = Number(head.last_irreversible_block), id = head.head_topology.id;
-    let burned = 0n, minted = 0n, blocks = 0, t0 = 0, t1 = 0;
-    const signers = new Set();
-    for (let start = lib_h - MEASURE_BLOCKS + 1; start <= lib_h; start += 100) {
-      const res = await S.provider.call("block_store.get_blocks_by_height", { head_block_id: id, ancestor_start_height: String(start), num_blocks: Math.min(100, lib_h - start + 1), return_block: true, return_receipt: true });
-      for (const it of res.block_items || []) {
-        const h = it.block?.header || {}, signer = h.signer;
-        if (!signer) continue;
-        blocks++; signers.add(signer);
-        const ts = Number(h.timestamp); if (!t0 || ts < t0) t0 = ts; if (ts > t1) t1 = ts;
-        for (const e of it.receipt?.events || []) {
-          if (!e.data) continue;
-          if (e.source === S.dep.vhp && /burn_event$/.test(e.name || "")) { const d = decodeAddrValue(e.data); if (d.who === signer) burned += d.value; }
-          if (e.source === S.dep.koin && /mint_event$/.test(e.name || "")) { const d = decodeAddrValue(e.data); if (d.who === signer) minted += d.value; }
-        }
-      }
-    }
-    const tok = new lib.Contract({ id: S.dep.vhp, abi: TOKEN_ABI, provider: S.provider });
-    let held = 0n;
-    for (const a of signers) held += big(((await tok.functions.balance_of({ owner: a })).result || {}).value);
-    if (!blocks || held <= 0n || burned <= 0n || t1 <= t0) throw new Error("not enough data");
-    const perWeek = blocks / ((t1 - t0) / 604800000);              // blocks per week, from the blocks' own timestamps
-    const weekly = (Number(burned) / blocks) * perWeek / Number(held);
-    const reward = (Number(minted - burned) / blocks) * perWeek / Number(held);
-    if (!(weekly > 0 && weekly < 0.2)) throw new Error("measurement out of range");
-    const r = { at: Date.now(), weekly, reward, blocks, producers: signers.size, held: held.toString() };
-    try { localStorage.setItem(MEASURE_KEY, JSON.stringify(r)); } catch {}
-    return r;
-  }
-
-  const span = (weeks) => {
-    if (!isFinite(weeks)) return "never";
-    if (weeks < 8) return `${Math.max(1, Math.round(weeks))} week${Math.round(weeks) === 1 ? "" : "s"}`;
-    const months = weeks / 4.345;
-    if (months < 24) return `${Math.round(months)} months`;
-    const y = months / 12;
-    return `${y < 10 ? y.toFixed(1) : Math.round(y)} years`;
-  };
-
-  function renderCompare() {
-    if (!$("#cmp-swap")) return;
-    const q = quote();
-    const units = q.units && q.units > 0n ? q.units : 100n * UNIT;
-    const out = units - feeOf(units, feeBps());
-    $("#cmp-amt").textContent = `${amount(units, 4)} VHP`;
-    $("#cmp-swap").textContent = `${amount(out, 4)} KOIN`;
-    const keep = 1 - feeBps() / 10000;
-    if (!rate) return;
-    if (rate.error) {
-      $("#cmp-node").textContent = "slowly";
-      $("#cmp-node-when").textContent = "A small share of your VHP each week, and only while your own node runs 24/7.";
-      $("#cmp-note").textContent = "Couldn't measure the live rate right now.";
-      return;
-    }
-    const tFull = Math.log(1 - keep) / Math.log(1 - rate.weekly), tHalf = Math.log(0.5) / Math.log(1 - rate.weekly);
-    $("#cmp-node").textContent = `~${span(tFull)}`;
-    $("#cmp-node-when").textContent = `to get the same ${amount(out, 4)} KOIN back (half of it after ~${span(tHalf)}), with a node running 24/7.`;
-    $("#cmp-note").textContent = `${S.demo ? "Sample numbers. " : ""}Measured from the last ${rate.blocks.toLocaleString()} Koinos blocks: producers turn about ${(rate.weekly * 100).toFixed(2)}% of their VHP back into KOIN per week${rate.reward > 0 ? `, and earn about ${(rate.reward * 52 * 100).toFixed(1)}% a year in block rewards on top` : ""}.`;
-  }
-
-  function startCompare() {
-    if (S.demo) { rate = { weekly: 0.0019, reward: 0.0012, blocks: 1000 }; renderCompare(); return; }
-    const go = () => {
-      if (measuring) return;
-      measuring = measureRate().then((r) => { rate = r; }, () => { rate = { error: true }; }).finally(renderCompare);
-    };
-    const sec = $("#wait");
-    if ("IntersectionObserver" in window && sec) {
-      const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { io.disconnect(); go(); } }, { rootMargin: "200px" });
-      io.observe(sec);
-    } else go();
-  }
-
   // ═══════════════ rendering ═══════════════
   function renderStats() {
     const st = S.st;
     if (!st) return;
     $("#stat-avail").textContent = amount(st.available);
-    const grown = S.firstAvail === null ? 0n : big(st.available) - S.firstAvail;
-    $("#stat-growth").textContent = grown > 0n ? `+${amount(grown, 4)}` : "0";
     $("#stat-swapped").textContent = amount(st.totals?.vhp_in);
   }
 
@@ -354,7 +253,7 @@
     $("#bal-line").textContent = S.account && S.vhp !== null ? `Balance: ${amount(S.vhp, 4)} VHP` : "Connect Kondor to see your VHP";
   }
 
-  function renderAll() { renderWallet(); renderStats(); renderQuote(); renderRecent(); renderCompare(); }
+  function renderAll() { renderWallet(); renderStats(); renderQuote(); renderRecent(); }
 
   function setMax() {
     if (!S.account) return connect();
@@ -392,7 +291,7 @@
   async function start() {
     $("#connect").addEventListener("click", () => (S.account ? toast(`Connected as ${S.account}`) : connect()));
     $("#swap-form").addEventListener("submit", doSwap);
-    $("#amount").addEventListener("input", () => { renderQuote(); renderCompare(); });
+    $("#amount").addEventListener("input", renderQuote);
     $("#max").addEventListener("click", setMax);
     const wantDemo = /[?&]demo\b/.test(location.search);
     const dep = wantDemo ? null : await fetchJson(DEPLOYMENT).catch(() => null);
@@ -406,7 +305,6 @@
       try { await loadLive(); } catch (e) { toast(`Couldn't reach the Koinos network: ${e.message}`, 8000); }
     }
     renderAll();
-    startCompare();
     // Refresh every 30 s: the available KOIN grows as the desk's node produces blocks.
     setInterval(async () => { try { await loadLive(); renderAll(); } catch {} }, S.demo ? 4000 : 30000);
   }
