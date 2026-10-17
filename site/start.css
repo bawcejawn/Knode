@@ -7,16 +7,6 @@
 .sec-title { font: 800 1.7rem/1.1 var(--display); letter-spacing: -0.02em; margin-bottom: 16px; }
 .small { font-size: .88rem; margin-top: 12px; }
 
-.song { margin-top: 8px; }
-.song-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; }
-.song-head h2 { font: 800 1.5rem/1.1 var(--display); margin: 0 0 4px; }
-.song audio { width: min(420px, 100%); }
-.lyrics { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 4px; }
-.lyrics li { padding: 6px 12px; border-radius: 10px; color: var(--muted); font-weight: 600; cursor: pointer; transition: background .15s ease, color .15s ease, transform .15s ease; }
-.lyrics li.chorus { color: var(--ink); }
-.lyrics li.gap { margin-top: 12px; }
-.lyrics li:hover { background: color-mix(in srgb, var(--violet) 8%, transparent); }
-.lyrics li.now { background: var(--violet); color: var(--violet-ink); transform: translateX(4px); }
 
 .routes { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; }
 .route { background: var(--surface); border-radius: var(--r-lg); padding: 22px; box-shadow: var(--shadow); }

@@ -51,10 +51,10 @@
       "cta": "Play free"
     },
     {
-      "name": "KoinosProof",
-      "tagline": "Certify photos, videos and documents on Koinos.",
-      "link": "https://koinosproof.com/",
-      "cta": "Prove it"
+      "name": "Koinosscan",
+      "tagline": "Explore Koinos blocks, transactions, producers and addresses.",
+      "link": "https://koinosscan.com/",
+      "cta": "Explore"
     },
     {
       "name": "Vortex Bridge",
