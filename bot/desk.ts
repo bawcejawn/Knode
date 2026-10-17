@@ -251,6 +251,26 @@ async function upgrade(sub: string | undefined, send: boolean) {
   log(`✔ upgraded. Now clear the notice: npm run desk -- upgrade cancel --send`);
 }
 
+// ═══════════════════════════════ producer key check ═══════════════════════════════
+/** Reads Proof-of-Burn's record for the desk address (the same read the probes proved on mainnet) and compares it
+ *  with the key file of the desk node on this PC. */
+async function keyStatus() {
+  const { dep, chain } = deployed();
+  const pob = new Contract({ id: dep.pob ?? MAINNET_TOKENS.pob, abi: pobAbi as any, provider: chain.provider });
+  const hex = (b64: string) => Buffer.from(String(b64).replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("hex");
+  let onChain = "";
+  try { onChain = String(((await (pob.functions as any).get_public_key({ producer: dep.contract })).result ?? {}).value ?? ""); } catch { onChain = ""; }
+  let local = "";
+  try { local = nodePublicKey(DESK_NODE_KEY_FILE); } catch {}
+  log(`Desk address (the producer)  ${dep.contract}`);
+  log(`Key on record with PoB       ${onChain || "none yet"}`);
+  log(`Desk node's key file         ${local || `not found at ${DESK_NODE_KEY_FILE}`}`);
+  if (!onChain) { log("… not registered yet. Run: npm run desk -- register-key node --send"); process.exitCode = 1; }
+  else if (!local) log("? Registered on chain, but this PC's desk node key file wasn't found to compare.");
+  else if (hex(onChain) === hex(local)) log("✔ Registered: the desk node signs blocks for the desk address.");
+  else { log("✖ A DIFFERENT key is on record than the desk node's key file. Run: npm run desk -- register-key node --send"); process.exitCode = 1; }
+}
+
 // ═══════════════════════════════ commands ═══════════════════════════════
 async function main() {
   const [cmd = "status", ...a] = process.argv.slice(2);
@@ -308,23 +328,7 @@ async function main() {
       log(`The desk node's PUBLIC key (safe to share):\n  ${nodePublicKey(DESK_NODE_KEY_FILE)}\n\nRegister it for the desk with:\n  npm run desk -- register-key node          (dry run)\n  npm run desk -- register-key node --send`);
       return;
     }
-    case "key-status": {
-      // Reads Proof-of-Burn's record for the desk address (the same read the probes proved on mainnet).
-      const { dep, chain } = deployed();
-      const pob = new Contract({ id: dep.pob ?? MAINNET_TOKENS.pob, abi: pobAbi as any, provider: chain.provider });
-      const bytes = (b64: string) => Buffer.from(String(b64).replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("hex");
-      let onChain = "";
-      try { onChain = String(((await (pob.functions as any).get_public_key({ producer: dep.contract })).result ?? {}).value ?? ""); } catch { onChain = ""; }
-      let local = "";
-      try { local = nodePublicKey(DESK_NODE_KEY_FILE); } catch {}
-      log(`Desk address (the producer)  ${dep.contract}`);
-      log(`Key on record with PoB       ${onChain || "none yet"}`);
-      if (local) log(`Desk node's key              ${local}`);
-      if (!onChain) log("\n… not registered yet. Run: npm run desk -- register-key node --send");
-      else if (local && bytes(onChain) === bytes(local)) log("\n✔ Registered: the desk node signs blocks for the desk address.");
-      else if (local) { log("\n✖ A DIFFERENT key is on record. Run: npm run desk -- register-key node --send"); process.exitCode = 1; }
-      return;
-    }
+    case "key-status": return keyStatus();
     case "node-status": {
       const rpc = E.DESK_NODE_RPC ?? "http://127.0.0.1:8100";
       const pub: any = await new Provider([E.RPC ?? "https://api.koinos.io"]).getHeadInfo();
@@ -334,7 +338,9 @@ async function main() {
       catch { log(`The desk node doesn't answer on ${rpc}. Is Docker running? In C:\\kpred-desk-node\\koinos run: docker compose up -d`); process.exitCode = 1; return; }
       const behind = ph - lh;
       log(`Network block ${ph.toLocaleString()} — desk node ${lh.toLocaleString()}`);
-      log(behind <= 20 ? "✔ The desk node is caught up. It can produce once its key is registered." : `… the desk node is ${behind.toLocaleString()} blocks behind (~${(behind * 3 / 3600).toFixed(1)} h of chain). It catches up much faster than real time.`);
+      log(behind <= 20 ? "✔ The desk node is caught up." : `… the desk node is ${behind.toLocaleString()} blocks behind (~${(behind * 3 / 3600).toFixed(1)} h of chain). It catches up much faster than real time.`);
+      log("");
+      await keyStatus();   // the registration lives on the chain; this reads it, so the answer is real, not a reminder
       return;
     }
     case "register-key": {
