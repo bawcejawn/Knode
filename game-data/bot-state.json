@@ -1,15 +1,15 @@
 {
   "checkedUpTo": 0,
   "orphans": [],
-  "lastCompound": 40278991,
+  "lastCompound": 40307980,
   "warnings": [],
-  "lastProduced": 40306772,
+  "lastProduced": 40307920,
   "producedByDay": {
     "1397": 2,
     "1398": 35,
-    "1399": 35
+    "1399": 38
   },
-  "producerScannedTo": 40306865,
+  "producerScannedTo": 40307923,
   "notified": [
     "upgrade:0x917708a7c567d9642a7a2f121c34fbc70200909787208705fc3aa5a2b1e6433a:1792342988830"
   ]
