@@ -446,6 +446,9 @@
   }
   const outcomeOf = (q) => (q.chainOutcome !== undefined ? q.chainOutcome : q.result ? (q.result.void ? 1000 : q.result.option + 1) : 0);
 
+  /** On-chain question ids start at 0. The card shows that id plus one. Submits still send q.chainId. */
+  const displayQuestionNumber = (q) => Number(q.chainId) + 1;
+
   function questionCard(q, mode) {
     const mine = myAnswer(q);
     const oc = outcomeOf(q);
@@ -469,7 +472,7 @@
       }, el("span", { class: "letter" }, String.fromCharCode(65 + o.index)), el("span", {}, o.label));
     }));
     const foot = el("div", { class: "q-foot" },
-      el("span", {}, `Question #${q.chainId}`),
+      el("span", {}, `Question #${displayQuestionNumber(q)}`),
       mine !== null ? el("span", {}, `Your answer: ${String.fromCharCode(65 + mine)}`) : mode === "open" ? el("span", {}, S.account ? "Pick an option" : "Connect a wallet to answer") : null,
       q.result && q.result.value ? el("span", {}, `Actual: ${q.result.value}`) : null);
     return el("article", { class: "q" }, top, el("h3", {}, ...linkify(q.text)), opts, foot);
