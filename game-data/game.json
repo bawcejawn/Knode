@@ -1,0 +1,76 @@
+{
+  "rpc": "https://api.koinos.io",
+  "weekOneStart": "2026-10-26",
+  "lockBlocks": 14400,
+  "questionsPerDay": [
+    5,
+    5,
+    5,
+    5,
+    5,
+    5,
+    0
+  ],
+  "tierByDay": [
+    "Easy",
+    "Easy",
+    "Medium",
+    "Medium",
+    "Hard",
+    "Hard",
+    "Easy"
+  ],
+  "menus": {
+    "Easy": [
+      "E1s",
+      "E3",
+      "E2s"
+    ],
+    "Medium": [
+      "M1",
+      "M9",
+      "M10",
+      "M4",
+      "M5",
+      "M6",
+      "M7"
+    ],
+    "Hard": [
+      "H1",
+      "H3"
+    ]
+  },
+  "enabled": [
+    "E1s",
+    "E2s",
+    "E3",
+    "M1",
+    "M4",
+    "M5",
+    "M6",
+    "M7",
+    "M9",
+    "M10",
+    "H1",
+    "H3"
+  ],
+  "model": {
+    "rateDays": 2,
+    "calibDays": 7,
+    "aggDays": 3,
+    "minDaily": 1400,
+    "minSmallDaily": 20,
+    "minExpected": 60,
+    "maxDrift": 0.25,
+    "voidAlpha": 0.001,
+    "tolerance": 0.05,
+    "step": 1200,
+    "pairCleanDays": 14,
+    "coreRateDays": 0.25,
+    "smallRateDays": 1,
+    "minVoidBlocks": 600,
+    "cleanDays": 2,
+    "reliabilityDays": 14,
+    "maxVoidHistory": 0.03
+  }
+}
