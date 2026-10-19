@@ -26,7 +26,13 @@ jobs:
       - name: npm test
         run: |
           set -o pipefail
-          npm test 2>&1 | tee test.log
+          # protoc's plugin sometimes fails with EAGAIN while it is installing. That is not a test failure.
+          for attempt in 1 2 3; do
+            if npm test 2>&1 | tee test.log; then exit 0; fi
+            if ! grep -q EAGAIN test.log || [ "$attempt" = 3 ]; then exit 1; fi
+            echo "Build tool hit EAGAIN (attempt $attempt); retrying."
+            sleep 5
+          done
       - name: Show what failed (as annotations on the run page)
         if: failure()
         run: |
