@@ -1,7 +1,8 @@
 /**
  * KPRED OPERATOR BOT — keeps the weekly game running. Every command is safe to run again at any time.
  *
- *   npm run bot -- status                     what the game looks like right now (read-only, no key needed)
+ *   npm run bot -- status                     what the game looks like right now (read-only, no key needed).
+ *                                             Production is read from recent block signers, not from bot-state.json.
  *   npm run bot -- tick                       do whatever is due: resolve finished questions, post today's
  *                                             questions, close/finalize weeks, settle players, compound
  *   npm run bot -- tick --dry-run             show what tick would do without sending anything
@@ -29,6 +30,7 @@ import { Signer, Provider, Contract } from "koilib";
 import { Chain, KoinosChain, SimChain, Call, showKoin, toSat, loadAbi } from "./chain.ts";
 import { tokenAbi } from "./token-abi.ts";
 import { syncBlocks } from "../common.ts";
+import { formatProduction, loadSigners, signerFromBlockItem, type SignedBlock } from "./production.ts";
 
 // ───────────────────────── settings ─────────────────────────
 
@@ -106,6 +108,8 @@ export type Ctx = {
   checkpoint: (message: string) => void;
   /** Recent irreversible blocks (height + producer), for the production health check. */
   recentBlocks?: () => Promise<Array<{ h: number; signer: string }>>;
+  /** Recent block signers, read from the chain for the status line. Not set on the simulated chain. */
+  recentSigners?: (lib: number, maxBlocks: number) => Promise<{ blocks: SignedBlock[]; from: number; to: number }>;
   /** Things that need a human. A scheduled run with problems ends as "failed", which makes GitHub email you. */
   problems: string[];
   quiet?: boolean;
@@ -508,10 +512,26 @@ export async function status(ctx: Ctx) {
     log(`  open question #${q.chainId} (answers close ${utc(q.lockTime)}, in ${inH(q.lockTime)}): ${q.text}`);
     for (const o of q.options) log(`      ${String.fromCharCode(65 + o.index)}) ${o.label}`);
   }
-  const bs = readJson(ctx.P.botState, null);
-  if (bs?.lastProduced) log(`Pool production: last block ${bs.lastProduced} (${Math.round((lib - bs.lastProduced) / 20)} min ago), ~${(productionRate(bs, lib) * DAY).toFixed(0)} blocks/day`);
-  else log(`Pool production: no block produced yet`);
+  await logLiveProduction(ctx, lib, now);
   if (ctx.chain.kind === "koinos") log(`Bot wallet ${ctx.operator.getAddress()} Mana ${showKoin(await ctx.chain.mana(ctx.operator.getAddress()))}`);
+}
+
+/** Last blocks signed by the game and the desk, from the chain. The saved bot-state.json height is not used. */
+async function logLiveProduction(ctx: Ctx, lib: number, nowMs: number) {
+  if (!ctx.recentSigners) {
+    log("Pool production (live): this run cannot list block signers.");
+    return;
+  }
+  const scanBlocks = Number(E.STATUS_SCAN_BLOCKS ?? 4800); // about 4 hours of 3-second blocks
+  try {
+    const scanned = await ctx.recentSigners(lib, scanBlocks);
+    log(formatProduction("Pool production (live)", ctx.chain.contractId, scanned.blocks, scanned.from, scanned.to, nowMs));
+    const desk = E.DESK_ADDRESS || readJson(path.join("desk-data", "deployment.json"), null)?.contract;
+    if (desk) log(formatProduction("Desk production (live)", String(desk), scanned.blocks, scanned.from, scanned.to, nowMs));
+    else log("Desk production (live): no desk address (desk-data/deployment.json or DESK_ADDRESS).");
+  } catch (e) {
+    log(`Pool production (live): could not read recent block signers (${(e as Error).message ?? e}).`);
+  }
 }
 
 // ═══════════════════════════════ deploy ═══════════════════════════════
@@ -1008,6 +1028,28 @@ function liveCtx(dryRun: boolean): Ctx {
     chain, operator, P, dryRun, generator: generatorRunner(P.dir), checkpoint: gitCheckpoint(P.dir), problems: [],
     // The same block history the question generator uses (game-data/blocks.csv), topped up to the newest final block.
     recentBlocks: async () => (await syncBlocks(chain.provider, path.join(P.dir, "blocks.csv"), 26)).blocks,
+    recentSigners: async (lib, maxBlocks) => {
+      const head: any = await chain.provider.getHeadInfo();
+      const headId = head.head_topology.id;
+      return loadSigners(async (from, to) => {
+        let last: unknown;
+        for (let attempt = 1; attempt <= 4; attempt++) {
+          try {
+            const res: any = await chain.provider.call("block_store.get_blocks_by_height", {
+              head_block_id: headId, ancestor_start_height: String(from),
+              num_blocks: to - from + 1, return_block: true, return_receipt: false,
+            });
+            const items = res?.block_items ?? [];
+            if (items.length === 0) throw new Error(`node returned no blocks at ${from}`);
+            return items.map(signerFromBlockItem);
+          } catch (e) {
+            last = e;
+            await new Promise((r) => setTimeout(r, 400 * attempt));
+          }
+        }
+        throw last;
+      }, lib, maxBlocks);
+    },
   };
 }
 
