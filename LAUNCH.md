@@ -110,8 +110,8 @@ The questions themselves are still about real block ranges ("between block A and
 
 **Free play:** anyone can answer and appear on the leaderboard without staking. Rewards are points × stake, so free
 players are never paid. Deposits are whole numbers only (1, 2, 3 VHP …); withdrawals can be any amount, down to the last
-decimal, so everyone can always take out every unit. The pool only pays Mana for staked players;
-free players use their own Mana or Kondor's free Mana.
+decimal, so everyone can always take out every unit. Players pay their own Mana, or Kondor's free Mana.
+The contract still has optional code to sponsor Mana for staked players, capped on chain at 2 KOIN; the owner can set that cap to 0. The project is not paying anyone's Mana right now.
 
 ## Step 4b — Lock the exact library versions
 
@@ -258,7 +258,7 @@ All stakes, weeks, results and the seed carry over. `npm run bot -- upgrade canc
 | Lever | Undo | Notes |
 |---|---|---|
 | `pause on --send` (no new deposits) | `pause off --send` | Withdrawals and collecting rewards keep working |
-| `sponsor-limit 0 --send` (stop paying players' Mana) | `sponsor-limit 2 --send` | |
+| `sponsor-limit 0 --send` (optional: set the sponsor cap to 0) | `sponsor-limit 2 --send` | On chain the cap is 2 KOIN. Players pay their own Mana. |
 | `void 12 "reason" --send` | can't be undone | That question just doesn't count |
 | `admin set_operator operator=<new bot address> --as owner --send` | same command with the old address | Then update the `OPERATOR_WIF` secret on GitHub |
 
@@ -280,7 +280,7 @@ npm run bot -- status
 npm run bot -- node-status
 npm run bot -- void 12 "reason"       # VOID open question #12 (before its week closes)
 npm run bot -- claim-fee              # the 5% producer fee (KOIN) to the admin wallet
-npm run bot -- sponsor-limit 0        # stop paying players' Mana (players use their own / Kondor's free Mana)
+npm run bot -- sponsor-limit 0        # optional: set the sponsor cap to 0 (players pay their own Mana)
 npm run bot -- pause on|off           # pause NEW deposits (withdrawals and claims always work)
 ```
 

@@ -27,7 +27,9 @@ export interface Chain {
   /** Read-only call. Returns the decoded result ({} when empty). Throws if the contract refuses. */
   read(method: string, args?: any): Promise<any>;
   /** One transaction with one or more operations, signed by `signers` (the first is the payee, whose nonce is
-   *  used). `sponsored`: the game contract pays the Mana (only for a single answer / settle / claim). */
+   *  used). `sponsored`: optional request for the contract to pay Mana for one answer, settle, or claim by a
+   *  staked player, up to the on-chain cap (2 KOIN; the owner can set it to 0). Players pay their own Mana.
+   *  The project is not paying anyone's Mana right now. */
   send(calls: Call[], signers: Signer[], opts?: { sponsored?: boolean; payer?: string; rcLimitKoin?: number }): Promise<Sent>;
   mana(address: string): Promise<bigint>;
 }
