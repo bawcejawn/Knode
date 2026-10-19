@@ -1,0 +1,24 @@
+# The status command's live production check. No chain and no secrets.
+name: Status check tests
+
+on:
+  push:
+    paths: ["bot/production.ts", "bot/production.test.ts", "bot/bot.ts", ".github/workflows/status-test.yml"]
+  pull_request:
+    paths: ["bot/production.ts", "bot/production.test.ts", "bot/bot.ts", ".github/workflows/status-test.yml"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - run: node --import tsx --test bot/production.test.ts
