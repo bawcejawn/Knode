@@ -1,6 +1,7 @@
 {
   "name": "kpred-desk",
   "version": "0.1.0",
+  "license": "UNLICENSED",
   "description": "Knode swap desk: swap VHP for the desk's KOIN at 1:1 minus a 3% fee. The desk's VHP produces blocks, which refills its KOIN.",
   "private": true,
   "type": "module",
