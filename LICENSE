@@ -1,0 +1,7 @@
+Copyright (c) 2026 Carl Padavano. All rights reserved.
+
+This repository, including the desk/ and game/ contracts, is proprietary.
+
+The source code is made publicly visible for transparency, review, and verification of the deployed on-chain contracts only. No permission is granted to copy, modify, distribute, sublicense, deploy, or create derivative works from it, in whole or in part, without prior written permission from the copyright holder. Viewing and forking on GitHub as permitted by GitHub's Terms of Service is not a grant of any other rights.
+
+Third-party components (for example, the bundled Google protobuf files) remain under their own licenses.

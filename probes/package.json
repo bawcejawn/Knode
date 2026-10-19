@@ -1,6 +1,7 @@
 {
   "name": "kprediction-probes",
   "version": "0.1.0",
+  "license": "UNLICENSED",
   "description": "Testnet probes: checks that every on-chain capability the prediction contract needs works on Koinos Harbinger",
   "private": true,
   "type": "module",

@@ -222,3 +222,7 @@ backtest isn't running. After that it keeps its own copy in `generator-data/bloc
 `paramsHash` covers everything that decides the answer (template, subjects, heights, thresholds, rates).
 `dataHash` is the SHA-256 of the window's blocks (`height,signer,timestamp,txCount` per line), so anyone
 can check a resolution against the chain.
+
+## License
+
+Copyright (c) 2026 Carl Padavano. All rights reserved. The source, including the `desk/` and `game/` contracts, is public so anyone can review it and check the deployed contracts. See [LICENSE](LICENSE).

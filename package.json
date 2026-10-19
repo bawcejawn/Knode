@@ -1,6 +1,7 @@
 {
   "name": "kprediction",
   "version": "1.0.0",
+  "license": "UNLICENSED",
   "description": "Kprediction: weekly Koinos block-producer prediction game — analysis tools, question generator and operator bot",
   "type": "module",
   "private": true,

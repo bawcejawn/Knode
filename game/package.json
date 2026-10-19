@@ -1,6 +1,7 @@
 {
   "name": "kpred-game",
   "version": "0.1.0",
+  "license": "UNLICENSED",
   "description": "Kprediction game contract: weekly block-producer prediction game on Koinos, scored and paid fully on-chain",
   "private": true,
   "type": "module",

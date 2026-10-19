@@ -85,7 +85,7 @@ Concrete follow-ups, none of them a contract change:
 | M7 | Open | Toolchain audit findings unchanged. Not re-run this pass. |
 | M8 | Open | CI still does not run on pull requests or cover the resolver. |
 | M9 | Open | Snapshot script still trusts the host for the file and the hash. |
-| M10 | Open | Still no license. |
+| M10 | **Resolved** | Root LICENSE reserves all rights, including desk/ and game/. The four package.json files set "license": "UNLICENSED". |
 | M11 | Open | Owner transfer is still instant. |
 | L1–L5 | Open | Unchanged, except one L3 bullet: `game/SECURITY.md` saying the live contract pays by headcount is now true. The README day-schedule mismatch, the stale “eligible stake” proto line (M1), and `docs/security-audit.md` still stand. |
 | New | Status cache | `npm run bot -- status` reports a stale `lastProduced` as if the node were down. See above. Not a node outage. |
@@ -296,6 +296,8 @@ Fix: run contract tests on pull requests. Add a small Node test that feeds a fix
 Fix: pin a snapshot hash in this repo (or a second source) and pin the `koinos/koinos` commit. Drop `--ssl-no-revoke`, or limit it to a documented corporate-proxy case.
 
 #### M10. There is no license.
+
+Resolved: root `LICENSE` reserves all rights for the whole repo, including `desk/` and `game/`, and the four `package.json` files set `"license": "UNLICENSED"`.
 
 No `LICENSE` file, and no `"license"` field in any `package.json`. The repo is public and takes deposits. Default copyright means nobody else can legally copy, fork, or audit-and-republish the contracts, and contributors have not granted you their copyright either. Several commits are attributed to "Claude" as well as the owner.
 
