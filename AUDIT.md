@@ -339,6 +339,8 @@ There is no root `tsconfig.json` and no typecheck script. `bot/` uses `any` thro
 
 `sponsorOk` for `settle` (`Kpred.ts` lines 1039–1048) does not check the player's signature. `settle` is intentionally permissionless. The pool can be made to pay mana for those calls, capped by `max_sponsor_rc` (2 KOIN on chain). That is the documented grief limit, not a theft.
 
+Note: players pay their own Mana, and the project is not paying anyone's Mana right now. The contract still has optional code to sponsor Mana for staked players. That option is capped on chain at 2 KOIN (`max_sponsor_rc`); the owner can set the cap to 0.
+
 Integer rounding in `claim` can leave dust in `pots_outstanding`. It is bounded by about one base unit per claim and cannot be withdrawn as surplus. Not worth a contract change by itself.
 
 Fix: add a `tsconfig` that CI runs with `tsc --noEmit`. Pass `git` arguments as an array (`spawnSync`) instead of a shell string. Make the watchdog fail, or not run, when the producer variable is missing.

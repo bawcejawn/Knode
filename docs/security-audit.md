@@ -64,7 +64,7 @@ check"). If a bug ever tried to pay out more than was earned, the whole transact
 - The producer fee and the seed are tracked separately from players' money; compounding never burns the seed KOIN
   or the unpaid producer fee.
 - Weeks close, settle and finalise in order, with the time windows enforced by block time.
-- The pool pays Mana only for one valid answer, settle or claim by a staked player, with a 10 KOIN cap per transaction.
+- Players pay their own Mana. Optional code can sponsor Mana for one valid answer, settle, or claim by a staked player. The on-chain cap is 2 KOIN (the code allows at most 10). The owner can set the cap to 0. The project is not paying anyone's Mana right now.
 - The registered block-producer key can't redirect rewards: blocks are always credited to the contract's address.
 - Numbers can't overflow: the reward maths uses 128-bit arithmetic.
 - The website never builds HTML from text it loads (no `innerHTML`), so question data can't inject code into the page.
@@ -78,7 +78,7 @@ check"). If a bug ever tried to pay out more than was earned, the whole transact
 | The bot key is stolen | It can't move tokens. It could post wrong results; the owner can correct them before the week closes (12-hour window), and anyone can recheck results from the published block data. Replace it with `set_operator`. |
 | The pool's node is down | No funds at risk, only lower rewards. The bot emails after 1 hour of silence. |
 | The bot is down for more than a day around Monday–Tuesday | Players who keep playing are settled automatically. Others who don't act during the 24-hour settle window miss that week's reward (the rest of the winners share it). The email alert fires after 1 hour. |
-| A staked player spams answer attempts that fail | Each one costs the pool at most the sponsor limit (2 Mana) and only while it's still in the queue. `sponsor-limit 0` stops it instantly. |
+| A staked player spams answer attempts that fail | Optional sponsorship is capped on chain at 2 KOIN. While that cap is above 0, one attempt can cost the pool at most the cap, and only while it is still in the queue. `sponsor-limit 0` sets the cap to 0. Players pay their own Mana. |
 | Ownership transfer isn't timelocked | It needs both the current owner and the new owner to sign, and the bot emails you as soon as one is proposed. Even a new owner still faces the 48-hour wait for any code change. |
 | Withdrawal needs VHP that is momentarily held as KOIN | The contract burns spare KOIN back into VHP first. In the rare case Mana is short, the message says to try again shortly. |
 
