@@ -2,6 +2,8 @@
 # post the day's questions, close / finalize weeks, settle players, compound) and commits game-data/ so every
 # question and result is public. Safe to run any number of times.
 #
+# It does not run on pull requests. A pull request must never see OPERATOR_WIF and must never push to main.
+#
 # Turn it on: Settings → Secrets and variables → Actions
 #   Secrets:   OPERATOR_WIF   the bot's key (it can only post and resolve questions — never move funds)
 #   Variables: BOT_ENABLED = true        (RPC is optional; defaults to https://api.koinos.io)
@@ -17,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write             # to commit game-data/
+  contents: write             # commit and push game-data/ (questions, results, bot state)
 
 jobs:
   tick:
@@ -25,14 +27,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       # Exact versions from package-lock.json when it exists (safer: nothing unexpected is installed next to the bot key).
       - run: if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
       # Recent block history for the question generator (downloaded once, then topped up each hour).
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: game-data/blocks.csv
           key: blocks-${{ github.run_id }}
