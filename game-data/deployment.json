@@ -8,7 +8,7 @@
   "koin": "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK",
   "vhp": "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq",
   "pob": "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv",
-  "wasmSha256": "ff4207b477b0bee2d2f545b3ddfeff9a8dd1cc6fb804852f12d8102ecef5697f",
+  "wasmSha256": "917708a7c567d9642a7a2f121c34fbc70200909787208705fc3aa5a2b1e6433a",
   "uploaded": true,
   "uploadTx": "0x1220b0341e1e8cec8fc5b0c6780862705d6aa45c49ff9d2d065fa972f1572fc6aa08",
   "genesisTime": 1792368000000,
@@ -19,5 +19,6 @@
   "timelockLength": 172800000,
   "minStake": "100000000",
   "maxSponsorRc": "200000000",
-  "deployedAt": "2026-10-16T02:03:38.621Z"
+  "deployedAt": "2026-10-16T02:03:38.621Z",
+  "upgradedAt": "2026-10-19T00:39:33.713Z"
 }
