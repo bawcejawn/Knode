@@ -10,6 +10,7 @@
     "generate": "tsx generator.ts",
     "export-blocks": "tsx export-blocks.ts",
     "bot": "tsx bot/bot.ts",
+    "test:resolver": "node --import tsx --test resolver.test.ts",
     "desk": "tsx bot/desk.ts"
   },
   "dependencies": {

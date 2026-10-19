@@ -28,7 +28,8 @@ import { createRequire } from "node:module";
 import { Signer, Provider, Contract } from "koilib";
 import { Chain, KoinosChain, SimChain, Call, showKoin, toSat, loadAbi } from "./chain.ts";
 import { tokenAbi } from "./token-abi.ts";
-import { syncBlocks } from "../common.ts";
+import { readCsv, syncBlocks } from "../common.ts";
+import { chainOutcome, scoreQuestion, storedOutcome } from "../resolver.ts";
 
 // ───────────────────────── settings ─────────────────────────
 
@@ -304,27 +305,48 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
     await sendOp(ctx, `resolve orphan #${id} as VOID`, [{ method: "resolve_question", args: { id, outcome: 1000, data_hash: dataHash } }]);
   }
 
-  // Local questions: compute results from block data (generator), then post them.
+  // Local questions: the answer is recomputed from the block file every time, then posted.
+  // The generator is only asked to download any blocks that are not stored yet. A saved result that
+  // does not match those blocks is replaced; it is never what gets posted.
   let ranGenerator = false;
   for (let pass = 0; pass < 2; pass++) {
     let needGenerator = false;
+    const blocks = readCsv(path.join(ctx.P.dir, "blocks.csv"));
     for (const f of dayFiles(ctx.P)) {
       let dirty = false;
       for (const q of f.data.questions ?? []) {
         if (q.chainId === undefined || q.chainOutcome !== undefined) continue;
         const onChain = (await ctx.chain.read("get_question", { id: q.chainId })).question;
+        const scored = scoreQuestion(q, blocks);
         if (num(onChain.outcome) !== 0) {
           q.chainOutcome = num(onChain.outcome);
           dirty = true;
-          const mine = q.result ? (q.result.void ? 1000 : q.result.option + 1) : undefined;
-          if (mine !== undefined && mine !== q.chainOutcome) log(`  ⚠ ${q.id} (#${q.chainId}): on-chain outcome ${q.chainOutcome} differs from the computed one ${mine} (corrected by the owner?)`);
+          if (scored.ok) {
+            const mine = storedOutcome(scored.result);
+            if (!q.result || q.result.dataHash !== scored.result.dataHash || q.result.void !== scored.result.void || q.result.option !== scored.result.option) {
+              q.result = scored.result;
+            }
+            if (mine !== q.chainOutcome) log(`  ⚠ ${q.id} (#${q.chainId}): on-chain outcome ${q.chainOutcome} differs from the blocks (${mine}${scored.result.void ? ", void" : ""}).`);
+          }
           continue;
         }
         if (!due(onChain)) continue;
-        if (!q.result) { needGenerator = true; continue; }
-        const outcome = q.result.void ? 1000 : q.result.option;
-        const dataHash = "0x" + (q.result.dataHash ?? sha256hex(`void: ${q.result.reason}`));
-        const label = q.result.void ? `VOID (${q.result.reason})` : `option ${String.fromCharCode(65 + q.result.option)} (actual ${q.result.value})`;
+        if (!scored.ok) {
+          if (q.result?.reason === "window older than stored history") { delete q.result; dirty = true; }
+          if (scored.pending) {
+            if (ranGenerator) ctx.problems.push(`${q.id} (#${q.chainId}) is ready to resolve, but its blocks are still not in the history.`);
+            else needGenerator = true;
+          } else ctx.problems.push(`${q.id} (#${q.chainId}) was not resolved: ${scored.reason}`);
+          continue;
+        }
+        if (!q.result || q.result.dataHash !== scored.result.dataHash || q.result.void !== scored.result.void || q.result.option !== scored.result.option || q.result.value !== scored.result.value) {
+          if (q.result) log(`  ${q.id}: saved result did not match the blocks; using the recomputed answer`);
+          q.result = scored.result;
+          dirty = true;
+        }
+        const outcome = chainOutcome(scored.result);
+        const dataHash = "0x" + scored.result.dataHash;
+        const label = scored.result.void ? `VOID (${scored.result.reason})` : `option ${String.fromCharCode(65 + (scored.result.option ?? 0))} (actual ${scored.result.value})`;
         // Not marked done here: the next pass reads the outcome back from the chain, so a transaction that never
         // made it into a block is simply sent again.
         await sendOp(ctx, `resolve ${q.id} (#${q.chainId}) → ${label}`, [{ method: "resolve_question", args: { id: q.chainId, outcome, data_hash: dataHash } }]);
@@ -332,7 +354,7 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
       if (dirty && !ctx.dryRun) writeJson(f.file, f.data);
     }
     if (!needGenerator || ranGenerator) break;
-    // Some finished questions have no result yet: let the generator read the blocks and work them out.
+    // Some finished questions have no result yet: download the blocks (the generator also refreshes the public files).
     ranGenerator = true;
     const g = ctx.generator(["resolve"]);
     if (!g.ok) { log(`  ✖ resolving from block data failed:\n${g.output.slice(-1500)}`); ctx.problems.push("Resolving questions from block data failed."); break; }

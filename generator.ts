@@ -4,7 +4,7 @@
  * Builds each day's questions exactly the way the backtester tested them, picks subjects by the
  * rotation rules, writes plain-English wording with exact integer option bounds, and computes the
  * parameter hash that will be recorded on-chain at release. Later it resolves each question from
- * irreversible blocks.
+ * the irreversible blocks inside that question's window, and from nothing else.
  *
  *   npm run generate -- release                 build today's questions (UTC date)
  *   npm run generate -- release --date 2026-11-02
@@ -27,6 +27,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { BLOCKS_PER_DAY, fmt, pct, quant, sampleThresholds, optionFor, syncBlocks, readCsv, type Blk } from "./common.ts";
+import { scoreQuestion } from "./resolver.ts";
+import { pathToFileURL } from "node:url";
 
 const DIR = process.env.GEN_DIR ?? "generator-data"; // the bot uses game-data/ (committed, public)
 const MODEL_VERSION = "v5";
@@ -293,11 +295,11 @@ type Question = {
   subjects: string[]; group?: string[]; unit: string;
   releaseHeight: number; lockHeight: number; lockTime?: number; windowStart: number; windowEnd: number;
   thresholds: number[]; options: Option[]; predicted: number[];
-  model: { version: string; rates: Record<string, number>; forecast?: Record<string, number>; window: number }; // rates: 2-day (void rule); forecast: what set the options
+  model: { version: string; rates: Record<string, number>; forecast?: Record<string, number>; window: number; voidAlpha?: number; minVoidBlocks?: number }; // rates and the void rule are fixed at release; forecast: what set the options
   paramsHash?: string; result?: any;
 };
 
-const TEMPLATES: Record<string, { name: string; kind: string; k: number; W: number; cls?: "core" | "small"; stat?: string }> = {
+export const TEMPLATES: Record<string, { name: string; kind: string; k: number; W: number; cls?: "core" | "small"; stat?: string }> = {
   E1: { name: "Core producer over/under", kind: "single", k: 2, W: 20000, cls: "core" },
   E2: { name: "Head-to-head with spread", kind: "h2h", k: 2, W: 20000 },
   E3: { name: "Smaller producer over/under", kind: "single", k: 2, W: 0, cls: "small" },
@@ -332,6 +334,13 @@ const unitShow: Record<string, (v: number) => string> = {
   permille: (v) => (v / 10).toFixed(1) + "%",
 };
 
+/** Saved on the question before it is posted, so a later edit to game.json cannot change the answer. */
+function publishedModel(g: Game, rates: Record<string, number>, window: number, forecast?: Record<string, number>): Question["model"] {
+  return forecast
+    ? { version: MODEL_VERSION, rates, forecast, window, voidAlpha: g.model.voidAlpha, minVoidBlocks: g.model.minVoidBlocks ?? 0 }
+    : { version: MODEL_VERSION, rates, window, voidAlpha: g.model.voidAlpha, minVoidBlocks: g.model.minVoidBlocks ?? 0 };
+}
+
 function predictedFromZ(z: number[], mean: number, sd: number, lean: number, t: number[]) {
   const k = t.length + 1, c = new Array(k).fill(0);
   for (const x of z) c[optionFor(Math.round(mean + sd * (x + lean)), t)]++;
@@ -357,7 +366,7 @@ async function run() {
   if (blocks.length < (need - 0.5) * BLOCKS_PER_DAY) throw new Error(`Need about ${need} days of blocks; have ${fmt(blocks.length / BLOCKS_PER_DAY, 1)}.`);
   const libHeight = isNaN(lib) ? blocks[blocks.length - 1].h : lib;
 
-  if (args.cmd === "resolve") return resolve(blocks, g);
+  if (args.cmd === "resolve") return resolve(blocks);
   if (args.cmd !== "release") throw new Error(`Unknown command "${args.cmd}". Use release, resolve or show.`);
 
   const file = path.join(DIR, "questions", `${args.date}.json`);
@@ -435,7 +444,7 @@ async function run() {
           ? [{ index: 0, label: `No — ${fmt(t[0])} or fewer`, min: null, max: t[0] }, { index: 1, label: `Yes — ${fmt(t[0] + 1)} or more`, min: t[0] + 1, max: null }]
           : rangeOptions(t, unitShow.count);
         q = { id: `${args.date}-${n}`, ...base, title: T.name, text, subjects: [who], unit: "count", windowStart: lockHeight + 1, windowEnd: lockHeight + W,
-          thresholds: t, options, predicted: pred, model: { version: MODEL_VERSION, rates: { [who]: rate }, forecast: { [who]: frate }, window: W } };
+          thresholds: t, options, predicted: pred, model: publishedModel(g, { [who]: rate }, W, { [who]: frate }) };
         usedToday.add(who);
         break;
       }
@@ -460,7 +469,7 @@ async function run() {
           text: `Producer ${A}'s blocks minus producer ${B}'s blocks, ${span}: will the difference be more than ${fmt(t1)}?`,
           subjects: [A, B], unit: "count", windowStart: lockHeight + 1, windowEnd: lockHeight + T.W, thresholds: [t1],
           options: [{ index: 0, label: `No — ${fmt(t1)} or less`, min: null, max: t1 }, { index: 1, label: `Yes — ${fmt(t1 + 1)} or more`, min: t1 + 1, max: null }],
-          predicted: [0.5, 0.5], model: { version: MODEL_VERSION, rates: { [A]: M.rateAt(a, M.r), [B]: M.rateAt(b, M.r) }, window: T.W } };
+          predicted: [0.5, 0.5], model: publishedModel(g, { [A]: M.rateAt(a, M.r), [B]: M.rateAt(b, M.r) }, T.W) };
         usedToday.add(A); usedToday.add(B);
       } else {
         const rest = sp.filter((p) => p !== a && p !== b);
@@ -477,7 +486,7 @@ async function run() {
             { index: 3, label: `Both: ${L1} ≥ ${fmt(t1 + 1)} and ${L2} ≥ ${fmt(t2 + 1)}`, min: null, max: null },
           ],
           predicted: [0.25, 0.25, 0.25, 0.25],
-          model: { version: MODEL_VERSION, rates: Object.fromEntries([a, b, c, d].map((p) => [M.names[p], M.rateAt(p, M.r)])), window: T.W } };
+          model: publishedModel(g, Object.fromEntries([a, b, c, d].map((p) => [M.names[p], M.rateAt(p, M.r)])), T.W) };
         [A, B, Cn, Dn].forEach((x) => usedToday.add(x));
       }
     } else if (T.kind === "tail") {
@@ -492,7 +501,7 @@ async function run() {
         text: `How many blocks will these ${tail.length} non-core producers sign together between block ${fmt(lockHeight + 1)} and block ${fmt(lockHeight + T.W)}? (Full list in the question details.)`,
         subjects: [], group: tail.map((p) => M.names[p]), unit: "count", windowStart: lockHeight + 1, windowEnd: lockHeight + T.W,
         thresholds: t, options: rangeOptions(t, unitShow.count), predicted: predictedFromZ(z, mean, sd, 0, t),
-        model: { version: MODEL_VERSION, rates: Object.fromEntries(tail.map((p) => [M.names[p], M.rateAt(p, M.r)])), window: T.W } };
+        model: publishedModel(g, Object.fromEntries(tail.map((p) => [M.names[p], M.rateAt(p, M.r)])), T.W) };
     } else {
       if (questions.some((x) => x.template === id)) continue;
       const S = M.stats[T.stat!], sample = M.aggSample(T.stat!, T.W), t = sampleThresholds(sample, T.k);
@@ -509,7 +518,7 @@ async function run() {
         text: `${what[T.stat!]} between block ${fmt(lockHeight + 1)} and block ${fmt(lockHeight + T.W)}?`,
         subjects: [], unit: S.unit, windowStart: lockHeight + 1, windowEnd: lockHeight + T.W,
         thresholds: t, options: rangeOptions(t, unitShow[S.unit], S.unit === "count" ? "or fewer" : "or less", "or more"), predicted: pred,
-        model: { version: MODEL_VERSION, rates: {}, window: T.W } };
+        model: publishedModel(g, {}, T.W) };
     }
     if (q) {
       const { paramsHash, result, text, title, options, ...canonical } = q;
@@ -549,61 +558,36 @@ function show(date: string) {
   printDay(JSON.parse(fs.readFileSync(file, "utf8")).questions);
 }
 
-function resolve(blocks: Blk[], g: Game) {
+function resolve(blocks: Blk[]) {
   const st = loadState();
-  const h0 = blocks[0].h, hLast = blocks[blocks.length - 1].h;
-  const idx = (h: number) => h - h0;
   const files = fs.readdirSync(path.join(DIR, "questions")).filter((f) => f.endsWith(".json")).sort();
   let resolved = 0, pending = 0;
-  const ids = new Map<string, number>();
-  blocks.forEach((b) => { if (!ids.has(b.signer)) ids.set(b.signer, ids.size); });
   for (const f of files) {
     const file = path.join(DIR, "questions", f);
     const day = JSON.parse(fs.readFileSync(file, "utf8"));
     let changed = false;
     for (const q of day.questions as Question[]) {
-      if (q.result) continue;
-      if (q.windowEnd > hLast) { pending++; continue; }
-      if (idx(q.windowStart) < 0) { q.result = { void: true, reason: "window older than stored history" }; changed = true; continue; }
-      const a = idx(q.windowStart), b = idx(q.windowEnd) + 1;
-      const win = blocks.slice(a, b);
-      const dataHash = createHash("sha256").update(win.map((x) => `${x.h},${x.signer},${x.ts},${x.ntx}`).join("\n")).digest("hex");
-      const countOf = (who: string) => win.filter((x) => x.signer === who).length;
-      // Void: any subject offline longer than luck allows (chance < voidAlpha), using its rate at release
-      const offline = q.subjects.filter((who) => {
-        const rate = q.model.rates[who];
-        let last = a - 1, gap = 0;
-        for (let i = a; i < b; i++) if (blocks[i].signer === who) { gap = Math.max(gap, i - last - 1); last = i; }
-        gap = Math.max(gap, b - 1 - last);
-        return gap > Math.max(g.model.minVoidBlocks ?? 0, Math.log(g.model.voidAlpha / (b - a)) / Math.log(1 - rate));
-      });
-      let value: number, option: number, valueText = "";
-      if (TEMPLATES[q.template]?.kind === "h2h") { value = countOf(q.subjects[0]) - countOf(q.subjects[1]); option = optionFor(value, q.thresholds); }
-      else if (TEMPLATES[q.template]?.kind === "combo") {
-        const d1 = countOf(q.subjects[0]) - countOf(q.subjects[1]), d2 = countOf(q.subjects[2]) - countOf(q.subjects[3]);
-        value = d1; valueText = `line 1 = ${d1}, line 2 = ${d2}`; option = (d1 > q.thresholds[0] ? 2 : 0) + (d2 > q.thresholds[1] ? 1 : 0);
-      } else if (q.group) { value = q.group.reduce((s, who) => s + countOf(who), 0); option = optionFor(value, q.thresholds); }
-      else if (q.subjects.length === 1) { value = countOf(q.subjects[0]); option = optionFor(value, q.thresholds); }
-      else {
-        const TSa = win.map((x) => x.ts);
-        value = q.template === "M4" ? Math.max(...TSa.slice(1).map((t, i) => t - TSa[i]))
-          : q.template === "M5" ? Math.round((TSa[TSa.length - 1] - TSa[0]) / (TSa.length - 1))
-          : q.template === "M6" ? Math.round((1000 * win.filter((x) => x.ntx === 0).length) / win.length)
-          : win.reduce((s, x) => s + x.ntx, 0);
-        option = optionFor(value, q.thresholds);
+      const scored = scoreQuestion(q, blocks);
+      if (!scored.ok) {
+        // A short or gappy history is not an answer. Never publish a void just because this computer is missing blocks.
+        if (q.result?.reason === "window older than stored history") { delete q.result; changed = true; }
+        if (scored.pending) pending++;
+        else console.log(`  ${q.id}: left unresolved — ${scored.reason}`);
+        continue;
       }
-      if (!valueText) valueText = q.unit === "ms" ? (value / 1000).toFixed(3) + " s" : q.unit === "permille" ? (value / 10).toFixed(1) + "%" : fmt(value);
-      q.result = offline.length
-        ? { void: true, reason: `${offline.join(", ")} went offline during the window`, value: valueText, dataHash, resolvedAt: new Date().toISOString() }
-        : { void: false, option, value: valueText, dataHash, resolvedAt: new Date().toISOString() };
-      if (offline.length) {
+      const next = scored.result;
+      const same = q.result && q.result.void === next.void && q.result.option === next.option && q.result.dataHash === next.dataHash && q.result.value === next.value && q.result.reason === next.reason && q.result.resolvedAt === next.resolvedAt;
+      if (same) continue;
+      q.result = next;
+      if (next.void && next.reason?.endsWith(" went offline during the window")) {
+        const names = next.reason.slice(0, -" went offline during the window".length).split(", ").filter(Boolean);
         const wk = String(q.week);
-        st.voidedByWeek[wk] = [...new Set([...(st.voidedByWeek[wk] ?? []), ...offline])];
+        st.voidedByWeek[wk] = [...new Set([...(st.voidedByWeek[wk] ?? []), ...names])];
       }
       changed = true; resolved++;
       console.log(`\n[${q.id}] ${q.title}`);
-      console.log(`  ${q.result.void ? `VOID — ${q.result.reason}` : `Correct option: ${String.fromCharCode(65 + option)}) ${q.options[option].label}  (actual: ${valueText})`}`);
-      console.log(`  data hash ${dataHash.slice(0, 16)}… — anyone can recompute it from blocks ${fmt(q.windowStart)}–${fmt(q.windowEnd)}`);
+      console.log(`  ${next.void ? `VOID — ${next.reason}` : `Correct option: ${String.fromCharCode(65 + (next.option ?? 0))}) ${q.options[next.option ?? 0].label}  (actual: ${next.value})`}`);
+      console.log(`  data hash ${next.dataHash.slice(0, 16)}… — anyone can recompute it from blocks ${fmt(q.windowStart)}–${fmt(q.windowEnd)}`);
     }
     if (changed) fs.writeFileSync(file, JSON.stringify(day, null, 2));
   }
@@ -611,4 +595,4 @@ function resolve(blocks: Blk[], g: Game) {
   console.log(`\nResolved ${resolved} question(s); ${pending} still waiting for their window to close.\n`);
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
