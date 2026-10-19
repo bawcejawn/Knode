@@ -1,11 +1,11 @@
-# The status command's live production check. No chain and no secrets.
+# The status command's live production check and the contract Mana alarm rule. No chain and no secrets.
 name: Status check tests
 
 on:
   push:
-    paths: ["bot/production.ts", "bot/production.test.ts", "bot/bot.ts", ".github/workflows/status-test.yml"]
+    paths: ["bot/production.ts", "bot/production.test.ts", "bot/mana.ts", "bot/mana.test.ts", "bot/bot.ts", ".github/workflows/status-test.yml"]
   pull_request:
-    paths: ["bot/production.ts", "bot/production.test.ts", "bot/bot.ts", ".github/workflows/status-test.yml"]
+    paths: ["bot/production.ts", "bot/production.test.ts", "bot/mana.ts", "bot/mana.test.ts", "bot/bot.ts", ".github/workflows/status-test.yml"]
   workflow_dispatch: {}
 
 permissions:
@@ -21,4 +21,4 @@ jobs:
         with:
           node-version: 22
       - run: npm ci --no-audit --no-fund
-      - run: node --import tsx --test bot/production.test.ts
+      - run: node --import tsx --test bot/production.test.ts bot/mana.test.ts
