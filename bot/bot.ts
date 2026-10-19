@@ -32,6 +32,7 @@ import { tokenAbi } from "./token-abi.ts";
 import { readCsv, syncBlocks } from "../common.ts";
 import { chainOutcome, scoreQuestion, storedOutcome } from "../resolver.ts";
 import { formatProduction, loadSigners, signerFromBlockItem, type SignedBlock } from "./production.ts";
+import { contractManaVerdict } from "./mana.ts";
 
 // ───────────────────────── settings ─────────────────────────
 
@@ -253,7 +254,13 @@ async function healthPass(ctx: Ctx, bs: BotState) {
     const opMana = await ctx.chain.mana(ctx.operator.getAddress());
     if (opMana < toSat(2)) ctx.problems.push(`The bot's wallet ${ctx.operator.getAddress()} is low on Mana (${showKoin(opMana)}). Send it some KOIN.`);
     const cMana = big(st.raw.mana);
-    if (big(st.t.seed_koin) > 0n && cMana < toSat(10)) ctx.problems.push(`The contract is low on Mana (${showKoin(cMana)}): free transactions may be refused for a while.`);
+    const verdict = contractManaVerdict(cMana, big(st.t.seed_koin), st.height, bs.lastCompound);
+    if (verdict === "after-compound") {
+      // compound burns the contract's own Mana; it refills by itself, so this is expected and does not fail the run.
+      const text = `The contract's Mana is low (${showKoin(cMana)}) because the bot compounded at block ${bs.lastCompound}. Expected; it refills on its own.`;
+      log(`  note: ${text}`);
+      if (process.env.GITHUB_ACTIONS) console.log(`::warning title=Contract Mana::${text}`);
+    } else if (verdict === "low") ctx.problems.push(`The contract is low on Mana (${showKoin(cMana)}) and no recent compound explains it: free transactions may be refused for a while.`);
   }
 }
 
