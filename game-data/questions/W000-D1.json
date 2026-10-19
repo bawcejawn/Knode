@@ -55,7 +55,8 @@
         "voidAlpha": 0.001,
         "minVoidBlocks": 600
       },
-      "paramsHash": "b737e3e2e1ab748e3c72ac7a8836b01cbec7336ba60ca8729174c82e545152f6"
+      "paramsHash": "b737e3e2e1ab748e3c72ac7a8836b01cbec7336ba60ca8729174c82e545152f6",
+      "chainId": 0
     },
     {
       "id": "W000-D1-2",
@@ -108,7 +109,8 @@
         "voidAlpha": 0.001,
         "minVoidBlocks": 600
       },
-      "paramsHash": "6b5de6d8722c59bd578cc401a14ba826394201e9392b1b2c22121a8bc796ef5b"
+      "paramsHash": "6b5de6d8722c59bd578cc401a14ba826394201e9392b1b2c22121a8bc796ef5b",
+      "chainId": 1
     },
     {
       "id": "W000-D1-3",
@@ -161,7 +163,8 @@
         "voidAlpha": 0.001,
         "minVoidBlocks": 600
       },
-      "paramsHash": "0756e81a5d2dbb2be56e371d6996aefc4acc61909b4f96981a4e79d9507ed75c"
+      "paramsHash": "0756e81a5d2dbb2be56e371d6996aefc4acc61909b4f96981a4e79d9507ed75c",
+      "chainId": 2
     },
     {
       "id": "W000-D1-4",
@@ -213,7 +216,8 @@
         "voidAlpha": 0.001,
         "minVoidBlocks": 600
       },
-      "paramsHash": "196fac9318aea991f6961edde770cff9006a3ad950dcb1d834fe7235ef80d0eb"
+      "paramsHash": "196fac9318aea991f6961edde770cff9006a3ad950dcb1d834fe7235ef80d0eb",
+      "chainId": 3
     },
     {
       "id": "W000-D1-5",
@@ -266,7 +270,8 @@
         "voidAlpha": 0.001,
         "minVoidBlocks": 600
       },
-      "paramsHash": "0f9175d9f239525d928aa93c0a305d1add6221035358f90f9d4c0640a17201b5"
+      "paramsHash": "0f9175d9f239525d928aa93c0a305d1add6221035358f90f9d4c0640a17201b5",
+      "chainId": 4
     }
   ]
 }
