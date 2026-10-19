@@ -12,6 +12,8 @@ const WORKFLOWS = [
   ".github/workflows/desk-test.yml",
   ".github/workflows/watch.yml",
   ".github/workflows/workflow-guard.yml",
+  ".github/workflows/resolver-test.yml",
+  ".github/workflows/status-test.yml",
 ];
 
 function useLines(file: string): string[] {
@@ -20,6 +22,11 @@ function useLines(file: string): string[] {
 
 test("every third-party action is pinned to a full commit, with a version comment", () => {
   for (const file of WORKFLOWS) {
+    // status-test.yml lands with the status pull request; it is not on main yet.
+    if (file.endsWith("status-test.yml") && !fs.existsSync(file)) continue;
+    assert.equal(fs.existsSync(file), true, file);
+    const text = fs.readFileSync(file, "utf8");
+    assert.doesNotMatch(text, /actions:\s*write/, `${file} must not grant actions: write`);
     const lines = useLines(file);
     assert.ok(lines.length > 0, file);
     for (const line of lines) {
@@ -40,7 +47,7 @@ test("the hourly bot still resolves, posts, selects, checks and commits, and doe
   assert.match(y, /BOT_GIT_PUSH:\s*"1"/);
   assert.match(y, /GEN_DIR:\s*game-data/);
   assert.match(y, /contents:\s*write/);
-  assert.match(y, /actions:\s*write/);
+  assert.doesNotMatch(y, /actions:\s*write/);
   assert.match(y, /path:\s*game-data\/blocks\.csv/);
   assert.match(y, /vars\.BOT_ENABLED == 'true'/);
   assert.match(y, /group:\s*kpred-bot/);

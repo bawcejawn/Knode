@@ -20,7 +20,6 @@ concurrency:
 
 permissions:
   contents: write             # commit and push game-data/ (questions, results, bot state)
-  actions: write              # save the block-history cache for the next hour
 
 jobs:
   tick:
