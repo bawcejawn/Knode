@@ -2,9 +2,102 @@
 
 Audit date: 2026-10-19. Scope is the whole repository at `main` (`89228ce`): the game contract, the swap desk, the operator bot, the question generator and backtest, the static site, probes, node setup, and CI. This is a review only. No application code was changed.
 
+The game upgrade called urgent in the executive summary was applied later the same day. Read **Post-upgrade recheck** below before the original C1 text. That recheck is the current state.
+
+## Post-upgrade recheck (2026-10-19, about 00:50 UTC)
+
+Read-only. No deploy and no chain write. `main` is now `0d931fa` (“Upgraded: v3 payouts”), which changes only `game-data/deployment.json`. Game source is the same source whose release wasm hashed to `917708a7…` in the original audit.
+
+### The live game is the v3 build
+
+The chain’s own contract-metadata hash for `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr` is `0x1220917708a7c567d9642a7a2f121c34fbc70200909787208705fc3aa5a2b1e6433a`. Strip the `0x1220` multihash prefix and it is the sha256 in `deployment.json` after `0d931fa`, and the sha256 of the v3 wasm rebuilt for the original audit. All three authority flags are on (`authorizes_call_contract`, `authorizes_transaction_application`, `authorizes_upload_contract`), so the upload did not hand the pool to the deploy key.
+
+`get_state().upgrade` is empty (`hash` `0x`, `eta` 0). Transaction `0x1220ff68968f3d0d84e913e41649dfe08c3a39c25d7c4d0d87dfaa764b685a9bb882` is one call, entry point `187647932` (`0x0b2f47bc`), which is `cancel_upgrade`. That matches the owner’s note: upload the announced bytecode, then clear the notice.
+
+On-chain ABI text now says `claim_owner_share` is retired and `claim_creator_fee` is the 5% producer fee. `owner_share` on chain is 0. The code path that closes a week sets `retained = 0` and picks the winner line from `eligible_players` (top 30% by headcount, ties included), then pays two baskets (65% of the house’s earnings by rank weight, the rest by rank weight × stake). That is what a claim will pay.
+
+Live numbers at chain time 2026-10-19 00:49 UTC: week index 0, which the site and `npm run bot -- status` call Week 1. It ends 2026-10-26 00:00 UTC. Zero questions (the first post is 12:00 UTC; nothing is late). Stake 21,010 VHP, seed 1,000 VHP + 50 KOIN. Holdings 22,077.40 (21,837.63 VHP + 239.77 KOIN) against 22,060.00 owed. The 17.40 difference is block reward not yet assigned to a week. Same shape as the owner’s “22,077.24 vs 22,060”, a few minutes of rewards later.
+
+### What the site tells players
+
+`site/app.js` (`score`, `applyPots`, `livePots`) uses the same headcount cutoff, the same 5% fee, and the same two-basket arithmetic as `claim`. The “How it works” week-close paragraph on `site/index.html` matches that: 95% to winners, top 30% of staked players, place alone for most of the seed’s earnings, place × stake for the rest.
+
+One sentence on that same page is still the old rule. “Collect your reward” says the share is “the pot × your points × your stake ÷ the same total over all winners.” The chain does not pay that way. Points only decide the place. The amount is a rank weight (`1/√rank`), split by the two baskets. Tied players share the weights of their places. That sentence should be rewritten. It does not change what the contract pays.
+
+“Winners are final Tuesday 12:00 UTC” is the on-time path only (week ends Monday 00:00, close allowed 12 hours later, 24 hours of settlement after that). A late close moves it. That is still finding M5.
+
+### The pool is producing. `status` is reading an old file.
+
+`npm run bot -- status` does not look at who signed recent blocks. `status` in `bot/bot.ts` (around lines 511–513) prints `lastProduced` from `game-data/bot-state.json`, then computes “minutes ago” as `(current irreversible height − that saved height) / 20`. The “blocks/day” figure is the same file’s `producedByDay` counts.
+
+The number 40278691 is real, and it is old. It was the saved `lastProduced` in the tick committed at 2026-10-17 07:31 UTC (`38763c5`). That block’s header signer is the game contract, at 2026-10-17 07:15 UTC. The file at that commit had only two days of counts, 2 + 18 blocks. Divided by those two days, that is exactly “~10 blocks/day”. Against a chain tip about 48,240 blocks later, `(tip − 40278691) / 20` is exactly about 2,412 minutes. The line is the October 17 snapshot subtracted from today’s height. It is not a measurement of the node.
+
+The hourly GitHub tick has kept raising the same field. By `c45a8a3` (2026-10-19 00:35 UTC) `lastProduced` was 40326404 and the daily counts were 2 + 35 + 56 + 15. A local `status` that still prints 40278691 is using a `game-data/bot-state.json` that was not updated after that October 17 tick. `status` itself never refreshes the file (`liveCtx(true)` does not run the health scan).
+
+Checked on chain, these blocks are all signed by the game address `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr`, not by the desk:
+
+| Height | Time (UTC) | Signer |
+|---|---|---|
+| 40278691 | 2026-10-17 07:15 | game (the stale status height) |
+| 40324991 | 2026-10-18 23:00 | game |
+| 40326404 | 2026-10-19 00:13 | game (last height saved on `main` at 00:35) |
+| 40327063 | 2026-10-19 00:46 | game |
+
+A walk from height 40,270,000 to 40,320,000 counted 84 blocks signed by the game before the public node started returning an HTML error page. Proof-of-Burn has a 33-byte producer key registered for the game (compressed, prefix byte 2). The desk (`1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR`) is a different producer; it also signed blocks in that range (90 in the same partial walk). Status is not looking at the desk, and it is not using the wrong contract address. It is printing a cache.
+
+What to change: make `status` scan recent block signers (the same `signer === contract` check the hourly tick already does) and print that height and its timestamp. Keep the file as a cache for the tick, but do not let a stale file masquerade as a live outage. Until then, `git pull` and read `lastProduced` on `main`, or ignore the minutes figure from a checkout that has not pulled since October 17.
+
+### KOIN Vault stake warning
+
+The screenshot is the play page’s Stake button with **KOIN** selected, not VHP, and not the producer-key page. `site/index.html` stake dialog, handled in `site/app.js` around lines 427–435, sends one transaction with two calls:
+
+1. KOIN `19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK`, entry `1960973952` (`0x74e21680`) = `approve`. Owner is the connected wallet. Spender is the game contract. `value` is the amount typed, in satoshis (whole KOIN only: 1, 2, 25, …). It is not the maximum allowance (`18446744073709551615` never appears here).
+2. Game `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr`, entry `533371977` (`0x1fca9c49`) = `deposit_koin`. Same wallet as `from`, same amount.
+
+`deposit_koin` requires the player’s signature (`requireAuthority` on `from`) and then `pullKoin`, which calls KOIN `transfer` from the player to the game. The KOIN contract will not let the game move someone else’s KOIN unless that person has approved the game. The signature on the game call does not replace that token approval. VHP staking is the same pair with `deposit_vhp` (`0x8ed1d782`) and the VHP contract; this screenshot is the KOIN radio button.
+
+If the transaction is accepted, the transfer spends the allowance that was just set to the same amount, so nothing is left over for the game to take later. If it is rejected or reverts, both calls revert together. A third party cannot call `deposit_koin` for this wallet just because an allowance exists: the game also demands the owner’s signature. The red “spending permission” line is Vault describing the approve, which is real but limited to this amount and this contract.
+
+Vault cannot name `deposit_koin` because its reviewer only decodes built-in schemas (KOIN/VHP transfer, approve, burn, wallet modules, and a few Proof-of-Burn calls). It does not read an ABI off the contract. The game does publish a `koilib_types` ABI (confirmed on chain after the upgrade; `contract_meta_store.get_contract_meta`). That is the format Kondor can use. Vault ignores it, so the second call becomes “KOIN Vault cannot explain this contract action,” the risk checkbox is required, and the whole transaction is paid by the user’s mana with a 100 mana ceiling (Vault’s cap for a request it will not sponsor). “100 mana” is a maximum resource limit, not a 100 KOIN fee.
+
+This is not a drain. Approve only if the KOIN amount is the stake you typed and the second contract is `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr`.
+
+Concrete follow-ups, none of them a contract change:
+
+- The exact-amount approve is already what the site does. Do not switch it to unlimited.
+- Ask KOIN Vault to decode this contract’s published ABI, or to add `deposit_koin`, `deposit_vhp`, `withdraw`, `answer`, and `claim` to its reviewer. Republishing the ABI will not change Vault’s current reviewer.
+- On the stake dialog, say in plain words “this approves the game to take exactly this many KOIN, then turns them into VHP stake” so the red text is less surprising.
+
+### Findings after the upgrade
+
+| ID | Status | Why |
+|---|---|---|
+| C1 | **Resolved** | Live bytecode hash is the v3 wasm. Upgrade notice cleared. `claim_owner_share` text on chain is the retired wording. `owner_share` is 0. |
+| H1 | Open | `resolve_question` still calls `advance`. No source change since the audit. |
+| H2 | Open | Desk owner and treasury are still both `1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717`. Balances now about 1,429.11 KOIN and 19,605.41 VHP. No treasury change and no upgrade pending. |
+| H3 | Open | `bot.yml` still uses floating Actions tags and a repo-write token. |
+| M1 | Open, and now on chain | `finalize_week`’s on-chain description still says “top 30% of eligible stake”. The code uses headcount. Fixing the sentence needs a new upgrade. |
+| M2 | Open | `E3` and `M9` still enabled. No questions have been posted yet, so this has not paid anyone. |
+| M3 | Open | `fetchRange` still does not check heights. |
+| M4 | Open | A rejected question file is still reused. Not triggered: zero questions posted. |
+| M5 | Open | Claims UI still looks at six weeks. The Tuesday 12:00 sentence is still unconditional. |
+| M6 | Open | CDN scripts still have no SRI or CSP. |
+| M7 | Open | Toolchain audit findings unchanged. Not re-run this pass. |
+| M8 | Open | CI still does not run on pull requests or cover the resolver. |
+| M9 | Open | Snapshot script still trusts the host for the file and the hash. |
+| M10 | Open | Still no license. |
+| M11 | Open | Owner transfer is still instant. |
+| L1–L5 | Open | Unchanged, except one L3 bullet: `game/SECURITY.md` saying the live contract pays by headcount is now true. The README day-schedule mismatch, the stale “eligible stake” proto line (M1), and `docs/security-audit.md` still stand. |
+| New | Status cache | `npm run bot -- status` reports a stale `lastProduced` as if the node were down. See above. Not a node outage. |
+| New | Vault copy | Stake-with-KOIN is an exact approve plus `deposit_koin`. Vault’s warning is because it will not read the published ABI. Not a token drain. |
+
+Homepage fix still worth doing with M1’s sentence: the “Collect your reward” line. Do not treat either as a reason to rush another upgrade tonight. M1 can wait for the next scheduled upgrade. The homepage sentence is a text edit.
+
 The previous contents of this file were an auditor briefing (addresses, rebuild steps, what to look at). Those facts are kept in the appendix so they are not lost. The findings below are from reading the code, rebuilding both contracts, running their test suites, `npm audit`, and reading live mainnet state.
 
 ## Executive summary
+
+The urgent mismatch in the next paragraphs was fixed after this text was written: mainnet is now the v3 bytecode. Details, the stale `status` line, and the KOIN Vault stake screen are in the recheck section above. The rest of this summary describes the repository as reviewed.
 
 Knode is a weekly Koinos prediction game plus a VHP-for-KOIN swap desk. Players stake VHP in a game contract. That VHP produces blocks. Each week the operator posts multiple-choice questions about block producers and network stats; after the week, winners share the pool's block rewards. A second contract (the desk) swaps a user's VHP for the desk's KOIN, 1:1 minus a 3% fee, and produces blocks with the VHP it receives. The website is static files on GitHub Pages. Wallets sign every user transaction. The hourly bot posts questions and results; its key cannot move funds.
 
@@ -79,6 +172,8 @@ Live addresses, verified on chain during this audit:
 ### Critical
 
 #### C1. Mainnet is still the old payout rules, while the site, bot, and tests are the new ones. The upgrade is ready and has not been applied.
+
+**Resolved 2026-10-19.** The upgrade was applied. See “Post-upgrade recheck” at the top. The text below is the finding as it stood before that upload.
 
 `game-data/deployment.json` records wasm `ff4207b477b0bee2d2f545b3ddfeff9a8dd1cc6fb804852f12d8102ecef5697f`, uploaded in `cce5dc3` (2026-10-16 02:03 UTC). `git diff cce5dc3 HEAD -- game/assembly/Kpred.ts` is 156 lines. At that deploy commit the contract header says the split is "5% creator fee, 2% owner share, 93% pot", and `finalizeInternal` sets the winner line from `eligible_stake`, not from a player count.
 
@@ -273,7 +368,7 @@ Reviewed and not found to be a bug:
 
 Do these in order. The first one is time-sensitive because week 0 has started.
 
-1. **Today: resolve C1.** Apply the announced upgrade or roll the website and bot back to the deployed rules before any question is resolved. Confirm with `get_state` (ABI wording and `upgrade.hash`). Update `wasmSha256` only after the upload is in a block.
+1. **C1 is done.** The v3 wasm is live and `wasmSha256` on `main` matches it. Still do the homepage “Collect your reward” sentence (it still says points × stake) and, on the next upgrade, M1’s “eligible stake” ABI sentence. Make `status` read recent signers instead of a stale `bot-state.json`.
 2. **Before that upgrade is announced again: fix M1** if you still can cancel and re-announce. If you apply `917708a7…` as-is, file a follow-up to correct the "eligible stake" sentence; do not pretend the ABI text matches the code.
 3. **Next contract change: H1**, with a test that a late resolve does not close the week. Ship M11 (owner-transfer delay) in the same upgrade if you can afford the delay.
 4. **This week: H2.** Split the desk treasury from the owner key before the desk balance grows further.
