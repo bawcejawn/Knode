@@ -1090,8 +1090,11 @@ async function main() {
   if (cmd === "tick") {
     const ctx = liveCtx(flag("--dry-run"));
     log(`tick at ${new Date().toISOString()}${ctx.dryRun ? " (dry run)" : ""}`);
-    await tick(ctx);
-    await status(ctx);
+    try { await tick(ctx); }
+    catch (e) { ctx.problems.push(`the tick stopped early: ${(e as Error).message ?? e}`); }
+    // The status summary is only a printout: a hiccup reading it (a busy RPC node) is not a reason to fail the run.
+    try { await status(ctx); }
+    catch (e) { log(`  (status summary skipped: ${(e as Error).message ?? e})`); }
     if (ctx.problems.length) {
       log(`\n⚠ NEEDS ATTENTION (${ctx.problems.length}):\n${ctx.problems.map((p) => "  • " + p).join("\n")}`);
       // On GitHub, also show each one on the run's summary page (and in the email), not only inside the log.
