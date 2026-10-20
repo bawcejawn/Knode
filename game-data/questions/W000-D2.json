@@ -1,0 +1,272 @@
+{
+  "date": "W000-D2",
+  "week": 0,
+  "day": 2,
+  "tier": "Easy",
+  "released": "2026-10-20T12:35:24.449Z",
+  "questions": [
+    {
+      "id": "W000-D2-1",
+      "date": "W000-D2",
+      "week": 0,
+      "day": 2,
+      "tier": "Easy",
+      "template": "E2s",
+      "releaseHeight": 40368863,
+      "lockHeight": 40383613,
+      "lockTime": 1792540800000,
+      "title": "Head-to-head with spread",
+      "text": "Producer 1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW's blocks minus producer 14MHW6TF8gw8EuMRLCJc2PQHLzZLKuwGqb's blocks, between block 40,383,614 and block 40,393,613: will the difference be more than 119?",
+      "subjects": [
+        "1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW",
+        "14MHW6TF8gw8EuMRLCJc2PQHLzZLKuwGqb"
+      ],
+      "unit": "count",
+      "windowStart": 40383614,
+      "windowEnd": 40393613,
+      "thresholds": [
+        119
+      ],
+      "options": [
+        {
+          "index": 0,
+          "label": "No — 119 or less",
+          "min": null,
+          "max": 119
+        },
+        {
+          "index": 1,
+          "label": "Yes — 120 or more",
+          "min": 120,
+          "max": null
+        }
+      ],
+      "predicted": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "version": "v5",
+        "rates": {
+          "1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW": 0.0739236111111111,
+          "14MHW6TF8gw8EuMRLCJc2PQHLzZLKuwGqb": 0.05071180555555556
+        },
+        "window": 10000,
+        "voidAlpha": 0.001,
+        "minVoidBlocks": 600
+      },
+      "paramsHash": "2c1de0d38d1fcdf6ede82765b8d98e8fdeb565cffcbd32d9c162f0f7add6d1c9"
+    },
+    {
+      "id": "W000-D2-2",
+      "date": "W000-D2",
+      "week": 0,
+      "day": 2,
+      "tier": "Easy",
+      "template": "E1s",
+      "releaseHeight": 40368863,
+      "lockHeight": 40383613,
+      "lockTime": 1792540800000,
+      "title": "Core producer over/under",
+      "text": "Will producer 15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ sign more than 1,810 blocks between block 40,383,614 and block 40,393,613 (about 8 hours)?",
+      "subjects": [
+        "15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ"
+      ],
+      "unit": "count",
+      "windowStart": 40383614,
+      "windowEnd": 40393613,
+      "thresholds": [
+        1810
+      ],
+      "options": [
+        {
+          "index": 0,
+          "label": "No — 1,810 or fewer",
+          "min": null,
+          "max": 1810
+        },
+        {
+          "index": 1,
+          "label": "Yes — 1,811 or more",
+          "min": 1811,
+          "max": null
+        }
+      ],
+      "predicted": [
+        0.5005336179295624,
+        0.4994663820704376
+      ],
+      "model": {
+        "version": "v5",
+        "rates": {
+          "15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ": 0.1852777777777778
+        },
+        "forecast": {
+          "15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ": 0.18097222222222223
+        },
+        "window": 10000,
+        "voidAlpha": 0.001,
+        "minVoidBlocks": 600
+      },
+      "paramsHash": "29f03d9083f9200b2b6a767bd71a43fbc3438afa28cd47b419d924e7b0e01080"
+    },
+    {
+      "id": "W000-D2-3",
+      "date": "W000-D2",
+      "week": 0,
+      "day": 2,
+      "tier": "Easy",
+      "template": "E3",
+      "releaseHeight": 40368863,
+      "lockHeight": 40383613,
+      "lockTime": 1792540800000,
+      "title": "Smaller producer over/under",
+      "text": "Will producer 13iFaqgdnsoqUTCwZC9GtRXwh8ZvdiiPwm sign more than 206 blocks between block 40,383,614 and block 40,403,613 (about 17 hours)?",
+      "subjects": [
+        "13iFaqgdnsoqUTCwZC9GtRXwh8ZvdiiPwm"
+      ],
+      "unit": "count",
+      "windowStart": 40383614,
+      "windowEnd": 40403613,
+      "thresholds": [
+        206
+      ],
+      "options": [
+        {
+          "index": 0,
+          "label": "No — 206 or fewer",
+          "min": null,
+          "max": 206
+        },
+        {
+          "index": 1,
+          "label": "Yes — 207 or more",
+          "min": 207,
+          "max": null
+        }
+      ],
+      "predicted": [
+        0.4950980392156863,
+        0.5049019607843137
+      ],
+      "model": {
+        "version": "v5",
+        "rates": {
+          "13iFaqgdnsoqUTCwZC9GtRXwh8ZvdiiPwm": 0.009982638888888888
+        },
+        "forecast": {
+          "13iFaqgdnsoqUTCwZC9GtRXwh8ZvdiiPwm": 0.010347222222222223
+        },
+        "window": 20000,
+        "voidAlpha": 0.001,
+        "minVoidBlocks": 600
+      },
+      "paramsHash": "78a00ef135c126a837ff591b7806acd8692a2d3ebc3133ce207b2a31c442c5a4"
+    },
+    {
+      "id": "W000-D2-4",
+      "date": "W000-D2",
+      "week": 0,
+      "day": 2,
+      "tier": "Easy",
+      "template": "E2s",
+      "releaseHeight": 40368863,
+      "lockHeight": 40383613,
+      "lockTime": 1792540800000,
+      "title": "Head-to-head with spread",
+      "text": "Producer 14f34kUNZugf2DK4hPJGy4AkmBM7Y4pvVu's blocks minus producer 1G2QjRtNwEfqGwX7SMD8LNjWgJdWA7XtSU's blocks, between block 40,383,614 and block 40,393,613: will the difference be more than 318?",
+      "subjects": [
+        "14f34kUNZugf2DK4hPJGy4AkmBM7Y4pvVu",
+        "1G2QjRtNwEfqGwX7SMD8LNjWgJdWA7XtSU"
+      ],
+      "unit": "count",
+      "windowStart": 40383614,
+      "windowEnd": 40393613,
+      "thresholds": [
+        318
+      ],
+      "options": [
+        {
+          "index": 0,
+          "label": "No — 318 or less",
+          "min": null,
+          "max": 318
+        },
+        {
+          "index": 1,
+          "label": "Yes — 319 or more",
+          "min": 319,
+          "max": null
+        }
+      ],
+      "predicted": [
+        0.5,
+        0.5
+      ],
+      "model": {
+        "version": "v5",
+        "rates": {
+          "14f34kUNZugf2DK4hPJGy4AkmBM7Y4pvVu": 0.11746527777777778,
+          "1G2QjRtNwEfqGwX7SMD8LNjWgJdWA7XtSU": 0.08902777777777778
+        },
+        "window": 10000,
+        "voidAlpha": 0.001,
+        "minVoidBlocks": 600
+      },
+      "paramsHash": "75b943bcd247488b3661923f218f2bd7c17325cb2ed4f2798f57ffd90d79a12d"
+    },
+    {
+      "id": "W000-D2-5",
+      "date": "W000-D2",
+      "week": 0,
+      "day": 2,
+      "tier": "Easy",
+      "template": "E1s",
+      "releaseHeight": 40368863,
+      "lockHeight": 40383613,
+      "lockTime": 1792540800000,
+      "title": "Core producer over/under",
+      "text": "Will producer 1GGxRhLN7Ek54xycG5XaZBE4bCgwV2xtvk sign more than 1,378 blocks between block 40,383,614 and block 40,393,613 (about 8 hours)?",
+      "subjects": [
+        "1GGxRhLN7Ek54xycG5XaZBE4bCgwV2xtvk"
+      ],
+      "unit": "count",
+      "windowStart": 40383614,
+      "windowEnd": 40393613,
+      "thresholds": [
+        1378
+      ],
+      "options": [
+        {
+          "index": 0,
+          "label": "No — 1,378 or fewer",
+          "min": null,
+          "max": 1378
+        },
+        {
+          "index": 1,
+          "label": "Yes — 1,379 or more",
+          "min": 1379,
+          "max": null
+        }
+      ],
+      "predicted": [
+        0.5005336179295624,
+        0.4994663820704376
+      ],
+      "model": {
+        "version": "v5",
+        "rates": {
+          "1GGxRhLN7Ek54xycG5XaZBE4bCgwV2xtvk": 0.12986111111111112
+        },
+        "forecast": {
+          "1GGxRhLN7Ek54xycG5XaZBE4bCgwV2xtvk": 0.13527777777777777
+        },
+        "window": 10000,
+        "voidAlpha": 0.001,
+        "minVoidBlocks": 600
+      },
+      "paramsHash": "3a1f39b5bb9d86a1179116e95dd419d17a86b0a96dcee8a8923dd9d0ac9eca73"
+    }
+  ]
+}
