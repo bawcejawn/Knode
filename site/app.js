@@ -76,18 +76,57 @@
     if (h) return `${h}h ${m}m`;
     return `${Math.max(m, s > 0 ? 1 : 0)}m`;
   };
-  /** Question text with every Koinos address turned into an explorer link (full address, easy to look up). */
-  const linkify = (text) => {
-    const out = [];
-    let last = 0;
-    for (const m of String(text).matchAll(/1[1-9A-HJ-NP-Za-km-z]{25,34}/g)) {
-      out.push(text.slice(last, m.index));
-      out.push(el("a", { href: EXPLORER_ADDRESS + m[0], target: "_blank", rel: "noopener", class: "addr-link", title: "Open this producer on the block explorer" }, m[0]));
-      last = m.index + m[0].length;
-    }
-    out.push(text.slice(last));
-    return out;
+  // ── plain-language questions: built from the question's own fields, so the card reads like a sentence ──
+  const ADDR_RE = /1[1-9A-HJ-NP-Za-km-z]{25,34}/g;
+  const fmtN = (n) => Number(n).toLocaleString();
+  /** A producer as a small coloured chip; opens it in Producer lookup (blocks, share, what to expect). */
+  const pchip = (a) => el("a", { class: "pchip", href: `node.html?a=${a}&w=28800`, target: "_blank", rel: "noopener", title: `${a}\nOpen in Producer lookup`, style: `--c: hsl(${hue(a)} 65% 52%)` },
+    el("i", { "aria-hidden": "true" }), a === S.dep?.contract ? "Knode pool" : short(a));
+  const chipify = (text) => {
+    const out = []; let last = 0;
+    for (const m of String(text).matchAll(ADDR_RE)) { out.push(text.slice(last, m.index)); out.push(pchip(m[0])); last = m.index + m[0].length; }
+    out.push(text.slice(last)); return out;
   };
+  function qKind(q) {
+    const t = `${q.template || ""} ${q.title || ""}`;
+    if (/^H2|Two head-to-heads/.test(t)) return "combo";
+    if (/^E2|Head-to-head/.test(t)) return "h2h";
+    if (/^M10|non-core/.test(t)) return "tail";
+    if (/over\/under/.test(t)) return "ou";
+    if (/quartiles|sextiles|eighths|^M1|^M9|^H1|^H3/.test(t)) return "range";
+    return "network";
+  }
+  const KIND_LABEL = { h2h: "Head-to-head", ou: "Over / under", range: "How many blocks", tail: "Smaller producers together", network: "Network", combo: "Double head-to-head" };
+  const qSubjects = (q) => (q.subjects && q.subjects.length ? q.subjects : (String(q.text).match(ADDR_RE) || []));
+  const qLine = (q) => (q.thresholds && q.thresholds.length ? q.thresholds[0] : Number((String(q.text).match(/more than ([\d,]+)/) || [])[1]?.replace(/,/g, "")));
+  /** The question as a short sentence, producers as chips. The full original wording stays in the tooltip. */
+  function headline(q) {
+    const kind = qKind(q), [A, B] = qSubjects(q), line = qLine(q);
+    if (kind === "h2h" && A && B && Number.isFinite(line)) return ["Will ", pchip(A), " out-sign ", pchip(B), " by more than ", el("b", {}, fmtN(line)), " blocks?"];
+    if (kind === "ou" && A && Number.isFinite(line)) return ["Will ", pchip(A), " sign more than ", el("b", {}, fmtN(line)), " blocks?"];
+    if (kind === "range" && A) return ["How many blocks will ", pchip(A), " sign?"];
+    const plain = String(q.text).replace(/,? between block [\d,]+ and block [\d,]+/, "").replace(/ \(about [^)]*\)/, "").replace(/ \(Full list[^)]*\)/, "");
+    return chipify(plain);
+  }
+  /** "Counts blocks #a → #b · 10,000 blocks · about 8 h" */
+  function windowFacts(q) {
+    const n = q.windowEnd - q.windowStart + 1, hours = (n * BLOCK_MS) / 3.6e6;
+    return [el("span", { class: "fact" }, `Blocks ${fmtN(q.windowStart)} → ${fmtN(q.windowEnd)}`),
+      el("span", { class: "fact" }, `${fmtN(n)} blocks · about ${hours < 10 ? hours.toFixed(1) : Math.round(hours)} h`)];
+  }
+  /** What actually happened, in words. */
+  function actualText(q) {
+    if (!q.result || q.result.void) return null;
+    const v = Number(String(q.result.value).replace(/,/g, "")), [A, B] = qSubjects(q), kind = qKind(q);
+    if (!Number.isFinite(v)) return [`Actual: ${q.result.value}`];
+    if (kind === "h2h" && A && B) return v >= 0 ? [pchip(A), ` signed ${fmtN(v)} more blocks than `, pchip(B), "."] : [pchip(B), " signed ", el("b", {}, fmtN(-v)), " more blocks than ", pchip(A), ` (a difference of ${fmtN(v)}).`];
+    if ((kind === "ou" || kind === "range") && A) return [pchip(A), ` signed ${fmtN(v)} blocks.`];
+    if (q.unit === "ms") return [`Actual: ${(v / 1000).toFixed(2)} seconds.`];
+    if (q.unit === "permille") return [`Actual: ${(v / 10).toFixed(1)}% of blocks.`];
+    return [`Actual: ${fmtN(v)}.`];
+  }
+  /** "No — 298 or less" → strong "No" + quieter detail. */
+  const optLabel = (label) => { const [a, ...b] = String(label).split(" — "); return b.length ? [el("b", {}, a), el("span", { class: "opt-detail" }, b.join(" — "))] : [el("b", {}, label)]; };
 
   /** A UTC hour of the day shown in the viewer's own time zone, e.g. "8:00 AM". */
   const localHour = (utcHour) => { const d = new Date(); d.setUTCHours(utcHour, 0, 0, 0); return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); };
@@ -453,13 +492,14 @@
     const mine = myAnswer(q);
     const oc = outcomeOf(q);
     const left = q.lockTime - nowMs();
+    const status = mode === "open" ? el("span", { class: `timer${left < 3600000 ? " soon" : ""}`, title: `Answers close ${new Date(q.lockTime).toLocaleString()}` }, `Closes in ${duration(left)}`)
+      : oc === 1000 ? el("span", { class: "badge badge-void" }, "Voided")
+      : oc ? (mine === null ? el("span", { class: "badge badge-wait" }, "Resolved") : mine + 1 === oc ? el("span", { class: "badge badge-ok" }, "+1 point") : el("span", { class: "badge badge-miss" }, "No point"))
+      : el("span", { class: "badge badge-wait" }, `Result in ~${duration((q.windowEnd + 60 - S.height) * BLOCK_MS)}`);
     const top = el("div", { class: "q-top" },
-      el("span", { class: `tier tier-${q.tier || "Medium"}` }, q.tier || "Question"),
-      mode === "open" ? el("span", { class: `timer${left < 3600000 ? " soon" : ""}`, title: `Answers close ${new Date(q.lockTime).toLocaleString()}` }, `Closes in ${duration(left)}`)
-        : oc === 1000 ? el("span", { class: "badge badge-void" }, "Voided")
-        : oc ? (mine === null ? el("span", { class: "badge badge-wait" }, "Resolved") : mine + 1 === oc ? el("span", { class: "badge badge-ok" }, "+1 point") : el("span", { class: "badge badge-miss" }, "No point"))
-        : el("span", { class: "badge badge-wait" }, `Result in ~${duration((q.windowEnd + 60 - S.height) * BLOCK_MS)}`));
-    const opts = el("div", { class: "opts" }, q.options.map((o) => {
+      el("div", { class: "q-tags" }, el("span", { class: `tier tier-${q.tier || "Medium"}` }, q.tier || "Question"), el("span", { class: "kind" }, KIND_LABEL[qKind(q)])),
+      status);
+    const opts = el("div", { class: `opts n${q.options.length}` }, q.options.map((o) => {
       let cls = "opt";
       if (mine === o.index) cls += " picked";
       if (oc && oc !== 1000 && oc === o.index + 1) cls += " correct";
@@ -469,13 +509,16 @@
         class: cls, type: "button", disabled: !canAnswer,
         "aria-label": `Option ${String.fromCharCode(65 + o.index)}: ${o.label}`,
         onclick: () => answer(q, o.index),
-      }, el("span", { class: "letter" }, String.fromCharCode(65 + o.index)), el("span", {}, o.label));
+      }, el("span", { class: "letter" }, String.fromCharCode(65 + o.index)), el("span", { class: "opt-text" }, ...optLabel(o.label)));
     }));
+    const act = actualText(q);
     const foot = el("div", { class: "q-foot" },
       el("span", {}, `Question #${displayQuestionNumber(q)}`),
-      mine !== null ? el("span", {}, `Your answer: ${String.fromCharCode(65 + mine)}`) : mode === "open" ? el("span", {}, S.account ? "Pick an option" : "Connect a wallet to answer") : null,
-      q.result && q.result.value ? el("span", {}, `Actual: ${q.result.value}`) : null);
-    return el("article", { class: "q" }, top, el("h3", {}, ...linkify(q.text)), opts, foot);
+      mine !== null ? el("span", {}, `Your answer: ${String.fromCharCode(65 + mine)}`) : mode === "open" ? el("span", { class: "q-cta" }, S.account ? "Pick an answer" : "Connect a wallet to answer") : null);
+    return el("article", { class: `q q-${(q.tier || "Medium")}` }, top,
+      el("h3", { title: q.text }, ...headline(q)),
+      el("div", { class: "q-facts" }, ...windowFacts(q), mode === "open" ? el("span", { class: "fact" }, "Counting starts when answers close") : null),
+      opts, act ? el("p", { class: "q-actual" }, ...act) : null, foot);
   }
 
   function renderPlay() {
@@ -583,17 +626,32 @@
   }
 
   function renderResults() {
-    const groups = S.files.slice().reverse().map(({ f, d }) => ({ f, d, qs: (d.questions || []).filter((q) => q.result && q.chainId !== undefined && S.height > q.windowEnd) })).filter((g) => g.qs.length);
+    const groups = S.files.slice().reverse().map(({ f, d }) => {
+      const qs = (d.questions || []).filter((q) => q.chainId !== undefined);
+      return { f, d, done: qs.filter((q) => q.result && S.height > q.windowEnd), waiting: qs.filter((q) => !(q.result && S.height > q.windowEnd)) };
+    }).filter((g) => g.done.length || g.waiting.length);
     const list = $("#results-list");
     if (!groups.length) { list.replaceChildren(el("div", { class: "empty" }, "No results yet. The first ones arrive a few hours after the first questions close.")); return; }
+    const card = (g, q) => {
+      const r = q.result, opt = r.void ? null : q.options[r.option];
+      return el("article", { class: `res${r.void ? " res-void" : ""}` },
+        el("div", { class: "q-top" },
+          el("div", { class: "q-tags" }, el("span", { class: "qno" }, `Q${displayQuestionNumber(q)}`), el("span", { class: "kind" }, KIND_LABEL[qKind(q)])),
+          r.void ? el("span", { class: "badge badge-void" }, "Voided") : el("span", { class: "badge badge-ok" }, "Final")),
+        el("h3", { title: q.text }, ...headline(q)),
+        r.void ? el("p", { class: "res-answer void" }, `Voided: ${r.reason || "a producer went offline"}. Nobody gains or loses a point.`)
+          : el("div", { class: "res-answer" }, el("span", { class: "res-letter" }, String.fromCharCode(65 + r.option)), el("span", { class: "opt-text" }, ...optLabel(opt.label))),
+        actualText(q) ? el("p", { class: "q-actual" }, ...actualText(q)) : null,
+        el("p", { class: "meta" }, `Blocks ${fmtN(q.windowStart)} → ${fmtN(q.windowEnd)} · fingerprint ${String(r.dataHash || "").slice(0, 12)}… `,
+          S.demo ? null : el("a", { href: DATA + g.f }, "full data")));
+    };
+    const wait = (q) => el("div", { class: "res-wait" },
+      el("span", { class: "qno" }, `Q${displayQuestionNumber(q)}`), el("span", { class: "res-wait-text" }, ...headline(q)),
+      el("span", { class: "badge badge-wait" }, S.height > q.windowEnd ? "Result being posted" : `Result in ~${duration((q.windowEnd + 60 - S.height) * BLOCK_MS)}`));
     list.replaceChildren(...groups.map((g) => el("section", { class: "day-group" },
-      el("h2", {}, `Week ${num(g.d.week) + 1}, day ${g.d.day}`),
-      g.qs.map((q) => el("div", { class: "res" },
-        el("p", {}, q.text),
-        el("span", { class: "ans" }, q.result.void ? el("span", { class: "badge badge-void" }, "Voided") : `${String.fromCharCode(65 + q.result.option)}: ${q.options[q.result.option].label}`),
-        el("span", { class: "meta" }, q.result.void ? `Reason: ${q.result.reason || "a producer went offline"}. ` : `Actual: ${q.result.value}. `,
-          `Blocks ${q.windowStart.toLocaleString()}–${q.windowEnd.toLocaleString()}. Fingerprint ${String(q.result.dataHash || "").slice(0, 16)}… `,
-          S.demo ? null : el("a", { href: DATA + g.f }, "full data")))))));
+      el("h2", {}, `Week ${num(g.d.week) + 1}, day ${g.d.day}`, el("span", { class: "day-count" }, `${g.done.length} of ${g.done.length + g.waiting.length} final`)),
+      ...g.done.map((q) => card(g, q)),
+      g.waiting.length ? el("div", { class: "res-waiting" }, el("p", { class: "res-waiting-h" }, "Still counting (these watch a longer stretch of blocks)"), ...g.waiting.map(wait)) : null)));
   }
 
   function renderAll() {
