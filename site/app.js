@@ -488,6 +488,169 @@
   /** On-chain question ids start at 0. The card shows that id plus one. Submits still send q.chainId. */
   const displayQuestionNumber = (q) => Number(q.chainId) + 1;
 
+  // ═══════════════ live race: count blocks for questions whose answers are closed ═══════════════
+  // The page reads the window's blocks itself (who signed each, its time and transaction count), keeps them in this
+  // browser, and tops up only the new ones every minute. Answers are locked by then, so showing the race is fair.
+  const LV = { from: 0, sig: [], ts: [], ntx: [], signers: [], idx: new Map(), busy: false, top: 0 };
+  const LV_KEY = "kn-live-v1";
+  try {
+    const r = JSON.parse(localStorage.getItem(LV_KEY) || "null");
+    if (r && r.sig && r.sig.length === r.ts.length && r.sig.length === r.ntx.length) {
+      Object.assign(LV, { from: r.from, sig: r.sig, ts: r.ts, ntx: r.ntx, signers: r.signers });
+      LV.signers.forEach((a, i) => LV.idx.set(a, i)); LV.top = LV.from + LV.sig.length - 1;
+    }
+  } catch { /* start fresh */ }
+  const lvSigner = (a) => { let i = LV.idx.get(a); if (i === undefined) { i = LV.signers.length; LV.signers.push(a); LV.idx.set(a, i); } return i; };
+  async function lvRead(a, b, headId) {
+    const n = b - a + 1, out = { signer: new Array(n), ts: new Array(n), ntx: new Array(n) };
+    const queue = []; for (let e = b; e >= a; e -= 200) queue.push([Math.max(a, e - 199), e]);
+    const worker = async () => {
+      while (queue.length) {
+        const [x, y] = queue.shift();
+        let res = null;
+        for (let t = 0; ; t++) {
+          try { res = await S.provider.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(x), num_blocks: y - x + 1, return_block: true, return_receipt: false }); break; }
+          catch (err) { if (y - x >= 50) { const m = (x + y) >> 1; queue.push([x, m], [m + 1, y]); break; } if (t >= 3) throw err; await new Promise((r) => setTimeout(r, 800 * (t + 1))); }
+        }
+        if (!res) continue;
+        let got = 0;
+        for (const it of res.block_items || []) {
+          const i = num(it.block_height) - a;
+          if (i < 0 || i >= n || out.signer[i] !== undefined) continue;
+          out.signer[i] = it.block.header.signer; out.ts[i] = num(it.block.header.timestamp); out.ntx[i] = (it.block.transactions || []).length; got++;
+        }
+        if (!got) throw new Error("no blocks returned");
+        let k = x; while (k <= y && out.signer[k - a] !== undefined) k++;
+        if (k <= y) queue.push([k, y]);
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    return out;
+  }
+  /** Make sure the store covers every running window, up to the newest block. */
+  async function updateLive() {
+    if (S.demo || !S.provider || LV.busy) return;
+    const running = S.questions.filter((q) => nowMs() >= q.lockTime && !(q.result && S.height > q.windowEnd) && q.windowStart);
+    if (!running.length) return;
+    LV.busy = true;
+    try {
+      const head = await S.provider.getHeadInfo();
+      const top = Math.min(num(head.head_topology.height), Math.max(...running.map((q) => q.windowEnd)));
+      const need = Math.min(...running.map((q) => q.windowStart));
+      if (top < need) return;
+      const drop = (k) => { LV.sig.splice(0, k); LV.ts.splice(0, k); LV.ntx.splice(0, k); LV.from += k; };
+      if (!LV.sig.length || LV.top < need - 1 || LV.from > top) { Object.assign(LV, { from: need, sig: [], ts: [], ntx: [], signers: [], top: need - 1 }); LV.idx.clear(); }
+      if (LV.from < need) drop(Math.min(LV.sig.length, need - LV.from));
+      // the newest ~60 blocks can still change: re-read them
+      const keep = Math.max(0, Math.min(LV.sig.length, LV.top - 60 - LV.from + 1));
+      LV.sig.length = keep; LV.ts.length = keep; LV.ntx.length = keep; LV.top = LV.from + keep - 1;
+      if (!LV.sig.length) LV.from = need, LV.top = need - 1;
+      if (LV.top < top) {
+        const r = await lvRead(LV.top + 1, top, head.head_topology.id);
+        for (let i = 0; i < r.signer.length; i++) { LV.sig.push(lvSigner(r.signer[i])); LV.ts.push(r.ts[i]); LV.ntx.push(r.ntx[i]); }
+        LV.top = top;
+      }
+      try { localStorage.setItem(LV_KEY, JSON.stringify({ from: LV.from, sig: LV.sig, ts: LV.ts, ntx: LV.ntx, signers: LV.signers })); } catch { /* storage full: still works */ }
+    } catch { /* try again next minute */ } finally { LV.busy = false; }
+  }
+
+  /** Each option's range. Uses the stored min/max, or reads it from the label ("654 to 684", "745 or more"). */
+  function optBounds(q) {
+    return q.options.map((o) => {
+      if (o.min !== undefined || o.max !== undefined) return { min: o.min ?? null, max: o.max ?? null };
+      const t = String(o.label).replace(/,/g, ""), n = (t.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+      if (/or (fewer|less)/.test(t)) return { min: null, max: n[n.length - 1] };
+      if (/or more/.test(t)) return { min: n[n.length - 1], max: null };
+      return n.length >= 2 ? { min: n[n.length - 2], max: n[n.length - 1] } : { min: null, max: null };
+    });
+  }
+  const qThresholds = (q) => (q.thresholds && q.thresholds.length ? q.thresholds : optBounds(q).slice(0, -1).map((b) => b.max).filter((x) => x != null));
+
+  /** Where a question stands right now: counts so far, the pace, and the option the pace points to. */
+  function liveOf(q) {
+    if (!q.windowStart || LV.top < q.windowStart || LV.from > q.windowStart) return null;
+    const end = Math.min(q.windowEnd, LV.top), done = end - q.windowStart + 1, total = q.windowEnd - q.windowStart + 1, frac = done / total;
+    const i0 = q.windowStart - LV.from, i1 = end - LV.from;
+    const countOf = (a) => { const k = LV.idx.get(a); if (k === undefined) return 0; let c = 0; for (let i = i0; i <= i1; i++) if (LV.sig[i] === k) c++; return c; };
+    const bd = optBounds(q);
+    const pick = (v) => { const i = bd.findIndex((o) => (o.min == null || v >= o.min) && (o.max == null || v <= o.max)); return i >= 0 ? q.options[i].index : null; };
+    const kind = qKind(q), subs = qSubjects(q), th = qThresholds(q);
+    const L = { done, total, frac, kind };
+    if (kind === "h2h" || kind === "combo") {
+      L.lines = [];
+      for (let j = 0; j + 1 < subs.length; j += 2) {
+        const a = countOf(subs[j]), b = countOf(subs[j + 1]), d = a - b;
+        L.lines.push({ A: subs[j], B: subs[j + 1], a, b, d, pa: a / frac, pb: b / frac, pd: d / frac, line: th[j / 2] });
+      }
+      L.pointsTo = kind === "h2h" ? pick(Math.round(L.lines[0].pd)) : (L.lines.length === 2 ? (L.lines[0].pd > L.lines[0].line ? 2 : 0) + (L.lines[1].pd > L.lines[1].line ? 1 : 0) : null);
+    } else if (kind === "ou" || kind === "range" || kind === "tail") {
+      const who = kind === "tail" ? (q.group || []) : subs.slice(0, 1);
+      const v = who.reduce((s, a) => s + countOf(a), 0);
+      Object.assign(L, { who, v, proj: v / frac, pointsTo: pick(Math.round(v / frac)) });
+    } else {
+      const t = String(q.text);
+      let v = NaN, proj = NaN, show = (x) => fmtN(Math.round(x));
+      if (/longest gap/i.test(t)) { let g = 0; for (let i = i0 + 1; i <= i1; i++) g = Math.max(g, LV.ts[i] - LV.ts[i - 1]); v = g; proj = g; show = (x) => `${(x / 1000).toFixed(1)} s`; L.what = "Longest gap so far"; }
+      else if (/average time/i.test(t)) { v = done > 1 ? (LV.ts[i1] - LV.ts[i0]) / (done - 1) : NaN; proj = v; show = (x) => `${(x / 1000).toFixed(2)} s`; L.what = "Average so far"; }
+      else if (/no transactions/i.test(t)) { let e = 0; for (let i = i0; i <= i1; i++) if (LV.ntx[i] === 0) e++; v = (1000 * e) / done; proj = v; show = (x) => `${(x / 10).toFixed(1)}%`; L.what = "Empty blocks so far"; }
+      else if (/transactions/i.test(t)) { let c = 0; for (let i = i0; i <= i1; i++) c += LV.ntx[i]; v = c; proj = c / frac; L.what = "Transactions so far"; }
+      Object.assign(L, { v, proj, show, pointsTo: Number.isFinite(proj) ? pick(Math.round(proj)) : null });
+    }
+    return L;
+  }
+
+  /** The race, drawn: a progress bar for the window, then a lane per producer (or a gauge for the network). */
+  function raceView(q, compact = false) {
+    const L = liveOf(q);
+    if (!L) return S.demo ? null : el("div", { class: "race race-wait" }, el("span", { class: "muted" }, "Live count loading…"));
+    const pct = Math.min(100, (L.frac * 100));
+    const head = el("div", { class: "race-head" },
+      el("span", { class: "live-dot", "aria-hidden": "true" }), el("b", {}, L.frac >= 1 ? "All blocks counted" : "Live"),
+      el("span", { class: "muted" }, `${fmtN(L.done)} of ${fmtN(L.total)} blocks · ${pct.toFixed(0)}%`),
+      L.pointsTo != null && L.frac < 1 ? el("span", { class: "race-points" }, `On pace for ${String.fromCharCode(65 + L.pointsTo)}`) : null);
+    const bar = el("div", { class: "race-track", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(pct)) }, el("i", { style: `width:${pct}%` }));
+    if (compact) return el("div", { class: "race race-compact" }, head, bar);
+    const lane = (who, v, proj, scale, marker, addr) => el("div", { class: "lane" },
+      el("div", { class: "lane-label" }, who),
+      el("div", { class: "lane-track" },
+        el("span", { class: "lane-proj", style: `width:${Math.min(100, (proj / scale) * 100)}%` }),
+        el("span", { class: "lane-now", style: `width:${Math.min(100, (v / scale) * 100)}%${addr ? `;background:hsl(${hue(addr)} 62% 52%)` : ""}` }),
+        marker != null ? el("span", { class: "lane-mark", style: `left:${Math.min(100, (marker / scale) * 100)}%`, title: `line ${fmtN(marker)}` }) : null),
+      el("div", { class: "lane-num" }, el("b", {}, fmtN(v)), el("span", {}, `→ ${fmtN(Math.round(proj))}`)));
+    const body = [];
+    if (L.lines) {
+      for (const ln of L.lines) {
+        const scale = Math.max(ln.pa, ln.pb, 1) * 1.08;
+        body.push(lane(pchip(ln.A), ln.a, ln.pa, scale, null, ln.A), lane(pchip(ln.B), ln.b, ln.pb, scale, null, ln.B));
+        const lead = ln.d >= 0 ? [pchip(ln.A), ` leads by ${fmtN(ln.d)}`] : [pchip(ln.B), ` leads by ${fmtN(-ln.d)}`];
+        body.push(el("p", { class: "race-note" }, ...lead, ` · needs more than ${fmtN(ln.line)} · on pace for a gap of ${fmtN(Math.round(ln.pd))}`));
+      }
+    } else if (L.who) {
+      const th = qThresholds(q), scale = Math.max(L.proj, ...(th.length ? [th[th.length - 1] * 1.15] : []), 1) * 1.05;
+      const who = L.kind === "tail" ? el("span", {}, `${L.who.length} producers`) : pchip(L.who[0]);
+      body.push(lane(who, L.v, L.proj, scale, th.length === 1 ? th[0] : null));
+      if (th.length > 1) {
+        // the answer zones along the same track: where the projection lands is the option it points to
+        // equal-width zones (one per answer), with a dot where the pace currently lands
+        const k = q.options.length, w = 100 / k, bd = optBounds(q), p = L.proj, i = q.options.findIndex((o) => o.index === L.pointsTo);
+        let at = null;
+        if (i >= 0) {
+          const avg = (th[th.length - 1] - th[0]) / Math.max(1, th.length - 1) || 1;
+          const lo = bd[i].min ?? bd[i].max - avg, hi = bd[i].max ?? bd[i].min + avg;
+          at = w * i + w * Math.max(0.08, Math.min(0.92, (p - lo) / Math.max(1, hi - lo)));
+        }
+        body.push(el("div", { class: "lane lane-zones" }, el("div", { class: "lane-label muted" }, "Answers"),
+          el("div", { class: "zones" }, ...q.options.map((o) => el("span", { class: `zone${o.index === L.pointsTo ? " on" : ""}`, title: o.label }, String.fromCharCode(65 + o.index))),
+            at != null ? el("i", { class: "zone-dot", style: `left:${at}%`, title: `on pace for ${fmtN(Math.round(p))}` }) : null),
+          el("div", {})));
+      }
+      body.push(el("p", { class: "race-note" }, `${fmtN(L.v)} so far · on pace for ${fmtN(Math.round(L.proj))}${th.length === 1 ? ` · the line is ${fmtN(th[0])}` : ""}`));
+    } else if (Number.isFinite(L.v)) {
+      body.push(el("p", { class: "race-note" }, `${L.what}: `, el("b", {}, L.show(L.v)), Number.isFinite(L.proj) && L.proj !== L.v ? ` · on pace for ${L.show(L.proj)}` : ""));
+    }
+    return el("div", { class: "race" }, head, bar, ...body);
+  }
+
   function questionCard(q, mode) {
     const mine = myAnswer(q);
     const oc = outcomeOf(q);
@@ -499,8 +662,10 @@
     const top = el("div", { class: "q-top" },
       el("div", { class: "q-tags" }, el("span", { class: `tier tier-${q.tier || "Medium"}` }, q.tier || "Question"), el("span", { class: "kind" }, KIND_LABEL[qKind(q)])),
       status);
+    const pace = mode === "locked" && !oc ? liveOf(q)?.pointsTo : null;
     const opts = el("div", { class: `opts n${q.options.length}` }, q.options.map((o) => {
       let cls = "opt";
+      if (pace === o.index && (q.windowEnd - q.windowStart) > 0) cls += " pace";
       if (mine === o.index) cls += " picked";
       if (oc && oc !== 1000 && oc === o.index + 1) cls += " correct";
       else if (oc && oc !== 1000 && mine === o.index) cls += " wrong";
@@ -518,6 +683,7 @@
     return el("article", { class: `q q-${(q.tier || "Medium")}` }, top,
       el("h3", { title: q.text }, ...headline(q)),
       el("div", { class: "q-facts" }, ...windowFacts(q), mode === "open" ? el("span", { class: "fact" }, "Counting starts when answers close") : null),
+      mode === "locked" && !oc ? raceView(q) : null,
       opts, act ? el("p", { class: "q-actual" }, ...act) : null, foot);
   }
 
@@ -647,7 +813,8 @@
     };
     const wait = (q) => el("div", { class: "res-wait" },
       el("span", { class: "qno" }, `Q${displayQuestionNumber(q)}`), el("span", { class: "res-wait-text" }, ...headline(q)),
-      el("span", { class: "badge badge-wait" }, S.height > q.windowEnd ? "Result being posted" : `Result in ~${duration((q.windowEnd + 60 - S.height) * BLOCK_MS)}`));
+      el("span", { class: "badge badge-wait" }, S.height > q.windowEnd ? "Result being posted" : `Result in ~${duration((q.windowEnd + 60 - S.height) * BLOCK_MS)}`),
+      nowMs() >= q.lockTime ? el("div", { class: "res-wait-race" }, raceView(q, true)) : null);
     list.replaceChildren(...groups.map((g) => el("section", { class: "day-group" },
       el("h2", {}, `Week ${num(g.d.week) + 1}, day ${g.d.day}`, el("span", { class: "day-count" }, `${g.done.length} of ${g.done.length + g.waiting.length} final`)),
       ...g.done.map((q) => card(g, q)),
@@ -702,18 +869,36 @@
     $("#demo-note").hidden = false;
     const qs = (window.KPRED_DEMO?.questions || []);
     const last = Math.max(...qs.map((q) => q.lockHeight));
-    S.height = last - 9000;
+    // ?demo=live previews the race: the last day's answers closed 4,500 blocks ago and its blocks are being counted.
+    const liveDemo = /[?&]demo=live\b/.test(location.search);
+    S.height = liveDemo ? last + 4500 : last - 9000;
     // Demo clock: "now" is 15:00 UTC on a Saturday, so Saturday's questions are open until 00:00 UTC.
     const sat = new Date(); sat.setUTCDate(sat.getUTCDate() + ((6 - sat.getUTCDay() + 7) % 7)); sat.setUTCHours(15, 0, 0, 0);
     S.chainTime = sat.getTime(); S.seenAt = Date.now();
     S.genesis = 0; S.week = 2; S.weekEnd = S.chainTime + 33 * 3600000;
-    const lockOf = (q) => (q.lockHeight === last ? S.chainTime + 9 * 3600000 : S.chainTime + (q.lockHeight - S.height) * BLOCK_MS);
+    const lockOf = (q) => (q.lockHeight === last && !liveDemo ? S.chainTime + 9 * 3600000 : S.chainTime + (q.lockHeight - S.height) * BLOCK_MS);
     S.dep = { contract: DEMO_PRODUCERS[4] };
     S.questions = qs.map((q) => ({ ...q, lockTime: lockOf(q), chainOutcome: q.result && q.windowEnd + 60 < S.height ? (q.result.void ? 1000 : q.result.option + 1) : undefined, result: q.windowEnd + 60 < S.height ? q.result : null }));
     S.files = [...new Set(qs.map((q) => q.day))].map((d) => ({ f: `W002-D${d}.json`, d: { week: 2, day: d, questions: S.questions.filter((q) => q.day === d) } }));
     S.st = { totals: { total_stake: String(48250n * UNIT), seed_vhp: String(170000n * UNIT), seed_koin: String(20000n * UNIT), pots_outstanding: String(1203n * UNIT), owner_share: "0", creator_fee: "0" },
       vhp_balance: String(218250n * UNIT + 1203n * UNIT), koin_balance: String(20000n * UNIT + 412n * UNIT) };
     S.claims = [];
+    // the live race for questions still counting: simulated blocks that drift toward each question's real result
+    const run = S.questions.filter((q) => q.lockHeight < S.height && !q.result);
+    if (run.length) {
+      const orig = new Map(qs.map((q) => [q.id, q])), prob = new Map();
+      for (const q of run) {
+        const W = q.windowEnd - q.windowStart + 1, V = Number(String(orig.get(q.id)?.result?.value || "0").replace(/,/g, "")), [A, B] = qSubjects(q);
+        if (qKind(q) === "h2h" && A && B) { prob.set(A, 0.2); prob.set(B, Math.max(0.01, 0.2 - V / W)); } else if (A) prob.set(A, Math.min(0.5, V / W));
+      }
+      const from = Math.min(...run.map((q) => q.windowStart)), list = [...prob.entries()];
+      Object.assign(LV, { from, sig: [], ts: [], ntx: [], signers: [], top: S.height }); LV.idx.clear();
+      for (let h = from; h <= S.height; h++) {
+        let x = drnd(), who = "1OtherProducerXXXXXXXXXXXXXXXXXXX";
+        for (const [a, pr] of list) { if (x < pr) { who = a; break; } x -= pr; }
+        LV.sig.push(lvSigner(who)); LV.ts.push(S.chainTime - (S.height - h) * BLOCK_MS + Math.floor(drnd() * 900)); LV.ntx.push(drnd() < 0.3 ? 0 : 1 + Math.floor(drnd() * 3));
+      }
+    }
     // a field of players with made-up answers to the resolved questions
     const resolved = S.questions.filter((q) => q.chainOutcome);
     S.demoRows = Array.from({ length: 14 }, (_, i) => {
@@ -771,7 +956,8 @@
       initWallet();
       S.game = new lib.Contract({ id: dep.contract, abi: S.abi, provider: S.provider });
       try { await loadLive(); } catch (e) { toast(`Couldn't reach the Koinos network: ${e.message}`, 8000); }
-      setInterval(async () => { try { await loadLive(); S.board[S.week] = undefined; renderPlay(); } catch {} }, 60000);
+      setInterval(async () => { try { await loadLive(); S.board[S.week] = undefined; renderPlay(); } catch {} await updateLive(); renderPlay(); if (!$("#view-results").hidden) renderResults(); }, 60000);
+      updateLive().then(() => { renderPlay(); if (!$("#view-results").hidden) renderResults(); });
     }
     $("#producers-link").href = EXPLORER_PRODUCERS;
     $("#schedule").textContent = `Your time: new questions ${localHour(12)} Monday to Saturday, answers close ${localHour(0)}. Winners are final Tuesdays at ${localHour(12)}.`;

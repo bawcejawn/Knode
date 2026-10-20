@@ -164,6 +164,9 @@ a { color: var(--violet); }
 .opt.wrong { border-color: var(--rose); background: var(--rose-soft); }
 .opt.wrong .letter { background: var(--rose); color: #fff; }
 .opt[disabled] { cursor: default; }
+.opt.pace { border-style: dashed; border-color: var(--violet); }
+@media (max-width: 560px) { .opt.pace::after { display: none; } }
+.opt.pace::after { content: "on pace"; margin-left: auto; font-size: .72rem; font-weight: 800; color: var(--violet); text-transform: uppercase; letter-spacing: .04em; }
 .q-actual { margin-top: 12px; font-weight: 600; color: var(--ink); line-height: 1.7; }
 .q-foot { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: space-between; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); font-size: .86rem; color: var(--muted); }
 .q-cta { color: var(--violet); font-weight: 700; }
@@ -172,6 +175,36 @@ a { color: var(--violet); }
 .badge-ok { background: var(--mint-soft); color: var(--mint); }
 .badge-miss { background: var(--rose-soft); color: var(--rose); }
 .badge-wait { background: var(--violet-soft); color: var(--violet); }
+
+/* ───── live race (questions still counting) ───── */
+.race { margin-top: 14px; padding: 14px 16px; border-radius: var(--r-md); background: var(--paper); border: 1px solid var(--line); }
+.race-wait { font-size: .88rem; }
+.race-head { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; font-size: .9rem; }
+.race-head b { font-weight: 800; }
+.live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--rose); box-shadow: 0 0 0 0 var(--rose); animation: livepulse 1.6s ease-out infinite; }
+@keyframes livepulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--rose) 60%, transparent); } 100% { box-shadow: 0 0 0 9px transparent; } }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+.race-points { margin-left: auto; font-weight: 800; font-size: .82rem; padding: 3px 10px; border-radius: 999px; background: var(--violet); color: var(--violet-ink); }
+.race-track { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; margin: 10px 0 4px; }
+.race-track i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--violet), var(--mint)); transition: width .6s ease; }
+.lane { display: grid; grid-template-columns: 150px 1fr 104px; align-items: center; gap: 12px; margin-top: 12px; }
+.lane-zones { margin-top: 6px; } .lane-zones .lane-label { font-size: .78rem; font-weight: 700; }
+.lane-label { min-width: 0; overflow: hidden; }
+.lane-track { position: relative; height: 22px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); overflow: visible; }
+.lane-proj { position: absolute; inset: 0 auto 0 0; border-radius: 6px; background: repeating-linear-gradient(135deg, var(--violet-soft) 0 6px, transparent 6px 12px); }
+.lane-now { position: absolute; inset: 0 auto 0 0; border-radius: 6px; background: var(--violet); transition: width .6s ease; }
+.lane-mark { position: absolute; top: -5px; bottom: -5px; width: 3px; margin-left: -1px; border-radius: 2px; background: var(--sun); }
+.lane-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lane-num b { font: 800 1.05rem/1 var(--display); } .lane-num span { margin-left: 6px; font-size: .82rem; color: var(--muted); }
+.zones { position: relative; display: flex; height: 24px; border-radius: 6px; overflow: visible; margin-bottom: 4px; border: 1px solid var(--line); background: var(--surface); }
+.zone { flex: 1 1 0; display: grid; place-items: center; font: 800 .74rem/1 var(--display); color: var(--muted); border-left: 1px solid var(--line); min-width: 0; overflow: hidden; }
+.zone:first-child { border-left: 0; }
+.zone.on { background: var(--violet-soft); color: var(--violet); }
+.zone-dot { position: absolute; bottom: -6px; width: 11px; height: 11px; margin-left: -5.5px; border-radius: 50%; background: var(--violet); border: 2px solid var(--surface); box-shadow: 0 0 0 2px var(--violet); transition: left .6s ease; }
+.race-note { margin-top: 10px; font-size: .9rem; font-weight: 600; color: var(--ink); line-height: 1.7; }
+.race-compact { margin: 8px 0 0; padding: 10px 12px; }
+.res-wait-race { grid-column: 1 / -1; }
+@media (max-width: 560px) { .lane { grid-template-columns: 1fr 92px; gap: 6px 10px; } .lane-label { grid-column: 1 / -1; } .lane-zones .lane-label { display: none; } .race-points { margin-left: 0; } }
 
 /* ───── panels ───── */
 .panel { background: var(--surface); border-radius: var(--r-lg); padding: 20px; box-shadow: var(--shadow); }
