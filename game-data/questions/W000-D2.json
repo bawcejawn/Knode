@@ -187,7 +187,8 @@
         "value": "200",
         "dataHash": "eacf2933df0aab8055126b137e07b5bb9645c2d758afb319fa4c36c23ca9bf40",
         "resolvedAt": "2026-10-21T18:17:58.850Z"
-      }
+      },
+      "chainOutcome": 1
     },
     {
       "id": "W000-D2-4",
