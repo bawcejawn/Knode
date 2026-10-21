@@ -105,9 +105,13 @@
     if (kind === "h2h" && A && B && Number.isFinite(line)) return ["Will ", pchip(A), " out-sign ", pchip(B), " by more than ", el("b", {}, fmtN(line)), " blocks?"];
     if (kind === "ou" && A && Number.isFinite(line)) return ["Will ", pchip(A), " sign more than ", el("b", {}, fmtN(line)), " blocks?"];
     if (kind === "range" && A) return ["How many blocks will ", pchip(A), " sign?"];
+    if (kind === "tail" && q.group && q.group.length) return [`How many blocks will these ${q.group.length} smaller producers sign together?`];
     const plain = String(q.text).replace(/,? between block [\d,]+ and block [\d,]+/, "").replace(/ \(about [^)]*\)/, "").replace(/ \(Full list[^)]*\)/, "");
     return chipify(plain);
   }
+  /** For "these N producers together" questions: every producer in the group, as chips. */
+  const groupView = (q) => (q.group && q.group.length ? el("div", { class: "q-group" },
+    el("span", { class: "q-group-h" }, `The ${q.group.length} producers counted together:`), ...q.group.map(pchip)) : null);
   /** "Counts blocks #a → #b · 10,000 blocks · about 8 h" */
   function windowFacts(q) {
     const n = q.windowEnd - q.windowStart + 1, hours = (n * BLOCK_MS) / 3.6e6;
@@ -681,7 +685,7 @@
       el("span", {}, `Question #${displayQuestionNumber(q)}`),
       mine !== null ? el("span", {}, `Your answer: ${String.fromCharCode(65 + mine)}`) : mode === "open" ? el("span", { class: "q-cta" }, S.account ? "Pick an answer" : "Connect a wallet to answer") : null);
     return el("article", { class: `q q-${(q.tier || "Medium")}` }, top,
-      el("h3", { title: q.text }, ...headline(q)),
+      el("h3", { title: q.text }, ...headline(q)), groupView(q),
       el("div", { class: "q-facts" }, ...windowFacts(q), mode === "open" ? el("span", { class: "fact" }, "Counting starts when answers close") : null),
       mode === "locked" && !oc ? raceView(q) : null,
       opts, act ? el("p", { class: "q-actual" }, ...act) : null, foot);
@@ -804,7 +808,7 @@
         el("div", { class: "q-top" },
           el("div", { class: "q-tags" }, el("span", { class: "qno" }, `Q${displayQuestionNumber(q)}`), el("span", { class: "kind" }, KIND_LABEL[qKind(q)])),
           r.void ? el("span", { class: "badge badge-void" }, "Voided") : el("span", { class: "badge badge-ok" }, "Final")),
-        el("h3", { title: q.text }, ...headline(q)),
+        el("h3", { title: q.text }, ...headline(q)), groupView(q),
         r.void ? el("p", { class: "res-answer void" }, `Voided: ${r.reason || "a producer went offline"}. Nobody gains or loses a point.`)
           : el("div", { class: "res-answer" }, el("span", { class: "res-letter" }, String.fromCharCode(65 + r.option)), el("span", { class: "opt-text" }, ...optLabel(opt.label))),
         actualText(q) ? el("p", { class: "q-actual" }, ...actualText(q)) : null,
