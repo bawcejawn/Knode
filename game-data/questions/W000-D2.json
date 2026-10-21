@@ -180,7 +180,14 @@
         "minVoidBlocks": 600
       },
       "paramsHash": "78a00ef135c126a837ff591b7806acd8692a2d3ebc3133ce207b2a31c442c5a4",
-      "chainId": 7
+      "chainId": 7,
+      "result": {
+        "void": false,
+        "option": 0,
+        "value": "200",
+        "dataHash": "eacf2933df0aab8055126b137e07b5bb9645c2d758afb319fa4c36c23ca9bf40",
+        "resolvedAt": "2026-10-21T18:17:58.850Z"
+      }
     },
     {
       "id": "W000-D2-4",
