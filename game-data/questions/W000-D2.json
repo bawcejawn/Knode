@@ -56,7 +56,14 @@
         "minVoidBlocks": 600
       },
       "paramsHash": "2c1de0d38d1fcdf6ede82765b8d98e8fdeb565cffcbd32d9c162f0f7add6d1c9",
-      "chainId": 5
+      "chainId": 5,
+      "result": {
+        "void": false,
+        "option": 1,
+        "value": "166",
+        "dataHash": "7dec76fcdb7da508bfdd9778e76b89cd2e3aecc5a066c79136762f50a290fa6f",
+        "resolvedAt": "2026-10-21T09:43:34.860Z"
+      }
     },
     {
       "id": "W000-D2-2",
@@ -110,7 +117,14 @@
         "minVoidBlocks": 600
       },
       "paramsHash": "29f03d9083f9200b2b6a767bd71a43fbc3438afa28cd47b419d924e7b0e01080",
-      "chainId": 6
+      "chainId": 6,
+      "result": {
+        "void": false,
+        "option": 0,
+        "value": "1,760",
+        "dataHash": "7dec76fcdb7da508bfdd9778e76b89cd2e3aecc5a066c79136762f50a290fa6f",
+        "resolvedAt": "2026-10-21T09:43:34.860Z"
+      }
     },
     {
       "id": "W000-D2-3",
@@ -217,7 +231,14 @@
         "minVoidBlocks": 600
       },
       "paramsHash": "75b943bcd247488b3661923f218f2bd7c17325cb2ed4f2798f57ffd90d79a12d",
-      "chainId": 8
+      "chainId": 8,
+      "result": {
+        "void": false,
+        "option": 0,
+        "value": "227",
+        "dataHash": "7dec76fcdb7da508bfdd9778e76b89cd2e3aecc5a066c79136762f50a290fa6f",
+        "resolvedAt": "2026-10-21T09:43:34.860Z"
+      }
     },
     {
       "id": "W000-D2-5",
@@ -271,7 +292,14 @@
         "minVoidBlocks": 600
       },
       "paramsHash": "3a1f39b5bb9d86a1179116e95dd419d17a86b0a96dcee8a8923dd9d0ac9eca73",
-      "chainId": 9
+      "chainId": 9,
+      "result": {
+        "void": false,
+        "option": 0,
+        "value": "1,295",
+        "dataHash": "7dec76fcdb7da508bfdd9778e76b89cd2e3aecc5a066c79136762f50a290fa6f",
+        "resolvedAt": "2026-10-21T09:43:34.860Z"
+      }
     }
   ]
 }
