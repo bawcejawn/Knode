@@ -1,0 +1,343 @@
+{
+  "date": "W000-D3",
+  "week": 0,
+  "day": 3,
+  "tier": "Medium",
+  "released": "2026-10-21T12:35:59.028Z",
+  "questions": [
+    {
+      "id": "W000-D3-1",
+      "date": "W000-D3",
+      "week": 0,
+      "day": 3,
+      "tier": "Medium",
+      "template": "M5",
+      "releaseHeight": 40396925,
+      "lockHeight": 40411663,
+      "lockTime": 1792627200000,
+      "title": "Average block interval",
+      "text": "What will be the average time between blocks between block 40,411,664 and block 40,416,663?",
+      "subjects": [],
+      "unit": "ms",
+      "windowStart": 40411664,
+      "windowEnd": 40416663,
+      "thresholds": [
+        3061,
+        3084,
+        3099
+      ],
+      "options": [
+        {
+          "index": 0,
+          "label": "3.061 s or less",
+          "min": null,
+          "max": 3061
+        },
+        {
+          "index": 1,
+          "label": "3.062 s to 3.084 s",
+          "min": 3062,
+          "max": 3084
+        },
+        {
+          "index": 2,
+          "label": "3.085 s to 3.099 s",
+          "min": 3085,
+          "max": 3099
+        },
+        {
+          "index": 3,
+          "label": "3.100 s or more",
+          "min": 3100,
+          "max": null
+        }
+      ],
+      "predicted": [
+        0.24390243902439024,
+        0.24390243902439024,
+        0.2804878048780488,
+        0.23170731707317074
+      ],
+      "model": {
+        "version": "v5",
+        "rates": {},
+        "window": 5000,
+        "voidAlpha": 0.001,
+        "minVoidBlocks": 600
+      },
+      "paramsHash": "e244e787d2bb7db294f77dc64208b2886956c7dabd659bd9c2a42340d4c8abbc"
+    },
+    {
+      "id": "W000-D3-2",
+      "date": "W000-D3",
+      "week": 0,
+      "day": 3,
+      "tier": "Medium",
+      "template": "M10",
+      "releaseHeight": 40396925,
+      "lockHeight": 40411663,
+      "lockTime": 1792627200000,
+      "title": "All non-core producers combined",
+      "text": "How many blocks will these 7 non-core producers sign together between block 40,411,664 and block 40,431,663? (Full list in the question details.)",
+      "subjects": [],
+      "group": [
+        "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh",
+        "13iFaqgdnsoqUTCwZC9GtRXwh8ZvdiiPwm",
+        "1F96MSYgSsgY1WJHnTBtjtgPEN9te7xNxp",
+        "15jueaBcMieDCMGw6wAmEK6cNSUVicknG1",
+        "122hrgzoXVmmxWxUs8TUrCFGcKG9czYgvf",
+        "1932QKYoPzaGmwBxTnnYhNqV9LQi2sYLHT",
+        "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR"
+      ],
+      "unit": "count",
+      "windowStart": 40411664,
+      "windowEnd": 40431663,
+      "thresholds": [
+        405,
+        452,
+        522
+      ],
+      "options": [
+        {
+          "index": 0,
+          "label": "405 or fewer",
+          "min": null,
+          "max": 405
+        },
+        {
+          "index": 1,
+          "label": "406 to 452",
+          "min": 406,
+          "max": 452
+        },
+        {
+          "index": 2,
+          "label": "453 to 522",
+          "min": 453,
+          "max": 522
+        },
+        {
+          "index": 3,
+          "label": "523 or more",
+          "min": 523,
+          "max": null
+        }
+      ],
+      "predicted": [
+        0.25,
+        0.25,
+        0.25,
+        0.25
+      ],
+      "model": {
+        "version": "v5",
+        "rates": {
+          "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh": 0.011006944444444444,
+          "13iFaqgdnsoqUTCwZC9GtRXwh8ZvdiiPwm": 0.01015625,
+          "1F96MSYgSsgY1WJHnTBtjtgPEN9te7xNxp": 0.0005381944444444444,
+          "15jueaBcMieDCMGw6wAmEK6cNSUVicknG1": 0.00001736111111111111,
+          "122hrgzoXVmmxWxUs8TUrCFGcKG9czYgvf": 0.00006944444444444444,
+          "1932QKYoPzaGmwBxTnnYhNqV9LQi2sYLHT": 0.0001388888888888889,
+          "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR": 0.00203125
+        },
+        "window": 20000,
+        "voidAlpha": 0.001,
+        "minVoidBlocks": 600
+      },
+      "paramsHash": "243cb6191521138e23979229c35c4a43aaeb5563406abfd17d8d8f7b882d7682"
+    },
+    {
+      "id": "W000-D3-3",
+      "date": "W000-D3",
+      "week": 0,
+      "day": 3,
+      "tier": "Medium",
+      "template": "M9",
+      "releaseHeight": 40396925,
+      "lockHeight": 40411663,
+      "lockTime": 1792627200000,
+      "title": "Smaller producer quartiles",
+      "text": "How many blocks will producer 1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh sign between block 40,411,664 and block 40,431,663 (about 17 hours)?",
+      "subjects": [
+        "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh"
+      ],
+      "unit": "count",
+      "windowStart": 40411664,
+      "windowEnd": 40431663,
+      "thresholds": [
+        184,
+        200,
+        219
+      ],
+      "options": [
+        {
+          "index": 0,
+          "label": "184 or fewer",
+          "min": null,
+          "max": 184
+        },
+        {
+          "index": 1,
+          "label": "185 to 200",
+          "min": 185,
+          "max": 200
+        },
+        {
+          "index": 2,
+          "label": "201 to 219",
+          "min": 201,
+          "max": 219
+        },
+        {
+          "index": 3,
+          "label": "220 or more",
+          "min": 220,
+          "max": null
+        }
+      ],
+      "predicted": [
+        0.2505854800936768,
+        0.25526932084309134,
+        0.24355971896955503,
+        0.2505854800936768
+      ],
+      "model": {
+        "version": "v5",
+        "rates": {
+          "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh": 0.011006944444444444
+        },
+        "forecast": {
+          "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh": 0.01017361111111111
+        },
+        "window": 20000,
+        "voidAlpha": 0.001,
+        "minVoidBlocks": 600
+      },
+      "paramsHash": "816de73ddde6cfc3b24af2710abd106fea9151907feed66186ccdcaee9738303"
+    },
+    {
+      "id": "W000-D3-4",
+      "date": "W000-D3",
+      "week": 0,
+      "day": 3,
+      "tier": "Medium",
+      "template": "M7",
+      "releaseHeight": 40396925,
+      "lockHeight": 40411663,
+      "lockTime": 1792627200000,
+      "title": "Transactions in the window",
+      "text": "How many transactions will be included in blocks between block 40,411,664 and block 40,416,663?",
+      "subjects": [],
+      "unit": "count",
+      "windowStart": 40411664,
+      "windowEnd": 40416663,
+      "thresholds": [
+        40,
+        54,
+        73
+      ],
+      "options": [
+        {
+          "index": 0,
+          "label": "40 or fewer",
+          "min": null,
+          "max": 40
+        },
+        {
+          "index": 1,
+          "label": "41 to 54",
+          "min": 41,
+          "max": 54
+        },
+        {
+          "index": 2,
+          "label": "55 to 73",
+          "min": 55,
+          "max": 73
+        },
+        {
+          "index": 3,
+          "label": "74 or more",
+          "min": 74,
+          "max": null
+        }
+      ],
+      "predicted": [
+        0.23170731707317074,
+        0.2682926829268293,
+        0.24390243902439024,
+        0.25609756097560976
+      ],
+      "model": {
+        "version": "v5",
+        "rates": {},
+        "window": 5000,
+        "voidAlpha": 0.001,
+        "minVoidBlocks": 600
+      },
+      "paramsHash": "cb99313c48818f2d062a8419e9e5b8bfefc89d28c1326fd20a07725036f2e85d"
+    },
+    {
+      "id": "W000-D3-5",
+      "date": "W000-D3",
+      "week": 0,
+      "day": 3,
+      "tier": "Medium",
+      "template": "M6",
+      "releaseHeight": 40396925,
+      "lockHeight": 40411663,
+      "lockTime": 1792627200000,
+      "title": "Share of empty blocks",
+      "text": "What share of blocks will contain no transactions between block 40,411,664 and block 40,416,663?",
+      "subjects": [],
+      "unit": "permille",
+      "windowStart": 40411664,
+      "windowEnd": 40416663,
+      "thresholds": [
+        987,
+        990,
+        992
+      ],
+      "options": [
+        {
+          "index": 0,
+          "label": "98.7% or less",
+          "min": null,
+          "max": 987
+        },
+        {
+          "index": 1,
+          "label": "98.8% to 99.0%",
+          "min": 988,
+          "max": 990
+        },
+        {
+          "index": 2,
+          "label": "99.1% to 99.2%",
+          "min": 991,
+          "max": 992
+        },
+        {
+          "index": 3,
+          "label": "99.3% or more",
+          "min": 993,
+          "max": null
+        }
+      ],
+      "predicted": [
+        0.25609756097560976,
+        0.24390243902439024,
+        0.2804878048780488,
+        0.21951219512195122
+      ],
+      "model": {
+        "version": "v5",
+        "rates": {},
+        "window": 5000,
+        "voidAlpha": 0.001,
+        "minVoidBlocks": 600
+      },
+      "paramsHash": "cb66f89397269c0eee41156658a8c32bd932fdab6aabf6efb85385a689456c6f"
+    }
+  ]
+}
