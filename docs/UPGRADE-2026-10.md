@@ -24,8 +24,8 @@ Nothing in this file has been run. Every command below that changes something is
 | AB-016, AB-020 | Eligibility stays "at least 2 counted answers and at least `min_stake`", plus stake > 0. New owner-only `set_min_stake` (never 0, applies from the next week, never the current one; `init` also refuses 0). From the week after the upgrade, the winners' 30% is counted over eligible players with at least one point, so zero-score accounts no longer pull the cutoff down. |
 | AB-019 | New tests catch removing the solvency check, the house-share fallback and the `min_stake` boundary. |
 
-The ABI gains `set_min_stake`, an optional `min_sponsor_rc` in `set_sponsor_limit`, and `done` in
-`finalize_week_result`. Entry point ids of existing methods are unchanged (the bot and the website keep working with
+The ABI gains `set_min_stake`, an optional `min_sponsor_rc` in `set_sponsor_limit`, `done` in
+`finalize_week_result`, and `last_result_time` in the week object. Entry point ids of existing methods are unchanged (the bot and the website keep working with
 both the live and the new code).
 
 ## Storage: compatibility and new fields
