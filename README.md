@@ -20,7 +20,7 @@ A question is **voided** (it counts for nobody) when:
    its numbers are saved with the question), or
 2. **VHP swing:** a producer it is about (its subjects, or every member of a group question), or the whole network's
    VHP for network-wide questions (M4–M7: block gaps, block interval, empty blocks, transactions), gained or lost
-   **more than `voidVhpSwing`** of its VHP between the question's release and the end of its window.
+   **more than `voidVhpSwing`** of its VHP, compared with its release, in a reading taken during the question's window.
    `voidVhpSwing` is a setting in `game-data/game.json` (`model.voidVhpSwing`, 0.10 = 10%).
 
 How the VHP-swing rule is applied, exactly:
@@ -29,11 +29,19 @@ How the VHP-swing rule is applied, exactly:
   supply, saved under the key `network`) at the newest block, and saves it in the question as `model.vhp`, with that
   block height (`model.vhpHeight`) and the limit (`model.voidVhpSwing`). All three are part of the `paramsHash` posted
   on chain, so they cannot be changed afterwards.
-- **At the window's end** the bot reads the same balances again on its first run at or after the window's last block
-  (it runs every hour, so normally within an hour; never before that block). It saves them in the question file as
-  `vhpEnd` (block height, time and values) before resolving.
-- The question is void if, for any of those producers (or the network), `|end − release| > voidVhpSwing × release`
-  (exact integer arithmetic). The result's `vhpCheck` lists both readings and each change, so anyone can check it.
+- **During the window** the bot reads the same balances again on every run (it runs every hour) and adds each reading
+  to the question file's `vhpReadings` (block height, time and values). The height is read after the balances, so the
+  balances are from that block or earlier. A reading whose height is after the window's last block is not kept.
+- The question is void if, in any reading taken during the window (`windowStart ≤ height ≤ windowEnd`), for any of
+  those producers (or the network), `|reading − release| > voidVhpSwing × release` (exact integer arithmetic).
+  - A reading taken after the window's last block never voids, whatever it shows: by then the outcome is public.
+  - If the bot took no reading during the window (it was down the whole time), the rule is skipped and the question
+    resolves on its blocks alone. The result's `vhpCheck.skipped` says so, and the bot logs it.
+  - A producer with no VHP at release is not checked (any amount would be an infinite change).
+- The result's `vhpCheck` lists the heights of the readings used and, for each producer, the reading with the largest
+  change, so anyone can check it.
+- A subject can still move its own VHP during the window to void a question about itself (it costs only Mana). This is
+  part of "anyone can influence the results".
 - Questions released before this rule existed have no `model.vhp`; they keep the rules they were released with.
 
 

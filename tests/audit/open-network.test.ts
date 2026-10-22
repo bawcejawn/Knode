@@ -37,8 +37,9 @@ function withSnapshot(q: any, vhp = 1_000_000n * 100_000_000n) {
   q.model.voidVhpSwing = 0.1;
   return q;
 }
-const endWith = (q: any, change: (who: string, start: bigint) => bigint) => ({
-  height: q.windowEnd + 300,
+/** A reading taken during the window (at its last block), with each subject's VHP changed by `change`. */
+const endWith = (q: any, change: (who: string, start: bigint) => bigint, height = q.windowEnd) => ({
+  height,
   values: Object.fromEntries(vhpSubjects(q).map((w) => [w, change(w, BigInt(q.model.vhp[w])).toString()])),
 });
 
@@ -62,7 +63,8 @@ test("the docs say the same, and explain the exact VHP-swing rule", () => {
   assert.match(md, new RegExp(DESK));
   assert.match(md, /block-producer node of its own/);
   assert.match(md, /voidVhpSwing/);
-  assert.match(md, /first run at or after the window's last block/);
+  assert.match(md, /on every run/);
+  assert.match(md, /A reading taken after the window's last block never voids/);
   const g = JSON.parse(fs.readFileSync("game-data/game.json", "utf8"));
   assert.equal(g.model.voidVhpSwing, 0.1, "game.json starts the rule at 10%");
 });
@@ -73,8 +75,8 @@ test("(decision kept) sending transactions may move a network question: allowed 
   const q = withSnapshot(byT("M7"));
   const honest = Array.from({ length: 45 }, (_, k) => k * 100 + 7), extra = Array.from({ length: 40 }, (_, k) => k * 100 + 57);
   const end = endWith(q, (_w, a) => a);
-  const before = scoreQuestion(q, history(q, (i) => (honest.includes(i) ? 1 : 0)), { vhpEnd: end });
-  const after = scoreQuestion(q, history(q, (i) => (honest.includes(i) || extra.includes(i) ? 1 : 0)), { vhpEnd: end });
+  const before = scoreQuestion(q, history(q, (i) => (honest.includes(i) ? 1 : 0)), { vhpReadings: [end] });
+  const after = scoreQuestion(q, history(q, (i) => (honest.includes(i) || extra.includes(i) ? 1 : 0)), { vhpReadings: [end] });
   assert.ok(before.ok && after.ok && !before.result.void && !after.result.void);
   assert.notEqual(after.result.option, before.result.option);
 });
@@ -84,7 +86,7 @@ test("(decision kept) sending transactions may move a network question: allowed 
 test("a subject that gains or loses MORE than 10% of its VHP voids the question; exactly 10% does not", () => {
   const q = withSnapshot(byT("M9"));
   const blocks = history(q);
-  const at = (f: (a: bigint) => bigint) => scoreQuestion(q, blocks, { vhpEnd: endWith(q, (_w, a) => f(a)) });
+  const at = (f: (a: bigint) => bigint) => scoreQuestion(q, blocks, { vhpReadings: [endWith(q, (_w, a) => f(a))] });
   const exact = at((a) => a + a / 10n);
   assert.ok(exact.ok && !exact.result.void, "+10.00% is not more than 10%");
   const over = at((a) => a + a / 10n + 1n);
@@ -92,16 +94,17 @@ test("a subject that gains or loses MORE than 10% of its VHP voids the question;
   const down = at((a) => (a * 88n) / 100n);
   assert.ok(down.ok && down.result.void, "−12% is void");
   assert.equal(down.ok && down.result.vhpCheck?.values[q.subjects[0]].change, "−12.00%");
-  assert.equal(down.ok && down.result.vhpCheck?.endHeight, q.windowEnd + 300);
+  assert.deepEqual(down.ok && down.result.vhpCheck?.readings, [q.windowEnd]);
+  assert.equal(down.ok && down.result.vhpCheck?.values[q.subjects[0]].height, q.windowEnd);
 });
 
 test("every member of a group question counts (M10, which names the Desk), and only members count", () => {
   const q = withSnapshot(byT("M10"));
   assert.ok(q.group.includes(DESK), "(context) the live group question names the Desk");
   const blocks = history(q);
-  const desk = scoreQuestion(q, blocks, { vhpEnd: endWith(q, (w, a) => (w === DESK ? a * 2n : a)) });
+  const desk = scoreQuestion(q, blocks, { vhpReadings: [endWith(q, (w, a) => (w === DESK ? a * 2n : a))] });
   assert.ok(desk.ok && desk.result.void && desk.result.reason!.includes(DESK), "VHP swapped into the Desk voids the group question");
-  const outsider = scoreQuestion(q, blocks, { vhpEnd: { ...endWith(q, (_w, a) => a), values: { ...endWith(q, (_w, a) => a).values, "1SomeoneElse": "1" } } });
+  const outsider = scoreQuestion(q, blocks, { vhpReadings: [{ ...endWith(q, (_w, a) => a), values: { ...endWith(q, (_w, a) => a).values, "1SomeoneElse": "1" } }] });
   assert.ok(outsider.ok && !outsider.result.void);
 });
 
@@ -109,19 +112,35 @@ test("network-wide questions (M4–M7) use the whole network's VHP", () => {
   for (const t of ["M5", "M6", "M7"]) {
     const q = withSnapshot(byT(t));
     assert.deepEqual(vhpSubjects(q), [NETWORK_VHP]);
-    const calm = scoreQuestion(q, history(q), { vhpEnd: endWith(q, (_w, a) => a + a / 20n) });
+    const calm = scoreQuestion(q, history(q), { vhpReadings: [endWith(q, (_w, a) => a + a / 20n)] });
     assert.ok(calm.ok && !calm.result.void, `${t}: +5% of the network is fine`);
-    const swing = scoreQuestion(q, history(q), { vhpEnd: endWith(q, (_w, a) => a - a / 5n) });
+    const swing = scoreQuestion(q, history(q), { vhpReadings: [endWith(q, (_w, a) => a - a / 5n)] });
     assert.ok(swing.ok && swing.result.void && /the network's VHP/.test(swing.result.reason!), `${t}: −20% of the network voids it`);
   }
 });
 
-test("without the window-end reading a snapshot question waits; old questions keep their old rules", () => {
+test("only readings taken during the window count; with none the rule is skipped; old questions keep their old rules", () => {
   const q = withSnapshot(byT("M9"));
-  const r = scoreQuestion(q, history(q));
-  assert.ok(!r.ok && r.pending && /VHP reading/.test(r.reason));
+  const blocks = history(q);
+  // A swing inside the window voids, even if VHP is back to normal by the window's end.
+  const inside = scoreQuestion(q, blocks, { vhpReadings: [endWith(q, (_w, a) => a * 2n, q.windowStart + 50), endWith(q, (_w, a) => a)] });
+  assert.ok(inside.ok && inside.result.void && /during the window/.test(inside.result.reason!), "+100% mid-window voids");
+  assert.equal(inside.ok && inside.result.vhpCheck?.values[q.subjects[0]].height, q.windowStart + 50);
+  // A swing that shows only after the window's last block (or before its first) never voids.
+  const after = scoreQuestion(q, blocks, { vhpReadings: [endWith(q, (_w, a) => a), endWith(q, (_w, a) => a * 2n, q.windowEnd + 1)] });
+  assert.ok(after.ok && !after.result.void, "a reading one block after the window does not count");
+  const before = scoreQuestion(q, blocks, { vhpReadings: [endWith(q, (_w, a) => a * 2n, q.windowStart - 1)] });
+  assert.ok(before.ok && !before.result.void && before.result.vhpCheck?.skipped, "a reading before the window does not count");
+  // No reading during the window: the rule is skipped and the question resolves on its blocks alone.
+  const none = scoreQuestion(q, blocks);
+  assert.ok(none.ok && !none.result.void);
+  assert.deepEqual(none.ok && none.result.vhpCheck?.readings, []);
+  assert.match(String(none.ok && none.result.vhpCheck?.skipped), /no VHP reading was taken during the window/);
+  // A file saved before this change (a single vhpEnd taken after the window) resolves without the swing void.
+  const legacy = scoreQuestion(q, blocks, { vhpEnd: endWith(q, (_w, a) => a * 2n, q.windowEnd + 300) });
+  assert.ok(legacy.ok && !legacy.result.void);
   const old = byT("M9");                                         // posted before the rule: no snapshot
-  const o = scoreQuestion(old, history(old), { vhpEnd: { height: 1, values: {} } });
+  const o = scoreQuestion(old, history(old), { vhpReadings: [{ height: q.windowEnd, values: {} }] });
   assert.ok(o.ok && o.result.vhpCheck === undefined);
 });
 
@@ -129,10 +148,10 @@ test("the offline void is unchanged, and both reasons are given when both apply"
   const q = withSnapshot(byT("M9"));
   const who = q.subjects[0];
   const silent = history(q).map((b) => (b.signer === who ? { ...b, signer: FILLER } : b));
-  const r = scoreQuestion(q, silent, { vhpEnd: endWith(q, (_w, a) => a * 2n) });
+  const r = scoreQuestion(q, silent, { vhpReadings: [endWith(q, (_w, a) => a * 2n)] });
   assert.ok(r.ok && r.result.void);
   assert.match(r.result.reason!, new RegExp(`${who} went offline during the window; ${who}'s VHP changed by more than 10%`));
-  const offlineOnly = scoreQuestion(q, silent, { vhpEnd: endWith(q, (_w, a) => a) });
+  const offlineOnly = scoreQuestion(q, silent, { vhpReadings: [endWith(q, (_w, a) => a)] });
   assert.equal(offlineOnly.ok && offlineOnly.result.reason, `${who} went offline during the window`);
 });
 
@@ -144,7 +163,7 @@ test("the release snapshot is part of the published params hash", () => {
   const edited = structuredClone(q);
   edited.model.vhp[q.subjects[0]] = "1";
   assert.notEqual(paramsHashOf(edited), h);
-  const later = { ...structuredClone(q), chainId: 7, chainOutcome: 2, vhpEnd: { height: 1, values: {} }, result: {}, corrections: [] };
+  const later = { ...structuredClone(q), chainId: 7, chainOutcome: 2, vhpEnd: { height: 1, values: {} }, vhpReadings: [{ height: 1, values: {} }], result: {}, corrections: [] };
   assert.equal(paramsHashOf(later), h, "what the bot adds after release does not change it");
 });
 

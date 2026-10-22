@@ -6,8 +6,8 @@
  * inside that window. Nothing else is consulted: not the clock, and not a settings file that might
  * have been edited after the question was posted.
  *
- * Questions released with a VHP snapshot (model.vhp, model.voidVhpSwing) also need one more input: the VHP reading
- * the bot took at the window's end (see vhpSwingCheck). Both readings are published, so anyone can check the decision.
+ * Questions released with a VHP snapshot (model.vhp, model.voidVhpSwing) also use the VHP readings the bot took while
+ * the window was open (see vhpSwingCheck). All readings are published, so anyone can check the decision.
  *
  * The window is inclusive on both ends. The closing block — the last block in which a player answer
  * can still be included, the height just before windowStart — is not one of the blocks the question
@@ -47,14 +47,15 @@ export type QuestionInput = {
     vhp?: Record<string, string>; vhpHeight?: number; voidVhpSwing?: number };
 };
 
-/** A VHP reading taken at (or just after) the window's end: block height and the same keys as model.vhp. */
+/** A VHP reading: the block height it was taken at (at the latest) and the same keys as model.vhp. Only readings
+ *  whose height is inside the question's window count (see vhpSwingCheck). */
 export type VhpReading = { height: number; readAt?: string; values: Record<string, string> };
 
 /** Key used for the whole network's VHP (the VHP token's total supply) in model.vhp. */
 export const NETWORK_VHP = "network";
 
 /** Fields the bot adds to a question file after it was released. They are not part of the published parameters. */
-const AFTER_RELEASE = ["paramsHash", "result", "text", "title", "options", "chainId", "chainOutcome", "postSkipped", "vhpEnd", "corrections"];
+const AFTER_RELEASE = ["paramsHash", "result", "text", "title", "options", "chainId", "chainOutcome", "postSkipped", "vhpEnd", "vhpReadings", "corrections"];
 
 /** The params hash published on chain: sha256 of the question as released, without its wording and the bot's later
  *  bookkeeping. Anyone can recompute it from the public question file. */
@@ -73,26 +74,41 @@ export function vhpSubjects(q: Pick<QuestionInput, "template" | "subjects" | "gr
   return [...(q.subjects ?? [])];
 }
 
-/** "Void if a producer it is about (or the network) gained or lost MORE than voidVhpSwing of its VHP between release
- *  and the window's end." Exact integer arithmetic: |end − start| × 1,000,000 > start × round(swing × 1,000,000). */
-export function vhpSwingCheck(q: QuestionInput, end: VhpReading | undefined):
-  | { ok: true; swung: string[]; detail: Record<string, { release: string; end: string; change: string }> }
+/** "Void if a producer it is about (or the network) gained or lost MORE than voidVhpSwing of its VHP, compared with
+ *  the release snapshot, in any VHP reading taken during the window." Exact integer arithmetic:
+ *  |reading − release| × 1,000,000 > release × round(swing × 1,000,000).
+ *  - Only readings with windowStart ≤ height ≤ windowEnd count. A reading taken after the window's last block never
+ *    voids (by then the outcome is public), whatever it shows.
+ *  - With no reading inside the window at all, the rule is skipped and the question resolves on its blocks alone.
+ *  - A subject whose release VHP is 0 is not checked (any amount would be an infinite change). */
+export function vhpSwingCheck(q: QuestionInput, readings: VhpReading[]):
+  | { ok: true; swung: string[]; heights: number[]; detail: Record<string, { release: string; end: string; change: string; height?: number }> }
   | { ok: false; pending: boolean; reason: string } {
   const start = q.model?.vhp ?? {};
   const limit = q.model?.voidVhpSwing ?? 0;
-  if (!end) return { ok: false, pending: true, reason: "no VHP reading at the window's end yet" };
   const ppm = BigInt(Math.round(limit * 1_000_000));
-  const swung: string[] = [], detail: Record<string, { release: string; end: string; change: string }> = {};
+  const inWindow = readings.filter((r) => Number.isInteger(r?.height) && r.height >= q.windowStart && r.height <= q.windowEnd)
+    .sort((a, b) => a.height - b.height);
+  const swung: string[] = [], detail: Record<string, { release: string; end: string; change: string; height?: number }> = {};
   for (const who of vhpSubjects(q)) {
     if (start[who] === undefined) return { ok: false, pending: false, reason: `the release snapshot has no VHP for ${who}` };
-    if (end.values[who] === undefined) return { ok: false, pending: false, reason: `the window-end reading has no VHP for ${who}` };
-    const a = BigInt(start[who]), b = BigInt(end.values[who]);
-    const diff = b > a ? b - a : a - b;
-    const change = a === 0n ? (b === 0n ? "0%" : "new VHP") : `${b >= a ? "+" : "−"}${(Number((diff * 1_000_000n) / a) / 10_000).toFixed(2)}%`;
-    detail[who] = { release: start[who], end: end.values[who], change };
-    if (diff * 1_000_000n > a * ppm) swung.push(who);
+    const a = BigInt(start[who]);
+    if (a === 0n) { detail[who] = { release: start[who], end: "", change: "not checked (no VHP at release)" }; continue; }
+    // The reading with the largest change decides (the latest one on a tie).
+    let best: { b: bigint; diff: bigint; height: number } | undefined;
+    for (const r of inWindow) {
+      if (r.values?.[who] === undefined || !/^\d+$/.test(String(r.values[who]))) {
+        return { ok: false, pending: false, reason: `the VHP reading at block ${r.height} has no valid value for ${who}` };
+      }
+      const b = BigInt(r.values[who]), diff = b > a ? b - a : a - b;
+      if (!best || diff >= best.diff) best = { b, diff, height: r.height };
+    }
+    if (!best) { detail[who] = { release: start[who], end: "", change: "no reading during the window" }; continue; }
+    const pct = (Number((best.diff * 1_000_000n) / a) / 10_000).toFixed(2);
+    detail[who] = { release: start[who], end: best.b.toString(), change: `${best.b >= a ? "+" : "−"}${pct}%`, height: best.height };
+    if (best.diff * 1_000_000n > a * ppm) swung.push(who);
   }
-  return { ok: true, swung, detail };
+  return { ok: true, swung, heights: inWindow.map((r) => r.height), detail };
 }
 
 export type AnswerResult = {
@@ -102,8 +118,11 @@ export type AnswerResult = {
   dataHash: string;
   reason?: string;
   resolvedAt: string;
-  /** The VHP-swing rule's inputs and outcome (questions released with a VHP snapshot only). */
-  vhpCheck?: { limit: number; releaseHeight?: number; endHeight: number; values: Record<string, { release: string; end: string; change: string }> };
+  /** The VHP-swing rule's inputs and outcome (questions released with a VHP snapshot only): the heights of the readings
+   *  taken during the window, and per subject the reading with the largest change. `skipped` says why the rule was not
+   *  applied (no reading during the window). */
+  vhpCheck?: { limit: number; releaseHeight?: number; readings: number[]; skipped?: string;
+    values: Record<string, { release: string; end: string; change: string; height?: number }> };
 };
 
 export type ScoreOutcome =
@@ -139,7 +158,7 @@ function valueText(unit: string, value: number): string {
  * does not yet reach windowEnd, the result is pending (try again later) — it is never a void.
  * A hole or a duplicate inside the window is a hard failure: guessing would not be a 100% answer.
  */
-export function scoreQuestion(q: QuestionInput, blocks: Blk[], opts: { vhpEnd?: VhpReading } = {}): ScoreOutcome {
+export function scoreQuestion(q: QuestionInput, blocks: Blk[], opts: { vhpReadings?: VhpReading[]; vhpEnd?: VhpReading } = {}): ScoreOutcome {
   const kind = KINDS[q.template];
   if (!kind) return { ok: false, pending: false, reason: `unknown template ${q.template}` };
   if (!Number.isInteger(q.windowStart) || !Number.isInteger(q.windowEnd) || q.windowEnd < q.windowStart) {
@@ -220,14 +239,16 @@ export function scoreQuestion(q: QuestionInput, blocks: Blk[], opts: { vhpEnd?: 
   // Questions released with a VHP snapshot: void when a producer it is about (or the network) moved its VHP too much.
   let swung: string[] = [], vhpCheck: AnswerResult["vhpCheck"];
   if (q.model?.vhp && q.model.voidVhpSwing !== undefined) {
-    const v = vhpSwingCheck(q, opts.vhpEnd);
+    // vhpEnd: the single reading files from before this rule change carried. It counts like any other reading.
+    const v = vhpSwingCheck(q, [...(opts.vhpReadings ?? []), ...(opts.vhpEnd ? [opts.vhpEnd] : [])]);
     if (!v.ok) return v;
     swung = v.swung;
-    vhpCheck = { limit: q.model.voidVhpSwing, releaseHeight: q.model.vhpHeight, endHeight: opts.vhpEnd!.height, values: v.detail };
+    vhpCheck = { limit: q.model.voidVhpSwing, releaseHeight: q.model.vhpHeight, readings: v.heights, values: v.detail };
+    if (!v.heights.length) vhpCheck.skipped = "no VHP reading was taken during the window";
   }
   const reasons: string[] = [];
   if (offline.length) reasons.push(`${offline.join(", ")} went offline during the window`);
-  if (swung.length) reasons.push(`${swung.map((w) => (w === NETWORK_VHP ? "the network's VHP" : `${w}'s VHP`)).join(", ")} changed by more than ${q.model!.voidVhpSwing! * 100}% between release and the window's end`);
+  if (swung.length) reasons.push(`${swung.map((w) => (w === NETWORK_VHP ? "the network's VHP" : `${w}'s VHP`)).join(", ")} changed by more than ${q.model!.voidVhpSwing! * 100}% during the window`);
   const result: AnswerResult = reasons.length
     ? { void: true, reason: reasons.join("; "), value: text, dataHash, resolvedAt }
     : { void: false, option, value: text, dataHash, resolvedAt };

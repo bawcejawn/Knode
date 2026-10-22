@@ -121,7 +121,8 @@ export type Ctx = {
   /** A question window's blocks read fresh from the chain (irreversible blocks only). Without it the bot uses
    *  blocks.csv (simulations and tests). */
   windowBlocks?: (from: number, to: number) => Promise<Blk[]>;
-  /** VHP of these addresses ("network" = the whole network) right now, with the block height. */
+  /** VHP of these addresses ("network" = the whole network) right now, with the block height (read after the values,
+   *  so the values are from that block or an earlier one). */
   vhp?: (who: string[]) => Promise<VhpReading>;
   /** The block-producer public key Proof-of-Burn has on record for an address ("" when none). */
   producerKey?: (producer: string) => Promise<string>;
@@ -379,7 +380,9 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
     await sendOp(ctx, `resolve orphan #${id} as VOID`, [{ method: "resolve_question", args: { id, outcome: 1000, data_hash: dataHash } }]);
   }
 
-  await vhpEndPass(ctx, height);
+  // A failed VHP read only costs this run's reading; every other question is still resolved below.
+  try { await vhpReadPass(ctx, height); }
+  catch (e) { ctx.problems.push(`Reading VHP for open question windows failed: ${(e as Error).message ?? e}`); log(`  ✖ reading VHP failed: ${(e as Error).message ?? e}`); }
 
   // Local questions: the answer is recomputed every time from the window's blocks (read fresh from the chain on the
   // live bot), then posted. A saved result that does not match those blocks is replaced; it is never what gets posted.
@@ -410,7 +413,7 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
           ctx.problems.push(`${q.id} (#${q.chainId}): the question file no longer matches the on-chain params_hash (file ${fileHash.slice(0, 12)}…, chain ${chainHash.slice(0, 12)}…). Not resolving it from that file: restore the published version (git history).`);
           continue;
         }
-        const scored = scoreQuestion(q, await windowOf(q, csv), { vhpEnd: q.vhpEnd });
+        const scored = scoreQuestion(q, await windowOf(q, csv), { vhpReadings: q.vhpReadings, vhpEnd: q.vhpEnd });
         if (resolved) {
           q.chainOutcome = num(onChain.outcome);
           dirty = true;
@@ -441,6 +444,7 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
           q.result = scored.result;
           dirty = true;
         }
+        if (scored.result.vhpCheck?.skipped) log(`  ${q.id}: VHP-swing check skipped (${scored.result.vhpCheck.skipped})`);
         const outcome = chainOutcome(scored.result);
         const dataHash = "0x" + scored.result.dataHash;
         const label = scored.result.void ? `VOID (${scored.result.reason})` : `option ${String.fromCharCode(65 + (scored.result.option ?? 0))} (actual ${scored.result.value})`;
@@ -469,23 +473,33 @@ async function correctionCheck(ctx: Ctx, q: any): Promise<boolean> {
   return true;
 }
 
-/** The VHP-swing rule's second reading: for each posted question released with a VHP snapshot, the first bot run at
- *  or after the window's last block reads the same VHP again and saves it (with the height read at) in the file. */
-async function vhpEndPass(ctx: Ctx, height: number) {
-  const todo: Array<{ f: { file: string; data: DayFile }; q: any }> = [];
+/** The VHP-swing rule's readings: on every run while a posted question's window is open, read the VHP of the producers
+ *  it is about (or the network's) and add the reading (height and values) to the question file. Only readings taken
+ *  inside the window count; one that lands after the window's last block is dropped. */
+async function vhpReadPass(ctx: Ctx, height: number) {
+  const open: Array<{ f: { file: string; data: DayFile }; q: any }> = [];
   for (const f of dayFiles(ctx.P)) for (const q of f.data.questions ?? []) {
-    if (q.chainId === undefined || q.chainOutcome !== undefined || q.vhpEnd || !q.model?.vhp || q.model.voidVhpSwing === undefined) continue;
-    if (height >= q.windowEnd) todo.push({ f, q });
+    if (q.chainId === undefined || q.chainOutcome !== undefined || !q.model?.vhp || q.model.voidVhpSwing === undefined) continue;
+    if (height >= q.windowStart && height <= q.windowEnd) open.push({ f, q });
   }
-  if (!todo.length) return;
-  if (!ctx.vhp) { ctx.problems.push(`${todo.length} question(s) need a VHP reading at their window's end, but this run cannot read VHP.`); return; }
-  const reading = await ctx.vhp(todo.flatMap(({ q }) => vhpSubjects(q)));
+  if (!open.length) return;
+  if (!ctx.vhp) { ctx.problems.push(`${open.length} question(s) have an open window and need a VHP reading, but this run cannot read VHP.`); return; }
+  const reading = await ctx.vhp([...new Set(open.flatMap(({ q }) => vhpSubjects(q)))]);
   const readAt = new Date().toISOString();
-  for (const { f, q } of todo) {
-    q.vhpEnd = { height: reading.height, readAt, values: Object.fromEntries(vhpSubjects(q).map((w) => [w, reading.values[w]])) };
-    log(`  read ${q.id}'s VHP at the window's end (block ${reading.height})`);
+  const saved = new Set<{ file: string; data: DayFile }>();
+  for (const { f, q } of open) {
+    if (reading.height < q.windowStart || reading.height > q.windowEnd) { log(`  ${q.id}: VHP read at block ${reading.height}, outside its window; not kept`); continue; }
+    const values: Record<string, string> = {};
+    for (const w of vhpSubjects(q)) {
+      const v = reading.values[w];
+      if (v === undefined || !/^\d+$/.test(String(v))) throw new Error(`the VHP read returned no value for ${w}`);
+      values[w] = String(v);
+    }
+    (q.vhpReadings ??= []).push({ height: reading.height, readAt, values });
+    saved.add(f);
+    log(`  read ${q.id}'s VHP during its window (block ${reading.height})`);
   }
-  if (!ctx.dryRun) for (const f of new Set(todo.map((x) => x.f))) writeJson(f.file, f.data);
+  if (!ctx.dryRun) for (const f of saved) writeJson(f.file, f.data);
 }
 
 // ───────────── post today's questions ─────────────

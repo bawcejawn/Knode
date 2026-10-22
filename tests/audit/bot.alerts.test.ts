@@ -1,5 +1,5 @@
 // The bot's v4 behaviour on an in-memory fake chain (no network; the key is a throwaway test seed):
-// VHP readings at the window's end, alerts (roles, producer keys, the Desk, corrections, outcome mismatches),
+// VHP readings during the window, alerts (roles, producer keys, the Desk, corrections, outcome mismatches),
 // closing only after the correction time, and paged finalization.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -34,7 +34,7 @@ function world(w: World) {
   const onchain = w.onchain ?? [];
   const sent: any[] = [];
   let pages = w.finalizePages ?? 1, closed = w.weeksClosed ?? 0, finalized = w.weeksFinalized ?? 0;
-  const height = w.height ?? (w.questions?.[0]?.windowEnd ?? 40_000_000) + 500;
+  let height = w.height ?? (w.questions?.[0]?.windowEnd ?? 40_000_000) + 500;
   const chain: any = {
     kind: "sim", contractId: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr",
     async head() { return { height, lib: height - 100 }; },
@@ -64,7 +64,9 @@ function world(w: World) {
   const ctx = (extra: any = {}) => ({ chain, operator: Signer.fromSeed("bot-v4-test-only"), P, dryRun: false, problems: [] as string[],
     generator: () => ({ ok: true, output: "" }), checkpoint: () => {}, quiet: true, ...extra } as any);
   const file = () => JSON.parse(fs.readFileSync(path.join(P.questions, "W000-D3.json"), "utf8")).questions;
-  return { chain, sent, onchain, ctx, file, P };
+  /** Moves the fake chain's head (and the height get_state reports) to h. */
+  const at = (h: number) => { height = h; };
+  return { chain, sent, onchain, ctx, file, P, at };
 }
 
 /** M9 as the generator now releases it: VHP snapshot + 10% limit, hashed. */
@@ -78,35 +80,72 @@ function snapshotQuestion() {
 }
 const onchainFor = (q: any, outcome = 0) => ({ week: "0", k: 4, window_end: String(q.windowEnd), outcome, params_hash: "0x" + q.paramsHash });
 
-test("the bot reads VHP at the window's end, saves it, and voids a question whose subject's VHP swung more than 10%", async () => {
+const reader = (h: () => number, value: string, asked: string[][] = []) => async (who: string[]) => {
+  asked.push(who); return { height: h(), values: Object.fromEntries(who.map((x) => [x, value])) };
+};
+
+test("the bot reads VHP on every run during the window, saves each reading, and a swing of more than 10% voids", async () => {
   const q = snapshotQuestion();
-  const w = world({ questions: [q], onchain: [onchainFor(q)] });
+  const w = world({ questions: [q], onchain: [onchainFor(q)], height: q.windowStart + 100 });
+  let h = q.windowStart + 100;
   const asked: string[][] = [];
-  const vhp = async (who: string[]) => { asked.push(who); return { height: q.windowEnd + 400, values: Object.fromEntries(who.map((x) => [x, "120000000000000"])) }; };
-  await tick(w.ctx({ vhp }));
+  await tick(w.ctx({ vhp: reader(() => h, "120000000000000", asked) }));     // in the window: +20%
   assert.deepEqual(asked, [vhpSubjects(q)]);
+  assert.equal(w.sent.filter((c) => c.method === "resolve_question").length, 0, "not due yet");
+  h = q.windowEnd - 5; w.at(h);
+  await tick(w.ctx({ vhp: reader(() => h, "100000000000000", asked) }));     // back to normal before the end
+  assert.deepEqual(w.file()[0].vhpReadings.map((r: any) => [r.height, r.values[q.subjects[0]]]),
+    [[q.windowStart + 100, "120000000000000"], [q.windowEnd - 5, "100000000000000"]]);
+  h = q.windowEnd + 500; w.at(h);
+  await tick(w.ctx({ vhp: reader(() => h, "100000000000000", asked) }));
+  assert.equal(asked.length, 2, "no reading after the window");
   const saved = w.file()[0];
-  assert.equal(saved.vhpEnd.height, q.windowEnd + 400);
-  assert.equal(saved.vhpEnd.values[q.subjects[0]], "120000000000000");
   const res = w.sent.filter((c) => c.method === "resolve_question");
   assert.equal(res.length, 1);
-  assert.equal(res[0].args.outcome, 1000, "+20% VHP: void");
+  assert.equal(res[0].args.outcome, 1000, "+20% during the window: void");
   assert.match(saved.result.reason, /changed by more than 10%/);
   assert.equal(saved.result.vhpCheck.values[q.subjects[0]].change, "+20.00%");
+  assert.equal(saved.result.vhpCheck.values[q.subjects[0]].height, q.windowStart + 100);
+  assert.equal(paramsHashOf(saved), q.paramsHash, "readings do not change the published hash");
 });
 
-test("within 10% the question resolves normally; without a VHP reader it waits and says so", async () => {
+test("a swing seen only after the window does not void; a reading that lands after the window is not kept", async () => {
   const q = snapshotQuestion();
-  const w = world({ questions: [q], onchain: [onchainFor(q)] });
-  await tick(w.ctx({ vhp: async (who: string[]) => ({ height: q.windowEnd + 10, values: Object.fromEntries(who.map((x) => [x, "105000000000000"])) }) }));
+  const w = world({ questions: [q], onchain: [onchainFor(q)], height: q.windowEnd - 1 });
+  // The head was in the window when the run started, but the values came back from a later block.
+  await tick(w.ctx({ vhp: reader(() => q.windowEnd + 1, "150000000000000") }));
+  assert.equal(w.file()[0].vhpReadings, undefined, "a reading from after the window is dropped");
+  w.at(q.windowEnd + 500);
+  await tick(w.ctx({ vhp: reader(() => q.windowEnd + 500, "150000000000000") }));
   const res = w.sent.filter((c) => c.method === "resolve_question");
   assert.equal(res.length, 1);
   assert.notEqual(res[0].args.outcome, 1000);
+});
+
+test("within 10% the question resolves normally; with no reading during the window the rule is skipped and logged", async () => {
+  const q = snapshotQuestion();
+  const w = world({ questions: [q], onchain: [onchainFor(q)], height: q.windowEnd });
+  await tick(w.ctx({ vhp: reader(() => q.windowEnd, "105000000000000") }));
+  w.at(q.windowEnd + 500);
+  await tick(w.ctx());
+  const res = w.sent.filter((c) => c.method === "resolve_question");
+  assert.equal(res.length, 1);
+  assert.notEqual(res[0].args.outcome, 1000);
+  // The bot was down for the whole window: no reading, so no swing void; the result records why.
   const w2 = world({ questions: [snapshotQuestion()], onchain: [onchainFor(q)] });
-  const c2 = w2.ctx();
-  await tick(c2);
-  assert.equal(w2.sent.filter((c) => c.method === "resolve_question").length, 0);
-  assert.ok(c2.problems.some((p: string) => /VHP reading/.test(p)));
+  const logged: string[] = [], orig = console.log;
+  console.log = (...a: any[]) => { logged.push(a.join(" ")); };
+  try { await tick(w2.ctx({ vhp: reader(() => q.windowEnd + 500, "300000000000000") })); } finally { console.log = orig; }
+  const r2 = w2.sent.filter((c) => c.method === "resolve_question");
+  assert.equal(r2.length, 1);
+  assert.notEqual(r2[0].args.outcome, 1000);
+  assert.match(w2.file()[0].result.vhpCheck.skipped, /no VHP reading was taken during the window/);
+  assert.ok(logged.some((l) => /VHP-swing check skipped/.test(l)), "the skip is logged");
+  // During the window, a run that cannot read VHP says so.
+  const w3 = world({ questions: [snapshotQuestion()], onchain: [onchainFor(q)], height: q.windowStart + 10 });
+  const c3 = w3.ctx();
+  await tick(c3);
+  assert.ok(c3.problems.some((p: string) => /need a VHP reading/.test(p)), c3.problems.join(" | "));
 });
 
 test("an on-chain outcome that differs from the blocks is emailed (a failed run), not only logged", async () => {

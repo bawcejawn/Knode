@@ -583,7 +583,7 @@ function resolve(blocks: Blk[]) {
     const day = JSON.parse(fs.readFileSync(file, "utf8"));
     let changed = false;
     for (const q of day.questions as Question[]) {
-      const scored = scoreQuestion(q, blocks, { vhpEnd: (q as any).vhpEnd });
+      const scored = scoreQuestion(q, blocks, { vhpReadings: (q as any).vhpReadings, vhpEnd: (q as any).vhpEnd });
       if (!scored.ok) {
         // A short or gappy history is not an answer. Never publish a void just because this computer is missing blocks.
         if (q.result?.reason === "window older than stored history") { delete q.result; changed = true; }

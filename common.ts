@@ -176,17 +176,21 @@ export function readCompact(file = COMPACT): Blk[] {
 export const MAINNET_VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq";
 
 /** VHP held by each address right now, and the whole network's VHP under the key "network" (the token's total
- *  supply), with the head block height they were read at. Values are 1e-8 units, as text. */
+ *  supply). Values are 1e-8 units, as text. The height is the head read AFTER the values, so every value is from that
+ *  block or an earlier one. A read that returns no value is an error, never "0". */
 export async function readVhp(provider: Provider, vhpContract: string, who: string[]): Promise<{ height: number; values: Record<string, string> }> {
-  const head: any = await withRetry("reading head", () => provider.getHeadInfo());
   const vhp = new Contract({ id: vhpContract, abi: tokenAbi as any, provider });
   const fn = vhp.functions as any;
   const values: Record<string, string> = {};
   for (const w of [...new Set(who)]) {
-    values[w] = w === "network"
-      ? String((await withRetry("VHP total supply", () => fn.total_supply({})) as any).result?.value ?? "0")
-      : String((await withRetry(`VHP of ${w}`, () => fn.balance_of({ owner: w })) as any).result?.value ?? "0");
+    const r: any = w === "network"
+      ? await withRetry("VHP total supply", () => fn.total_supply({}))
+      : await withRetry(`VHP of ${w}`, () => fn.balance_of({ owner: w }));
+    // An empty result is how a token reports a zero balance; a missing result is a failed read.
+    if (!r || typeof r !== "object" || !("result" in r)) throw new Error(`no answer reading the VHP of ${w}`);
+    values[w] = String(r.result?.value ?? "0");
   }
+  const head: any = await withRetry("reading head", () => provider.getHeadInfo());
   return { height: Number(head.head_topology.height), values };
 }
 
