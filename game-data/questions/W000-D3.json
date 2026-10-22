@@ -73,7 +73,8 @@
         "value": "3.072 s",
         "dataHash": "127723f371ea11520ae56592f43598d639239c061d91ba98478a0da4538d292a",
         "resolvedAt": "2026-10-22T05:32:06.990Z"
-      }
+      },
+      "chainOutcome": 2
     },
     {
       "id": "W000-D3-2",
@@ -293,7 +294,8 @@
         "value": "39",
         "dataHash": "127723f371ea11520ae56592f43598d639239c061d91ba98478a0da4538d292a",
         "resolvedAt": "2026-10-22T05:32:06.990Z"
-      }
+      },
+      "chainOutcome": 1
     },
     {
       "id": "W000-D3-5",
@@ -363,7 +365,8 @@
         "value": "99.3%",
         "dataHash": "127723f371ea11520ae56592f43598d639239c061d91ba98478a0da4538d292a",
         "resolvedAt": "2026-10-22T05:32:06.990Z"
-      }
+      },
+      "chainOutcome": 4
     }
   ]
 }
