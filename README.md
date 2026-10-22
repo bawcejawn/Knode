@@ -260,7 +260,9 @@ backtest isn't running. After that it keeps its own copy in `generator-data/bloc
 | `state.json` | Rotation memory: the day each producer was last featured, and producers voided each week |
 | `questions/DATE.json` | That day's questions: text, options with exact bounds, heights, rates used, `paramsHash`, and later the `result` (option or void, actual value, `dataHash`) |
 
-`paramsHash` covers everything that decides the answer (template, subjects, heights, thresholds, rates).
+`paramsHash` covers everything that decides the answer (template, subjects, heights, thresholds, rates). Questions
+released with `hashRule: 2` (from October 2026) also cover their wording: title, text and every option's label and
+range, so an option cannot be relabelled after release. Earlier questions keep the rule they were posted with.
 `dataHash` is the SHA-256 of the window's blocks (`height,signer,timestamp,txCount` per line), so anyone
 can check a resolution against the chain.
 

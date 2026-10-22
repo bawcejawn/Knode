@@ -55,13 +55,19 @@ export type VhpReading = { height: number; readAt?: string; values: Record<strin
 export const NETWORK_VHP = "network";
 
 /** Fields the bot adds to a question file after it was released. They are not part of the published parameters. */
-const AFTER_RELEASE = ["paramsHash", "result", "text", "title", "options", "chainId", "chainOutcome", "postSkipped", "vhpEnd", "vhpReadings", "corrections"];
+const AFTER_RELEASE = ["paramsHash", "result", "text", "title", "options", "chainId", "chainOutcome", "postSkipped", "vhpEnd", "vhpReadings", "corrections", "chainDataHash"];
 
-/** The params hash published on chain: sha256 of the question as released, without its wording and the bot's later
- *  bookkeeping. Anyone can recompute it from the public question file. */
+/** Released with hashRule 2 or later: the wording players see (title, text, option labels and ranges) is hashed too. */
+export const HASH_RULE = 2;
+const WORDING = ["title", "text", "options"];
+
+/** The params hash published on chain: sha256 of the question as released, without the bot's later bookkeeping.
+ *  Questions released with hashRule ≥ 2 include their wording; older ones keep the rule they were posted with (no
+ *  wording). Anyone can recompute it from the public question file. */
 export function paramsHashOf(q: Record<string, any>): string {
+  const withWording = Number(q.hashRule ?? 0) >= HASH_RULE;
   const canonical: Record<string, any> = {};
-  for (const [k, v] of Object.entries(q)) if (!AFTER_RELEASE.includes(k)) canonical[k] = v;
+  for (const [k, v] of Object.entries(q)) if (!AFTER_RELEASE.includes(k) || (withWording && WORDING.includes(k))) canonical[k] = v;
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 

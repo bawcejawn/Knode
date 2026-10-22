@@ -27,7 +27,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { BLOCKS_PER_DAY, fmt, pct, quant, sampleThresholds, optionFor, syncBlocks, readCsv, readVhp, MAINNET_VHP, type Blk } from "./common.ts";
-import { scoreQuestion, paramsHashOf, vhpSubjects } from "./resolver.ts";
+import { scoreQuestion, paramsHashOf, vhpSubjects, HASH_RULE } from "./resolver.ts";
 import { pathToFileURL } from "node:url";
 
 const DIR = process.env.GEN_DIR ?? "generator-data"; // the bot uses game-data/ (committed, public)
@@ -542,7 +542,7 @@ async function run() {
       }
     }
   }
-  for (const q of questions) q.paramsHash = paramsHashOf(q);
+  for (const q of questions) { (q as any).hashRule = HASH_RULE; q.paramsHash = paramsHashOf(q); }
 
   for (const q of questions) for (const a of [...q.subjects]) st.featured[a] = dayNumber;
   fs.writeFileSync(file, JSON.stringify({ date: args.date, week, day: day + 1, tier, released: new Date().toISOString(), questions }, null, 2));
