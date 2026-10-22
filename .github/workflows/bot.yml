@@ -1,6 +1,12 @@
 # The operator bot, run by GitHub every hour for free. It does whatever is due (resolve finished questions,
-# post the day's questions, close / finalize weeks, settle players, compound) and commits game-data/ so every
+# post the day's questions, close / finalize weeks, settle players, compound) and publishes game-data/ so every
 # question and result is public. Safe to run any number of times.
+#
+# Two jobs, so the bot never holds a token that can change the repository:
+#   tick     runs the bot with OPERATOR_WIF. Its GitHub token is read-only and is not left in .git/config;
+#            npm installs exactly package-lock.json with install scripts off. It hands game-data/ on as an artifact.
+#   publish  runs no repository code. It copies only the bot's public files (questions, bot-state, state, index)
+#            into game-data/, refuses anything else, and pushes them. It is the only place with a write token.
 #
 # It does not run on pull requests. A pull request must never see OPERATOR_WIF and must never push to main.
 #
@@ -19,21 +25,26 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write             # commit and push game-data/ (questions, results, bot state)
+  contents: read              # the bot job can only read; only the publish job below can push
 
 jobs:
   tick:
     if: ${{ vars.BOT_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-      # Exact versions from package-lock.json when it exists (safer: nothing unexpected is installed next to the bot key).
-      - run: if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
-      # Recent block history for the question generator (downloaded once, then topped up each hour).
+      # Exactly package-lock.json, and no package's install script runs next to the bot key.
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      # Recent block history for the question generator (downloaded once, then topped up each hour). The bot does not
+      # trust it: cached rows are spot-checked against the chain, and every resolution reads its window fresh.
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: game-data/blocks.csv
@@ -46,3 +57,58 @@ jobs:
           RPC: ${{ vars.RPC || 'https://api.koinos.io' }}
           GEN_DIR: game-data
           BOT_GIT_PUSH: "1"
+      # Even when the run failed (it emails you), whatever it posted must still become public.
+      - name: Hand the public files to the publish job
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: game-data
+          path: |
+            game-data/questions/
+            game-data/bot-state.json
+            game-data/state.json
+            game-data/index.json
+          retention-days: 3
+          if-no-files-found: ignore
+
+  publish:
+    needs: tick
+    if: ${{ always() && vars.BOT_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write         # push game-data/ (questions, results, bot state)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true    # no artifact: nothing to publish
+        with:
+          name: game-data
+          path: ${{ runner.temp }}/incoming
+      - name: Push game-data/ (and nothing else)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IN: ${{ runner.temp }}/incoming
+        run: |
+          set -euo pipefail
+          if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
+          # Only the bot's own public files, as plain JSON files: no links, nothing outside these paths.
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type f ! -regex "$IN/\(questions/[A-Za-z0-9_-]*\.json\|bot-state\.json\|state\.json\|index\.json\)" \) \) -print)
+          if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
+          find "$IN" -type f -name '*.json' -print0 | xargs -0 -r -n1 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))'
+          mkdir -p game-data/questions
+          if [ -d "$IN/questions" ]; then cp "$IN"/questions/*.json game-data/questions/ 2>/dev/null || true; fi
+          for f in bot-state.json state.json index.json; do if [ -f "$IN/$f" ]; then cp "$IN/$f" "game-data/$f"; fi; done
+          git add game-data/questions game-data/bot-state.json game-data/state.json game-data/index.json 2>/dev/null || true
+          if git diff --cached --quiet; then echo "No changes."; exit 0; fi
+          outside=$(git diff --cached --name-only | grep -Ev '^game-data/(questions/[A-Za-z0-9_-]+\.json|bot-state\.json|state\.json|index\.json)$' || true)
+          if [ -n "$outside" ]; then echo "::error::Refusing to publish: $outside"; exit 1; fi
+          git -c user.name="kpred-bot" -c user.email="kpred-bot@users.noreply.github.com" commit -q -m "bot: tick"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for attempt in 1 2 3 4 5; do
+            if git pull -q --rebase "$remote" "$GITHUB_REF_NAME" && git push -q "$remote" "HEAD:$GITHUB_REF_NAME"; then exit 0; fi
+            echo "Push attempt $attempt failed; retrying."; sleep $((attempt * 5))
+          done
+          echo "::error::Could not push game-data/."; exit 1

@@ -68,3 +68,22 @@ test("contract tests and desk tests run on pull requests and cannot see secrets"
     assert.match(y, /npm run check/);
   }
 });
+
+test("the bot job holds no write token, installs without scripts, and only a separate job pushes game-data/", () => {
+  const y = fs.readFileSync(".github/workflows/bot.yml", "utf8");
+  const tickJob = y.slice(y.indexOf("\n  tick:"), y.indexOf("\n  publish:"));
+  const publishJob = y.slice(y.indexOf("\n  publish:"));
+  // every checkout leaves no token behind in .git/config
+  assert.equal(y.match(/uses: actions\/checkout@/g)?.length, y.match(/persist-credentials:\s*false/g)?.length);
+  // the job that runs the bot (and its dependencies) can only read, and never sees a token
+  assert.match(tickJob, /permissions:\s*\n\s*contents:\s*read/);
+  assert.doesNotMatch(tickJob, /contents:\s*write|github\.token|GITHUB_TOKEN/);
+  assert.match(tickJob, /npm ci --no-audit --no-fund --ignore-scripts/);
+  assert.match(tickJob, /npm run bot -- tick/);
+  // the publish job is the only one that can push; it runs no repository code and only takes game-data/ files
+  assert.match(publishJob, /permissions:\s*\n\s*contents:\s*write/);
+  assert.doesNotMatch(publishJob, /npm |npx |tsx|OPERATOR_WIF/);
+  assert.match(publishJob, /Refusing to publish/);
+  assert.match(publishJob, /\^game-data\/\(questions\/\[A-Za-z0-9_-\]\+\\.json\|bot-state\\.json\|state\\.json\|index\\.json\)\$/);
+  assert.match(y, /^permissions:\s*\n\s*contents:\s*read/m);
+});

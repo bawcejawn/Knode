@@ -1,11 +1,12 @@
-# Scores every question template from block history. Runs on pushes and on pull requests.
+# Scores every question template from block history, and runs the audit regression tests (resolver, bot on a fake
+# chain, website checks). Runs on pushes and on pull requests. No chain and no secrets.
 name: Resolver tests
 
 on:
   push:
-    paths: ["resolver.ts", "resolver.test.ts", "generator.ts", "common.ts", "bot/bot.ts", "package.json", "package-lock.json", ".github/workflows/resolver-test.yml"]
+    paths: ["resolver.ts", "resolver.test.ts", "generator.ts", "common.ts", "bot/**", "site/**", "docs/**", "README.md", "tests/**", "game-data/game.json", "package.json", "package-lock.json", ".github/workflows/resolver-test.yml"]
   pull_request:
-    paths: ["resolver.ts", "resolver.test.ts", "generator.ts", "common.ts", "bot/bot.ts", "package.json", "package-lock.json", ".github/workflows/resolver-test.yml"]
+    paths: ["resolver.ts", "resolver.test.ts", "generator.ts", "common.ts", "bot/**", "site/**", "docs/**", "README.md", "tests/**", "game-data/game.json", "package.json", "package-lock.json", ".github/workflows/resolver-test.yml"]
   workflow_dispatch: {}
 
 permissions:
@@ -20,5 +21,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-      - run: npm ci --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund --ignore-scripts
       - run: npm run test:resolver
+      - run: npm run test:audit
