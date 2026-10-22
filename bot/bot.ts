@@ -1251,7 +1251,8 @@ function liveCtx(dryRun: boolean): Ctx {
     producerKey: async (producer) => String(((await (pob.functions as any).get_public_key({ producer })).result ?? {}).value ?? ""),
     desk: deskContract ? { deployment: deskDep, read: async (method, args = {}) => ((await (deskContract.functions as any)[method](args)).result ?? {}) } : undefined,
     // The same block history the question generator uses (game-data/blocks.csv), topped up to the newest final block.
-    recentBlocks: async () => (await syncBlocks(chain.provider, path.join(P.dir, "blocks.csv"), 26)).blocks,
+    // Hourly, for the production count only: older rows are spot-checked (the generator checks its newest days in full).
+    recentBlocks: async () => (await syncBlocks(chain.provider, path.join(P.dir, "blocks.csv"), 26, undefined, { checkAllDays: 0 })).blocks,
     recentSigners: async (lib, maxBlocks) => {
       const head: any = await chain.provider.getHeadInfo();
       const headId = head.head_topology.id;

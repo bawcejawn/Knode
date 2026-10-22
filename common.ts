@@ -91,8 +91,10 @@ export async function fetchRange(provider: Provider, headId: string, from: numbe
 /**
  * Keeps `file` holding exactly the last `days` of irreversible blocks. Seeds from `seedFile`
  * (e.g. the backtester's cache) when available, then downloads whatever is missing, saving as it goes.
+ * `checkAllDays`: the newest days of the cache that are compared with the chain row by row (the generator's model
+ * weighs them most); older rows are spot-checked.
  */
-export async function syncBlocks(provider: Provider, file: string, days: number, seedFile?: string) {
+export async function syncBlocks(provider: Provider, file: string, days: number, seedFile?: string, opts: { checkAllDays?: number } = {}) {
   let blocks = readCsv(file);
   if (blocks.length === 0 && seedFile && fs.existsSync(seedFile)) {
     console.log(`Seeding block history from ${seedFile} ...`);
@@ -106,9 +108,21 @@ export async function syncBlocks(provider: Provider, file: string, days: number,
   const lib = Number(head.last_irreversible_block);
   const from = Math.max(1, lib - Math.round(days * BLOCKS_PER_DAY) + 1);
   blocks = blocks.filter((b) => b.h >= from && b.h <= lib).sort((a, b) => a.h - b.h);
-  // The cache (a file, or GitHub's Actions cache) is not trusted: runs of cached rows spread over the whole range are
-  // compared with the chain, and on any difference the cache is dropped and downloaded again.
-  if (blocks.length && !(await cacheMatchesChain(provider, head.head_topology.id, blocks))) {
+  blocks = blocks.filter((b, i) => i === 0 || b.h !== blocks[i - 1].h);
+  // Holes inside the cached range are downloaded (or, if there are many, the cache is dropped).
+  const holes: Array<[number, number]> = [];
+  let missing = 0;
+  for (let i = 1; i < blocks.length; i++) if (blocks[i].h > blocks[i - 1].h + 1) { holes.push([blocks[i - 1].h + 1, blocks[i].h - 1]); missing += blocks[i].h - blocks[i - 1].h - 1; }
+  if (missing > 50_000) { console.log(`The cached blocks have ${fmt(missing)} missing heights: discarding the cache.`); blocks = []; }
+  else if (holes.length) {
+    console.log(`Filling ${fmt(missing)} missing height(s) in the cached blocks ...`);
+    for (const [lo, hi] of holes) blocks = blocks.concat(await fetchRange(provider, head.head_topology.id, lo, hi));
+    blocks.sort((a, b) => a.h - b.h);
+  }
+  // The cache (a file, or GitHub's Actions cache) is not trusted: the newest checkAllDays are compared with the chain
+  // row by row, and runs of older rows spread over the rest; on any difference the cache is dropped and downloaded again.
+  const checkFrom = lib - Math.round((opts.checkAllDays ?? 2) * BLOCKS_PER_DAY) + 1;
+  if (blocks.length && !(await cacheMatchesChain(provider, head.head_topology.id, blocks, 24, 10, checkFrom))) {
     console.log("Cached blocks differ from the chain: discarding the cache and downloading again.");
     blocks = [];
   }
@@ -134,16 +148,25 @@ export async function syncBlocks(provider: Provider, file: string, days: number,
   return { blocks, lib };
 }
 
-/** Compares `runs` runs of `len` cached blocks, evenly spread (random start), with the chain. */
-export async function cacheMatchesChain(provider: Provider, headId: string, blocks: Blk[], runs = 24, len = 10): Promise<boolean> {
-  const step = Math.max(len, Math.floor(blocks.length / runs));
-  for (let i = Math.floor(Math.random() * step); i < blocks.length; i += step) {
-    const n = Math.min(len, blocks.length - i);
-    const res: any = await withRetry(`checking cached blocks at ${blocks[i].h}`, () =>
-      provider.call("block_store.get_blocks_by_height", {
-        head_block_id: headId, ancestor_start_height: String(blocks[i].h), num_blocks: n, return_block: true, return_receipt: false,
-      }));
-    const got = (res?.block_items ?? []).map(toBlk);
+/** Compares every cached block at or above `checkFrom`, and `runs` runs of `len` older cached blocks, evenly spread
+ *  (random start), with the chain. `blocks` must be sorted by height with no gaps. */
+export async function cacheMatchesChain(provider: Provider, headId: string, blocks: Blk[], runs = 24, len = 10, checkFrom = Infinity): Promise<boolean> {
+  const old = blocks.findIndex((b) => b.h >= checkFrom), split = old < 0 ? blocks.length : old;
+  const starts: Array<[number, number]> = [];
+  const step = Math.max(len, Math.floor(split / runs));
+  for (let i = Math.floor(Math.random() * step); i < split; i += step) starts.push([i, Math.min(len, split - i)]);
+  for (let i = split; i < blocks.length; i += 100) starts.push([i, Math.min(100, blocks.length - i)]);
+  for (const [i, n] of starts) {
+    const got: Blk[] = [];
+    while (got.length < n) {
+      const res: any = await withRetry(`checking cached blocks at ${blocks[i + got.length].h}`, () =>
+        provider.call("block_store.get_blocks_by_height", {
+          head_block_id: headId, ancestor_start_height: String(blocks[i + got.length].h), num_blocks: n - got.length, return_block: true, return_receipt: false,
+        }));
+      const items = res?.block_items ?? [];
+      if (!items.length) return false;
+      got.push(...items.map(toBlk));
+    }
     for (let j = 0; j < n; j++) {
       const a = blocks[i + j], b = got[j];
       if (!b || a.h !== b.h || a.ts !== b.ts || a.signer !== b.signer || a.ntx !== b.ntx) return false;
