@@ -192,6 +192,19 @@ test("owner, operator and producer keys that differ from deployment.json are ema
   assert.ok(!/1Thief/.test(c2.problems.join(" | ")), "each change is emailed once, not every hour");
 });
 
+test("with no producerKey in deployment.json, the key the bot first sees is emailed (once) so it can be pinned", async () => {
+  const w = world({ deployment: { owner: "1Owner", operator: "1Op" } });
+  const c = w.ctx({ producerKey: async () => "SeenKey" });
+  await tick(c);
+  assert.ok(c.problems.some((p: string) => /has no "producerKey"\. The key registered for the game is SeenKey/.test(p)), c.problems.join(" | "));
+  const c2 = w.ctx({ producerKey: async () => "SeenKey" });
+  await tick(c2);
+  assert.ok(!c2.problems.some((p: string) => /producerKey/.test(p)), "emailed once");
+  const c3 = w.ctx({ producerKey: async () => "OtherKey" });
+  await tick(c3);
+  assert.ok(c3.problems.some((p: string) => /is OtherKey, not SeenKey/.test(p)), "a later change is still caught");
+});
+
 test("the bot does not try to close a week before close_delay has passed after its last resolution", async () => {
   const end = GENESIS + WEEK + 43_200_000;                       // week 0's normal close time
   const late = { time: end + 3_600_000, week: { last_resolved_time: String(end - 1_000) } };   // resolved late: close at end + 12 h

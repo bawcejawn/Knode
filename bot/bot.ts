@@ -91,6 +91,8 @@ type BotState = {
   notified?: string[];
   /** Block-producer keys first seen on record for the game and the desk (used when deployment.json names none). */
   producerKey?: string; deskProducerKey?: string;
+  /** The owner-only settings seen on the last run (to report a change). */
+  settings?: string;
 };
 type DayFile = { date: string; week: number; day: number; questions: any[]; skipped?: string };
 
@@ -260,11 +262,14 @@ async function healthPass(ctx: Ctx, bs: BotState) {
     }
   }
 
-  // 2. A week that should have closed but has not.
+  // 2. A week that should have closed but has not. Measured from its normal close (week end + close_delay) as well as
+  //    from the close time that corrections move, so a week held open by repeated corrections is reported too.
   const w = st.weeksClosed;
   const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
   if (st.time > closeAt(st, w, wk) + 3 * HOUR_MS) {
     ctx.problems.push(`Week ${w} is overdue to close (${num(wk.questions) - num(wk.resolved)} question(s) still open).`);
+  } else if (st.time > weekEnd(st, w) + st.closeDelay + 3 * HOUR_MS && num(wk.last_resolved_time) > weekEnd(st, w)) {
+    ctx.problems.push(`Week ${w} is still open ${((st.time - weekEnd(st, w) - st.closeDelay) / HOUR_MS).toFixed(0)} h after its normal close: its latest result or correction was at ${utc(num(wk.last_resolved_time))}. Only the owner key can change results; if you did not, your admin key may be compromised.`);
   }
 
   // 3. Changes only the owner should ever make. If the admin key were stolen, these are the first signs; the
@@ -279,17 +284,33 @@ async function healthPass(ctx: Ctx, bs: BotState) {
   };
   if (num(up.eta) > 0) ownerAlert(`upgrade:${up.hash}:${up.eta}`, `A code upgrade is scheduled (possible from ${utc(num(up.eta))}). If you did not do this, your admin key may be compromised.`);
   if (num(wd.eta) > 0) ownerAlert(`seed:${wd.vhp}:${wd.koin}:${wd.eta}`, `A seed withdrawal is scheduled (possible from ${utc(num(wd.eta))}). If you did not do this, your admin key may be compromised.`);
-  if (st.c.pending_owner) ownerAlert(`owner:${st.c.pending_owner}`, `An ownership transfer to ${st.c.pending_owner} is pending (it can be accepted a day after it was proposed). If you did not do this, your admin key may be compromised: propose your own address again right away.`);
+  if (st.c.pending_owner) ownerAlert(`owner:${st.c.pending_owner}:${st.c.pending_owner_height ?? ""}`, `An ownership transfer to ${st.c.pending_owner} is pending (it can be accepted a day after it was proposed). If you did not do this, your admin key may be compromised: propose your own address again right away.`);
   // The roles and the producer key must be the ones recorded at deployment (game-data/deployment.json).
   const dep = readJson(ctx.P.deployment, null);
   if (dep?.owner && st.c.owner && st.c.owner !== dep.owner)
     ownerAlert(`owner-changed:${st.c.owner}`, `The game's owner is ${st.c.owner}, not ${dep.owner} as in deployment.json. If you did not hand it over, your admin key is compromised.`);
   if (dep?.operator && st.c.operator && st.c.operator !== dep.operator)
     ownerAlert(`operator-changed:${st.c.operator}`, `The game's operator is ${st.c.operator}, not ${dep.operator} as in deployment.json. If you did not change it, your admin key may be compromised (if you did, update deployment.json).`);
+  // Owner-only settings: compared with deployment.json where it records them, and with the last run.
+  const settings = { min_stake: String(st.c.min_stake ?? "0"), min_stake_next: String(st.c.min_stake_next ?? "0"), min_stake_next_week: String(st.c.min_stake_next_week ?? "0"),
+    max_sponsor_rc: String(st.c.max_sponsor_rc ?? "0"), min_sponsor_rc: String(st.c.min_sponsor_rc ?? "0"), paused: !!st.c.paused };
+  const fp = JSON.stringify(settings), odd: string[] = [];
+  if (dep?.minStake !== undefined && settings.min_stake !== String(dep.minStake)) odd.push(`min_stake is ${showKoin(settings.min_stake)} VHP (deployment.json: ${showKoin(dep.minStake)})`);
+  if (big(settings.min_stake_next) > 0n && big(settings.min_stake_next) !== big(settings.min_stake)) odd.push(`min_stake changes to ${showKoin(settings.min_stake_next)} VHP from week ${num(settings.min_stake_next_week) + 1}`);
+  if (dep?.maxSponsorRc !== undefined && settings.max_sponsor_rc !== String(dep.maxSponsorRc)) odd.push(`free transactions are capped at ${showKoin(settings.max_sponsor_rc)} Mana (deployment.json: ${showKoin(dep.maxSponsorRc)})`);
+  if (settings.paused) odd.push("the game is paused");
+  if (bs.settings && bs.settings !== fp) odd.push("the owner settings changed since the last run");
+  bs.settings = fp;
+  if (odd.length) ownerAlert(`settings:${fp}`, `Owner settings: ${odd.join("; ")}. If you did not do this, your admin key may be compromised (if you did, update deployment.json).`);
   if (ctx.producerKey) {
     const k = await ctx.producerKey(C);
     const expected = dep?.producerKey ?? bs.producerKey;
-    if (!expected) { if (k) { bs.producerKey = k; log(`  noted the game's registered producer key: ${k}`); } }
+    if (!expected) {
+      if (k) {
+        bs.producerKey = k;
+        ownerAlert(`key-noted:${k}`, `game-data/deployment.json has no "producerKey". The key registered for the game is ${k}: if it is yours, add it to deployment.json (until then the bot keeps it only in bot-state.json).`);
+      }
+    }
     else if (k !== expected) ownerAlert(`key-changed:${k}`, `The block-producer key registered for the game is ${k || "none"}, not ${expected}. If you did not register it, your admin key may be compromised (if you did, set "producerKey" in deployment.json).`);
   }
   if (ctx.desk) await deskHealth(ctx, bs, ownerAlert);
@@ -327,7 +348,12 @@ async function deskHealth(ctx: Ctx, bs: BotState, alert: (key: string, text: str
   if (ctx.producerKey && ctx.chain.kind === "koinos") {
     const k = await ctx.producerKey(dep.contract);
     const expected = dep.producerKey ?? bs.deskProducerKey;
-    if (!expected) { if (k) { bs.deskProducerKey = k; log(`  noted the Desk's registered producer key: ${k}`); } }
+    if (!expected) {
+      if (k) {
+        bs.deskProducerKey = k;
+        alert(`desk-key-noted:${k}`, `desk-data/deployment.json has no "producerKey". The key registered for the Desk is ${k}: if it is yours, add it to deployment.json (until then the bot keeps it only in bot-state.json).`);
+      }
+    }
     else if (k !== expected) alert(`desk-key:${k}`, `The block-producer key registered for the Desk is ${k || "none"}, not ${expected}. If you did not register it, your admin key may be compromised (if you did, set "producerKey" in desk-data/deployment.json).`);
   }
 }
@@ -356,6 +382,7 @@ async function scanIds(ctx: Ctx, bs: BotState) {
     } else if (!bs.orphans.includes(id)) {
       bs.orphans.push(id);
       log(`  ⚠ on-chain question #${id} has no matching local question — it will be resolved as VOID`);
+      ctx.problems.push(`On-chain question #${id} matches no question file (params_hash ${String(q?.params_hash ?? "")}). It will be voided. Unless the bot crashed right after posting it, the operator key may be compromised.`);
     }
     bs.checkedUpTo = id + 1;
   }
@@ -420,7 +447,12 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
         const scored = scoreQuestion(q, await windowOf(q, csv), { vhpReadings: q.vhpReadings, vhpEnd: q.vhpEnd });
         if (resolved) {
           q.chainOutcome = num(onChain.outcome);
+          q.chainDataHash = String(onChain.data_hash ?? "");
           dirty = true;
+          // The bot only resolves once the window's blocks are final, so an earlier result was set by someone else.
+          if (!due(onChain)) {
+            ctx.problems.push(`${q.id} (#${q.chainId}) got outcome ${q.chainOutcome}${q.chainOutcome === 1000 ? " (void)" : ""} on chain before its window's blocks were final; the bot did not post it. If you did not void it, your admin key may be compromised.`);
+          }
           if (scored.ok) {
             const mine = storedOutcome(scored.result);
             if (!q.result || q.result.dataHash !== scored.result.dataHash || q.result.void !== scored.result.void || q.result.option !== scored.result.option) {
@@ -470,10 +502,21 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
 async function correctionCheck(ctx: Ctx, q: any): Promise<boolean> {
   const onChain = (await ctx.chain.read("get_question", { id: q.chainId })).question ?? {};
   const now = num(onChain.outcome);
-  if (now === q.chainOutcome) return false;
+  const hex = (x: any) => String(x ?? "").replace(/^0x/, "").toLowerCase();
+  if (now === q.chainOutcome) {
+    // Same outcome: compare the data_hash with the one recorded (or, for older files, the bot's own result).
+    const known = hex(q.chainDataHash ?? q.result?.dataHash), seen = hex(onChain.data_hash);
+    if (!seen || seen === known) return false;
+    if (!known) { q.chainDataHash = String(onChain.data_hash); return true; }
+    (q.corrections ??= []).push({ from: q.chainOutcome, to: now, dataHash: onChain.data_hash, seenAt: new Date().toISOString() });
+    ctx.problems.push(`A result was re-posted on chain with the same outcome: ${q.id} (#${q.chainId}) now has data_hash ${String(onChain.data_hash).slice(0, 18)}…. Only the owner key can do that; if you did not, your admin key may be compromised.`);
+    q.chainDataHash = String(onChain.data_hash);
+    return true;
+  }
   (q.corrections ??= []).push({ from: q.chainOutcome, to: now, dataHash: onChain.data_hash, seenAt: new Date().toISOString() });
   ctx.problems.push(`A result was changed on chain: ${q.id} (#${q.chainId}) went from outcome ${q.chainOutcome} to ${now}${now === 1000 ? " (void)" : ""}. If you did not do this, your admin key may be compromised.`);
   q.chainOutcome = now;
+  q.chainDataHash = String(onChain.data_hash ?? "");
   return true;
 }
 
