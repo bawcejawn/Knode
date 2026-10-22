@@ -130,6 +130,8 @@ export type Ctx = {
   desk?: { deployment: any; read: (method: string, args?: any) => Promise<any> };
   /** Settles the bot paid for itself this run, because the contract declined to (capped by MAX_BOT_PAID_SETTLES). */
   botPaid?: number;
+  /** Lifts the cap on bot-paid settles (the last hours before a week's settle_end). */
+  botPaidUncapped?: boolean;
 };
 
 const num = (x: any) => Number(x ?? 0);
@@ -155,6 +157,8 @@ const minStakeFor = (c: any, w: number) => (big(c.min_stake_next) > 0n && w >= n
 /** The most settles the bot pays for itself in one run when the contract declines to. The bot's Mana must stay
  *  available for posting and resolving questions. */
 export const MAX_BOT_PAID_SETTLES = Number(E.MAX_BOT_PAID_SETTLES ?? 10);
+/** In the last hours before settle_end the cap is lifted: a player nobody settles by then loses the week's reward. */
+export const SETTLE_LAST_HOURS_MS = 3 * HOUR_MS;
 
 async function sendOp(ctx: Ctx, what: string, calls: Call[], opts: { sponsored?: boolean } = {}): Promise<boolean> {
   if (ctx.dryRun) { log(`  [dry run] would send: ${what}`); return true; }
@@ -162,7 +166,7 @@ async function sendOp(ctx: Ctx, what: string, calls: Call[], opts: { sponsored?:
   if (!r.ok && opts.sponsored) {
     // The contract only sponsors what it can verify is valid; if it declines, the bot pays instead, a few per run.
     ctx.botPaid = (ctx.botPaid ?? 0) + 1;
-    if (ctx.botPaid > MAX_BOT_PAID_SETTLES) {
+    if (!ctx.botPaidUncapped && ctx.botPaid > MAX_BOT_PAID_SETTLES) {
       if (ctx.botPaid === MAX_BOT_PAID_SETTLES + 1) {
         ctx.problems.push(`The contract declined to pay for more than ${MAX_BOT_PAID_SETTLES} settles this run. The bot paid for ${MAX_BOT_PAID_SETTLES} and left the rest for later runs (anyone can settle any player).`);
       }
@@ -622,13 +626,23 @@ async function settlePass(ctx: Ctx) {
     if (h < num(wk.settle_start) || h > num(wk.settle_end)) continue;
     // Free players (no stake that week) can never be paid, so the bot doesn't spend Mana settling them.
     const minStake = minStakeFor(st.c, w);
-    const todo = (await allPlayers(ctx.chain, w)).filter((r) => r.entry && !r.entry.settled && big(r.entry.stake) >= minStake && big(r.entry.stake) > 0n);
-    if (todo.length) log(`  settling ${todo.length} player(s) for week ${w}`);
+    const unsettled = async () => (await allPlayers(ctx.chain, w)).filter((r) => r.entry && !r.entry.settled && big(r.entry.stake) >= minStake && big(r.entry.stake) > 0n);
+    // Largest stakes first, so if the bot has to stop paying, it stops at the smallest entries.
+    const todo = (await unsettled()).sort((a, b) => (big(b.entry.stake) > big(a.entry.stake) ? 1 : big(b.entry.stake) < big(a.entry.stake) ? -1 : 0));
+    const lastHours = num(wk.settle_end) - h <= SETTLE_LAST_HOURS_MS;
+    if (todo.length) log(`  settling ${todo.length} player(s) for week ${w}${lastHours ? " (last hours before settle_end: no cap on bot-paid settles)" : ""}`);
     let n = 0;
-    for (const r of todo) {
-      if (await sendOp(ctx, `settle ${r.address} for week ${w}`, [{ method: "settle", args: { player: r.address, week: String(w) } }], { sponsored: true })) n++;
-    }
+    ctx.botPaidUncapped = lastHours;
+    try {
+      for (const r of todo) {
+        if (await sendOp(ctx, `settle ${r.address} for week ${w}`, [{ method: "settle", args: { player: r.address, week: String(w) } }], { sponsored: true })) n++;
+      }
+    } finally { ctx.botPaidUncapped = false; }
     if (todo.length) log(`  settled ${n}/${todo.length}`);
+    if (lastHours && todo.length && !ctx.dryRun) {
+      const left = await unsettled();
+      if (left.length) ctx.problems.push(`Week ${w}: ${left.length} staked player(s) are still not settled and settlement ends ${utc(num(wk.settle_end))}. Anyone can send their settle; after that time they get no reward for the week.`);
+    }
   }
 }
 
