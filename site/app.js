@@ -214,7 +214,13 @@
   }
 
   // ═══════════════ scoring (same rules as the contract) ═══════════════
-  function score(rows, outcomes) {
+  /** v4: from the week the contract records (config.scorer_rule_week_plus_one), winners are the top 30% of the
+   *  eligible players WITH POINTS; before it, of all eligible players. */
+  /** The minimum stake for a week (v4: a change applies from the week after it was made; 1 VHP until then). */
+  const minStakeFor = (week) => { const c = (S.st && S.st.config) || {}; const next = big(c.min_stake_next || 0);
+    return next > 0n && week >= num(c.min_stake_next_week) ? next : big(c.min_stake || UNIT); };
+  const scorerRule = (week) => { const v = num((S.st && S.st.config || {}).scorer_rule_week_plus_one); return v > 0 && week + 1 >= v; };
+  function score(rows, outcomes, week = S.week) {
     const scored = rows.map((r) => {
       let pts = 0, counted = 0;
       if (!r.voided) for (const a of r.answers || []) {
@@ -223,12 +229,13 @@
         counted++;
         if (o === num(a.option) + 1) pts++;
       }
-      return { ...r, pts, counted, eligible: !r.voided && counted > 1 && r.stake >= UNIT };
+      return { ...r, pts, counted, eligible: !r.voided && counted > 1 && r.stake > 0n && r.stake >= minStakeFor(week) };
     }).sort((x, y) => y.pts - x.pts || (y.stake > x.stake ? 1 : y.stake < x.stake ? -1 : 0));
     const elig = scored.filter((s) => s.eligible);
     const total = elig.reduce((s, x) => s + x.stake, 0n);
-    // Winners: the top 30% of staked, eligible players by points (headcount), ties included; 0 points never wins.
-    const need = Math.ceil((elig.length * 30) / 100);
+    // Winners: the top 30% of staked, eligible players by points (headcount), ties included; 0 points never wins
+    // (and, from v4, does not count toward the 30%).
+    const need = Math.ceil(((scorerRule(week) ? elig.filter((s) => s.pts > 0).length : elig.length) * 30) / 100);
     let cutoff = 0, cum = 0;
     const maxP = Math.max(0, ...elig.map((s) => s.pts));
     if (need > 0) for (let p = maxP; p >= 1; p--) { cum += elig.filter((s) => s.pts === p).length; cutoff = p; if (cum >= need) break; }
@@ -295,7 +302,7 @@
     const ids = new Set(rows.flatMap((r) => r.answers.map((a) => num(a.question_id))));
     const outcomes = new Map();
     await Promise.all([...ids].map(async (id) => outcomes.set(id, num(((await read("get_question", { id })).question || {}).outcome))));
-    const res = score(rows, outcomes);
+    const res = score(rows, outcomes, week);
     if (week < num(S.st.totals?.weeks_finalized)) {
       res.final = (await read("get_week", { week: String(week) })).week || {};
       applyPots(res, big(res.final.pot_a), big(res.final.pot_b));

@@ -3,6 +3,7 @@
  * week and the website can show estimates. Must match game/assembly/Kpred.ts exactly.
  *
  *  - Winners: the top 30% of eligible (staked) players by points, headcount, everyone tied at the line included.
+ *    From v4 (scorersOnly), the 30% is counted over eligible players with at least one point.
  *    A score of 0 never wins.
  *  - Each place r has a rank weight 1e9/√r; players tied share their places' weights evenly.
  *  - Basket A (pot_a): split by rank weight only.  Basket B (pot_b): split by rank weight × stake.
@@ -20,8 +21,9 @@ export const rankWeight = (r: number | bigint) => isqrt(W_SCALE / BigInt(r));
 export type Eligible = { pts: number; stake: bigint };
 export type Group = { pts: number; players: number; stake: bigint; sumW: bigint };
 
-export function winnersOf(elig: Eligible[]) {
-  const exactNeed = (BigInt(elig.length) * 30n + 99n) / 100n;          // 30%, rounded up — same as the contract
+export function winnersOf(elig: Eligible[], scorersOnly = true) {
+  const counted = scorersOnly ? elig.filter((e) => e.pts > 0).length : elig.length;
+  const exactNeed = (BigInt(counted) * 30n + 99n) / 100n;               // 30%, rounded up — same as the contract
   const byPts = new Map<number, { players: number; stake: bigint }>();
   for (const e of elig) { const g = byPts.get(e.pts) ?? { players: 0, stake: 0n }; g.players++; g.stake += e.stake; byPts.set(e.pts, g); }
   const maxP = Math.max(0, ...elig.map((e) => e.pts));
