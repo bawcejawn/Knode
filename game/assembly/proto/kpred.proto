@@ -121,6 +121,7 @@ message week_object {
   uint32 fin_index = 29;                              // players of that group counted so far
   uint64 fin_rank = 30 [jstype = JS_STRING];          // next place (rank) to give out
   uint64 fin_gw = 31 [jstype = JS_STRING];            // rank weight given to that group so far
+  uint64 last_result_time = 32 [jstype = JS_STRING];  // time (ms) of the latest first result (a resolution, or the owner voiding an open question); changes to posted results end 2 x close_delay after max(week end, this)
 }
 
 message bucket_object {

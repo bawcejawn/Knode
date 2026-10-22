@@ -824,6 +824,13 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "last_result_time": {
+                "type": "uint64",
+                "id": 32,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },

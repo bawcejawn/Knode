@@ -6,14 +6,16 @@ Nothing in this file has been run. Every command below that changes something is
 |---|---|
 | Contract | Kpred `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr` (mainnet) |
 | Live code | sha256 `917708a7c567d9642a7a2f121c34fbc70200909787208705fc3aa5a2b1e6433a` (commit `1c25791`) |
-| **New code** | sha256 `8eaed0f75e952041d98931c782c7d71e0f6ae48eb5d2cb50bf9fc6158a184559` (`game/build/release/contract.wasm`, 53,861 bytes, built from branch `audit-fixes-1`) |
+| **New code** | sha256 `565e7eefa37098cfe83f58ef279b08c8092bd798939f966049eb153df972bc6f` (`game/build/release/contract.wasm`, 54,405 bytes, built from branch `audit-fixes-1`) |
 | Timelock | 48 hours after `schedule_upgrade`; the live code has no expiry, the new one gives 7 days after it |
 
 ## What changes
 
 | Finding | Change in the contract |
 |---|---|
-| AB-004 | A week closes no sooner than `close_delay` (12 h) after its **last** resolution or correction, as well as 12 h after it ends. A late result never closes its week in the same transaction. Owner changes to a posted result stop a quarter of `close_delay` (3 h) before the close; each change restarts the 12 h. |
+| AB-004 | A week closes no sooner than `close_delay` (12 h) after its **last** resolution or correction, as well as 12 h after it ends. A late result never closes its week in the same transaction. Owner changes to a posted result stop a quarter of `close_delay` (3 h) before the close; a change of outcome restarts the 12 h (a new `data_hash` alone does not). |
+| AB-024 | Changes to posted results end 2 × `close_delay` (24 h) after the week ends, or after the week's latest first result if that is later (a late resolution, or the owner voiding an open question). So corrections can never hold a finished week open: it can close at most one more `close_delay` after that. |
+| AB-026 | No sponsored claim unless the pool can pay it now (VHP on hand plus the spare KOIN its Mana can burn back), and no sponsored settle for an entry whose player withdrew the whole stake that week. |
 | AB-013 | `accept_owner` only 28,800 blocks (about 24 h) after `propose_owner`, so the hourly bot sees the pending transfer many times and emails you, and you have a day to propose your own address again. |
 | AB-014 | An announced upgrade or seed withdrawal can be carried out only during the 7 days after its timelock ends; after that it must be announced again (fresh 48 h). |
 | AB-015 | Answers stay open at least `week_length / 168` (exactly 1 hour with 7-day weeks). |
@@ -43,6 +45,7 @@ returned, then keeps playing (claims, the running week, the seed withdrawal, all
 | config (0) | `scorer_rule_week_plus_one` (17) | 0 | first week (+1) of the "players with points" 30%; the first action after the upgrade sets it to the next week |
 | week (5) | `last_resolved_time` (26) | 0 | time of the latest resolution or correction |
 | week (5) | `fin_started` (27), `fin_points` (28), `fin_index` (29), `fin_rank` (30), `fin_gw` (31) | false / 0 | paged finalization progress (weeks finalized before the upgrade never use them) |
+| week (5) | `last_result_time` (32) | 0 | time of the latest first result; corrections end 2 × `close_delay` after max(week end, this). 0 means the week's end decides |
 
 No new storage space, no migration call. Players, entries, questions, buckets, totals, the seed and the timelocks are
 untouched.
@@ -56,13 +59,13 @@ untouched.
    ```
    cd game
    npm ci
-   npm test            # 87 contract tests, then the release build
+   npm test            # 98 contract tests, then the release build
    npm run check       # offline safety check
    ```
    ```
    certutil -hashfile build\release\contract.wasm SHA256
    ```
-   It must print `8eaed0f75e952041d98931c782c7d71e0f6ae48eb5d2cb50bf9fc6158a184559`. If it does not, stop: you are not building the reviewed code.
+   It must print `565e7eefa37098cfe83f58ef279b08c8092bd798939f966049eb153df972bc6f`. If it does not, stop: you are not building the reviewed code.
 3. `npm run bot -- status` and save the output (`npm run bot -- status > before-upgrade.txt`) to compare afterwards.
 4. `npm run bot -- upgrade status`: nothing should be announced. If something is, find out why before going on.
 5. Pick the timing: schedule on a Tuesday or Wednesday so the upload lands mid-week, away from the weekly close
@@ -76,7 +79,7 @@ npm run bot -- upgrade schedule          (dry run: shows the hash it will announ
 npm run bot -- upgrade schedule --send
 ```
 
-- It announces the sha256 of your local build; check it is `8eaed0f75e952041d98931c782c7d71e0f6ae48eb5d2cb50bf9fc6158a184559`.
+- It announces the sha256 of your local build; check it is `565e7eefa37098cfe83f58ef279b08c8092bd798939f966049eb153df972bc6f`.
 - Note the time it prints ("can be uploaded from …").
 - The bot emails you that an upgrade is scheduled: that is expected. Tell players (the Trust page shows the
   announcement); they can withdraw during the 48 hours if they disagree.
@@ -98,7 +101,7 @@ It uploads exactly the announced code (owner authorizes, bot wallet pays), then 
 ## 4. Verify
 
 1. Code hash on chain (read-only; nothing is signed). Fetch the contract's metadata and check it with the audit tool,
-   as in the audit report's §KX-26, expecting `0x12208eaed0f75e952041d98931c782c7d71e0f6ae48eb5d2cb50bf9fc6158a184559` and all three authorize flags true:
+   as in the audit report's §KX-26, expecting `0x1220565e7eefa37098cfe83f58ef279b08c8092bd798939f966049eb153df972bc6f` and all three authorize flags true:
    ```
    curl -s -X POST https://api.koinos.io -H "content-type: application/json" -d "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"chain.invoke_system_call\", \"params\": {\"id\": 303, \"args\": \"CgYIARIAGAMSGQDka1eqiZY46QAtkl2DCfUVJJ_OmXITQJU=\"}}" > meta-kpred.json
    python C:\Users\alcat\.claude\skills\audit-bot\scripts\verify_deploy.py --contract 1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr --wasm game\build\release\contract.wasm --meta-json meta-kpred.json --expect-upload-override yes --expect-call-override yes --expect-tx-override yes

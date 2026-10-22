@@ -49,6 +49,9 @@ const OWNER_ACCEPT_DELAY: u64 = 28_800;
 // Announced upgrades and seed withdrawals can be carried out only during 7 days after their timelock ends. After that
 // they must be announced again (with a fresh 48-hour notice), so an old announcement cannot be used by surprise.
 const ANNOUNCEMENT_EXPIRY: u64 = 7 * 86_400_000;
+// Changes to a posted result end this many close_delays after the week's end (or after its latest first result, if
+// later), so corrections can never hold a finished week open: it closes by one more close_delay after that.
+const CORRECTION_DELAYS: u64 = 2;
 // Answers stay open at least 1/168 of a week: exactly 1 hour with mainnet's 7-day weeks.
 const MIN_ANSWER_DIVISOR: u64 = 168;
 // Finalization gives out at most this many places (rank weights) per transaction; larger weeks take several.
@@ -244,6 +247,12 @@ export class Kpred {
     const a = this.weekEnd(c, w) + c.close_delay;
     const b = wk.last_resolved_time + c.close_delay;
     return a > b ? a : b;
+  }
+
+  /** Changes to week `w`'s posted results are accepted only while now + close_delay/4 is at most this. */
+  correctionEnd(c: kpred.config_object, w: u64, wk: kpred.week_object): u64 {
+    const a = this.weekEnd(c, w), b = wk.last_result_time;
+    return (a > b ? a : b) + CORRECTION_DELAYS * c.close_delay;
   }
 
   closeDue(c: kpred.config_object, t: kpred.totals_object, h: u64): bool {
@@ -583,6 +592,22 @@ export class Kpred {
     return r;
   }
 
+  /** What a winner's claim pays for week w. */
+  rewardOf(w: u64, wk: kpred.week_object, e: kpred.entry_object): u64 {
+    // Basket A (by rank): pot_a × (this score group's rank weight ÷ its players) ÷ all winners' rank weight.
+    // Basket B (by rank × stake): pot_b × (rank weight ÷ players × stake) ÷ the same total over all winners.
+    // Every step rounds down, so the claims of a week can never add up to more than its pot.
+    const b = this.buckets.get(this.bucketKey(w, e.points))!;
+    const n = u128.fromU64(<u64>b.players);
+    let reward = u128.muldiv(u128.fromU64(wk.pot_a), u128.fromU64(b.sum_w), n * u128.fromU64(wk.sum_w)).toU64();
+    const bw = new u128(wk.bw_lo, wk.bw_hi);
+    if (!bw.isZero()) {
+      const mine = u128.muldiv(u128.fromU64(b.sum_w), u128.fromU64(e.stake), n);
+      reward += u128.muldiv(u128.fromU64(wk.pot_b), mine, bw).toU64();
+    }
+    return reward;
+  }
+
   claim(args: kpred.claim_arguments): kpred.claim_result {
     const player = args.player!;
     System.requireAuthority(authority.authorization_type.contract_call, player);
@@ -593,17 +618,7 @@ export class Kpred {
     const wk = this.weeks.get(wkKey)!;
     const key = this.entryKey(player, args.week);
     const e = this.entries.get(key)!;
-    // Basket A (by rank): pot_a × (this score group's rank weight ÷ its players) ÷ all winners' rank weight.
-    // Basket B (by rank × stake): pot_b × (rank weight ÷ players × stake) ÷ the same total over all winners.
-    // Every step rounds down, so the claims of a week can never add up to more than its pot.
-    const b = this.buckets.get(this.bucketKey(args.week, e.points))!;
-    const n = u128.fromU64(<u64>b.players);
-    let reward = u128.muldiv(u128.fromU64(wk.pot_a), u128.fromU64(b.sum_w), n * u128.fromU64(wk.sum_w)).toU64();
-    const bw = new u128(wk.bw_lo, wk.bw_hi);
-    if (!bw.isZero()) {
-      const mine = u128.muldiv(u128.fromU64(b.sum_w), u128.fromU64(e.stake), n);
-      reward += u128.muldiv(u128.fromU64(wk.pot_b), mine, bw).toU64();
-    }
+    const reward = this.rewardOf(args.week, wk, e);
     e.claimed = true;
     e.reward = reward;
     this.entries.put(key, e);
@@ -859,6 +874,7 @@ export class Kpred {
     const wk = this.weeks.get(wkKey)!;
     wk.resolved += 1;
     wk.last_resolved_time = this.now();             // the owner can correct it for close_delay before the week closes
+    wk.last_result_time = wk.last_resolved_time;
     this.weeks.put(wkKey, wk);
     this.advance(c);                                // an earlier finished week may close now; never this one at once
     return new kpred.resolve_question_result();
@@ -883,18 +899,25 @@ export class Kpred {
       this.questions.put(key, q!);
       wk.resolved += 1;
       wk.last_resolved_time = now;
+      wk.last_result_time = now;
       this.weeks.put(wkKey, wk);
       this.advance(c);
     } else {
       // Changing a posted result: never in the last quarter of the correction time before the close, so a change is
-      // always visible (and can be changed back) for a while before results are final. Each change restarts the
-      // correction time.
+      // always visible (and can be changed back) for a while before results are final. A change of outcome restarts
+      // the correction time; a new data_hash alone does not. Changes end CORRECTION_DELAYS close_delays after the
+      // week (correctionEnd), so they cannot keep a finished week open.
       System.require(now + c.close_delay / 4 <= this.closeAt(c, q!.week, wk),
         "too close to the week's close to change a result (changes stop a quarter of close_delay before it)");
+      System.require(now + c.close_delay / 4 <= this.correctionEnd(c, q!.week, wk),
+        "the time for changing this week's results is over");
+      const changed = q!.outcome != (args.outcome == VOID ? VOID : args.outcome + 1);
       this.setOutcome(q!, args.outcome, args.data_hash);
       this.questions.put(key, q!);
-      wk.last_resolved_time = now;
-      this.weeks.put(wkKey, wk);
+      if (changed) {
+        wk.last_resolved_time = now;
+        this.weeks.put(wkKey, wk);
+      }
     }
     return new kpred.correct_question_result();
   }
@@ -1158,7 +1181,7 @@ export class Kpred {
       if (!isAddress(a.player)) return false;
       const se = this.entries.get(this.entryKey(a.player!, a.week));
       // free players' entries are never paid for
-      if (se == null || se.stake == 0 || se.stake < this.minStakeFor(c, a.week)) return false;
+      if (se == null || se.voided || se.stake == 0 || se.stake < this.minStakeFor(c, a.week)) return false;
       if (this.settleCheck(a.player!, a.week).length == 0) return true;
       // The week may simply not be closed yet although it is due: the settle call closes it first, then settles.
       const t = this.totals.get()!;
@@ -1170,6 +1193,18 @@ export class Kpred {
       if (!isAddress(a.player)) return false;
       // Only a claim that is valid right now: the week is finalized and the player is a winner who has not claimed.
       if (this.claimCheck(a.player!, a.week).length > 0) return false;
+      // ...and one the pool can pay out now: VHP on hand plus what compound can burn back (spare KOIN, limited by the
+      // Mana left after this transaction's own rc_limit), as claim's ensureVhp does.
+      const wk = this.weeks.get(u64Key(a.week))!;
+      const reward = this.rewardOf(a.week, wk, this.entries.get(this.entryKey(a.player!, a.week))!);
+      const t = this.totals.get()!;
+      const koinBal = Tokens.koinBalance(this.contractId), keep = t.seed_koin + t.creator_fee;
+      let burnable: u64 = koinBal > keep ? koinBal - keep : 0;
+      const mana = Tokens.mana(this.contractId);
+      const manaLeft: u64 = mana > rcLimit ? mana - rcLimit : 0;
+      if (burnable > manaLeft) burnable = manaLeft;
+      const vhp = Tokens.vhpBalance(this.contractId);
+      if (vhp < reward && reward - vhp > burnable) return false;
       return System.checkAuthority(authority.authorization_type.contract_call, a.player!);
     }
     return false;
