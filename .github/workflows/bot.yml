@@ -9,10 +9,14 @@
 #            into game-data/, refuses anything else, and pushes them. It is the only place with a write token.
 #
 # It does not run on pull requests. A pull request must never see OPERATOR_WIF and must never push to main.
+# "Run workflow" uses the chosen branch's copy of this file, so the key is kept in a GitHub environment that only main
+# may use (the ref check below is a second guard, but a branch could edit it away; the environment rule it cannot).
 #
-# Turn it on: Settings → Secrets and variables → Actions
-#   Secrets:   OPERATOR_WIF   the bot's key (it can only post and resolve questions — never move funds)
-#   Variables: BOT_ENABLED = true        (RPC is optional; defaults to https://api.koinos.io)
+# Turn it on:
+#   Settings → Environments → New environment "bot" → Deployment branches and tags: "Selected", add the rule "main".
+#     Environment secrets: OPERATOR_WIF   the bot's key (it can only post and resolve questions — never move funds)
+#     (Delete any repository-level OPERATOR_WIF secret, so only the environment holds it.)
+#   Settings → Secrets and variables → Actions → Variables: BOT_ENABLED = true   (RPC is optional; defaults to https://api.koinos.io)
 name: Kpred bot
 
 on:
@@ -29,7 +33,8 @@ permissions:
 
 jobs:
   tick:
-    if: ${{ vars.BOT_ENABLED == 'true' }}
+    if: ${{ vars.BOT_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    environment: bot          # holds OPERATOR_WIF; its deployment-branch rule allows main only
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -97,16 +102,31 @@ jobs:
           # Only the bot's own public files, as plain JSON files: no links, nothing outside these paths.
           bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type f ! -regex "$IN/\(questions/[A-Za-z0-9_-]*\.json\|bot-state\.json\|state\.json\|index\.json\)" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
+          # Real files are a few KB: refuse anything over 2 MB.
+          big=$(find "$IN" -type f -size +2048k -print)
+          if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
           find "$IN" -type f -name '*.json' -print0 | xargs -0 -r -n1 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))'
           mkdir -p game-data/questions
           if [ -d "$IN/questions" ]; then cp "$IN"/questions/*.json game-data/questions/ 2>/dev/null || true; fi
           for f in bot-state.json state.json index.json; do if [ -f "$IN/$f" ]; then cp "$IN/$f" "game-data/$f"; fi; done
-          git add game-data/questions game-data/bot-state.json game-data/state.json game-data/index.json 2>/dev/null || true
+          # Files changed on main since this run started (your own edits) are left as they are on main.
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          start="${GITHUB_SHA:-$(git rev-parse HEAD)}"
+          git fetch -q "$remote" "$GITHUB_REF_NAME"
+          for f in $(git diff --name-only "$start" FETCH_HEAD -- game-data/); do
+            if ! git diff --quiet "$start" -- "$f"; then echo "::warning::Not publishing $f: it was also changed on main during this run."; fi
+            git checkout -q FETCH_HEAD -- "$f" 2>/dev/null || rm -f "$f"
+          done
+          for p in game-data/questions game-data/bot-state.json game-data/state.json game-data/index.json; do
+            if [ -e "$p" ]; then git add -- "$p"; fi
+          done
           if git diff --cached --quiet; then echo "No changes."; exit 0; fi
+          # A run changes a handful of files (today's questions, results, bot state): refuse a flood.
+          n=$(git diff --cached --name-only | wc -l)
+          if [ "$n" -gt 50 ]; then echo "::error::Refusing to publish $n changed files in one run (at most 50)."; exit 1; fi
           outside=$(git diff --cached --name-only | grep -Ev '^game-data/(questions/[A-Za-z0-9_-]+\.json|bot-state\.json|state\.json|index\.json)$' || true)
           if [ -n "$outside" ]; then echo "::error::Refusing to publish: $outside"; exit 1; fi
           git -c user.name="kpred-bot" -c user.email="kpred-bot@users.noreply.github.com" commit -q -m "bot: tick"
-          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           for attempt in 1 2 3 4 5; do
             if git pull -q --rebase "$remote" "$GITHUB_REF_NAME" && git push -q "$remote" "HEAD:$GITHUB_REF_NAME"; then exit 0; fi
             echo "Push attempt $attempt failed; retrying."; sleep $((attempt * 5))

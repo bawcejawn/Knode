@@ -157,9 +157,12 @@ npm run bot -- status
 ## Step 8 — Turn on the bot and the website (GitHub)
 
 On github.com/bawcejawn/Knode:
-1. **Settings → Secrets and variables → Actions**
-   - New repository secret `OPERATOR_WIF`. The value is the `OPERATOR_WIF` line from `.env`, only the part after `=`.
-   - On the Variables tab, add `BOT_ENABLED` = `true`.
+1. **Settings → Environments → New environment** `bot`
+   - Deployment branches and tags: "Selected branches and tags", add `main` (a manual run from another branch then
+     can't get the key).
+   - Environment secret `OPERATOR_WIF`. The value is the `OPERATOR_WIF` line from `.env`, only the part after `=`.
+     Don't also keep it as a repository secret.
+   - **Settings → Secrets and variables → Actions**, Variables tab: add `BOT_ENABLED` = `true`.
 2. **Settings → Pages**: Source "Deploy from a branch", branch `main`, folder `/ (root)`, then Save.
    The site appears at **https://bawcejawn.github.io/Knode/** within a few minutes. To preview it with sample data
    at any time, add `?demo` to the address.
@@ -263,7 +266,7 @@ All stakes, weeks, results and the seed carry over. `npm run bot -- upgrade canc
 | `pause on --send` (no new deposits) | `pause off --send` | Withdrawals and collecting rewards keep working |
 | `sponsor-limit 0 --send` (optional: set the sponsor cap to 0) | `sponsor-limit 2 --send` | On chain the cap is 2 KOIN. Players pay their own Mana. |
 | `void 12 "reason" --send` | can't be undone | That question just doesn't count |
-| `admin set_operator operator=<new bot address> --as owner --send` | same command with the old address | Then update the `OPERATOR_WIF` secret on GitHub |
+| `admin set_operator operator=<new bot address> --as owner --send` | same command with the old address | Then update the `OPERATOR_WIF` secret of the `bot` environment on GitHub |
 
 Players' withdrawals can never be paused, on purpose: a stolen admin key can never lock anyone's money.
 

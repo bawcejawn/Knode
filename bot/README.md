@@ -106,7 +106,10 @@ Then it checks everything independently:
 3. `npm run bot -- deploy` (dry run). Check the plan, then `npm run bot -- deploy --send`.
 4. The owner registers the block producer key: `admin register_key '{"public_key":"…"}' --as owner`.
 5. Add the seed: `admin seed_deposit_vhp '{"amount":"…"}' --as seed`, then `seed_deposit_koin`.
-6. In GitHub, add the `OPERATOR_WIF` secret and set the variable `BOT_ENABLED=true`.
+6. In GitHub: Settings → Environments → New environment `bot`; under "Deployment branches and tags" choose
+   "Selected branches and tags" and add `main`; add the environment secret `OPERATOR_WIF`. Delete any
+   repository-level `OPERATOR_WIF` secret, so a manual run from another branch can't get the key. Then set the
+   variable `BOT_ENABLED=true`.
 
 ## Rotating the operator key
 
@@ -118,8 +121,8 @@ before; rotate away from it). Nothing in this list has been done for you.
    and keep the private key only in your password manager. Send it a little KOIN for Mana.
 2. Point the contract at it (owner key, on your PC):
    `npm run bot -- admin set_operator operator=<new address> --as owner` (dry run), then add `--send`.
-3. Right away, in GitHub: Settings → Secrets and variables → Actions → `OPERATOR_WIF` → Update secret, paste the new
-   private key. Update `OPERATOR_WIF` in your local `.env` too.
+3. Right away, in GitHub: Settings → Environments → `bot` → `OPERATOR_WIF` → Update secret, paste the new private
+   key. Update `OPERATOR_WIF` in your local `.env` too.
 4. Update `"operator"` in `game-data/deployment.json` to the new address and commit it (otherwise the bot will email
    you that the operator changed).
 5. Run the workflow once by hand (Actions → Kpred bot → Run workflow) and check it is green.
