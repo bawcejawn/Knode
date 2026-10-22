@@ -28,10 +28,11 @@ test("pages declare a Content-Security-Policy (GitHub Pages sends none)", () => 
 test("(blocked) no HTML-string sinks: chain/question data is only ever set as text or attributes", () => {
   const hits = [];
   for (const f of files) read(f).split("\n").forEach((l, i) => {
+    // The one exception: wallet.js QR code = SVG built by the QR library from a URI already checked to be https://koinvault.app/.
+    if (f === "wallet.js" && /qr\.innerHTML = c\.createSvgTag\(/.test(l)) return;
     if (/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function/.test(l)) hits.push(`${f}:${i + 1}`);
   });
-  // The one exception: wallet.js QR code = SVG built by the QR library from a URI already checked to be https://koinvault.app/.
-  assert.deepEqual(hits.filter((h) => !/^wallet\.js:132$/.test(h)), [], hits.join(", "));
+  assert.deepEqual(hits, [], hits.join(", "));
 });
 
 test("(blocked) no postMessage / message listeners an attacker frame or opener could talk to", () => {

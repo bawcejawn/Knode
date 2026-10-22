@@ -718,7 +718,7 @@
     const oq = $("#open-questions");
     oq.replaceChildren(...(open.length ? open.map((q) => questionCard(q, "open")) : [el("div", { class: "empty" }, `No open questions right now. New questions arrive Monday to Saturday at ${localHour(12)} your time.`)]));
     // (In-page ad slots are switched off for now. To bring one back, add an element with data-ad-slot="…" to the page;
-    // loadAds() fills it from site/ads.json.)
+    // loadAds() fills it from site/ads.json. A network (iframe) ad also needs its origin in index.html's CSP frame-src.)
     $("#locked-questions").replaceChildren(...(locked.length ? locked.map((q) => questionCard(q, "locked")) : [el("div", { class: "empty" }, "Nothing waiting. Answered questions show up here until their result is in.")]));
 
     // you
