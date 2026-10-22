@@ -12,11 +12,11 @@
     "check": "tsx scripts/offline-check.ts"
   },
   "dependencies": {
-    "koilib": "latest"
+    "koilib": "9.4.1"
   },
   "devDependencies": {
     "@koinos/sdk-as": "1.5.1",
-    "@koinos/sdk-as-cli": "latest",
-    "tsx": "latest"
+    "@koinos/sdk-as-cli": "1.0.2",
+    "tsx": "4.23.15"
   }
 }

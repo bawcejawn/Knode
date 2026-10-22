@@ -13,6 +13,10 @@
 #>
 param([string]$Root = "C:\kpred-testnet")
 $ErrorActionPreference = "Stop"
+# The official node setup is pinned to a release, checked by its commit (https://github.com/koinos/koinos/releases).
+# To move to a newer release: read its notes, then change BOTH lines to the new tag and the commit GitHub shows for it.
+$KoinosTag = "v2.2.1"
+$KoinosCommit = "7c861cd13681f6fce735e345cc6f563cc6047574"
 function Step($text) { Write-Host "`n== $text ==" -ForegroundColor Cyan }
 function Ok($text) { Write-Host "   OK  $text" -ForegroundColor Green }
 function Note($text) { Write-Host "   $text" }
@@ -32,7 +36,14 @@ Ok ("{0:N0} GB free on {1}:" -f ($free / 1GB), $driveName)
 Step "2/3 Official Koinos node setup, Harbinger testnet settings"
 New-Item -ItemType Directory -Force $Root | Out-Null
 $repo = Join-Path $Root "koinos"
-if (-not (Test-Path $repo)) { git clone --depth 1 https://github.com/koinos/koinos.git $repo; if ($LASTEXITCODE -ne 0) { throw "git clone failed" } }
+if (-not (Test-Path $repo)) {
+  git -c advice.detachedHead=false clone --depth 1 --branch $KoinosTag https://github.com/koinos/koinos.git $repo; if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
+  if ((git -C $repo rev-parse HEAD).Trim() -ne $KoinosCommit) { Remove-Item $repo -Recurse -Force; throw "The downloaded node setup is not release $KoinosTag (commit $KoinosCommit). Nothing was installed." }
+  Ok "official node setup $KoinosTag (commit $($KoinosCommit.Substring(0, 12)))"
+} elseif ((git -C $repo rev-parse HEAD).Trim() -ne $KoinosCommit) {
+  Note "This folder's node setup is not the pinned release $KoinosTag (an older run used the newest code). It keeps working;"
+  Note "to move to the release, stop the node and run: git -C $repo fetch --depth 1 origin tag $KoinosTag; git -C $repo checkout $KoinosTag"
+}
 Set-Location $repo
 if (-not (Test-Path "harbinger")) { throw "The Koinos setup has no 'harbinger' folder - tell Claude." }
 if (-not (Test-Path "config")) { Copy-Item "harbinger\config-example" "config" -Recurse }

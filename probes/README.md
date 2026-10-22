@@ -41,8 +41,12 @@ Open a terminal in this `probes` folder.
 
 ```
 npm install -g yarn
-npm install
+npm ci --ignore-scripts
 ```
+
+Versions are pinned in `package.json` and `package-lock.json` (same koilib and SDK as the game). Use `npm ci`, not
+`npm install`, so nothing newer than the lockfile is ever installed. The probes are a one-off tool: nothing in the
+bot, the website or the GitHub workflows runs them.
 
 **2. Build the probe contract.** This turns `assembly/Kprobe.ts` into `build/release/contract.wasm`.
 
@@ -79,7 +83,8 @@ in this folder. It prints three addresses:
 
 > **Keys rule:** `.env` never leaves your computer. Never paste it, or any private key or seed
 > phrase, into a chat, a screenshot or GitHub. Addresses are fine to share. `.gitignore` already
-> keeps `.env` out of GitHub.
+> keeps `.env` out of GitHub. The probe wallets are for probing only: never reuse one as the bot's
+> `OPERATOR_WIF` or for any other role (`npm run bot -- keys` no longer copies them).
 
 **4. Check the balance.**
 
