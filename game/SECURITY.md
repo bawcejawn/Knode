@@ -1,11 +1,14 @@
-# Game contract — security review (2026-10-17)
+# Game contract — security review (2026-10-17, updated for v4 2026-10-22)
 
 This file is for you and for outside auditors. It lists what could go wrong, what stops it, and which test proves it.
 All tests run on GitHub on every push ("Contract tests"). The longer pre-deploy review, with the fixes it made, is in
 [`docs/security-audit.md`](../docs/security-audit.md).
 
 Contract: `game/assembly/Kpred.ts` (logic) and `Tokens.ts` (every token movement). Mainnet address
-`1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr`. Tests: `game/assembly/__tests__/Kpred.spec.ts` (47 tests).
+`1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr`. Tests: `game/assembly/__tests__/` (86 tests: `Kpred.spec.ts`, the v4 rules in
+`Kpred.v4.spec.ts`, and the audit's proof, red-team and fuzz tests), plus `game/scripts/storage-compat.test.ts`
+(the upgraded code reads everything the live contract stored). The v4 upgrade plan is in
+[`docs/UPGRADE-2026-10.md`](../docs/UPGRADE-2026-10.md).
 
 ## Whose money is at risk, and how it's protected
 
@@ -20,14 +23,18 @@ Contract: `game/assembly/Kpred.ts` (logic) and `Tokens.ts` (every token movement
 | 7 | A last-minute whale deposit grabs the week. | A deposit counts from the next week; production is time-weighted; winners are the top 30% by headcount, not by stake. | "deposits before the game starts count from week 0…", "a deposit just before the close barely moves the basket split", "winners are the top 30% of staked players by headcount…" |
 | 8 | Answers after the deadline, invalid options, answering twice. | Lock time, option range and one answer per question are enforced on-chain. | "answers need an open question, a valid option, and only once", "option and timing boundaries are exact…" |
 | 9 | The bot posts a question whose answer is already known, or whose window runs past the week. | Windows must start after answers close and end before the week can close (overflow-proof check). | "only the operator posts; rules on lock and window are enforced", "refuses a question whose window ends after the week is due to close" |
-| 10 | A wrong result is posted. | Results only after the blocks are final; the owner can correct or void before the week closes; block hashes are published so anyone can recheck. | "resolutions: operator only, after the window is final…", "the owner can VOID an open question…" |
+| 10 | A wrong result is posted, even a late one. | Results only after the blocks are final. A week closes no sooner than close_delay (12 h) after its last result, so the owner can always correct or void it; changes stop a quarter of that time before the close and each change restarts it. Block hashes are published so anyone can recheck; the bot emails on any correction or mismatch. | "resolutions: operator only…", "the owner can VOID an open question…", AB-004, INS-3, "a change is allowed until a quarter of close_delay before the close…" |
 | 11 | The owner takes players' money. | The owner has no function that moves stakes or prizes; the fee is capped at what was earned. | "owner-only functions refuse everyone else…", "the owner cannot take more than the owner share" |
 | 12 | The seed is pulled out suddenly. | Only the seed owner, only after a 48-hour public timelock, never more than the seed. | "only the seed owner adds or withdraws it, and only after the timelock", "a KOIN seed withdrawal pays what KOIN is on hand…" |
 | 13 | Malicious new code is uploaded. | Needs the owner's signature, the exact announced code, and the 48-hour wait; the new code must keep the contract's protections switched on. | "code can be replaced only with the owner, the announced bytecode, after the timelock" |
 | 14 | Someone (including the deploy key) moves the pool's tokens directly. | `authorize` refuses every outside token move. | "never lets anyone move the contract's tokens from outside" |
-| 15 | Someone drains the pool's Mana with sponsored transactions. | Sponsorship only for one valid answer, settle or claim, with a capped rc_limit; the owner can lower it or switch it off. | "pays only for one valid answer / settle / claim with a small rc_limit", "the owner can lower, raise (max 10 KOIN) or switch off…" |
+| 15 | Someone drains the pool's Mana with sponsored transactions. | Sponsorship only for one answer, settle or claim that will succeed (no claim before the week is final), with an rc_limit between a floor and the cap, canonical (unpadded) arguments, and at most "stake ÷ cap" answers per account per week; the owner can lower it or switch it off. | "pays only for one valid answer / settle / claim…", AB-003, sponsor-low-rc, sponsor-drain, "rc_limit must be between the floor…" |
 | 16 | Big numbers overflow. | Reward maths uses 128-bit arithmetic. | "a whale with 1 billion VHP and a minnow with 1 VHP are paid exactly…" |
 | 17 | A week can never close (stuck pot). | Weeks close automatically as a side effect of play; all-voided or no-scorer weeks roll the pot forward. | "weeks close, settle and finalize as a side effect of normal play", "a week where every question is voided…", "with no scorers the pot rolls…" |
+| 18 | Cheap accounts that score 0 push the winners' cutoff down. | From the week after v4, the 30% is counted over players with at least one point; eligibility also needs a stake above 0 and that week's minimum stake (owner-settable, never 0, from the next week). | sybil-cutoff, zero-stake-winner, "the minimum stake can change…", "winners are the top 30% of players WITH POINTS…" |
+| 19 | A stolen owner key takes ownership in one transaction, or uses an old announcement. | accept_owner waits 28,800 blocks (~a day) after propose_owner; announced upgrades and seed withdrawals expire 7 days after their timelock. | INS-1, INS-2, INS-4, "announcements expire 7 days after their timelock" |
+| 20 | The operator posts a question nobody can answer in time. | Answers stay open at least 1/168 of a week (1 hour). | INS-5, "answers stay open at least 1 hour" |
+| 21 | Finalizing a huge week runs out of compute. | Finalization is paged (500 places per transaction). | "finalization is paged…" |
 
 ## Trust assumptions (not fixable in code)
 

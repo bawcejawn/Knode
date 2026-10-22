@@ -4,6 +4,39 @@ multiple-choice questions about block producers and network data; top scorers sh
 
 Folders: the analysis tools are in this folder; `probes/` holds the testnet contract probes.
 
+## Open network: anyone can influence the results
+
+Koinos is an open network. Anyone can stake VHP, run a block producer or send transactions, and each of those changes
+what the blocks show. So players, producers and anyone else can influence the results of the questions. That is
+allowed: every way of influencing a result counts as part of the game.
+
+The project takes part too. It runs the Knode Swap desk (`1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR`, which produces blocks)
+and a block-producer node of its own. Both can appear in questions like any other producer. Only the game's own pool
+(the Kpred contract) is never a subject.
+
+A question is **voided** (it counts for nobody) when:
+
+1. a producer it names goes offline during its window (the longest silence is longer than chance allows; the rule and
+   its numbers are saved with the question), or
+2. **VHP swing:** a producer it is about (its subjects, or every member of a group question), or the whole network's
+   VHP for network-wide questions (M4–M7: block gaps, block interval, empty blocks, transactions), gained or lost
+   **more than `voidVhpSwing`** of its VHP between the question's release and the end of its window.
+   `voidVhpSwing` is a setting in `game-data/game.json` (`model.voidVhpSwing`, 0.10 = 10%).
+
+How the VHP-swing rule is applied, exactly:
+
+- **At release** the generator reads the VHP balance of each producer the question is about (or the VHP token's total
+  supply, saved under the key `network`) at the newest block, and saves it in the question as `model.vhp`, with that
+  block height (`model.vhpHeight`) and the limit (`model.voidVhpSwing`). All three are part of the `paramsHash` posted
+  on chain, so they cannot be changed afterwards.
+- **At the window's end** the bot reads the same balances again on its first run at or after the window's last block
+  (it runs every hour, so normally within an hour; never before that block). It saves them in the question file as
+  `vhpEnd` (block height, time and values) before resolving.
+- The question is void if, for any of those producers (or the network), `|end − release| > voidVhpSwing × release`
+  (exact integer arithmetic). The result's `vhpCheck` lists both readings and each change, so anyone can check it.
+- Questions released before this rule existed have no `model.vhp`; they keep the rules they were released with.
+
+
 ## Step 0 — Koinos producer & reward analysis
 
 Read-only. No wallet, no keys, no transactions. It downloads recent public blocks and prints

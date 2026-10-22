@@ -55,8 +55,11 @@ The keys are written to **`C:\kprediction\.env`**. Open it with `notepad .env`. 
 |---|---|---|
 | **contract** | `CONTRACT_WIF` | The game's own address. **Send it nothing.** It must stay empty until deploy. |
 | **admin** | `OWNER_WIF` | Owner and seed owner. **Back it up offline** (paper or a password manager). |
-| **bot** | `OPERATOR_WIF` | Yesterday's probe owner wallet (~52 KOIN). Posts and resolves questions; it can't move game funds. |
-| **player** | `PLAYER_WIF` | Yesterday's probe helper wallet, used for testing. |
+| **bot** | `OPERATOR_WIF` | A new wallet used only by the bot (send it some KOIN for Mana). Posts and resolves questions; it can't move game funds. |
+| **player** | `PLAYER_WIF` | A new wallet, used for testing. |
+
+`keys` no longer reuses the probe wallets. If your bot key is still the old probe owner wallet, rotate it: see
+"Rotating the operator key" in bot/README.md.
 
 ## Step 3 — Fund the wallets
 

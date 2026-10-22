@@ -28,8 +28,8 @@ export interface Chain {
   read(method: string, args?: any): Promise<any>;
   /** One transaction with one or more operations, signed by `signers` (the first is the payee, whose nonce is
    *  used). `sponsored`: optional request for the contract to pay Mana for one answer, settle, or claim by a
-   *  staked player, up to the on-chain cap (2 KOIN; the owner can set it to 0). Players pay their own Mana.
-   *  The project is not paying anyone's Mana right now. */
+   *  staked player, up to the on-chain cap (2 KOIN at deployment; the owner can set it to 0). The website never asks
+   *  for it (players pay their own Mana); the bot uses it for settles. */
   send(calls: Call[], signers: Signer[], opts?: { sponsored?: boolean; payer?: string; rcLimitKoin?: number }): Promise<Sent>;
   mana(address: string): Promise<bigint>;
 }

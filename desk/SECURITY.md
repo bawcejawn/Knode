@@ -38,3 +38,20 @@ Latest results: **25/25 tests passed**, **34/34 offline checks passed**. Release
 - If people swap faster than the node produces, "available" drops to zero until blocks refill it.
 - If the node is offline, there is no refill, but swaps still work up to what is there.
 - Users pay their own Mana for a swap.
+
+## Next Desk upgrade (no contract change now)
+
+Found by the audit of 2026-10-21 and left for the next Desk upgrade, by decision. Until then the bot watches the
+Desk every hour (owner and treasury against `desk-data/deployment.json`, announced upgrades and treasury changes,
+its producer key) and emails you on any change.
+
+- **AB-002, the treasury timelock protects nothing while treasury = owner.** Row 10 above assumes the treasury is a
+  different wallet. Today `desk-data/deployment.json` has owner = treasury, so whoever holds the owner key can withdraw
+  everything at once, straight to "the treasury". Now: move the treasury to a cold wallet (`npm run desk -- treasury
+  schedule <cold address> --send`, wait 48 h, `treasury apply --send`) and keep that key off this PC. At the next
+  upgrade: refuse a treasury equal to the owner, in `init` and in `schedule_treasury`.
+- **AB-014 (Desk part), announcements never expire.** An announced upgrade or treasury change stays usable forever
+  after its 48 h. At the next upgrade: let them be carried out only for a limited time after the timelock (the game
+  uses 7 days), then they must be announced again. Until then: cancel any announcement you will not apply
+  (`upgrade cancel` / `treasury cancel`), and after any owner change cancel what the old key announced.
+

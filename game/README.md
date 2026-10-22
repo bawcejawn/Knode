@@ -10,24 +10,33 @@ anyone can re-check against the chain.
 1. **Stake.** Deposit VHP, or KOIN (burned 1:1 into VHP). A deposit counts from the **next** week (or from
    week 0 if made before the game starts). Minimum stake to play: 1 VHP. No maximum.
 2. **Answer.** The operator posts the day's questions (option count, answer deadline, observation window,
-   and the hash of the full question). Players answer before the deadline and pay their own Mana.
-   The contract still has optional code that can sponsor Mana for one valid answer, settle, or claim
-   by a staked player, and refuses anything else before it can spend the pool's Mana. That option is
-   capped on chain at 2 KOIN, and the owner can set the cap to 0. The project is not paying anyone's Mana right now.
+   and the hash of the full question). Answers stay open at least 1 hour (1/168 of a week). Players answer
+   before the deadline and pay their own Mana.
+   The contract can also pay the Mana for one answer, settle or claim by a staked player (the bot uses it for
+   settles). It pays only for a transaction that will succeed, with an rc_limit between a floor (half the cap
+   unless the owner sets one) and the cap (2 KOIN at deployment, 10 at most), with canonical arguments, and for
+   each account at most "stake ÷ cap" answers a week plus one settle and one claim. The owner can set the cap to 0.
 3. **Resolve.** After a question's window has ended and its blocks are final, the operator posts the
    winning option (or "void") with the hash of the blocks used. Before the week closes, the owner can
-   correct a resolution.
-4. **Close.** After the week ends (plus a correction delay), anyone can close it. The contract measures the
+   correct a resolution (changes stop a quarter of the correction delay before the close; each change
+   restarts the delay).
+4. **Close.** After the week ends **and** after its last resolution or correction, plus the correction delay
+   (12 hours) after whichever is later, anyone can close it. A late result therefore never closes its week at once. The contract measures the
    pool's gain (everything it holds minus everything it owes) and splits it:
    - 5% producer fee, in KOIN
    - 95% winners' pot (a pot with no winners carries into the next week without a second fee)
 5. **Settle.** During the settlement window, anyone can settle any player. The sender pays the Mana. This counts their
    correct answers and adds their stake to a points table kept on-chain. A player is eligible if they
-   answered more than one non-void question, kept at least the minimum stake, and didn't withdraw that week.
+   answered more than one non-void question, has a stake (more than 0) of at least that week's minimum stake,
+   and didn't withdraw that week. The owner can change the minimum stake (`set_min_stake`, never 0); a change
+   applies from the next week, never the one being played.
 6. **Finalize.** After settlement, anyone can finalize. The contract walks down the points table from the
-   top score until the winners hold **at least 30% of eligible stake**. Everyone tied at the cutoff wins.
-7. **Claim.** Each winner claims `pot × (points × stake) ÷ (Σ points × stake over all winners)`, paid in VHP
-   to their wallet. If nobody scored, the pot rolls into the next week.
+   top score until the winners are **at least 30% of the eligible players who scored at least one point**
+   (players with 0 points never win and, from the week after the v4 upgrade, do not count toward the 30%).
+   Everyone tied at the cutoff wins. Big weeks are finalized in pages of 500 places, one per transaction
+   (every game action also runs the next page), so no transaction loops over every winner.
+7. **Claim.** Each winner is paid from two baskets, in VHP: basket A (65% of what the house earned) by place
+   alone, basket B by place × stake. If nobody scored, the pot rolls into the next week.
 
 Withdraw any amount any time. Withdrawing part of this week's stake keeps you in the week at the lower stake; withdrawing all of it takes you out of that week. Unclaimed rewards stay in the
 pool and keep producing until claimed, but they are not stake until you claim and re-stake them.
@@ -59,12 +68,15 @@ call `close_week` or `finalize_week` by hand (they still exist as a backup, and 
 |---|---|---|
 | Player | deposit, withdraw, answer, settle, claim (the player pays the Mana) | answer without stake; act for another wallet |
 | Operator (bot key) | post and resolve questions | move any funds or change settings |
-| Owner | correct resolutions before close, set operator, pause **new** deposits, register the node key, claim the 5% producer fee, schedule an upgrade | take players' stakes or rewards, or the seed; upload code without the timelock |
+| Owner | correct resolutions before close, set operator, pause **new** deposits, register the node key, claim the 5% producer fee, set the minimum stake (from next week, never 0) and the sponsorship limits, schedule an upgrade | take players' stakes or rewards, or the seed; upload code without the timelock; hand over ownership in less than 28,800 blocks (about a day) |
 | Seed owner | add seed VHP/KOIN, withdraw it after an announced timelock | anything else |
 
 The contract's own deploy key is powerless after setup: it can't move tokens or replace the code. Code
 upgrades need the owner's signature **and** the exact bytecode announced with `schedule_upgrade`, and only
-after the timelock has passed.
+after the timelock has passed. Announced upgrades and seed withdrawals expire 7 days after their timelock ends
+(announce again for a fresh 48-hour notice).
+
+See the main README, "Open network", for who can influence results and when a question is voided.
 
 ## The seed
 
