@@ -48,13 +48,67 @@ function load(sessionInit) {
 
 const saved = JSON.stringify({ sessionId: "sid-1", secret: SECRET, expiresAt: Date.now() + 600000, address: "1Victim" });
 
-test("KOIN Vault secret must not travel in a URL query string", async () => {
+// (repo) The audit's first case asserted the secret never appears in any URL. KOIN Vault's API only accepts it as a
+// query parameter for its two GET status calls, so the owner decided (2026-10): the query string for exactly those
+// two calls, POST bodies for everything else, and the secret in page memory only. These cases check that policy.
+const STATUS = /^https:\/\/koinvault\.app\/api\/dapp\/(status|request-status)\?/;
+
+test("KOIN Vault secret travels in a URL only for the two status calls, as GET", async () => {
   const { W, fetched } = load({ "kw-vault": saved });
   W.init({ provider: {}, onChange() {} });
   await new Promise((r) => setImmediate(r));
   assert.ok(fetched.length > 0, "status was checked");
-  const leaky = fetched.filter((f) => f.url.includes(SECRET));
-  assert.equal(leaky.length, 0, `secret sent in URL: ${leaky.map((f) => f.url).join(" | ")}`);
+  for (const f of fetched.filter((x) => x.url.includes(SECRET))) {
+    assert.match(f.url, STATUS, `secret sent in a URL other than a status call: ${f.url}`);
+    assert.equal(f.opt?.method ?? "GET", "GET");
+  }
+});
+
+test("a whole session (connect, send, disconnect): bodies everywhere else, and the secret never reaches storage", async () => {
+  const fetched = [], ses = new Map(), loc = new Map();
+  const st = (m) => ({ getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) });
+  const els = [];
+  const node = () => { const e = { attrs: {}, on: {}, append() {}, remove() {}, addEventListener(t, f) { e.on[t] = f; }, setAttribute(k, v) { e.attrs[k] = v; }, isConnected: true, style: {} }; els.push(e); return e; };
+  const win = {
+    navigator: { userAgent: "Desktop", maxTouchPoints: 0, platform: "Win32" },
+    document: { createElement: node, getElementById: () => null, head: node(), body: node(), hidden: false },
+    sessionStorage: st(ses), localStorage: st(loc), URL, URLSearchParams, console, Date, JSON, Promise,
+    setTimeout: (f, ms) => (ms === 2000 ? setImmediate(f) : 0), clearTimeout() {},
+    fetch: async (url, opt) => {
+      fetched.push({ url: String(url), opt });
+      const u = String(url);
+      const body = u.includes("/create") ? { ok: true, uri: "https://koinvault.app/?connect=sid-1", sessionId: "sid-1", secret: SECRET, expiresAt: Date.now() + 600000 }
+        : u.includes("/request-status") ? { ok: true, status: "approved", txid: "0xabc" }
+        : u.includes("/request") ? { ok: true, requestId: "req-1", expiresAt: Date.now() + 600000 }
+        : { ok: true, connected: true, address: "1Victim" };
+      return { ok: true, status: 200, json: async () => body };
+    },
+  };
+  win.window = win;
+  vm.createContext(win);
+  vm.runInContext(src, win);
+  const W = win.KWallet;
+  W.init({ provider: {}, onChange() {} });
+  const p = W.connect();
+  els.filter((e) => e.attrs.class === "kw-opt")[1].on.click();
+  assert.equal(await p, "1Victim");
+  await W.send("test", [{ call_contract: { contract_id: "1X", entry_point: 1, args: "" } }]);
+  W.disconnect();
+  await new Promise((r) => setImmediate(r));
+  const paths = fetched.map((f) => new URL(f.url).pathname.replace("/api/dapp/", ""));
+  for (const want of ["create", "status", "request", "request-status", "disconnect"]) assert.ok(paths.includes(want), `called ${want}`);
+  for (const f of fetched) {
+    const path = new URL(f.url).pathname.replace("/api/dapp/", "");
+    if (path === "status" || path === "request-status") {
+      assert.equal(f.opt?.method, "GET");
+      assert.ok(f.url.includes(SECRET), `${path} carries the secret in its query`);
+    } else {
+      assert.ok(!f.url.includes("secret="), `${path} must not put credentials in its URL: ${f.url}`);
+      assert.equal(f.opt?.method, "POST");
+      if (path !== "create") assert.ok(String(f.opt.body).includes(SECRET), `${path} posts the secret in its body`);
+    }
+  }
+  for (const [k, v] of [...ses, ...loc]) assert.ok(!String(v).includes(SECRET), `secret found in storage under ${k}`);
 });
 
 test("KOIN Vault secret should not sit in origin-wide sessionStorage in clear after connecting", async () => {

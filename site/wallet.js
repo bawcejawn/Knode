@@ -2,13 +2,13 @@
  *   - Kondor: the browser extension (desktop).
  *   - KOIN Vault: passkey smart accounts on the phone (https://koinvault.app), via its website connection API
  *     (docs/website-integration.md in therexdev/koin-vault). The user approves every transaction in KOIN Vault;
- *     this page never sees a key or a passkey. The session secret is sent only in request bodies, never in a URL, and
- *     lives only in this page's memory (never in storage): reloading or opening another page means connecting again.
+ *     this page never sees a key or a passkey. The session secret lives only in page memory (never in storage); it goes
+ *     in a URL only for KOIN Vault's two GET status calls (status, request-status), every other call posts it.
  * Usage: KWallet.init({ provider, onChange(address) }); await KWallet.connect(); await KWallet.send(label, ops).
  * `ops` are koilib operations ({ call_contract: { contract_id, entry_point, args } }), built with onlyOperation. */
 (() => {
   "use strict";
-  const VAULT = "https://koinvault.app";
+  const VAULT = "https://koinvault.app"; const STATUS_CALLS = new Set(["status", "request-status"]); // GET-only in KOIN Vault's API
   const lib = window.koilib || window.koinos || window;
   const store = {
     get: (s, k) => { try { return s.getItem(k); } catch { return null; } },
@@ -54,9 +54,9 @@
   function close(byUser = false) { if (modal) { modal.remove(); modal = null; } const f = onClose; onClose = null; if (byUser && f) f(); }
 
   // ── KOIN Vault API ──
-  async function vaultApi(path, { body } = {}) {
+  async function vaultApi(path, { body, query } = {}) {
     const url = new URL("/api/dapp/" + path, VAULT);
-    // Session credentials go only in the JSON body (POST), never in the URL, where logs and proxies would keep them.
+    if (query) { if (!STATUS_CALLS.has(path)) throw new Error("credentials go in a URL only for KOIN Vault's status calls"); url.search = new URLSearchParams(query).toString(); }
     const res = await fetch(url, {
       method: body === undefined ? "GET" : "POST",
       headers: body === undefined ? {} : { "Content-Type": "application/json" },
@@ -90,7 +90,7 @@
       if (Date.now() > W.session.expiresAt) return dropVault("KOIN Vault connection expired (they last 30 minutes). Connect again.");
       if (!document.hidden) {
         try {
-          const st = await vaultApi("status", { body: creds() }); fails = 0;
+          const st = await vaultApi("status", { query: creds() }); fails = 0;
           if (!st.connected || (W.address && st.address !== W.address)) return dropVault("KOIN Vault disconnected. Connect again to keep playing.");
         } catch (e) {
           if (e.status === 404 || e.status === 410) return dropVault("KOIN Vault connection ended. Connect again.");
@@ -136,7 +136,7 @@
       while (!cancelled && Date.now() < until) {
         await sleep(2000);
         if (cancelled) break;
-        let st; try { st = await vaultApi("status", { body: { sessionId: s.sessionId, secret: s.secret } }); }
+        let st; try { st = await vaultApi("status", { query: { sessionId: s.sessionId, secret: s.secret } }); }
         catch (e) { if (e.status === 404 || e.status === 410) throw new Error("The connection expired. Try again."); status.textContent = "Connection hiccup, still waiting…"; continue; }
         if (st.connected && st.address) {
           W.session = { sessionId: s.sessionId, secret: s.secret, expiresAt: s.expiresAt };
@@ -222,7 +222,7 @@
     try {
       while (Date.now() < until) {
         await sleep(2000);
-        let r; try { r = await vaultApi("request-status", { body: { ...creds(), requestId: req.requestId } }); }
+        let r; try { r = await vaultApi("request-status", { query: { ...creds(), requestId: req.requestId } }); }
         catch (e) { if (e.status === 404 || e.status === 410) throw new Error("The request expired before it was approved."); continue; }
         if (r.status === "pending") { if (stop) throw new Error("Still waiting in KOIN Vault. Approve or reject it there; don't send it again from here."); continue; }
         if (r.status === "submitting") { status.textContent = "Approved. Sending…"; continue; }
@@ -251,7 +251,7 @@
         const s = JSON.parse(saved);
         if (s && s.expiresAt > Date.now()) {
           W.session = { sessionId: s.sessionId, secret: s.secret, expiresAt: s.expiresAt };
-          vaultApi("status", { body: creds() }).then((st) => {
+          vaultApi("status", { query: creds() }).then((st) => {
             if (st.connected && st.address === s.address) { setAddress("vault", st.address); watchVault(); } else dropVault();
           }).catch((e) => { if (e.status === 404 || e.status === 410) dropVault(); });
         }
