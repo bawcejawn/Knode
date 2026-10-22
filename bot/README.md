@@ -20,10 +20,11 @@ hold up a week.
 
 - **The bot's key (operator) can't move any funds.** It can only post and resolve questions. A wrong
   resolution can be corrected by the owner before the week closes, and the owner can replace the operator.
-- **No question is ever lost.** In the GitHub run, a day's questions are saved *before* they are posted, and the
-  workflow's publish job pushes `game-data/` at the end of every run, even a failed one. If the bot crashes after
-  posting but before saving, the next run finds the questions on chain by their hash. If a question it doesn't
-  recognise is on chain, it is resolved as VOID so its week can still close.
+- **No question is ever lost.** In the GitHub run, a day's questions are saved in the runner (a local commit)
+  *before* they are posted, and the workflow's publish job pushes `game-data/` at the end of every run, even a failed
+  one. If the bot crashes after posting but before saving, the next run finds the questions on chain by their hash.
+  If the runner itself dies mid-run, its saved files never reach the publish job: a question it posted is then
+  unknown to the next run, which emails you and resolves it as VOID so its week can still close.
 - **The bot job holds no push token.** It runs with a read-only GitHub token (not left in `.git/config`) and installs
   exactly `package-lock.json` with install scripts off. A separate `publish` job, which runs no repository code,
   copies only `game-data/questions/*.json`, `bot-state.json`, `state.json` and `index.json` and pushes them.
@@ -140,7 +141,7 @@ The publish job already refuses anything outside `game-data/`. To have GitHub en
   `game-data/game.json`, and the files in the repository's root folder by name (`package.json`, `package-lock.json`,
   `common.ts`, `resolver.ts`, `generator.ts`, … as they are listed there). Do not use a bare `*.json`: it could also
   match the bot's own files under `game-data/`.
-- Check it before relying on it: from a test branch, a push changing `site/` must be refused for a non-admin token,
+- This advice has not been tested by the project. Check it before relying on it: from a test branch, a push changing `site/` must be refused for a non-admin token,
   and the next hourly run must still publish `game-data/`.
 - Bypass list: **Repository admin** (you), so your own pushes and pull requests still work. Do not add GitHub Actions.
 

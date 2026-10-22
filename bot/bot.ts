@@ -981,11 +981,16 @@ async function upgrade(sub: string | undefined, send: boolean) {
   if ((receipt as any)?.reverted) throw new Error(`upload reverted: ${JSON.stringify((receipt as any).logs)}`);
   await transaction.wait("byBlock", 300_000).catch(() => { throw new Error("Sent but not confirmed within 5 minutes. Check `npm run bot -- upgrade status` before trying again."); });
   log(`    uploaded — Mana used ${showKoin((receipt as any).rc_used)}`);
-  log("2/2 Clearing the notice ...");
-  await act("owner", "cancel_upgrade", {}, true);
+  // The new code is live from here on, whatever happens next: record it.
   dep.wasmSha256 = local.slice(2);
   dep.upgradedAt = new Date().toISOString();
   writeJson(P.deployment, dep);
+  log("2/2 Clearing the notice ...");
+  if (!(await act("owner", "cancel_upgrade", {}, true))) {
+    log(`\n✖ The code is uploaded (${P.deployment} is updated), but clearing the notice failed. Run: npm run bot -- upgrade cancel --send`);
+    process.exitCode = 1;
+    return;
+  }
   log(`\nDone. Commit ${P.deployment}. Check everything with: npm run bot -- status`);
 }
 
@@ -1018,7 +1023,7 @@ const ROLES: Record<string, { key: string; fallback?: string }> = {
   owner: { key: "OWNER_WIF" }, seed: { key: "SEED_WIF", fallback: "OWNER_WIF" }, operator: { key: "OPERATOR_WIF" }, player: { key: "PLAYER_WIF" },
 };
 
-async function act(role: string, method: string, args: any, send: boolean) {
+async function act(role: string, method: string, args: any, send: boolean): Promise<boolean> {
   const P = paths(E.GEN_DIR ?? "game-data");
   const dep = readJson(P.deployment, null);
   if (!dep?.contract) throw new Error(`${P.deployment} not found — deploy first.`);
@@ -1041,10 +1046,11 @@ async function act(role: string, method: string, args: any, send: boolean) {
   log(`As ${role} (${signer.getAddress()}) on ${rpc}:`);
   for (const c of calls) log(`  ${c.contract ? `${pull[method][1]}.` : ""}${c.method} ${JSON.stringify(c.args)}`);
   if (method === "seed_deposit_koin" || method === "deposit_koin") log(`  note: moving KOIN needs this wallet's Mana ≥ the amount (${showKoin(args.amount)}); the Mana moves with it.`);
-  if (!send) { log("\nDry run only — nothing was sent. Add --send to send it."); return; }
+  if (!send) { log("\nDry run only — nothing was sent. Add --send to send it."); return false; }
   const r = await chain.send(calls, [signer], { rcLimitKoin: 5 });
   log(r.ok ? `✔ done (Mana used ${showKoin(r.rcUsed)})  transaction ${r.txId}` : `✖ ${r.error}`);
   if (!r.ok) process.exitCode = 1;
+  return r.ok;
 }
 
 /** Friendly commands (amounts in whole KOIN / VHP). Each is a dry run unless --send is added. */
