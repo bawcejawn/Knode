@@ -57,7 +57,8 @@ test("KOIN Vault secret travels in a URL only for the two status calls, as GET",
   const { W, fetched } = load({ "kw-vault": saved });
   W.init({ provider: {}, onChange() {} });
   await new Promise((r) => setImmediate(r));
-  assert.ok(fetched.length > 0, "status was checked");
+  // A session saved by the old page is no longer restored (AB-027): it is deleted without being used.
+  assert.equal(fetched.length, 0, "an old saved session is not used");
   for (const f of fetched.filter((x) => x.url.includes(SECRET))) {
     assert.match(f.url, STATUS, `secret sent in a URL other than a status call: ${f.url}`);
     assert.equal(f.opt?.method ?? "GET", "GET");
@@ -124,11 +125,11 @@ test("KOIN Vault secret should not sit in origin-wide sessionStorage in clear af
   assert.ok(!raw.includes(SECRET), `secret readable from sessionStorage by any same-origin script: ${raw}`);
 });
 
-test("(blocked) the restored session is re-checked before use and dropped when the wallet reports another address", async () => {
-  const { W, fetched } = load({ "kw-vault": JSON.stringify({ sessionId: "sid-1", secret: "x", expiresAt: Date.now() + 600000, address: "1Attacker" }) });
-  let addr = "unset";
-  W.init({ provider: {}, onChange(a) { addr = a; } });
+test("(blocked) a session saved in sessionStorage (old page, or planted by another page of the origin) is deleted and never adopted", async () => {
+  const { W, fetched, ses } = load({ "kw-vault": JSON.stringify({ sessionId: "sid-1", secret: "x", expiresAt: Date.now() + 600000, address: "1Attacker" }) });
+  W.init({ provider: {}, onChange() {} });
   await new Promise((r) => setImmediate(r));
-  assert.ok(fetched.length > 0);
-  assert.notEqual(W.address, "1Attacker"); // status says 1Victim -> dropped, attacker-planted address not adopted
+  assert.equal(fetched.length, 0);
+  assert.equal(W.address, null);
+  assert.equal(ses.getItem("kw-vault"), null);
 });

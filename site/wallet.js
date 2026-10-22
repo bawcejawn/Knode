@@ -8,6 +8,13 @@
  * `ops` are koilib operations ({ call_contract: { contract_id, entry_point, args } }), built with onlyOperation. */
 (() => {
   "use strict";
+  // GitHub Pages cannot send X-Frame-Options or frame-ancestors, so a wallet page refuses to run inside a frame
+  // (another site could lay it under its own content and trick a click).
+  if (window.top !== window.self) {
+    document.documentElement.style.display = "none";
+    try { window.top.location.replace(window.self.location.href); } catch { /* a parent we may not navigate: stay hidden */ }
+    return;
+  }
   const VAULT = "https://koinvault.app"; const STATUS_CALLS = new Set(["status", "request-status"]); // GET-only in KOIN Vault's API
   const lib = window.koilib || window.koinos || window;
   const store = {
@@ -242,21 +249,9 @@
 
   function init({ provider, onChange, toast, status } = {}) {
     W.provider = provider; W.onChange = onChange || (() => {}); W.toast = toast; W.status = status;
-    // A connection saved by an earlier version of this page (it kept the secret in sessionStorage): take it out of
-    // storage at once, keep it in memory only, and check it again before use.
-    const saved = store.get(sessionStorage, "kw-vault");
-    if (saved) {
-      store.set(sessionStorage, "kw-vault", null);
-      try {
-        const s = JSON.parse(saved);
-        if (s && s.expiresAt > Date.now()) {
-          W.session = { sessionId: s.sessionId, secret: s.secret, expiresAt: s.expiresAt };
-          vaultApi("status", { query: creds() }).then((st) => {
-            if (st.connected && st.address === s.address) { setAddress("vault", st.address); watchVault(); } else dropVault();
-          }).catch((e) => { if (e.status === 404 || e.status === 410) dropVault(); });
-        }
-      } catch { /* unreadable: ignore it */ }
-    }
+    // An earlier version of this page kept the KOIN Vault session in sessionStorage. Delete any such entry and never
+    // use it: another page of this origin could have written it, and the user has not chosen it on this page.
+    store.set(sessionStorage, "kw-vault", null);
   }
 
   window.KWallet = {
