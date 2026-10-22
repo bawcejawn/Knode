@@ -26,8 +26,8 @@ import { Provider } from "koilib";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
-import { BLOCKS_PER_DAY, fmt, pct, quant, sampleThresholds, optionFor, syncBlocks, readCsv, type Blk } from "./common.ts";
-import { scoreQuestion } from "./resolver.ts";
+import { BLOCKS_PER_DAY, fmt, pct, quant, sampleThresholds, optionFor, syncBlocks, readCsv, readVhp, MAINNET_VHP, type Blk } from "./common.ts";
+import { scoreQuestion, paramsHashOf, vhpSubjects } from "./resolver.ts";
 import { pathToFileURL } from "node:url";
 
 const DIR = process.env.GEN_DIR ?? "generator-data"; // the bot uses game-data/ (committed, public)
@@ -45,7 +45,10 @@ type Game = {
   menus: Record<string, string[]>; // template ids per tier, in preference order (shuffled daily)
   enabled: string[]; // template ids allowed live (update from the backtest verdicts)
   model: { rateDays: number; calibDays: number; aggDays: number; minDaily: number; minSmallDaily: number; minExpected: number; maxDrift: number; voidAlpha: number; tolerance: number; step: number; pairCleanDays?: number;
-    coreRateDays?: number; smallRateDays?: number; minVoidBlocks?: number; cleanDays?: number; reliabilityDays?: number; maxVoidHistory?: number };
+    coreRateDays?: number; smallRateDays?: number; minVoidBlocks?: number; cleanDays?: number; reliabilityDays?: number; maxVoidHistory?: number;
+    /** Void a question when a producer it is about (or the network, for M4–M7) gains or loses MORE than this share of
+     *  its VHP between release and the window's end (0.10 = 10%). Saved with each question at release. */
+    voidVhpSwing?: number };
 };
 
 function nextMonday(): string {
@@ -68,7 +71,7 @@ function loadGame(): Game {
       // From the 120-day backtest (model v5). E3/M9 are fair but void ~6% (smaller nodes have more outages).
       enabled: ["E1s", "E2s", "E3", "M1", "M4", "M5", "M6", "M7", "M9", "M10", "H1", "H3"],
       model: { rateDays: 2, calibDays: 7, aggDays: 3, minDaily: 1400, minSmallDaily: 20, minExpected: 60, maxDrift: 0.25, voidAlpha: 0.001, tolerance: 0.05, step: 1200,
-        pairCleanDays: 14, coreRateDays: 0.25, smallRateDays: 1, minVoidBlocks: 600, cleanDays: 2, reliabilityDays: 14, maxVoidHistory: 0.03 },
+        pairCleanDays: 14, coreRateDays: 0.25, smallRateDays: 1, minVoidBlocks: 600, cleanDays: 2, reliabilityDays: 14, maxVoidHistory: 0.03, voidVhpSwing: 0.1 },
     };
     fs.mkdirSync(DIR, { recursive: true });
     fs.writeFileSync(file, JSON.stringify(g, null, 2));
@@ -295,7 +298,8 @@ type Question = {
   subjects: string[]; group?: string[]; unit: string;
   releaseHeight: number; lockHeight: number; lockTime?: number; windowStart: number; windowEnd: number;
   thresholds: number[]; options: Option[]; predicted: number[];
-  model: { version: string; rates: Record<string, number>; forecast?: Record<string, number>; window: number; voidAlpha?: number; minVoidBlocks?: number }; // rates and the void rule are fixed at release; forecast: what set the options
+  model: { version: string; rates: Record<string, number>; forecast?: Record<string, number>; window: number; voidAlpha?: number; minVoidBlocks?: number;
+    vhp?: Record<string, string>; vhpHeight?: number; voidVhpSwing?: number }; // rates and the void rules are fixed at release; forecast: what set the options
   paramsHash?: string; result?: any;
 };
 
@@ -520,13 +524,25 @@ async function run() {
         thresholds: t, options: rangeOptions(t, unitShow[S.unit], S.unit === "count" ? "or fewer" : "or less", "or more"), predicted: pred,
         model: publishedModel(g, {}, T.W) };
     }
-    if (q) {
-      const { paramsHash, result, text, title, options, ...canonical } = q;
-      q.paramsHash = sha256(JSON.stringify(canonical));
-      questions.push(q);
-    }
+    if (q) questions.push(q);
   }
   if (questions.length < count) console.log(`⚠ Only ${questions.length} of ${count} questions could be made fairly today.`);
+
+  // The VHP-swing void rule: record, at release, the VHP of every producer each question is about (the network's for
+  // M4–M7). It is part of the published params hash, so anyone can check a later void against it.
+  if (g.model.voidVhpSwing !== undefined && questions.length) {
+    if (args.offline) console.log("(offline: no VHP snapshot, so these questions use only the offline void rule)");
+    else {
+      const dep = fs.existsSync(path.join(DIR, "deployment.json")) ? JSON.parse(fs.readFileSync(path.join(DIR, "deployment.json"), "utf8")) : {};
+      const snap = await readVhp(provider, dep.vhp ?? MAINNET_VHP, questions.flatMap((q) => vhpSubjects(q)));
+      for (const q of questions) {
+        q.model.vhp = Object.fromEntries(vhpSubjects(q).map((w) => [w, snap.values[w]]));
+        q.model.vhpHeight = snap.height;
+        q.model.voidVhpSwing = g.model.voidVhpSwing;
+      }
+    }
+  }
+  for (const q of questions) q.paramsHash = paramsHashOf(q);
 
   for (const q of questions) for (const a of [...q.subjects]) st.featured[a] = dayNumber;
   fs.writeFileSync(file, JSON.stringify({ date: args.date, week, day: day + 1, tier, released: new Date().toISOString(), questions }, null, 2));
@@ -567,7 +583,7 @@ function resolve(blocks: Blk[]) {
     const day = JSON.parse(fs.readFileSync(file, "utf8"));
     let changed = false;
     for (const q of day.questions as Question[]) {
-      const scored = scoreQuestion(q, blocks);
+      const scored = scoreQuestion(q, blocks, { vhpEnd: (q as any).vhpEnd });
       if (!scored.ok) {
         // A short or gappy history is not an answer. Never publish a void just because this computer is missing blocks.
         if (q.result?.reason === "window older than stored history") { delete q.result; changed = true; }
@@ -579,8 +595,9 @@ function resolve(blocks: Blk[]) {
       const same = q.result && q.result.void === next.void && q.result.option === next.option && q.result.dataHash === next.dataHash && q.result.value === next.value && q.result.reason === next.reason && q.result.resolvedAt === next.resolvedAt;
       if (same) continue;
       q.result = next;
-      if (next.void && next.reason?.endsWith(" went offline during the window")) {
-        const names = next.reason.slice(0, -" went offline during the window".length).split(", ").filter(Boolean);
+      const offlinePart = next.void ? next.reason?.split("; ").find((r) => r.endsWith(" went offline during the window")) : undefined;
+      if (offlinePart) {
+        const names = offlinePart.slice(0, -" went offline during the window".length).split(", ").filter(Boolean);
         const wk = String(q.week);
         st.voidedByWeek[wk] = [...new Set([...(st.voidedByWeek[wk] ?? []), ...names])];
       }

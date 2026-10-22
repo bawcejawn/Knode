@@ -6,6 +6,9 @@
  * inside that window. Nothing else is consulted: not the clock, and not a settings file that might
  * have been edited after the question was posted.
  *
+ * Questions released with a VHP snapshot (model.vhp, model.voidVhpSwing) also need one more input: the VHP reading
+ * the bot took at the window's end (see vhpSwingCheck). Both readings are published, so anyone can check the decision.
+ *
  * The window is inclusive on both ends. The closing block — the last block in which a player answer
  * can still be included, the height just before windowStart — is not one of the blocks the question
  * asks about, so it never changes the result. The block after windowEnd does not either.
@@ -38,8 +41,59 @@ export type QuestionInput = {
   windowEnd: number;
   thresholds: number[];
   options?: { index: number }[];
-  model?: { rates?: Record<string, number>; voidAlpha?: number; minVoidBlocks?: number };
+  model?: { rates?: Record<string, number>; voidAlpha?: number; minVoidBlocks?: number;
+    /** VHP (in 1e-8 units, as text) of each producer the question is about, or of the whole network ("network"), read
+     *  at release; and the largest change (0.10 = 10%) allowed by the window's end before the question is void. */
+    vhp?: Record<string, string>; vhpHeight?: number; voidVhpSwing?: number };
 };
+
+/** A VHP reading taken at (or just after) the window's end: block height and the same keys as model.vhp. */
+export type VhpReading = { height: number; readAt?: string; values: Record<string, string> };
+
+/** Key used for the whole network's VHP (the VHP token's total supply) in model.vhp. */
+export const NETWORK_VHP = "network";
+
+/** Fields the bot adds to a question file after it was released. They are not part of the published parameters. */
+const AFTER_RELEASE = ["paramsHash", "result", "text", "title", "options", "chainId", "chainOutcome", "postSkipped", "vhpEnd", "corrections"];
+
+/** The params hash published on chain: sha256 of the question as released, without its wording and the bot's later
+ *  bookkeeping. Anyone can recompute it from the public question file. */
+export function paramsHashOf(q: Record<string, any>): string {
+  const canonical: Record<string, any> = {};
+  for (const [k, v] of Object.entries(q)) if (!AFTER_RELEASE.includes(k)) canonical[k] = v;
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+/** Whose VHP decides a VHP-swing void: the producers a question is about (every member of a group question), or the
+ *  whole network for network-wide questions (M4–M7). */
+export function vhpSubjects(q: Pick<QuestionInput, "template" | "subjects" | "group">): string[] {
+  const kind = KINDS[q.template];
+  if (kind === "agg") return [NETWORK_VHP];
+  if (kind === "tail") return [...(q.group ?? [])];
+  return [...(q.subjects ?? [])];
+}
+
+/** "Void if a producer it is about (or the network) gained or lost MORE than voidVhpSwing of its VHP between release
+ *  and the window's end." Exact integer arithmetic: |end − start| × 1,000,000 > start × round(swing × 1,000,000). */
+export function vhpSwingCheck(q: QuestionInput, end: VhpReading | undefined):
+  | { ok: true; swung: string[]; detail: Record<string, { release: string; end: string; change: string }> }
+  | { ok: false; pending: boolean; reason: string } {
+  const start = q.model?.vhp ?? {};
+  const limit = q.model?.voidVhpSwing ?? 0;
+  if (!end) return { ok: false, pending: true, reason: "no VHP reading at the window's end yet" };
+  const ppm = BigInt(Math.round(limit * 1_000_000));
+  const swung: string[] = [], detail: Record<string, { release: string; end: string; change: string }> = {};
+  for (const who of vhpSubjects(q)) {
+    if (start[who] === undefined) return { ok: false, pending: false, reason: `the release snapshot has no VHP for ${who}` };
+    if (end.values[who] === undefined) return { ok: false, pending: false, reason: `the window-end reading has no VHP for ${who}` };
+    const a = BigInt(start[who]), b = BigInt(end.values[who]);
+    const diff = b > a ? b - a : a - b;
+    const change = a === 0n ? (b === 0n ? "0%" : "new VHP") : `${b >= a ? "+" : "−"}${(Number((diff * 1_000_000n) / a) / 10_000).toFixed(2)}%`;
+    detail[who] = { release: start[who], end: end.values[who], change };
+    if (diff * 1_000_000n > a * ppm) swung.push(who);
+  }
+  return { ok: true, swung, detail };
+}
 
 export type AnswerResult = {
   void: boolean;
@@ -48,6 +102,8 @@ export type AnswerResult = {
   dataHash: string;
   reason?: string;
   resolvedAt: string;
+  /** The VHP-swing rule's inputs and outcome (questions released with a VHP snapshot only). */
+  vhpCheck?: { limit: number; releaseHeight?: number; endHeight: number; values: Record<string, { release: string; end: string; change: string }> };
 };
 
 export type ScoreOutcome =
@@ -83,7 +139,7 @@ function valueText(unit: string, value: number): string {
  * does not yet reach windowEnd, the result is pending (try again later) — it is never a void.
  * A hole or a duplicate inside the window is a hard failure: guessing would not be a 100% answer.
  */
-export function scoreQuestion(q: QuestionInput, blocks: Blk[]): ScoreOutcome {
+export function scoreQuestion(q: QuestionInput, blocks: Blk[], opts: { vhpEnd?: VhpReading } = {}): ScoreOutcome {
   const kind = KINDS[q.template];
   if (!kind) return { ok: false, pending: false, reason: `unknown template ${q.template}` };
   if (!Number.isInteger(q.windowStart) || !Number.isInteger(q.windowEnd) || q.windowEnd < q.windowStart) {
@@ -161,8 +217,20 @@ export function scoreQuestion(q: QuestionInput, blocks: Blk[]): ScoreOutcome {
   }
   if (!text) text = valueText(q.unit, value);
   const resolvedAt = new Date(win[win.length - 1].ts).toISOString();
-  const result: AnswerResult = offline.length
-    ? { void: true, reason: `${offline.join(", ")} went offline during the window`, value: text, dataHash, resolvedAt }
+  // Questions released with a VHP snapshot: void when a producer it is about (or the network) moved its VHP too much.
+  let swung: string[] = [], vhpCheck: AnswerResult["vhpCheck"];
+  if (q.model?.vhp && q.model.voidVhpSwing !== undefined) {
+    const v = vhpSwingCheck(q, opts.vhpEnd);
+    if (!v.ok) return v;
+    swung = v.swung;
+    vhpCheck = { limit: q.model.voidVhpSwing, releaseHeight: q.model.vhpHeight, endHeight: opts.vhpEnd!.height, values: v.detail };
+  }
+  const reasons: string[] = [];
+  if (offline.length) reasons.push(`${offline.join(", ")} went offline during the window`);
+  if (swung.length) reasons.push(`${swung.map((w) => (w === NETWORK_VHP ? "the network's VHP" : `${w}'s VHP`)).join(", ")} changed by more than ${q.model!.voidVhpSwing! * 100}% between release and the window's end`);
+  const result: AnswerResult = reasons.length
+    ? { void: true, reason: reasons.join("; "), value: text, dataHash, resolvedAt }
     : { void: false, option, value: text, dataHash, resolvedAt };
+  if (vhpCheck) result.vhpCheck = vhpCheck;
   return { ok: true, result };
 }

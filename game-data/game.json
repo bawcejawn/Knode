@@ -71,6 +71,7 @@
     "minVoidBlocks": 600,
     "cleanDays": 2,
     "reliabilityDays": 14,
-    "maxVoidHistory": 0.03
+    "maxVoidHistory": 0.03,
+    "voidVhpSwing": 0.1
   }
 }

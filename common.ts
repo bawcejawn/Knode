@@ -2,7 +2,8 @@
  * Shared helpers for the generator (and, later, the resolver/keeper services).
  * Read-only chain access, the lean block cache, and the forecast model's building blocks.
  */
-import { Provider } from "koilib";
+import { Provider, Contract } from "koilib";
+import { tokenAbi } from "./bot/token-abi.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as zlib from "node:zlib";
@@ -105,6 +106,12 @@ export async function syncBlocks(provider: Provider, file: string, days: number,
   const lib = Number(head.last_irreversible_block);
   const from = Math.max(1, lib - Math.round(days * BLOCKS_PER_DAY) + 1);
   blocks = blocks.filter((b) => b.h >= from && b.h <= lib).sort((a, b) => a.h - b.h);
+  // The cache (a file, or GitHub's Actions cache) is not trusted: runs of cached rows spread over the whole range are
+  // compared with the chain, and on any difference the cache is dropped and downloaded again.
+  if (blocks.length && !(await cacheMatchesChain(provider, head.head_topology.id, blocks))) {
+    console.log("Cached blocks differ from the chain: discarding the cache and downloading again.");
+    blocks = [];
+  }
   const CHUNK = 50_000;
   const first = blocks.length ? blocks[0].h : lib + 1;
   if (first > from) {
@@ -127,6 +134,24 @@ export async function syncBlocks(provider: Provider, file: string, days: number,
   return { blocks, lib };
 }
 
+/** Compares `runs` runs of `len` cached blocks, evenly spread (random start), with the chain. */
+export async function cacheMatchesChain(provider: Provider, headId: string, blocks: Blk[], runs = 24, len = 10): Promise<boolean> {
+  const step = Math.max(len, Math.floor(blocks.length / runs));
+  for (let i = Math.floor(Math.random() * step); i < blocks.length; i += step) {
+    const n = Math.min(len, blocks.length - i);
+    const res: any = await withRetry(`checking cached blocks at ${blocks[i].h}`, () =>
+      provider.call("block_store.get_blocks_by_height", {
+        head_block_id: headId, ancestor_start_height: String(blocks[i].h), num_blocks: n, return_block: true, return_receipt: false,
+      }));
+    const got = (res?.block_items ?? []).map(toBlk);
+    for (let j = 0; j < n; j++) {
+      const a = blocks[i + j], b = got[j];
+      if (!b || a.h !== b.h || a.ts !== b.ts || a.signer !== b.signer || a.ntx !== b.ntx) return false;
+    }
+  }
+  return true;
+}
+
 /** The repo's packed block history (see export-blocks.ts): signer table, start, then per block
  *  "<signer index>,<ms since previous>,<transaction count>". The compute column is not kept (unused). */
 export const COMPACT = "data/blocks-compact.csv.gz";
@@ -143,6 +168,26 @@ export function readCompact(file = COMPACT): Blk[] {
     out.push({ h: h0 + out.length, ts, signer: signers[s], ntx, compute: 0 });
   }
   return out;
+}
+
+// ───────────────────────── VHP readings (the VHP-swing void rule) ─────────────────────────
+
+/** The VHP token on mainnet; game-data/deployment.json's "vhp" is used when present. */
+export const MAINNET_VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq";
+
+/** VHP held by each address right now, and the whole network's VHP under the key "network" (the token's total
+ *  supply), with the head block height they were read at. Values are 1e-8 units, as text. */
+export async function readVhp(provider: Provider, vhpContract: string, who: string[]): Promise<{ height: number; values: Record<string, string> }> {
+  const head: any = await withRetry("reading head", () => provider.getHeadInfo());
+  const vhp = new Contract({ id: vhpContract, abi: tokenAbi as any, provider });
+  const fn = vhp.functions as any;
+  const values: Record<string, string> = {};
+  for (const w of [...new Set(who)]) {
+    values[w] = w === "network"
+      ? String((await withRetry("VHP total supply", () => fn.total_supply({})) as any).result?.value ?? "0")
+      : String((await withRetry(`VHP of ${w}`, () => fn.balance_of({ owner: w })) as any).result?.value ?? "0");
+  }
+  return { height: Number(head.head_topology.height), values };
 }
 
 // ───────────────────────── Small statistics helpers ─────────────────────────

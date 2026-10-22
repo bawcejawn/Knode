@@ -9,6 +9,7 @@ export const tokenAbi = {
     allowance:  { entry_point: 0x32f09fa1, argument: "token.allowance_arguments",  return: "token.allowance_result",  read_only: true },
     transfer:   { entry_point: 0x27f576ca, argument: "token.transfer_arguments",   return: "token.transfer_result",   read_only: false },
     approve:    { entry_point: 0x74e21680, argument: "token.approve_arguments",    return: "token.approve_result",    read_only: false },
+    total_supply: { entry_point: 0xb0da3934, argument: "token.total_supply_arguments", return: "token.total_supply_result", read_only: true },
   },
   koilib_types: {
     nested: {
@@ -22,6 +23,8 @@ export const tokenAbi = {
           transfer_result: { fields: {} },
           approve_arguments: { fields: { owner: f(1, "bytes", ADDR), spender: f(2, "bytes", ADDR), value: f(3, "uint64", U64) } },
           approve_result: { fields: {} },
+          total_supply_arguments: { fields: {} },
+          total_supply_result: { fields: { value: f(1, "uint64", U64) } },
         },
       },
     },
