@@ -29,8 +29,9 @@ import { createRequire } from "node:module";
 import { Signer, Provider, Contract } from "koilib";
 import { Chain, KoinosChain, SimChain, Call, showKoin, toSat, loadAbi } from "./chain.ts";
 import { tokenAbi } from "./token-abi.ts";
-import { readCsv, syncBlocks } from "../common.ts";
-import { chainOutcome, scoreQuestion, storedOutcome } from "../resolver.ts";
+import { readCsv, syncBlocks, fetchRange, readVhp, MAINNET_VHP, type Blk } from "../common.ts";
+import { chainOutcome, scoreQuestion, storedOutcome, paramsHashOf, vhpSubjects, type VhpReading } from "../resolver.ts";
+import { pobAbi } from "../probes/scripts/abi.ts";
 import { formatProduction, loadSigners, signerFromBlockItem, type SignedBlock } from "./production.ts";
 import { contractManaVerdict } from "./mana.ts";
 
@@ -88,6 +89,8 @@ type BotState = {
   lastProduced: number; producedByDay: Record<string, number>; producerScannedTo: number;
   /** Owner-only changes already emailed about (so each one fails a run, and emails you, once — not every hour). */
   notified?: string[];
+  /** Block-producer keys first seen on record for the game and the desk (used when deployment.json names none). */
+  producerKey?: string; deskProducerKey?: string;
 };
 type DayFile = { date: string; week: number; day: number; questions: any[]; skipped?: string };
 
@@ -115,6 +118,17 @@ export type Ctx = {
   /** Things that need a human. A scheduled run with problems ends as "failed", which makes GitHub email you. */
   problems: string[];
   quiet?: boolean;
+  /** A question window's blocks read fresh from the chain (irreversible blocks only). Without it the bot uses
+   *  blocks.csv (simulations and tests). */
+  windowBlocks?: (from: number, to: number) => Promise<Blk[]>;
+  /** VHP of these addresses ("network" = the whole network) right now, with the block height. */
+  vhp?: (who: string[]) => Promise<VhpReading>;
+  /** The block-producer public key Proof-of-Burn has on record for an address ("" when none). */
+  producerKey?: (producer: string) => Promise<string>;
+  /** The Desk Swap contract, for its health check. */
+  desk?: { deployment: any; read: (method: string, args?: any) => Promise<any> };
+  /** Settles the bot paid for itself this run, because the contract declined to (capped by MAX_BOT_PAID_SETTLES). */
+  botPaid?: number;
 };
 
 const num = (x: any) => Number(x ?? 0);
@@ -131,12 +145,28 @@ async function state(ctx: Ctx) {
 }
 /** Time (ms) week w ends. */
 const weekEnd = (st: { genesis: number; weekLen: number }, w: number) => st.genesis + (w + 1) * st.weekLen;
+/** Earliest time (ms) week w can close: close_delay after the week ends and after its latest resolution (v4). */
+const closeAt = (st: { genesis: number; weekLen: number; closeDelay: number }, w: number, wk: any) =>
+  Math.max(weekEnd(st, w), num(wk?.last_resolved_time)) + st.closeDelay;
+/** The minimum stake for week w (a change applies from the week after it was made). */
+const minStakeFor = (c: any, w: number) => (big(c.min_stake_next) > 0n && w >= num(c.min_stake_next_week) ? big(c.min_stake_next) : big(c.min_stake));
+
+/** The most settles the bot pays for itself in one run when the contract declines to. The bot's Mana must stay
+ *  available for posting and resolving questions. */
+export const MAX_BOT_PAID_SETTLES = Number(E.MAX_BOT_PAID_SETTLES ?? 10);
 
 async function sendOp(ctx: Ctx, what: string, calls: Call[], opts: { sponsored?: boolean } = {}): Promise<boolean> {
   if (ctx.dryRun) { log(`  [dry run] would send: ${what}`); return true; }
   let r = await ctx.chain.send(calls, [ctx.operator], opts);
   if (!r.ok && opts.sponsored) {
-    // The contract only sponsors what it can verify is valid; if it declines, the bot pays instead.
+    // The contract only sponsors what it can verify is valid; if it declines, the bot pays instead, a few per run.
+    ctx.botPaid = (ctx.botPaid ?? 0) + 1;
+    if (ctx.botPaid > MAX_BOT_PAID_SETTLES) {
+      if (ctx.botPaid === MAX_BOT_PAID_SETTLES + 1) {
+        ctx.problems.push(`The contract declined to pay for more than ${MAX_BOT_PAID_SETTLES} settles this run. The bot paid for ${MAX_BOT_PAID_SETTLES} and left the rest for later runs (anyone can settle any player).`);
+      }
+      return false;
+    }
     r = await ctx.chain.send(calls, [ctx.operator], {});
   }
   if (r.ok) { if (!ctx.quiet) log(`  ✔ ${what}${r.rcUsed && r.rcUsed !== "0" ? `  (Mana ${showKoin(r.rcUsed)})` : ""}`); }
@@ -227,8 +257,8 @@ async function healthPass(ctx: Ctx, bs: BotState) {
 
   // 2. A week that should have closed but has not.
   const w = st.weeksClosed;
-  if (st.time > weekEnd(st, w) + st.closeDelay + 3 * HOUR_MS) {
-    const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
+  const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
+  if (st.time > closeAt(st, w, wk) + 3 * HOUR_MS) {
     ctx.problems.push(`Week ${w} is overdue to close (${num(wk.questions) - num(wk.resolved)} question(s) still open).`);
   }
 
@@ -244,7 +274,20 @@ async function healthPass(ctx: Ctx, bs: BotState) {
   };
   if (num(up.eta) > 0) ownerAlert(`upgrade:${up.hash}:${up.eta}`, `A code upgrade is scheduled (possible from ${utc(num(up.eta))}). If you did not do this, your admin key may be compromised.`);
   if (num(wd.eta) > 0) ownerAlert(`seed:${wd.vhp}:${wd.koin}:${wd.eta}`, `A seed withdrawal is scheduled (possible from ${utc(num(wd.eta))}). If you did not do this, your admin key may be compromised.`);
-  if (st.c.pending_owner) ownerAlert(`owner:${st.c.pending_owner}`, `An ownership transfer to ${st.c.pending_owner} is pending. If you did not do this, your admin key may be compromised.`);
+  if (st.c.pending_owner) ownerAlert(`owner:${st.c.pending_owner}`, `An ownership transfer to ${st.c.pending_owner} is pending (it can be accepted a day after it was proposed). If you did not do this, your admin key may be compromised: propose your own address again right away.`);
+  // The roles and the producer key must be the ones recorded at deployment (game-data/deployment.json).
+  const dep = readJson(ctx.P.deployment, null);
+  if (dep?.owner && st.c.owner && st.c.owner !== dep.owner)
+    ownerAlert(`owner-changed:${st.c.owner}`, `The game's owner is ${st.c.owner}, not ${dep.owner} as in deployment.json. If you did not hand it over, your admin key is compromised.`);
+  if (dep?.operator && st.c.operator && st.c.operator !== dep.operator)
+    ownerAlert(`operator-changed:${st.c.operator}`, `The game's operator is ${st.c.operator}, not ${dep.operator} as in deployment.json. If you did not change it, your admin key may be compromised (if you did, update deployment.json).`);
+  if (ctx.producerKey) {
+    const k = await ctx.producerKey(C);
+    const expected = dep?.producerKey ?? bs.producerKey;
+    if (!expected) { if (k) { bs.producerKey = k; log(`  noted the game's registered producer key: ${k}`); } }
+    else if (k !== expected) ownerAlert(`key-changed:${k}`, `The block-producer key registered for the game is ${k || "none"}, not ${expected}. If you did not register it, your admin key may be compromised (if you did, set "producerKey" in deployment.json).`);
+  }
+  if (ctx.desk) await deskHealth(ctx, bs, ownerAlert);
   bs.notified = [...still];
   if (st.c.operator && st.c.operator !== ctx.operator.getAddress() && ctx.chain.kind === "koinos" && E.OPERATOR_WIF)
     ctx.problems.push(`The contract's operator is ${st.c.operator}, not this bot (${ctx.operator.getAddress()}).`);
@@ -261,6 +304,26 @@ async function healthPass(ctx: Ctx, bs: BotState) {
       log(`  note: ${text}`);
       if (process.env.GITHUB_ACTIONS) console.log(`::warning title=Contract Mana::${text}`);
     } else if (verdict === "low") ctx.problems.push(`The contract is low on Mana (${showKoin(cMana)}) and no recent compound explains it: free transactions may be refused for a while.`);
+  }
+}
+
+/** The Desk Swap: owner and treasury as deployed, no surprise announcements, the same producer key. */
+async function deskHealth(ctx: Ctx, bs: BotState, alert: (key: string, text: string) => void) {
+  const d = ctx.desk!;
+  const s = await d.read("get_state");
+  const c = s.config ?? {};
+  const dep = d.deployment ?? {};
+  if (dep.owner && c.owner !== dep.owner) alert(`desk-owner:${c.owner}`, `The Desk's owner is ${c.owner}, not ${dep.owner} as in desk-data/deployment.json. If you did not change it, your admin key is compromised.`);
+  if (dep.treasury && c.treasury !== dep.treasury) alert(`desk-treasury-now:${c.treasury}`, `The Desk's treasury is ${c.treasury}, not ${dep.treasury} as in desk-data/deployment.json. If you did not change it, your admin key is compromised (if you did, update desk-data/deployment.json).`);
+  const up = s.upgrade ?? {}, tc = s.treasury_change ?? {};
+  if (num(up.eta) > 0) alert(`desk-upgrade:${up.hash}:${up.eta}`, `A Desk code upgrade is scheduled (possible from ${utc(num(up.eta))}). If you did not do this, your admin key may be compromised.`);
+  if (num(tc.eta) > 0) alert(`desk-treasury:${tc.address}:${tc.eta}`, `A Desk treasury change to ${tc.address} is scheduled (possible from ${utc(num(tc.eta))}). If you did not do this, your admin key may be compromised.`);
+  if (c.paused && !ctx.quiet) log(`  the Desk is paused`);
+  if (ctx.producerKey && ctx.chain.kind === "koinos") {
+    const k = await ctx.producerKey(dep.contract);
+    const expected = dep.producerKey ?? bs.deskProducerKey;
+    if (!expected) { if (k) { bs.deskProducerKey = k; log(`  noted the Desk's registered producer key: ${k}`); } }
+    else if (k !== expected) alert(`desk-key:${k}`, `The block-producer key registered for the Desk is ${k || "none"}, not ${expected}. If you did not register it, your admin key may be compromised (if you did, set "producerKey" in desk-data/deployment.json).`);
   }
 }
 
@@ -300,7 +363,7 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
   // from the start (each one is either linked to a local question by its hash, or resolved as VOID).
   const st = await state(ctx);
   const wk = (await ctx.chain.read("get_week", { week: String(st.weeksClosed) })).week ?? {};
-  if (st.time > weekEnd(st, st.weeksClosed) + st.closeDelay + 2 * HOUR_MS && num(wk.resolved) < num(wk.questions) && bs.checkedUpTo > 0) {
+  if (st.time > closeAt(st, st.weeksClosed, wk) + 2 * HOUR_MS && num(wk.resolved) < num(wk.questions) && bs.checkedUpTo > 0) {
     log(`  ⚠ week ${st.weeksClosed} is overdue to close with ${num(wk.questions) - num(wk.resolved)} open question(s): re-checking every question id`);
     bs.checkedUpTo = 0;
   }
@@ -316,20 +379,39 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
     await sendOp(ctx, `resolve orphan #${id} as VOID`, [{ method: "resolve_question", args: { id, outcome: 1000, data_hash: dataHash } }]);
   }
 
-  // Local questions: the answer is recomputed from the block file every time, then posted.
-  // The generator is only asked to download any blocks that are not stored yet. A saved result that
-  // does not match those blocks is replaced; it is never what gets posted.
+  await vhpEndPass(ctx, height);
+
+  // Local questions: the answer is recomputed every time from the window's blocks (read fresh from the chain on the
+  // live bot), then posted. A saved result that does not match those blocks is replaced; it is never what gets posted.
+  // On the simulated chain the blocks come from blocks.csv, and the generator is asked to download missing ones.
   let ranGenerator = false;
+  const fresh = new Map<string, Blk[]>();
+  const windowOf = async (q: any, csv: Blk[]) => {
+    if (!ctx.windowBlocks) return csv;
+    const k = `${q.windowStart}-${q.windowEnd}`;
+    if (!fresh.has(k)) fresh.set(k, await ctx.windowBlocks(q.windowStart, q.windowEnd));
+    return fresh.get(k)!;
+  };
   for (let pass = 0; pass < 2; pass++) {
     let needGenerator = false;
-    const blocks = readCsv(path.join(ctx.P.dir, "blocks.csv"));
+    const csv = ctx.windowBlocks ? [] : readCsv(path.join(ctx.P.dir, "blocks.csv"));
     for (const f of dayFiles(ctx.P)) {
       let dirty = false;
       for (const q of f.data.questions ?? []) {
-        if (q.chainId === undefined || q.chainOutcome !== undefined) continue;
+        if (q.chainId === undefined) continue;
+        if (q.chainOutcome !== undefined) { if (q.week >= st.weeksClosed && await correctionCheck(ctx, q)) dirty = true; continue; }
         const onChain = (await ctx.chain.read("get_question", { id: q.chainId })).question;
-        const scored = scoreQuestion(q, blocks);
-        if (num(onChain.outcome) !== 0) {
+        const resolved = num(onChain.outcome) !== 0;
+        if (!resolved && !due(onChain)) continue;
+        // The file must still be exactly the question that was posted: its parameters must hash to the on-chain
+        // params_hash. An edited file is never used to resolve.
+        const fileHash = paramsHashOf(q), chainHash = String(onChain.params_hash ?? "").replace(/^0x/, "").toLowerCase();
+        if (fileHash !== chainHash) {
+          ctx.problems.push(`${q.id} (#${q.chainId}): the question file no longer matches the on-chain params_hash (file ${fileHash.slice(0, 12)}…, chain ${chainHash.slice(0, 12)}…). Not resolving it from that file: restore the published version (git history).`);
+          continue;
+        }
+        const scored = scoreQuestion(q, await windowOf(q, csv), { vhpEnd: q.vhpEnd });
+        if (resolved) {
           q.chainOutcome = num(onChain.outcome);
           dirty = true;
           if (scored.ok) {
@@ -337,15 +419,19 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
             if (!q.result || q.result.dataHash !== scored.result.dataHash || q.result.void !== scored.result.void || q.result.option !== scored.result.option) {
               q.result = scored.result;
             }
-            if (mine !== q.chainOutcome) log(`  ⚠ ${q.id} (#${q.chainId}): on-chain outcome ${q.chainOutcome} differs from the blocks (${mine}${scored.result.void ? ", void" : ""}).`);
+            if (mine !== q.chainOutcome) {
+              log(`  ⚠ ${q.id} (#${q.chainId}): on-chain outcome ${q.chainOutcome} differs from the blocks (${mine}${scored.result.void ? ", void" : ""}).`);
+              ctx.problems.push(`${q.id} (#${q.chainId}): the on-chain outcome (${q.chainOutcome}) differs from what the blocks say (${mine}${scored.result.void ? ", void" : ""}). Check it; the owner can still correct it before the week closes.`);
+            }
           }
           continue;
         }
-        if (!due(onChain)) continue;
         if (!scored.ok) {
           if (q.result?.reason === "window older than stored history") { delete q.result; dirty = true; }
           if (scored.pending) {
-            if (ranGenerator) ctx.problems.push(`${q.id} (#${q.chainId}) is ready to resolve, but its blocks are still not in the history.`);
+            if (/VHP reading/.test(scored.reason)) ctx.problems.push(`${q.id} (#${q.chainId}) is ready to resolve, but ${scored.reason}.`);
+            else if (ctx.windowBlocks) log(`  ${q.id}: waiting for the window's blocks to become final`);
+            else if (ranGenerator) ctx.problems.push(`${q.id} (#${q.chainId}) is ready to resolve, but its blocks are still not in the history.`);
             else needGenerator = true;
           } else ctx.problems.push(`${q.id} (#${q.chainId}) was not resolved: ${scored.reason}`);
           continue;
@@ -370,6 +456,36 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
     const g = ctx.generator(["resolve"]);
     if (!g.ok) { log(`  ✖ resolving from block data failed:\n${g.output.slice(-1500)}`); ctx.problems.push("Resolving questions from block data failed."); break; }
   }
+}
+
+/** A posted result changed on chain (only the owner can do that, with correct_question): record it and email. */
+async function correctionCheck(ctx: Ctx, q: any): Promise<boolean> {
+  const onChain = (await ctx.chain.read("get_question", { id: q.chainId })).question ?? {};
+  const now = num(onChain.outcome);
+  if (now === q.chainOutcome) return false;
+  (q.corrections ??= []).push({ from: q.chainOutcome, to: now, dataHash: onChain.data_hash, seenAt: new Date().toISOString() });
+  ctx.problems.push(`A result was changed on chain: ${q.id} (#${q.chainId}) went from outcome ${q.chainOutcome} to ${now}${now === 1000 ? " (void)" : ""}. If you did not do this, your admin key may be compromised.`);
+  q.chainOutcome = now;
+  return true;
+}
+
+/** The VHP-swing rule's second reading: for each posted question released with a VHP snapshot, the first bot run at
+ *  or after the window's last block reads the same VHP again and saves it (with the height read at) in the file. */
+async function vhpEndPass(ctx: Ctx, height: number) {
+  const todo: Array<{ f: { file: string; data: DayFile }; q: any }> = [];
+  for (const f of dayFiles(ctx.P)) for (const q of f.data.questions ?? []) {
+    if (q.chainId === undefined || q.chainOutcome !== undefined || q.vhpEnd || !q.model?.vhp || q.model.voidVhpSwing === undefined) continue;
+    if (height >= q.windowEnd) todo.push({ f, q });
+  }
+  if (!todo.length) return;
+  if (!ctx.vhp) { ctx.problems.push(`${todo.length} question(s) need a VHP reading at their window's end, but this run cannot read VHP.`); return; }
+  const reading = await ctx.vhp(todo.flatMap(({ q }) => vhpSubjects(q)));
+  const readAt = new Date().toISOString();
+  for (const { f, q } of todo) {
+    q.vhpEnd = { height: reading.height, readAt, values: Object.fromEntries(vhpSubjects(q).map((w) => [w, reading.values[w]])) };
+    log(`  read ${q.id}'s VHP at the window's end (block ${reading.height})`);
+  }
+  if (!ctx.dryRun) for (const f of new Set(todo.map((x) => x.f))) writeJson(f.file, f.data);
 }
 
 // ───────────── post today's questions ─────────────
@@ -450,12 +566,13 @@ async function postPass(ctx: Ctx, bs: BotState) {
 // ───────────── close and finalize ─────────────
 
 async function closeFinalizePass(ctx: Ctx) {
-  for (let i = 0; i < 4; i++) {
+  // Finalizing a big week takes several pages (one transaction each); the loop runs until nothing is due.
+  for (let i = 0; i < 60; i++) {
     const st = await state(ctx);
     const h = st.time;
     const w = st.weeksClosed;
     const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
-    if (h >= weekEnd(st, w) + st.closeDelay && num(wk.resolved) === num(wk.questions)) {
+    if (h >= closeAt(st, w, wk) && num(wk.resolved) === num(wk.questions)) {
       if (!(await sendOp(ctx, `close week ${w}`, [{ method: "close_week", args: { week: String(w) } }])) || ctx.dryRun) return;
       continue;
     }
@@ -490,7 +607,7 @@ async function settlePass(ctx: Ctx) {
     const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
     if (h < num(wk.settle_start) || h > num(wk.settle_end)) continue;
     // Free players (no stake that week) can never be paid, so the bot doesn't spend Mana settling them.
-    const minStake = big(st.c.min_stake);
+    const minStake = minStakeFor(st.c, w);
     const todo = (await allPlayers(ctx.chain, w)).filter((r) => r.entry && !r.entry.settled && big(r.entry.stake) >= minStake && big(r.entry.stake) > 0n);
     if (todo.length) log(`  settling ${todo.length} player(s) for week ${w}`);
     let n = 0;
@@ -919,7 +1036,8 @@ async function friendly(cmd: string, a: string[], send: boolean): Promise<boolea
     case "claim": await act("player", "claim", { player: me("player"), week: need(0, "week number") }, send); return true;
     case "claim-fee": await act("owner", "claim_creator_fee", { to: a[0] && !a[0].startsWith("--") ? a[0] : me("owner") }, send); return true;
     case "void": await act("owner", "correct_question", { id: Number(need(0, "question number")), outcome: 1000, data_hash: "0x" + sha256hex(`voided by the owner: ${a.slice(1).filter((x) => !x.startsWith("--")).join(" ") || "no reason given"}`) }, send); return true;
-    case "sponsor-limit": await act("owner", "set_sponsor_limit", { max_sponsor_rc: units(need(0, "KOIN of Mana (0 = off)")) }, send); return true;
+    case "sponsor-limit": await act("owner", "set_sponsor_limit", { max_sponsor_rc: units(need(0, "KOIN of Mana (0 = off)")), min_sponsor_rc: units(a[1] && !a[1].startsWith("--") ? a[1] : "0") }, send); return true;
+    case "min-stake": await act("owner", "set_min_stake", { min_stake: whole(need(0, "VHP (whole number, at least 1)")) }, send); return true;
     case "pause": await act("owner", "set_paused", { paused: need(0, "on or off") === "on" }, send); return true;
   }
   return false;
@@ -973,8 +1091,8 @@ async function nodeStatus(personal = false) {
 
 // ═══════════════════════════════ keys ═══════════════════════════════
 
-/** Creates the keys this project needs in the root .env (never prints a private key). Re-uses the probe wallets:
- *  the probe owner (with its KOIN) becomes the bot's wallet, the probe helper becomes the test player. */
+/** Creates the keys this project needs in the root .env (never prints a private key). Every key is new: no wallet is
+ *  shared with the probes (their keys sat in probes/.env, next to code that installed unpinned packages). */
 function keys() {
   const file = path.resolve(TESTNET ? ".env.testnet" : ".env");
   let text = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
@@ -983,14 +1101,6 @@ function keys() {
   const added: string[] = [];
   if (!TESTNET && !has("RPC")) add("RPC", "https://api.koinos.io");
   if (!TESTNET && !has("CONFIRM_MAINNET")) add("CONFIRM_MAINNET", "yes");
-  const probe: Record<string, string> = {};
-  // (Testnet wallets are always brand new: they never share a key with mainnet.)
-  if (!TESTNET && fs.existsSync("probes/.env")) for (const line of fs.readFileSync("probes/.env", "utf8").split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
-    if (m) probe[m[1]] = m[2];
-  }
-  if (!has("OPERATOR_WIF") && probe.OWNER_WIF) { add("OPERATOR_WIF", probe.OWNER_WIF); added.push("OPERATOR_WIF (copied from the probe owner wallet)"); }
-  if (!has("PLAYER_WIF") && probe.HELPER_WIF) { add("PLAYER_WIF", probe.HELPER_WIF); added.push("PLAYER_WIF (copied from the probe helper wallet)"); }
   for (const k of ["OPERATOR_WIF", "PLAYER_WIF", "CONTRACT_WIF", "OWNER_WIF"]) {
     if (has(k)) continue;
     add(k, Signer.fromSeed(crypto.randomBytes(32).toString("hex")).getPrivateKey("wif"));
@@ -1028,7 +1138,9 @@ export function generatorRunner(dir: string, extra: string[] = []) {
   };
 }
 
-/** In the scheduled GitHub run (BOT_GIT_PUSH=1), commit and push game-data/ so nothing posted is ever lost. */
+/** In the scheduled GitHub run (BOT_GIT_PUSH=1), commit game-data/ locally at each checkpoint. The bot itself holds
+ *  no push token: the workflow's separate publish job pushes game-data/ (and nothing else) when the run ends, even
+ *  if the run failed, so nothing posted is lost. */
 function gitCheckpoint(dir: string) {
   return (message: string) => {
     if (E.BOT_GIT_PUSH !== "1") return;
@@ -1036,9 +1148,8 @@ function gitCheckpoint(dir: string) {
       execSync(`git add ${dir}`, { stdio: "ignore" });
       if (!execSync("git status --porcelain " + dir, { encoding: "utf8" }).trim()) return;
       execSync(`git -c user.name="kpred-bot" -c user.email="kpred-bot@users.noreply.github.com" commit -q -m "${message}"`, { stdio: "ignore" });
-      execSync("git pull -q --rebase && git push -q", { stdio: "inherit" });
     } catch (e) {
-      log(`  ⚠ could not push ${dir}: ${(e as Error).message}`);
+      log(`  ⚠ could not commit ${dir}: ${(e as Error).message}`);
     }
   };
 }
@@ -1053,8 +1164,21 @@ function liveCtx(dryRun: boolean): Ctx {
   const operator = E.OPERATOR_WIF ? Signer.fromWif(E.OPERATOR_WIF) : Signer.fromSeed("read-only placeholder");
   operator.provider = chain.provider;
   if (!dryRun && !E.OPERATOR_WIF) throw new Error("OPERATOR_WIF is missing (use --dry-run to look without a key).");
+  const deskDep = readJson(path.join("desk-data", "deployment.json"), null);
+  const deskContract = deskDep?.contract && fs.existsSync("desk/abi/desk.koilib.json")
+    ? new Contract({ id: deskDep.contract, abi: JSON.parse(fs.readFileSync("desk/abi/desk.koilib.json", "utf8")), provider: chain.provider }) : null;
+  const pob = new Contract({ id: dep?.pob ?? MAINNET.pob, abi: pobAbi as any, provider: chain.provider });
   return {
     chain, operator, P, dryRun, generator: generatorRunner(P.dir), checkpoint: gitCheckpoint(P.dir), problems: [],
+    // Window blocks are read fresh from the chain for every resolution; the cached blocks.csv is never trusted for that.
+    windowBlocks: async (from, to) => {
+      const head: any = await chain.provider.getHeadInfo();
+      const last = Math.min(to, Number(head.last_irreversible_block));
+      return last < from ? [] : fetchRange(chain.provider, head.head_topology.id, from, last);
+    },
+    vhp: (who) => readVhp(chain.provider, dep?.vhp ?? MAINNET_VHP, who),
+    producerKey: async (producer) => String(((await (pob.functions as any).get_public_key({ producer })).result ?? {}).value ?? ""),
+    desk: deskContract ? { deployment: deskDep, read: async (method, args = {}) => ((await (deskContract.functions as any)[method](args)).result ?? {}) } : undefined,
     // The same block history the question generator uses (game-data/blocks.csv), topped up to the newest final block.
     recentBlocks: async () => (await syncBlocks(chain.provider, path.join(P.dir, "blocks.csv"), 26)).blocks,
     recentSigners: async (lib, maxBlocks) => {

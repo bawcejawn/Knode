@@ -205,7 +205,8 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     if (!strayPosted && week === 1 && dayIdx === 9) {
       // A question the bot knows nothing about (as if posted by hand with the operator key). The bot must void it
       // after its window, or week 1 could never close.
-      strayPosted = await act(operator, "post_question", { k: 2, lock_time: String(now + 30 * 60_000), window_start: String(h + 700), window_end: String(h + 1800), params_hash: strayHash });
+      // (answers must stay open at least 1 hour, so it closes 2 hours later; its window starts after that)
+      strayPosted = await act(operator, "post_question", { k: 2, lock_time: String(now + 2 * HOUR_MS), window_start: String(h + 2700), window_end: String(h + 3800), params_hash: strayHash });
       check(strayPosted, "injected: a stray question unknown to the bot was posted on-chain");
     }
     if (!outageDone && week === 1 && dayIdx === 11 && (now - genesisTime) % DAY_MS < 20 * HOUR_MS) { outageSkips++; continue; } // bot down ~20 h
