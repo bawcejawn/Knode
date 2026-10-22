@@ -142,24 +142,44 @@ describe("RED TEAM saboteur: the pool's sponsored Mana cannot be farmed by dust 
     expect(sponsor(k)).toBe(false, "SABOTEUR: the pool agreed to pay for an answer padded with 600 junk bytes");
   });
 
-  it("one minimum-stake account cannot make the pool commit more Mana per week than its stake", () => {
+  // (repo) The audit's second case here asserted that a 1-VHP account gets at most one sponsored answer a week. The
+  // owner decided the opposite (2026-10): every staked player gets the game's Mana for one answer per question posted
+  // that week, so a 1-VHP player can answer every question for free. These two tests encode that decision instead.
+  it("a 1-VHP player gets the game's Mana for every question of a 30-question week", () => {
     const k = setup();                                  // min_stake = 1 VHP, max_sponsor_rc = 1 KOIN in this harness
     deposit(k, A, 1 * VHP);                             // before genesis: counts for week 0
     at(1100);
     const ids: u32[] = [];
-    for (let i = 0; i < 30; i++) ids.push(post(k, 2, 1300, 1301, 1400));   // one week of questions (game.json: 30)
+    for (let i = 0; i < 30; i++) ids.push(post(k, 2, 1300, 1301, 1400));
     at(1200);
-    let sponsored: u64 = 0;
+    let sponsored = 0;
     for (let i = 0; i < ids.length; i++) {
       as(A);
       setTx(0x0db52f40, Protobuf.encode(new kpred.answer_arguments(A, ids[i], 0), kpred.answer_arguments.encode), VHP, 1);
       if (sponsor(k)) sponsored++;
       answer(k, A, ids[i], 0);
     }
-    const s = k.get_state(new kpred.get_state_arguments());
-    const exposure = sponsored * s.config!.max_sponsor_rc;
-    expect(exposure <= 1 * VHP).toBe(true,
-      "SABOTEUR: a 1 VHP account got " + sponsored.toString() + " sponsored answers in one week (up to " +
-      (exposure / VHP).toString() + " KOIN of the pool's Mana)");
+    expect(sponsored).toBe(30, "every answer of the week is paid for");
+  });
+
+  it("the answer after that is refused sponsorship; a question posted later that week is paid for again", () => {
+    const k = setup();
+    deposit(k, A, 1 * VHP);
+    at(1100);
+    const ids: u32[] = [];
+    for (let i = 0; i < 30; i++) ids.push(post(k, 2, 1300, 1301, 1400));
+    at(1200);
+    for (let i = 0; i < ids.length; i++) answer(k, A, ids[i], 0);
+    // A 31st answer this week: there is no 31st question, so any further answer (here: one of the same questions
+    // again) is refused before the pool pays anything.
+    as(A);
+    setTx(0x0db52f40, Protobuf.encode(new kpred.answer_arguments(A, ids[0], 1), kpred.answer_arguments.encode), VHP, 1);
+    expect(sponsor(k)).toBe(false, "a 31st answer in a 30-question week must not be sponsored");
+    // one more question is posted the same week: one more sponsored answer
+    at(1210);
+    const extra = post(k, 2, 1300, 1301, 1400);
+    as(A);
+    setTx(0x0db52f40, Protobuf.encode(new kpred.answer_arguments(A, extra, 1), kpred.answer_arguments.encode), VHP, 1);
+    expect(sponsor(k)).toBe(true);
   });
 });

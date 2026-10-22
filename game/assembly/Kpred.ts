@@ -1146,10 +1146,10 @@ export class Kpred {
       const stake = e ? e.stake : this.activeStake(this.players.get(a.player!)!, q.week);
       const minStake = this.minStakeFor(c, q.week);
       if (minStake == 0 || stake == 0 || stake < minStake) return false;
-      // Weekly budget: the pool commits at most the player's stake in Mana to their answers (the n-th answer of the
-      // week is paid for only if n x the cap <= stake). Settle and claim happen once per week each.
-      const n: u64 = (e ? <u64>e.answers.length : 0) + 1;
-      if (n * c.max_sponsor_rc > stake) return false;
+      // Weekly budget: at most one sponsored answer per question posted that week, so a staked player can answer every
+      // question for free (whatever their stake); settle and claim happen once per week each.
+      const n: u32 = (e ? <u32>e.answers.length : 0) + 1;
+      if (n > this.weeks.get(u64Key(q.week))!.questions) return false;
       return System.checkAuthority(authority.authorization_type.contract_call, a.player!);
     }
     if (cc.entry_point == EP_SETTLE) {

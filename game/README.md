@@ -15,7 +15,8 @@ anyone can re-check against the chain.
    The contract can also pay the Mana for one answer, settle or claim by a staked player (the bot uses it for
    settles). It pays only for a transaction that will succeed, with an rc_limit between a floor (half the cap
    unless the owner sets one) and the cap (2 KOIN at deployment, 10 at most), with canonical arguments, and for
-   each account at most "stake ÷ cap" answers a week plus one settle and one claim. The owner can set the cap to 0.
+   each staked account at most one answer per question posted that week (a 1-VHP player answers
+   every question for free), plus one settle and one claim. The owner can set the cap to 0.
 3. **Resolve.** After a question's window has ended and its blocks are final, the operator posts the
    winning option (or "void") with the hash of the blocks used. Before the week closes, the owner can
    correct a resolution (changes stop a quarter of the correction delay before the close; each change

@@ -6,7 +6,7 @@ Nothing in this file has been run. Every command below that changes something is
 |---|---|
 | Contract | Kpred `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr` (mainnet) |
 | Live code | sha256 `917708a7c567d9642a7a2f121c34fbc70200909787208705fc3aa5a2b1e6433a` (commit `1c25791`) |
-| **New code** | sha256 `ee5a9f8c3a3949b0749aee5a12712c5b56694f3e1342ec6e49e79bd7be8bf214` (`game/build/release/contract.wasm`, 53,837 bytes, built from branch `audit-fixes-1`) |
+| **New code** | sha256 `8eaed0f75e952041d98931c782c7d71e0f6ae48eb5d2cb50bf9fc6158a184559` (`game/build/release/contract.wasm`, 53,861 bytes, built from branch `audit-fixes-1`) |
 | Timelock | 48 hours after `schedule_upgrade`; the live code has no expiry, the new one gives 7 days after it |
 
 ## What changes
@@ -17,7 +17,7 @@ Nothing in this file has been run. Every command below that changes something is
 | AB-013 | `accept_owner` only 28,800 blocks (about 24 h) after `propose_owner`, so the hourly bot sees the pending transfer many times and emails you, and you have a day to propose your own address again. |
 | AB-014 | An announced upgrade or seed withdrawal can be carried out only during the 7 days after its timelock ends; after that it must be announced again (fresh 48 h). |
 | AB-015 | Answers stay open at least `week_length / 168` (exactly 1 hour with 7-day weeks). |
-| AB-003, AB-017 | The contract pays Mana only for an answer, settle or claim that will succeed: no claims for weeks not yet finalized; `rc_limit` between a floor (default half the cap; `set_sponsor_limit` now takes an optional floor) and the cap; arguments must be canonical (re-encoded byte for byte, at most 64 bytes); each account gets at most "stake ÷ cap" sponsored answers per week, plus one settle and one claim. |
+| AB-003, AB-017 | The contract pays Mana only for an answer, settle or claim that will succeed: no claims for weeks not yet finalized; `rc_limit` between a floor (default half the cap; `set_sponsor_limit` now takes an optional floor) and the cap; arguments must be canonical (re-encoded byte for byte, at most 64 bytes); each staked account (at least `min_stake`) gets at most one sponsored answer per question posted that week (so a 1-VHP player answers every question for free), plus one settle and one claim. |
 | AB-011 | Finalization is paged: at most 500 places per transaction; any game action (or `finalize_week`) runs the next page. Claims open when the last page is done. |
 | AB-016, AB-020 | Eligibility stays "at least 2 counted answers and at least `min_stake`", plus stake > 0. New owner-only `set_min_stake` (never 0, applies from the next week, never the current one; `init` also refuses 0). From the week after the upgrade, the winners' 30% is counted over eligible players with at least one point, so zero-score accounts no longer pull the cutoff down. |
 | AB-019 | New tests catch removing the solvency check, the house-share fallback and the `min_stake` boundary. |
@@ -56,13 +56,13 @@ untouched.
    ```
    cd game
    npm ci
-   npm test            # 86 contract tests, then the release build
+   npm test            # 87 contract tests, then the release build
    npm run check       # offline safety check
    ```
    ```
    certutil -hashfile build\release\contract.wasm SHA256
    ```
-   It must print `ee5a9f8c3a3949b0749aee5a12712c5b56694f3e1342ec6e49e79bd7be8bf214`. If it does not, stop: you are not building the reviewed code.
+   It must print `8eaed0f75e952041d98931c782c7d71e0f6ae48eb5d2cb50bf9fc6158a184559`. If it does not, stop: you are not building the reviewed code.
 3. `npm run bot -- status` and save the output (`npm run bot -- status > before-upgrade.txt`) to compare afterwards.
 4. `npm run bot -- upgrade status`: nothing should be announced. If something is, find out why before going on.
 5. Pick the timing: schedule on a Tuesday or Wednesday so the upload lands mid-week, away from the weekly close
@@ -76,7 +76,7 @@ npm run bot -- upgrade schedule          (dry run: shows the hash it will announ
 npm run bot -- upgrade schedule --send
 ```
 
-- It announces the sha256 of your local build; check it is `ee5a9f8c3a3949b0749aee5a12712c5b56694f3e1342ec6e49e79bd7be8bf214`.
+- It announces the sha256 of your local build; check it is `8eaed0f75e952041d98931c782c7d71e0f6ae48eb5d2cb50bf9fc6158a184559`.
 - Note the time it prints ("can be uploaded from …").
 - The bot emails you that an upgrade is scheduled: that is expected. Tell players (the Trust page shows the
   announcement); they can withdraw during the 48 hours if they disagree.
@@ -98,7 +98,7 @@ It uploads exactly the announced code (owner authorizes, bot wallet pays), then 
 ## 4. Verify
 
 1. Code hash on chain (read-only; nothing is signed). Fetch the contract's metadata and check it with the audit tool,
-   as in the audit report's §KX-26, expecting `0x1220ee5a9f8c3a3949b0749aee5a12712c5b56694f3e1342ec6e49e79bd7be8bf214` and all three authorize flags true:
+   as in the audit report's §KX-26, expecting `0x12208eaed0f75e952041d98931c782c7d71e0f6ae48eb5d2cb50bf9fc6158a184559` and all three authorize flags true:
    ```
    curl -s -X POST https://api.koinos.io -H "content-type: application/json" -d "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"chain.invoke_system_call\", \"params\": {\"id\": 303, \"args\": \"CgYIARIAGAMSGQDka1eqiZY46QAtkl2DCfUVJJ_OmXITQJU=\"}}" > meta-kpred.json
    python C:\Users\alcat\.claude\skills\audit-bot\scripts\verify_deploy.py --contract 1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr --wasm game\build\release\contract.wasm --meta-json meta-kpred.json --expect-upload-override yes --expect-call-override yes --expect-tx-override yes

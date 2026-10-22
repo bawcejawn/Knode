@@ -5,7 +5,7 @@ All tests run on GitHub on every push ("Contract tests"). The longer pre-deploy 
 [`docs/security-audit.md`](../docs/security-audit.md).
 
 Contract: `game/assembly/Kpred.ts` (logic) and `Tokens.ts` (every token movement). Mainnet address
-`1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr`. Tests: `game/assembly/__tests__/` (86 tests: `Kpred.spec.ts`, the v4 rules in
+`1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr`. Tests: `game/assembly/__tests__/` (87 tests: `Kpred.spec.ts`, the v4 rules in
 `Kpred.v4.spec.ts`, and the audit's proof, red-team and fuzz tests), plus `game/scripts/storage-compat.test.ts`
 (the upgraded code reads everything the live contract stored). The v4 upgrade plan is in
 [`docs/UPGRADE-2026-10.md`](../docs/UPGRADE-2026-10.md).
@@ -28,7 +28,7 @@ Contract: `game/assembly/Kpred.ts` (logic) and `Tokens.ts` (every token movement
 | 12 | The seed is pulled out suddenly. | Only the seed owner, only after a 48-hour public timelock, never more than the seed. | "only the seed owner adds or withdraws it, and only after the timelock", "a KOIN seed withdrawal pays what KOIN is on hand…" |
 | 13 | Malicious new code is uploaded. | Needs the owner's signature, the exact announced code, and the 48-hour wait; the new code must keep the contract's protections switched on. | "code can be replaced only with the owner, the announced bytecode, after the timelock" |
 | 14 | Someone (including the deploy key) moves the pool's tokens directly. | `authorize` refuses every outside token move. | "never lets anyone move the contract's tokens from outside" |
-| 15 | Someone drains the pool's Mana with sponsored transactions. | Sponsorship only for one answer, settle or claim that will succeed (no claim before the week is final), with an rc_limit between a floor and the cap, canonical (unpadded) arguments, and at most "stake ÷ cap" answers per account per week; the owner can lower it or switch it off. | "pays only for one valid answer / settle / claim…", AB-003, sponsor-low-rc, sponsor-drain, "rc_limit must be between the floor…" |
+| 15 | Someone drains the pool's Mana with sponsored transactions. | Sponsorship only for one answer, settle or claim that will succeed (no claim before the week is final), with an rc_limit between a floor and the cap, canonical (unpadded) arguments, for staked players (at least `min_stake`) only, and at most one answer per question posted that week per account; the owner can lower it or switch it off. | "pays only for one valid answer / settle / claim…", AB-003, sponsor-low-rc, sponsor-drain, "rc_limit must be between the floor…" |
 | 16 | Big numbers overflow. | Reward maths uses 128-bit arithmetic. | "a whale with 1 billion VHP and a minnow with 1 VHP are paid exactly…" |
 | 17 | A week can never close (stuck pot). | Weeks close automatically as a side effect of play; all-voided or no-scorer weeks roll the pot forward. | "weeks close, settle and finalize as a side effect of normal play", "a week where every question is voided…", "with no scorers the pot rolls…" |
 | 18 | Cheap accounts that score 0 push the winners' cutoff down. | From the week after v4, the 30% is counted over players with at least one point; eligibility also needs a stake above 0 and that week's minimum stake (owner-settable, never 0, from the next week). | sybil-cutoff, zero-stake-winner, "the minimum stake can change…", "winners are the top 30% of players WITH POINTS…" |
