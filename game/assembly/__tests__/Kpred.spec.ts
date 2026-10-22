@@ -345,8 +345,14 @@ describe("a full week", () => {
     give(KOIN_TAG, CONTRACT, 100 * VHP);
     give(MANA_TAG, CONTRACT, 100 * VHP);
 
-    // The last resolution of a finished week closes it automatically (nobody has to call close_week).
+    // A late last resolution does NOT close the week at once: the owner gets close_delay to correct it (v4).
     at(2200); resolve(k, q2, 0);
+    expect(k.get_week(new kpred.get_week_arguments(0)).week!.closed).toBe(false);
+    MockVM.commitTransaction();
+    expect(() => { gK!.close_week(new kpred.close_week_arguments(0)); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("too early to close this week");
+    // close_delay after it, any action closes the week automatically (nobody has to call close_week).
+    at(2210); nobody(); k.compound(new kpred.compound_arguments());
     const w0 = k.get_week(new kpred.get_week_arguments(0)).week!;
     expect(w0.closed).toBe(true);
     expect(w0.gain).toBe(100 * VHP);
@@ -696,6 +702,13 @@ describe("owner powers are limited", () => {
     k.propose_owner(new kpred.propose_owner_arguments(B));
     expect(Base58.encode(k.get_state(new kpred.get_state_arguments()).config!.owner!)).toBe(Base58.encode(OWNER));
     as(B);
+    MockVM.commitTransaction();
+    expect(() => { gK!.accept_owner(new kpred.accept_owner_arguments()); }).toThrow();   // v4: not in the same block
+    expect(MockVM.getErrorMessage()).toBe("ownership can be accepted only 28,800 blocks (about a day) after it was proposed");
+    at(100 + 28_799);
+    MockVM.commitTransaction();
+    expect(() => { gK!.accept_owner(new kpred.accept_owner_arguments()); }).toThrow();
+    at(100 + 28_800);
     k.accept_owner(new kpred.accept_owner_arguments());
     expect(Base58.encode(k.get_state(new kpred.get_state_arguments()).config!.owner!)).toBe(Base58.encode(B));
   });
@@ -902,7 +915,9 @@ describe("safety valves", () => {
     k.correct_question(new kpred.correct_question_arguments(q1, 1000, hash32(3)));
     const w0 = k.get_week(new kpred.get_week_arguments(0)).week!;
     expect(w0.resolved).toBe(2);
-    expect(w0.closed).toBe(true);                    // voiding the last open question closed the week
+    expect(w0.closed).toBe(false);                   // v4: the void can still be corrected for close_delay
+    at(2025); nobody(); k.close_week(new kpred.close_week_arguments(0));
+    expect(k.get_week(new kpred.get_week_arguments(0)).week!.closed).toBe(true);
     expect(k.get_question(new kpred.get_question_arguments(q1)).question!.outcome).toBe(1000);
     // once closed, resolutions are final
     MockVM.commitTransaction();

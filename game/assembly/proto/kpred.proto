@@ -20,6 +20,12 @@ message config_object {
   uint64 max_sponsor_rc = 10 [jstype = JS_STRING];    // largest rc_limit the contract will pay for
   bool paused = 11;                                   // pauses NEW deposits only
   bytes pending_owner = 12 [(koinos.btype) = ADDRESS];
+  // v4 (all default to 0 in data stored by earlier versions)
+  uint64 min_stake_next = 13 [jstype = JS_STRING];      // a new minimum stake, waiting for its first week; 0 = none
+  uint64 min_stake_next_week = 14 [jstype = JS_STRING]; // first week min_stake_next applies to (never the week it was set in)
+  uint64 pending_owner_height = 15 [jstype = JS_STRING];// block height of propose_owner; accept_owner waits a day after it
+  uint64 min_sponsor_rc = 16 [jstype = JS_STRING];      // smallest rc_limit the contract will pay for; 0 = half of max_sponsor_rc
+  uint64 scorer_rule_week_plus_one = 17 [jstype = JS_STRING]; // first week (+1) whose winners are the top 30% of players WITH POINTS; 0 = not set yet
 }
 
 message totals_object {
@@ -108,6 +114,13 @@ message week_object {
   uint64 sum_w = 23 [jstype = JS_STRING];             // sum of the rank weights of all winners
   uint64 bw_hi = 24 [jstype = JS_STRING];             // sum of rank weight × stake over winners (128-bit)
   uint64 bw_lo = 25 [jstype = JS_STRING];
+  // v4
+  uint64 last_resolved_time = 26 [jstype = JS_STRING]; // time (ms) of the latest resolution or correction; the week closes close_delay after it at the earliest
+  bool fin_started = 27;                              // finalization is done in pages: the cutoff is set, places are being counted
+  uint32 fin_points = 28;                             // score group being counted
+  uint32 fin_index = 29;                              // players of that group counted so far
+  uint64 fin_rank = 30 [jstype = JS_STRING];          // next place (rank) to give out
+  uint64 fin_gw = 31 [jstype = JS_STRING];            // rank weight given to that group so far
 }
 
 message bucket_object {
@@ -298,7 +311,7 @@ message close_week_result {
   uint64 pot = 2 [jstype = JS_STRING];
 }
 
-// @description After settlement ends: find the winners' cutoff (top 30% of eligible stake by points, ties included). Weeks finalize in order. Also happens automatically.
+// @description After settlement ends: find the winners (top 30% of eligible players with points, ties included). Weeks finalize in order, a page of places per call. Also happens automatically.
 // @read-only false
 message finalize_week_arguments {
   uint64 week = 1 [jstype = JS_STRING];
@@ -307,6 +320,7 @@ message finalize_week_arguments {
 message finalize_week_result {
   uint32 cutoff = 1;
   uint32 winners = 2;
+  bool done = 3;                                      // false: more winners to count; call again (any action also continues it)
 }
 
 // ════════════════════════════ Operator ════════════════════════════
@@ -371,7 +385,7 @@ message propose_owner_arguments {
 
 message propose_owner_result {}
 
-// @description Step 2: the proposed owner accepts.
+// @description Step 2: the proposed owner accepts, at least 28,800 blocks (about a day) after step 1.
 // @read-only false
 message accept_owner_arguments {}
 
@@ -401,13 +415,24 @@ message cancel_upgrade_arguments {}
 
 message cancel_upgrade_result {}
 
-// @description Set the most Mana the contract pays for one free transaction; 0 turns free transactions off (owner only, at most 10 KOIN).
+// @description Set the most (and least) Mana the contract pays for one free transaction; 0 turns free transactions off (owner only, at most 10 KOIN).
 // @read-only false
 message set_sponsor_limit_arguments {
   uint64 max_sponsor_rc = 1 [jstype = JS_STRING];
+  uint64 min_sponsor_rc = 2 [jstype = JS_STRING];     // smallest rc_limit paid for (0 = half of max_sponsor_rc)
 }
 
 message set_sponsor_limit_result {}
+
+// @description Change the minimum stake to be eligible for rewards (owner only, never 0). It applies from next week.
+// @read-only false
+message set_min_stake_arguments {
+  uint64 min_stake = 1 [jstype = JS_STRING];
+}
+
+message set_min_stake_result {
+  uint64 from_week = 1 [jstype = JS_STRING];
+}
 
 // @description Claim the 5% producer fee in KOIN (owner only; limited by the contract's Mana).
 // @read-only false

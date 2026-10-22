@@ -110,7 +110,7 @@
       "argument": "kpred.finalize_week_arguments",
       "return": "kpred.finalize_week_result",
       "read_only": false,
-      "description": "After settlement ends: find the winners' cutoff (top 30% of eligible stake by points, ties included). Weeks finalize in order. Also happens automatically."
+      "description": "After settlement ends: find the winners (top 30% of eligible players with points, ties included). Weeks finalize in order, a page of places per call. Also happens automatically."
     },
     "post_question": {
       "entry_point": 1179668153,
@@ -159,7 +159,7 @@
       "argument": "kpred.accept_owner_arguments",
       "return": "kpred.accept_owner_result",
       "read_only": false,
-      "description": "Step 2: the proposed owner accepts."
+      "description": "Step 2: the proposed owner accepts, at least 28,800 blocks (about a day) after step 1."
     },
     "register_key": {
       "entry_point": 2765249345,
@@ -187,7 +187,14 @@
       "argument": "kpred.set_sponsor_limit_arguments",
       "return": "kpred.set_sponsor_limit_result",
       "read_only": false,
-      "description": "Set the most Mana the contract pays for one free transaction; 0 turns free transactions off (owner only, at most 10 KOIN)."
+      "description": "Set the most (and least) Mana the contract pays for one free transaction; 0 turns free transactions off (owner only, at most 10 KOIN)."
+    },
+    "set_min_stake": {
+      "entry_point": 4249409239,
+      "argument": "kpred.set_min_stake_arguments",
+      "return": "kpred.set_min_stake_result",
+      "read_only": false,
+      "description": "Change the minimum stake to be eligible for rewards (owner only, never 0). It applies from next week."
     },
     "claim_creator_fee": {
       "entry_point": 1525726320,
@@ -317,6 +324,41 @@
                 "id": 12,
                 "options": {
                   "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "min_stake_next": {
+                "type": "uint64",
+                "id": 13,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "min_stake_next_week": {
+                "type": "uint64",
+                "id": 14,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pending_owner_height": {
+                "type": "uint64",
+                "id": 15,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "min_sponsor_rc": {
+                "type": "uint64",
+                "id": 16,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "scorer_rule_week_plus_one": {
+                "type": "uint64",
+                "id": 17,
+                "options": {
+                  "jstype": "JS_STRING"
                 }
               }
             }
@@ -746,6 +788,39 @@
               "bw_lo": {
                 "type": "uint64",
                 "id": 25,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "last_resolved_time": {
+                "type": "uint64",
+                "id": 26,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "fin_started": {
+                "type": "bool",
+                "id": 27
+              },
+              "fin_points": {
+                "type": "uint32",
+                "id": 28
+              },
+              "fin_index": {
+                "type": "uint32",
+                "id": 29
+              },
+              "fin_rank": {
+                "type": "uint64",
+                "id": 30,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "fin_gw": {
+                "type": "uint64",
+                "id": 31,
                 "options": {
                   "jstype": "JS_STRING"
                 }
@@ -1296,6 +1371,10 @@
               "winners": {
                 "type": "uint32",
                 "id": 2
+              },
+              "done": {
+                "type": "bool",
+                "id": 3
               }
             }
           },
@@ -1482,11 +1561,40 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "min_sponsor_rc": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
           "set_sponsor_limit_result": {
             "fields": {}
+          },
+          "set_min_stake_arguments": {
+            "fields": {
+              "min_stake": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "set_min_stake_result": {
+            "fields": {
+              "from_week": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
           },
           "claim_creator_fee_arguments": {
             "fields": {

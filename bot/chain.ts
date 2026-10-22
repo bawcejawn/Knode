@@ -152,6 +152,12 @@ export class SimChain implements Chain {
     this.module = await WebAssembly.compile(fs.readFileSync(this.wasmFile));
   }
 
+  /** Replace the contract's code, as an upgrade does: everything stored stays exactly as it is. */
+  async setCode(wasmFile: string) {
+    this.wasmFile = wasmFile;
+    await this.init();
+  }
+
   time = 0;
   /** Move the simulated chain to block h with timestamp t (ms). */
   setHeight(h: number, t?: number) { this.height = h; if (t !== undefined) this.time = t; }

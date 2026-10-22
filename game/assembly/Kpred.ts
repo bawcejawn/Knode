@@ -19,7 +19,8 @@
  *               the week's stake), answer, settle, claim
  *   operator    post and resolve questions — cannot move any funds
  *   owner       correct a resolution before its week closes, set operator, pause NEW deposits, register the node key,
- *               claim the producer fee, schedule an upgrade (uploadable only after the timelock)
+ *               claim the producer fee, change the minimum stake (from next week), schedule an upgrade (uploadable only
+ *               after the timelock, and only for 7 days after it)
  *   seed owner  add seed VHP/KOIN; withdraw it only after an announced timelock
  *   nobody      can take players' stakes or rewards, or the seed — not the owner, not the deploy key
  */
@@ -40,6 +41,20 @@ const MIN_BLOCK_MS: u64 = 2800; // even if blocks ran this fast, a question's wi
 const MAX_BLOCK_MS: u64 = 3500; // even if blocks ran this slow, the window still ends before its week is due to close
 const WHOLE: u64 = 100_000_000;   // deposits are whole VHP / KOIN only (1, 2, 3 … never 1.5); withdrawals may be any amount
 const MAX_SPONSOR_LIMIT: u64 = 1_000_000_000; // 10 KOIN of Mana: the most one free transaction may ever cost the pool
+// Sponsored arguments are re-encoded and must match byte for byte; this is the longest any of them can be.
+const MAX_SPONSORED_ARGS: i32 = 64;
+// accept_owner must come at least this many blocks (~24 h at 3 s) after propose_owner. The hourly bot then sees the
+// pending transfer many times and emails the owner, who has a day to answer (propose again to their own address).
+const OWNER_ACCEPT_DELAY: u64 = 28_800;
+// Announced upgrades and seed withdrawals can be carried out only during 7 days after their timelock ends. After that
+// they must be announced again (with a fresh 48-hour notice), so an old announcement cannot be used by surprise.
+const ANNOUNCEMENT_EXPIRY: u64 = 7 * 86_400_000;
+// Answers stay open at least 1/168 of a week: exactly 1 hour with mainnet's 7-day weeks.
+const MIN_ANSWER_DIVISOR: u64 = 168;
+// Finalization gives out at most this many places (rank weights) per transaction; larger weeks take several.
+let finalizePage: u32 = 500;
+/** Test hook: a smaller page, to exercise paged finalization with a few players. */
+export function testSetFinalizePage(n: u32): void { if (BUILD_FOR_TESTING) finalizePage = n; }
 
 // Entry points the contract is willing to pay Mana for (first 4 bytes of sha256 of the name).
 const EP_ANSWER: u32 = 0x0db52f40;
@@ -130,7 +145,27 @@ export class Kpred {
   cfg(): kpred.config_object {
     const c = this.config.get()!;
     System.require(isAddress(c.owner), "not initialised");
+    // First action after the v4 upgrade: the new winners' rule starts with the NEXT week, never one being played.
+    if (c.scorer_rule_week_plus_one == 0) {
+      c.scorer_rule_week_plus_one = this.weekOf(c, this.now()) + 2;
+      this.config.put(c);
+    }
     return c;
+  }
+
+  /** The minimum stake for week `w`: a change applies from the week after it was made. */
+  minStakeFor(c: kpred.config_object, w: u64): u64 {
+    return c.min_stake_next > 0 && w >= c.min_stake_next_week ? c.min_stake_next : c.min_stake;
+  }
+
+  /** Winners are the top 30% of eligible players with at least 1 point (weeks from v4 on); before: of all eligible. */
+  scorerRule(c: kpred.config_object, w: u64): bool {
+    return c.scorer_rule_week_plus_one > 0 && w + 1 >= c.scorer_rule_week_plus_one;
+  }
+
+  /** Smallest rc_limit the contract pays for: an amount too small to finish would revert at the pool's cost. */
+  minSponsorRc(c: kpred.config_object): u64 {
+    return c.min_sponsor_rc > 0 ? c.min_sponsor_rc : c.max_sponsor_rc / 2;
   }
 
   /** Week number of a time (times before the start count as week 0). */
@@ -203,9 +238,17 @@ export class Kpred {
   // overdue steps — finalizing the oldest settled week and closing the next finished week (at most one of each) —
   // so the game moves forward on its own whenever anyone plays. The operator bot and the public close_week / finalize_week calls do the same thing.
 
+  /** Earliest time week `w` may close: close_delay after the week ends AND close_delay after its latest resolution or
+   *  correction, so every result can still be corrected for a while after it is posted. */
+  closeAt(c: kpred.config_object, w: u64, wk: kpred.week_object): u64 {
+    const a = this.weekEnd(c, w) + c.close_delay;
+    const b = wk.last_resolved_time + c.close_delay;
+    return a > b ? a : b;
+  }
+
   closeDue(c: kpred.config_object, t: kpred.totals_object, h: u64): bool {
-    if (h < this.weekEnd(c, t.weeks_closed) + c.close_delay) return false;
     const wk = this.weeks.get(u64Key(t.weeks_closed))!;
+    if (h < this.closeAt(c, t.weeks_closed, wk)) return false;
     return wk.resolved == wk.questions;
   }
 
@@ -218,7 +261,7 @@ export class Kpred {
     const h = this.now();
     let t = this.totals.get()!;
     if (this.finalizeDue(t, h)) {
-      this.finalizeInternal(t.weeks_finalized);
+      this.finalizeStep(c, t.weeks_finalized);
       t = this.totals.get()!;
     }
     if (this.closeDue(c, t, h)) this.closeInternal(c, t.weeks_closed, h);
@@ -358,6 +401,7 @@ export class Kpred {
     System.require(args.week_length > 0 && args.settle_length > 0, "week_length and settle_length must be positive");
     System.require(args.timelock_length > 0, "timelock must be positive");
     System.require(args.max_sponsor_rc <= MAX_SPONSOR_LIMIT, "at most 10 KOIN of Mana per free transaction");
+    System.require(args.min_stake > 0, "min_stake must be positive");
     c.owner = args.owner;
     c.operator = args.operator;
     c.seed_owner = args.seed_owner;
@@ -368,6 +412,7 @@ export class Kpred {
     c.timelock_length = args.timelock_length;
     c.min_stake = args.min_stake;
     c.max_sponsor_rc = args.max_sponsor_rc;
+    c.scorer_rule_week_plus_one = 1;
     this.config.put(c);
     return new kpred.init_result();
   }
@@ -517,8 +562,8 @@ export class Kpred {
     }
     e.points = points;
     e.counted = counted;
-    // Eligible: not voided, more than one counted answer, and at least the minimum stake.
-    e.eligible = !e.voided && counted > 1 && e.stake >= c.min_stake;
+    // Eligible: not voided, more than one counted answer, a stake, and at least that week's minimum stake.
+    e.eligible = !e.voided && counted > 1 && e.stake > 0 && e.stake >= this.minStakeFor(c, week);
     this.entries.put(key, e);
     if (e.eligible) {
       const wk = this.weeks.get(u64Key(week))!;
@@ -590,8 +635,8 @@ export class Kpred {
     const t = this.totals.get()!;
     System.require(args.week == t.weeks_closed, "weeks close in order: close week " + t.weeks_closed.toString() + " first");
     const h = this.now();
-    System.require(h >= this.weekEnd(c, args.week) + c.close_delay, "too early to close this week");
     const wk = this.weeks.get(u64Key(args.week))!;
+    System.require(h >= this.closeAt(c, args.week, wk), "too early to close this week");
     System.require(wk.resolved == wk.questions, "some questions are not resolved yet");
     return this.closeInternal(c, args.week, h);
   }
@@ -652,72 +697,95 @@ export class Kpred {
   }
 
   finalize_week(args: kpred.finalize_week_arguments): kpred.finalize_week_result {
-    this.cfg();
+    const c = this.cfg();
     const wk = this.weeks.get(u64Key(args.week))!;
     System.require(wk.closed, "week not closed yet");
     System.require(!wk.finalized, "already finalized");
     System.require(args.week == this.totals.get()!.weeks_finalized, "weeks finalize in order");
     System.require(this.now() > wk.settle_end, "settlement window still open");
-    return this.finalizeInternal(args.week);
+    return this.finalizeStep(c, args.week);
   }
 
-  finalizeInternal(week: u64): kpred.finalize_week_result {
+  /** One page of finalization. The first page finds the cutoff; each page then gives out up to `finalizePage` places
+   *  (rank weights), so no transaction ever has to loop over every winner. The last page marks the week final. */
+  finalizeStep(c: kpred.config_object, week: u64): kpred.finalize_week_result {
     const wkKey = u64Key(week);
     const wk = this.weeks.get(wkKey)!;
-    // Walk down from the highest score until the winners are at least 30% of the eligible players (ties included).
-    // Only staked players take places; a score of 0 never wins.
-    const need = (<u64>wk.eligible_players * WIN_PCT + 99) / 100;
-    let cutoff: u32 = 0;
-    let cum: u64 = 0;
-    if (need > 0) {
-      for (let p = wk.max_points; p >= 1; p--) {
-        cum += <u64>this.buckets.get(this.bucketKey(week, p))!.players;
-        cutoff = p;
-        if (cum >= need) break;
+    if (!wk.fin_started) {
+      // Walk down from the highest score until the winners are at least 30% of the eligible players (ties included).
+      // Only staked players take places; a score of 0 never wins and (from v4) does not count toward the 30%.
+      let players = <u64>wk.eligible_players;
+      if (this.scorerRule(c, week)) players -= <u64>this.buckets.get(this.bucketKey(week, 0))!.players;
+      const need = (players * WIN_PCT + 99) / 100;
+      let cutoff: u32 = 0;
+      let cum: u64 = 0;
+      if (need > 0) {
+        for (let p = wk.max_points; p >= 1; p--) {
+          cum += <u64>this.buckets.get(this.bucketKey(week, p))!.players;
+          cutoff = p;
+          if (cum >= need) break;
+        }
       }
+      wk.cutoff = cutoff;
+      wk.fin_started = true;
+      wk.fin_points = cutoff >= 1 ? wk.max_points : 0;
+      wk.fin_index = 0;
+      wk.fin_rank = 1;
+      wk.fin_gw = 0;
+      wk.winners = 0;
+      wk.sum_w = 0;
+      wk.bw_lo = 0;
+      wk.bw_hi = 0;
     }
     // Give each winning score group its places' rank weights (players tied share their places evenly).
-    let rank: u64 = 1;
-    let sumW: u64 = 0;
-    let bw = u128.Zero;
-    let winners: u32 = 0;
-    if (cutoff >= 1) {
-      for (let p = wk.max_points; p >= cutoff; p--) {
-        const bk = this.bucketKey(week, p);
-        const b = this.buckets.get(bk)!;
-        if (b.players == 0) continue;
-        let gw: u64 = 0;
-        for (let i: u32 = 0; i < b.players; i++) { gw += rankWeight(rank); rank++; }
-        b.sum_w = gw;
-        this.buckets.put(bk, b);
-        sumW += gw;
-        bw = bw + u128.muldiv(u128.fromU64(gw), u128.fromU64(b.stake), u128.fromU64(<u64>b.players));
-        winners += b.players;
+    const cutoff = wk.cutoff;
+    let budget = finalizePage;
+    let bw = new u128(wk.bw_lo, wk.bw_hi);
+    while (cutoff >= 1 && wk.fin_points >= cutoff && budget > 0) {
+      const bk = this.bucketKey(week, wk.fin_points);
+      const b = this.buckets.get(bk)!;
+      while (wk.fin_index < b.players && budget > 0) {
+        wk.fin_gw += rankWeight(wk.fin_rank);
+        wk.fin_rank++;
+        wk.fin_index++;
+        budget--;
       }
+      if (wk.fin_index < b.players) break;              // the page is used up: continue with this group next time
+      if (b.players > 0) {
+        b.sum_w = wk.fin_gw;
+        this.buckets.put(bk, b);
+        wk.sum_w += wk.fin_gw;
+        bw = bw + u128.muldiv(u128.fromU64(wk.fin_gw), u128.fromU64(b.stake), u128.fromU64(<u64>b.players));
+        wk.winners += b.players;
+      }
+      wk.fin_points -= 1;
+      wk.fin_index = 0;
+      wk.fin_gw = 0;
     }
-    wk.finalized = true;
-    wk.cutoff = cutoff;
-    const tf = this.totals.get()!;
-    tf.weeks_finalized += 1;
-    this.totals.put(tf);
-    wk.winners = winners;
-    wk.sum_w = sumW;
     wk.bw_lo = bw.lo;
     wk.bw_hi = bw.hi;
-    if (winners > 0 && bw.isZero()) { wk.pot_a += wk.pot_b; wk.pot_b = 0; }   // only if every winner had 0 stake (min_stake 0)
-    if (winners == 0) {
-      // Nobody scored: the pot goes back into the pool and is paid out with the next week's (without a second fee).
-      wk.rolled_over = true;
-      const t = this.totals.get()!;
-      this.accrue(t);
-      t.pots_outstanding -= wk.pot;
-      t.rolled_over += wk.pot;
-      this.totals.put(t);
+    const done = cutoff < 1 || wk.fin_points < cutoff;
+    if (done) {
+      wk.finalized = true;
+      const tf = this.totals.get()!;
+      tf.weeks_finalized += 1;
+      this.totals.put(tf);
+      if (wk.winners > 0 && bw.isZero()) { wk.pot_a += wk.pot_b; wk.pot_b = 0; }   // only if every winner had 0 stake (not possible from v4)
+      if (wk.winners == 0) {
+        // Nobody scored: the pot goes back into the pool and is paid out with the next week's (without a second fee).
+        wk.rolled_over = true;
+        const t = this.totals.get()!;
+        this.accrue(t);
+        t.pots_outstanding -= wk.pot;
+        t.rolled_over += wk.pot;
+        this.totals.put(t);
+      }
     }
     this.weeks.put(wkKey, wk);
     const r = new kpred.finalize_week_result();
     r.cutoff = cutoff;
-    r.winners = winners;
+    r.winners = wk.winners;
+    r.done = done;
     return r;
   }
 
@@ -733,6 +801,7 @@ export class Kpred {
     const w = this.weekOf(c, now);
     System.require(args.k >= 2 && args.k <= 16, "2 to 16 options");
     System.require(args.lock_time > now, "answers must close in the future");
+    System.require(args.lock_time - now >= c.week_length / MIN_ANSWER_DIVISOR, "answers must stay open for at least 1 hour (1/168 of a week)");
     System.require(args.lock_time <= this.weekEnd(c, w), "answers must close before the week ends");
     // The watched blocks must come after answers close, even if blocks ran faster than normal until then.
     const minStart = h + (args.lock_time - now + MIN_BLOCK_MS - 1) / MIN_BLOCK_MS;
@@ -789,8 +858,9 @@ export class Kpred {
     const wkKey = u64Key(q!.week);
     const wk = this.weeks.get(wkKey)!;
     wk.resolved += 1;
+    wk.last_resolved_time = this.now();             // the owner can correct it for close_delay before the week closes
     this.weeks.put(wkKey, wk);
-    this.advance(c);                                // the last resolution of a finished week may let it close
+    this.advance(c);                                // an earlier finished week may close now; never this one at once
     return new kpred.resolve_question_result();
   }
 
@@ -805,17 +875,26 @@ export class Kpred {
     const wkKey = u64Key(q!.week);
     const wk = this.weeks.get(wkKey)!;
     System.require(!wk.closed, "the week is closed; resolutions are final");
+    const now = this.now();
     if (q!.outcome == 0) {
       // Still open (e.g. the bot is down or its key was lost): the owner may only VOID it, so the week can close.
       System.require(args.outcome == VOID, "an open question can only be voided (outcome 1000)");
       this.setOutcome(q!, args.outcome, args.data_hash);
       this.questions.put(key, q!);
       wk.resolved += 1;
+      wk.last_resolved_time = now;
       this.weeks.put(wkKey, wk);
       this.advance(c);
     } else {
+      // Changing a posted result: never in the last quarter of the correction time before the close, so a change is
+      // always visible (and can be changed back) for a while before results are final. Each change restarts the
+      // correction time.
+      System.require(now + c.close_delay / 4 <= this.closeAt(c, q!.week, wk),
+        "too close to the week's close to change a result (changes stop a quarter of close_delay before it)");
       this.setOutcome(q!, args.outcome, args.data_hash);
       this.questions.put(key, q!);
+      wk.last_resolved_time = now;
+      this.weeks.put(wkKey, wk);
     }
     return new kpred.correct_question_result();
   }
@@ -831,9 +910,31 @@ export class Kpred {
     const c = this.cfg();
     System.require(this.isOwner(c), "owner only");
     System.require(args.max_sponsor_rc <= MAX_SPONSOR_LIMIT, "at most 10 KOIN of Mana per free transaction");
+    System.require(args.min_sponsor_rc <= args.max_sponsor_rc, "the smallest rc_limit cannot be above the largest");
     c.max_sponsor_rc = args.max_sponsor_rc;
+    c.min_sponsor_rc = args.min_sponsor_rc;
     this.config.put(c);
     return new kpred.set_sponsor_limit_result();
+  }
+
+  set_min_stake(args: kpred.set_min_stake_arguments): kpred.set_min_stake_result {
+    const c = this.cfg();
+    System.require(this.isOwner(c), "owner only");
+    System.require(args.min_stake > 0, "the minimum stake can never be 0");
+    const cur = this.weekOf(c, this.now());
+    if (c.min_stake_next > 0 && c.min_stake_next_week <= cur) {
+      // The earlier change is in use. Fold it in only once no unfinalized week still uses the value before it.
+      const wf = this.totals.get()!.weeks_finalized;
+      System.require(c.min_stake_next_week <= wf,
+        "the previous change still decides week " + wf.toString() + "'s results: try again after that week is finalized");
+      c.min_stake = c.min_stake_next;
+    }
+    c.min_stake_next = args.min_stake;
+    c.min_stake_next_week = cur + 1;                // never the current week
+    this.config.put(c);
+    const r = new kpred.set_min_stake_result();
+    r.from_week = cur + 1;
+    return r;
   }
 
   set_operator(args: kpred.set_operator_arguments): kpred.set_operator_result {
@@ -858,6 +959,7 @@ export class Kpred {
     System.require(this.isOwner(c), "owner only");
     System.require(isAddress(args.new_owner), "address required");
     c.pending_owner = args.new_owner;
+    c.pending_owner_height = this.height();
     this.config.put(c);
     return new kpred.propose_owner_result();
   }
@@ -866,8 +968,11 @@ export class Kpred {
     const c = this.cfg();
     System.require(isAddress(c.pending_owner), "no ownership transfer proposed");
     System.requireAuthority(authority.authorization_type.contract_call, c.pending_owner!);
+    System.require(c.pending_owner_height > 0 && this.height() >= c.pending_owner_height + OWNER_ACCEPT_DELAY,
+      "ownership can be accepted only 28,800 blocks (about a day) after it was proposed");
     c.owner = c.pending_owner;
     c.pending_owner = null;
+    c.pending_owner_height = 0;
     this.config.put(c);
     return new kpred.accept_owner_result();
   }
@@ -974,6 +1079,7 @@ export class Kpred {
     const s = this.seedWd.get()!;
     System.require(s.eta > 0, "no seed withdrawal requested");
     System.require(this.now() >= s.eta, "the timelock has not passed yet");
+    System.require(this.now() < s.eta + ANNOUNCEMENT_EXPIRY, "this request expired (it must be carried out within 7 days after its timelock): request it again");
     const t = this.totals.get()!;
     const vhpAmt = s.vhp <= t.seed_vhp ? s.vhp : t.seed_vhp;
     let koinAmt = s.koin <= t.seed_koin ? s.koin : t.seed_koin;
@@ -1015,48 +1121,55 @@ export class Kpred {
     return new authority.authorize_result(false);
   }
 
-  /** Pay the Mana only for one valid answer / settle / claim, with a capped rc_limit. Everything else is refused. */
+  /** Pay the Mana only for one answer / settle / claim that will succeed, with an rc_limit between the floor and the
+   *  cap, canonical arguments, and within the account's weekly budget. Everything else is refused. */
   sponsorOk(): bool {
     const c = this.config.get()!;
-    if (!isAddress(c.owner)) return false;
+    if (!isAddress(c.owner) || c.max_sponsor_rc == 0) return false;
     const rcLimit = System.getTransactionField("header.rc_limit")!.uint64_value;
-    if (rcLimit > c.max_sponsor_rc) return false;
+    if (rcLimit > c.max_sponsor_rc || rcLimit < this.minSponsorRc(c) || rcLimit == 0) return false;
     const ops = txOps();
     if (ops.length != 1) return false;
     const op = ops[0];
     if (op.call_contract == null) return false;
     const cc = op.call_contract!;
     if (!Arrays.equal(cc.contract_id, this.contractId)) return false;
+    if (cc.args.length > MAX_SPONSORED_ARGS) return false;
     if (cc.entry_point == EP_ANSWER) {
       const a = Protobuf.decode<kpred.answer_arguments>(cc.args, kpred.answer_arguments.decode);
+      if (!Arrays.equal(Protobuf.encode(a, kpred.answer_arguments.encode), cc.args)) return false;   // no padding
       if (!isAddress(a.player)) return false;
       if (this.answerCheck(c, a.player!, a.question_id, a.option).length > 0) return false;
       // The pool pays the Mana only for staked players; free players use their own (or Kondor's free Mana).
       const q = this.questions.get(u32Key(a.question_id))!;
-      if (this.activeStake(this.players.get(a.player!)!, q.week) < c.min_stake || c.min_stake == 0) return false;
+      const e = this.entries.get(this.entryKey(a.player!, q.week));
+      const stake = e ? e.stake : this.activeStake(this.players.get(a.player!)!, q.week);
+      const minStake = this.minStakeFor(c, q.week);
+      if (minStake == 0 || stake == 0 || stake < minStake) return false;
+      // Weekly budget: the pool commits at most the player's stake in Mana to their answers (the n-th answer of the
+      // week is paid for only if n x the cap <= stake). Settle and claim happen once per week each.
+      const n: u64 = (e ? <u64>e.answers.length : 0) + 1;
+      if (n * c.max_sponsor_rc > stake) return false;
       return System.checkAuthority(authority.authorization_type.contract_call, a.player!);
     }
     if (cc.entry_point == EP_SETTLE) {
       const a = Protobuf.decode<kpred.settle_arguments>(cc.args, kpred.settle_arguments.decode);
+      if (!Arrays.equal(Protobuf.encode(a, kpred.settle_arguments.encode), cc.args)) return false;
       if (!isAddress(a.player)) return false;
       const se = this.entries.get(this.entryKey(a.player!, a.week));
-      if (se == null || se.stake < c.min_stake || c.min_stake == 0) return false; // free players' entries are never paid for
+      // free players' entries are never paid for
+      if (se == null || se.stake == 0 || se.stake < this.minStakeFor(c, a.week)) return false;
       if (this.settleCheck(a.player!, a.week).length == 0) return true;
-      // The week may simply not be closed yet although it is due: the settle call closes it first.
+      // The week may simply not be closed yet although it is due: the settle call closes it first, then settles.
       const t = this.totals.get()!;
-      return a.week == t.weeks_closed && this.closeDue(c, t, this.now()) &&
-        this.entries.get(this.entryKey(a.player!, a.week)) != null;
+      return a.week == t.weeks_closed && this.closeDue(c, t, this.now()) && !se.settled;
     }
     if (cc.entry_point == EP_CLAIM) {
       const a = Protobuf.decode<kpred.claim_arguments>(cc.args, kpred.claim_arguments.decode);
+      if (!Arrays.equal(Protobuf.encode(a, kpred.claim_arguments.encode), cc.args)) return false;
       if (!isAddress(a.player)) return false;
-      if (this.claimCheck(a.player!, a.week).length > 0) {
-        // Allow only if the week is merely awaiting its (due) finalization and the player was settled eligible.
-        const t = this.totals.get()!;
-        if (a.week != t.weeks_finalized || !this.finalizeDue(t, this.now())) return false;
-        const e = this.entries.get(this.entryKey(a.player!, a.week));
-        if (e == null || !e.eligible || e.claimed) return false;
-      }
+      // Only a claim that is valid right now: the week is finalized and the player is a winner who has not claimed.
+      if (this.claimCheck(a.player!, a.week).length > 0) return false;
       return System.checkAuthority(authority.authorization_type.contract_call, a.player!);
     }
     return false;
@@ -1069,6 +1182,7 @@ export class Kpred {
     const u = this.upgrade.get()!;
     if (u.hash == null || u.hash!.length != 32 || u.eta == 0) return false;
     if (this.now() < u.eta) return false;
+    if (this.now() >= u.eta + ANNOUNCEMENT_EXPIRY) return false;   // expired: announce it again
     // The upload operation carries the whole new bytecode (tens of KB), far more than the default 1 KB buffer for
     // reading transaction fields. Enlarge it for this read so the check can see the bytecode at all.
     System.setSystemBufferSize(1024 * 1024);

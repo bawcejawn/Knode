@@ -3,9 +3,9 @@ name: Contract tests
 
 on:
   push:
-    paths: ["game/**", ".github/workflows/test.yml"]
+    paths: ["game/**", "bot/chain.ts", ".github/workflows/test.yml"]
   pull_request:
-    paths: ["game/**", ".github/workflows/test.yml"]
+    paths: ["game/**", "bot/chain.ts", ".github/workflows/test.yml"]
   workflow_dispatch: {}
 
 permissions:
@@ -37,4 +37,10 @@ jobs:
         if: failure()
         run: |
           sed 's/\x1b\[[0-9;]*m//g' test.log | grep -E "❌|\[Actual\]|\[Expected\]|ERROR|Error|error|Tests\]" | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+      # The upgraded code must read everything the live contract stored, exactly as it was written.
+      - name: Upgrade compatibility with the live contract's data
+        run: |
+          npm run build:sim
+          cd .. && npm ci --no-audit --no-fund --ignore-scripts
+          node --import tsx --test game/scripts/storage-compat.test.ts
       - run: npm run check
