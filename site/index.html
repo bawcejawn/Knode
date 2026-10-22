@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- Only these sources may run scripts, load data or be framed. 'unsafe-eval' is needed by koilib (its protobuf
+       encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://api.koinos.io https://koinvault.app; frame-src https:; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Knode</title>
   <link rel="icon" href="media/icon.svg" type="image/svg+xml">
@@ -143,11 +146,17 @@
       <ol class="steps">
         <li><h3>Play free, or stake VHP</h3><p>Anyone can answer and climb the leaderboard for free. To share in the rewards, stake at least 1 VHP (whole numbers only), or KOIN, which is burned into VHP. A stake counts from the next week. You can withdraw any amount at any time, down to the last decimal. Withdraw part during a week and you keep playing with the lower stake; withdraw everything and you're out for that week.</p></li>
         <li><h3>Answer daily questions</h3><p>30 questions a week: 5 new ones every Monday to Saturday at 12:00 UTC, and answers close at 00:00 UTC, 12 hours later, before the blocks they ask about are produced. Every correct answer is one point. Sunday is results day.</p></li>
-        <li><h3>The week closes</h3><p><strong>95% of the week's block rewards go to the winners</strong> (5% producer fee). The top 30% of staked players win, ties included. Higher places earn more: most of what the seed earns is shared by place alone, so a 1 VHP player can win big; the rest is shared by place × stake, so staking more pays more. Winners are final Tuesday 12:00 UTC. No winners? The pot carries into next week.</p></li>
-        <li><h3>Collect your reward</h3><p>Your reward is paid in VHP. After a 5% producer fee, the top 30% of staked players win, counted by headcount, and ties at the line win too. The pot is two baskets: one shared by finishing place (each place weighs 1/√rank, so first place weighs the most), and one shared by that place weight times your stake. Unclaimed rewards wait for you, and keep producing for the pool meanwhile.</p></li>
+        <li><h3>The week closes</h3><p><strong>95% of the week's block rewards go to the winners</strong> (5% producer fee). The top 30% of staked players who scored at least one point win, ties included. Higher places earn more: most of what the seed earns is shared by place alone, so a 1 VHP player can win big; the rest is shared by place × stake, so staking more pays more. Winners are final Tuesday 12:00 UTC. No winners? The pot carries into next week.</p></li>
+        <li><h3>Collect your reward</h3><p>Your reward is paid in VHP. After a 5% producer fee, the top 30% of staked players who scored at least one point win, counted by headcount, and ties at the line win too. The pot is two baskets: one shared by finishing place (each place weighs 1/√rank, so first place weighs the most), and one shared by that place weight times your stake. Unclaimed rewards wait for you, and keep producing for the pool meanwhile.</p></li>
       </ol>
+      <div class="section-head" id="open-network">
+        <h2>Anyone can move the results</h2>
+        <p>Koinos is an open network. Anyone can stake VHP, run a block producer or send transactions, and each of those changes what the blocks show. So players, producers and anyone else can influence the results of these questions, and that is allowed: it is part of the game.</p>
+        <p>The project takes part too. It runs <strong>Knode Swap</strong> (the desk at 1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR, which produces blocks) and a block-producer node of its own. Both can appear in questions like any other producer. The game's own pool is never a subject.</p>
+        <p>Two rules keep a question fair to answer. It is voided, and counts for nobody, if a producer it asks about goes offline during its window. It is also voided if a producer it asks about (every member, for a group question) gains or loses more than 10% of its VHP between the question's release and the end of its window. For questions about the whole network, the network's total VHP is used. Both VHP readings are published with the question.</p>
+      </div>
       <div class="faq">
-        <details><summary>Who decides the right answer?</summary><p>The blocks do. After a question's window ends and the blocks are final, the answer is computed from them and published with a hash of the exact blocks used. If a producer in a question goes offline, the question is voided and doesn't count for anyone.</p></details>
+        <details><summary>Who decides the right answer?</summary><p>The blocks do. After a question's window ends and the blocks are final, the answer is computed from them and published with a hash of the exact blocks used. If a producer in a question goes offline, or a producer's VHP (or the whole network's, for network questions) moves by more than 10% before the window ends, the question is voided and doesn't count for anyone. The week never closes less than 12 hours after its last result, so a wrong result can always be corrected before it is final.</p></details>
         <details><summary>Does it cost anything to play?</summary><p>No fees. Koinos uses Mana, which refills on its own. If your Mana is low, tick Kondor's free Mana option when you confirm. With KOIN Vault on your phone, holding a little KOIN gives you the Mana.</p></details>
         <details><summary>Can anyone take my stake?</summary><p>No. The contract only sends your stake back to you. The owner can't move players' stakes or rewards, and code changes must be announced 48 hours ahead so anyone can withdraw first.</p></details>
       </div>
@@ -187,8 +196,8 @@
     </form>
   </dialog>
 
-  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js" integrity="sha384-IAL9o3r4bQJvWhvszkorFINY2ct4LBA/LvyXE9NSOPCyYB25BsFV12JITA7Gxbk6" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js" integrity="sha384-WOeNFfSdOron0s4x9jdzLtA7Ic7RSqZCXZAaeQd6HRL6WezQp0KAtIF2XSa+11TL" crossorigin="anonymous"></script>
   <script src="demo-data.js"></script>
   <script src="wallet.js"></script>
   <script src="app.js"></script>

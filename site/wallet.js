@@ -2,7 +2,8 @@
  *   - Kondor: the browser extension (desktop).
  *   - KOIN Vault: passkey smart accounts on the phone (https://koinvault.app), via its website connection API
  *     (docs/website-integration.md in therexdev/koin-vault). The user approves every transaction in KOIN Vault;
- *     this page never sees a key or a passkey.
+ *     this page never sees a key or a passkey. The session secret is sent only in request bodies, never in a URL, and
+ *     lives only in this page's memory (never in storage): reloading or opening another page means connecting again.
  * Usage: KWallet.init({ provider, onChange(address) }); await KWallet.connect(); await KWallet.send(label, ops).
  * `ops` are koilib operations ({ call_contract: { contract_id, entry_point, args } }), built with onlyOperation. */
 (() => {
@@ -27,8 +28,7 @@
   .kw-box h3{font-family:var(--display,inherit);font-size:21px;margin:0 0 6px}
   .kw-box p{margin:6px 0;color:var(--muted,#5d6283);font-size:14px;line-height:1.45}
   .kw-opt{display:flex;gap:12px;align-items:center;width:100%;text-align:left;font:inherit;padding:14px;margin-top:10px;border-radius:14px;border:1px solid var(--line,#e2e4ef);background:var(--paper,#f4f5fb);color:inherit;cursor:pointer}
-  .kw-opt b{display:block;font-size:16px}.kw-opt span{font-size:13px;color:var(--muted,#5d6283)}
-  .kw-opt .kw-ic{font-size:26px;line-height:1}
+  .kw-opt b{display:block;font-size:16px}.kw-opt span{font-size:13px;color:var(--muted,#5d6283)} .kw-opt .kw-ic{font-size:26px;line-height:1}
   .kw-tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 7px;border-radius:99px;background:var(--violet-soft,#ece9ff);color:var(--violet,#5a43e6);margin-left:6px;vertical-align:2px}
   .kw-go{display:block;text-align:center;margin-top:14px;padding:13px;border-radius:99px;background:var(--violet,#5a43e6);color:var(--violet-ink,#fff);font-weight:700;text-decoration:none}
   .kw-qr{display:flex;justify-content:center;margin:14px 0 4px}.kw-qr svg,.kw-qr img{width:200px;height:200px;background:#fff;padding:8px;border-radius:12px}
@@ -54,9 +54,9 @@
   function close(byUser = false) { if (modal) { modal.remove(); modal = null; } const f = onClose; onClose = null; if (byUser && f) f(); }
 
   // ── KOIN Vault API ──
-  async function vaultApi(path, { body, query } = {}) {
+  async function vaultApi(path, { body } = {}) {
     const url = new URL("/api/dapp/" + path, VAULT);
-    if (query) url.search = new URLSearchParams(query).toString();
+    // Session credentials go only in the JSON body (POST), never in the URL, where logs and proxies would keep them.
     const res = await fetch(url, {
       method: body === undefined ? "GET" : "POST",
       headers: body === undefined ? {} : { "Content-Type": "application/json" },
@@ -90,7 +90,7 @@
       if (Date.now() > W.session.expiresAt) return dropVault("KOIN Vault connection expired (they last 30 minutes). Connect again.");
       if (!document.hidden) {
         try {
-          const st = await vaultApi("status", { query: creds() }); fails = 0;
+          const st = await vaultApi("status", { body: creds() }); fails = 0;
           if (!st.connected || (W.address && st.address !== W.address)) return dropVault("KOIN Vault disconnected. Connect again to keep playing.");
         } catch (e) {
           if (e.status === 404 || e.status === 410) return dropVault("KOIN Vault connection ended. Connect again.");
@@ -107,7 +107,7 @@
     if (window.qrcode) return Promise.resolve(window.qrcode);
     if (!qrLib) qrLib = new Promise((res, rej) => {
       const s = document.createElement("script");
-      s.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js";
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"; s.integrity = "sha384-mZT2gIty7ZDdOGkxfP6joZcYdMW1Jvj9dRlfpTmaJAKKXTqzygtB22k7FLe+KZC1"; s.crossOrigin = "anonymous";
       s.onload = () => res(window.qrcode); s.onerror = () => rej(new Error("QR code didn't load"));
       document.head.append(s);
     });
@@ -136,11 +136,11 @@
       while (!cancelled && Date.now() < until) {
         await sleep(2000);
         if (cancelled) break;
-        let st; try { st = await vaultApi("status", { query: { sessionId: s.sessionId, secret: s.secret } }); }
+        let st; try { st = await vaultApi("status", { body: { sessionId: s.sessionId, secret: s.secret } }); }
         catch (e) { if (e.status === 404 || e.status === 410) throw new Error("The connection expired. Try again."); status.textContent = "Connection hiccup, still waiting…"; continue; }
         if (st.connected && st.address) {
           W.session = { sessionId: s.sessionId, secret: s.secret, expiresAt: s.expiresAt };
-          store.set(sessionStorage, "kw-vault", JSON.stringify({ ...W.session, address: st.address }));
+          store.set(sessionStorage, "kw-vault", null);           // the secret stays in this page's memory only
           setAddress("vault", st.address);
           watchVault();
           close();
@@ -222,7 +222,7 @@
     try {
       while (Date.now() < until) {
         await sleep(2000);
-        let r; try { r = await vaultApi("request-status", { query: { ...creds(), requestId: req.requestId } }); }
+        let r; try { r = await vaultApi("request-status", { body: { ...creds(), requestId: req.requestId } }); }
         catch (e) { if (e.status === 404 || e.status === 410) throw new Error("The request expired before it was approved."); continue; }
         if (r.status === "pending") { if (stop) throw new Error("Still waiting in KOIN Vault. Approve or reject it there; don't send it again from here."); continue; }
         if (r.status === "submitting") { status.textContent = "Approved. Sending…"; continue; }
@@ -242,18 +242,20 @@
 
   function init({ provider, onChange, toast, status } = {}) {
     W.provider = provider; W.onChange = onChange || (() => {}); W.toast = toast; W.status = status;
-    // Restore a KOIN Vault connection from this tab (sessions live 30 minutes), checked again before use.
+    // A connection saved by an earlier version of this page (it kept the secret in sessionStorage): take it out of
+    // storage at once, keep it in memory only, and check it again before use.
     const saved = store.get(sessionStorage, "kw-vault");
     if (saved) {
+      store.set(sessionStorage, "kw-vault", null);
       try {
         const s = JSON.parse(saved);
         if (s && s.expiresAt > Date.now()) {
           W.session = { sessionId: s.sessionId, secret: s.secret, expiresAt: s.expiresAt };
-          vaultApi("status", { query: creds() }).then((st) => {
+          vaultApi("status", { body: creds() }).then((st) => {
             if (st.connected && st.address === s.address) { setAddress("vault", st.address); watchVault(); } else dropVault();
           }).catch((e) => { if (e.status === 404 || e.status === 410) dropVault(); });
-        } else store.set(sessionStorage, "kw-vault", null);
-      } catch { store.set(sessionStorage, "kw-vault", null); }
+        }
+      } catch { /* unreadable: ignore it */ }
     }
   }
 

@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- Only these sources may run scripts, load data or be framed. 'unsafe-eval' is needed by koilib (its protobuf
+       encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://api.koinos.io https://koinvault.app; frame-src https:; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Trust · Knode</title>
   <link rel="icon" href="media/icon.svg" type="image/svg+xml">
@@ -107,7 +110,7 @@
       <span><a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a> · <a href="./">Back to the game</a></span>
     </div>
   </footer>
-  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js" integrity="sha384-IAL9o3r4bQJvWhvszkorFINY2ct4LBA/LvyXE9NSOPCyYB25BsFV12JITA7Gxbk6" crossorigin="anonymous"></script>
   <script src="trust.js"></script>
 </body>
 </html>

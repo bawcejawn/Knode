@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- Only these sources may run scripts, load data or be framed. 'unsafe-eval' is needed by koilib (its protobuf
+       encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://api.koinos.io https://koinvault.app; frame-src https:; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>New to Koinos? Start here · Knode</title>
   <link rel="icon" href="media/icon.svg" type="image/svg+xml">
@@ -140,19 +143,6 @@
     </div>
   </footer>
 
-  <script>
-  (function () {
-    // the same Koinos project list as the game page (site/ads.json)
-    fetch("ads.json", { cache: "no-cache" }).then(function (r) { return r.ok ? r.json() : {}; }).then(function (a) {
-      var list = (a.ecosystem || []).concat(a.featured ? [a.featured] : []), grid = document.getElementById("eco-grid");
-      list.forEach(function (h) {
-        try { var u = new URL(h.link); if (u.protocol !== "https:") return; } catch (e) { return; }
-        var x = document.createElement("a"); x.className = "eco-item"; x.href = h.link; x.target = "_blank"; x.rel = "noopener";
-        var b = document.createElement("b"); b.textContent = h.name; var s = document.createElement("span"); s.textContent = h.tagline;
-        x.appendChild(b); x.appendChild(s); grid.appendChild(x);
-      });
-    }).catch(function () {});
-  })();
-  </script>
+  <script src="start.js"></script>
 </body>
 </html>
