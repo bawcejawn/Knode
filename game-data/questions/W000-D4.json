@@ -65,7 +65,8 @@
         "voidAlpha": 0.001,
         "minVoidBlocks": 600
       },
-      "paramsHash": "62c42305f5632c5ea276a2a610f75215f5e493e19f4174745a45106adbba421c"
+      "paramsHash": "62c42305f5632c5ea276a2a610f75215f5e493e19f4174745a45106adbba421c",
+      "chainId": 15
     },
     {
       "id": "W000-D4-2",
@@ -119,7 +120,8 @@
         "voidAlpha": 0.001,
         "minVoidBlocks": 600
       },
-      "paramsHash": "e2c5829e53a490b420363f2b0a2e897dfc73187a144069b52771cc67eb862d39"
+      "paramsHash": "e2c5829e53a490b420363f2b0a2e897dfc73187a144069b52771cc67eb862d39",
+      "chainId": 16
     },
     {
       "id": "W000-D4-3",
@@ -196,7 +198,8 @@
         "voidAlpha": 0.001,
         "minVoidBlocks": 600
       },
-      "paramsHash": "e6c8aafd1d744a962a1073e0bf1a43057ecbde462025cfd8c2b4e60b901495ea"
+      "paramsHash": "e6c8aafd1d744a962a1073e0bf1a43057ecbde462025cfd8c2b4e60b901495ea",
+      "chainId": 17
     },
     {
       "id": "W000-D4-4",
@@ -258,7 +261,8 @@
         "voidAlpha": 0.001,
         "minVoidBlocks": 600
       },
-      "paramsHash": "0a1430d98c960d4695dd36b9de1777c2b7510c009b76338d3230595511d58dcf"
+      "paramsHash": "0a1430d98c960d4695dd36b9de1777c2b7510c009b76338d3230595511d58dcf",
+      "chainId": 18
     },
     {
       "id": "W000-D4-5",
@@ -327,7 +331,8 @@
         "voidAlpha": 0.001,
         "minVoidBlocks": 600
       },
-      "paramsHash": "eab504d148f01d6cfd041f9d73fa87c944fb2ad4188b6b93e5804658fefc3ca9"
+      "paramsHash": "eab504d148f01d6cfd041f9d73fa87c944fb2ad4188b6b93e5804658fefc3ca9",
+      "chainId": 19
     }
   ]
 }
