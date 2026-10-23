@@ -69,7 +69,7 @@ const WORDING = ["title", "text", "options"];
  *  wording). Anyone can recompute it from the public question file. */
 export function paramsHashOf(q: Record<string, any>): string {
   const withWording = Number(q.hashRule ?? 0) >= HASH_RULE;
-  const canonical: Record<string, any> = {};
+  const canonical: Record<string, any> = Object.create(null);   // so a "__proto__" member is a key like any other
   for (const [k, v] of Object.entries(q)) if (!AFTER_RELEASE.includes(k) || (withWording && WORDING.includes(k))) canonical[k] = v;
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }

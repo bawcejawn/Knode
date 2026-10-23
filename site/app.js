@@ -43,7 +43,7 @@
   const WORDING = ["title", "text", "options"];
   async function paramsHashOf(q) {
     const withWording = Number(q.hashRule ?? 0) >= 2;
-    const canonical = {};
+    const canonical = Object.create(null);   // so a "__proto__" member is a key like any other
     for (const [k, v] of Object.entries(q)) if (!AFTER_RELEASE.includes(k) || (withWording && WORDING.includes(k))) canonical[k] = v;
     const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(canonical)));
     return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -182,26 +182,37 @@
     const files = await Promise.all((idx.days || []).slice(-21).map((f) => fetchJson(DATA + f).then((d) => ({ f, d })).catch(() => null)));
     S.files = files.filter(Boolean);
     await checkFiles(S.files);
-    S.questions = S.files.flatMap(({ f, d }) => (d.questions || []).filter((q) => q.chainId !== undefined).map((q) => ({ ...q, file: f })));
+    S.questions = S.files.flatMap(({ f, d }) => (d.questions || []).filter((q) => q.chainId !== undefined).map((q) => ({ ...q, chainId: Number(q.chainId), file: f })));
   }
 
   /** Each question file must hash to the params_hash posted on chain for its id, or the page will not offer it for
    *  answering: an edited or swapped file could show reversed option labels, or another question's id.
-   *  q.hashOk: true (checked), false (does not match), null (could not be checked this time). */
-  const chainHashes = new Map();
+   *  q.hashOk: true (checked), false (does not match), null (could not be checked this time).
+   *  q.chainSays: the outcome stored on chain (0 = not resolved, 1000 = void, n = option n − 1), after any owner
+   *  correction; null when it could not be read. Results are shown from it, never from the file's own result. */
+  const chainHashes = new Map(), chainOutcomes = new Map();
   async function checkFiles(files) {
     const qs = files.flatMap(({ d }) => (d.questions || []).filter((q) => q.chainId !== undefined));
+    // Nothing is added to a question before it is hashed (any extra key would change its hash).
     await Promise.all(qs.map(async (q) => {
       try {
         const id = Number(q.chainId);
         if (!Number.isInteger(id) || id < 0) { q.hashOk = false; return; }
-        if (!chainHashes.has(id)) {
-          const h = String(((await read("get_question", { id })).question || {}).params_hash || "").replace(/^0x/, "").toLowerCase();
+        // A question's outcome can still change until its week closes (owner corrections): re-read those of the last
+        // nine days, and any not resolved yet.
+        const recent = !S.height || num(q.windowEnd) > S.height - 9 * 28800;
+        if (!chainHashes.has(id) || recent || !chainOutcomes.get(id)) {
+          const onChain = (await read("get_question", { id })).question || {};
+          const h = String(onChain.params_hash || "").replace(/^0x/, "").toLowerCase();
           if (!h) { q.hashOk = null; return; }
           chainHashes.set(id, h);
+          chainOutcomes.set(id, num(onChain.outcome));
         }
-        q.hashOk = (await paramsHashOf(q)) === chainHashes.get(id);
+        const ok = (await paramsHashOf(q)) === chainHashes.get(id);
+        q.hashOk = ok;
+        q.chainSays = chainOutcomes.get(id);
       } catch { q.hashOk = null; }
+      if (q.chainSays === undefined) q.chainSays = null;
     }));
   }
 
@@ -378,7 +389,10 @@
     if (!S.account) { await connect(); if (!S.account) return false; }
     try {
       const ops = await build();
-      toast(`Confirm “${label}” in ${window.KWallet.label()}…${opts.ownMana ? " This one uses your own Mana: leave Kondor's free Mana option off." : ""}`, 20000);
+      const ownMana = !opts.ownMana ? "" : window.KWallet.kind === "vault"
+        ? " This one must use your own Mana: the page can't check who KOIN Vault charges, so in KOIN Vault make sure your wallet pays (not the game)."
+        : " This one uses your own Mana: leave Kondor's free Mana option off.";
+      toast(`Confirm “${label}” in ${window.KWallet.label()}…${ownMana}`, 20000);
       const id = await window.KWallet.send(label, ops, opts);
       toast(id ? `Done: ${label}` : `Sent: ${label}. It may take a minute to show; the page refreshes by itself.`, 8000);
       await loadLive().catch(() => {});
@@ -418,7 +432,7 @@
     const t = st.totals || {}, cfg = st.config || {};
     const koin = big(st.koin_balance), keep = big(t.seed_koin) + big(t.creator_fee);
     const spare = koin > keep ? koin - keep : 0n;
-    const short = !c || !c.reward || big(st.vhp_balance) < big(c.reward);
+    const short = !c || !(big(c.reward) > 0n) || big(st.vhp_balance) < big(c.reward);
     return short && spare > 0n && spare + big(cfg.max_sponsor_rc) > big(st.mana);
   }
   // claim-mana:end
@@ -541,10 +555,13 @@
 
   // ═══════════════ rendering ═══════════════
   function myAnswer(q) {
-    const a = (S.entry?.answers || []).find((x) => num(x.question_id) === q.chainId);
+    const a = (S.entry?.answers || []).find((x) => num(x.question_id) === Number(q.chainId));
     return a ? num(a.option) : null;
   }
-  const outcomeOf = (q) => (q.chainOutcome !== undefined ? q.chainOutcome : q.result ? (q.result.void ? 1000 : q.result.option + 1) : 0);
+  /** The outcome stored on chain (the demo has no chain: it uses its sample results). */
+  const outcomeOf = (q) => (S.demo ? (q.chainOutcome !== undefined ? q.chainOutcome : q.result ? (q.result.void ? 1000 : q.result.option + 1) : 0) : num(q.chainSays));
+  /** Questions released before their wording was hashed (hashRule 2): the page can't confirm their options. */
+  const wordingHashed = (q) => Number(q.hashRule ?? 0) >= 2;
 
   /** On-chain question ids start at 0. The card shows that id plus one. Submits still send q.chainId. */
   const displayQuestionNumber = (q) => Number(q.chainId) + 1;
@@ -730,14 +747,14 @@
       if (mine === o.index) cls += " picked";
       if (oc && oc !== 1000 && oc === o.index + 1) cls += " correct";
       else if (oc && oc !== 1000 && mine === o.index) cls += " wrong";
-      const canAnswer = mode === "open" && mine === null && q.hashOk !== false && (S.demo || q.hashOk === true);
+      const canAnswer = mode === "open" && mine === null && q.hashOk !== false && (S.demo || q.hashOk === true) && (S.demo || wordingHashed(q));
       return el("button", {
         class: cls, type: "button", disabled: !canAnswer,
         "aria-label": `Option ${String.fromCharCode(65 + o.index)}: ${o.label}`,
         onclick: () => answer(q, o.index),
       }, el("span", { class: "letter" }, String.fromCharCode(65 + o.index)), el("span", { class: "opt-text" }, ...optLabel(o.label)));
     }));
-    const act = actualText(q);
+    const act = oc && oc !== 1000 && (S.demo || q.result?.option + 1 === oc) ? actualText(q) : null;   // only once decided on chain
     const foot = el("div", { class: "q-foot" },
       el("span", {}, `Question #${displayQuestionNumber(q)}`),
       mine !== null ? el("span", {}, `Your answer: ${String.fromCharCode(65 + mine)}`) : mode === "open" ? el("span", { class: "q-cta" }, S.account ? "Pick an answer" : "Connect a wallet to answer") : null);
@@ -749,10 +766,12 @@
   }
 
   function hashNote(q) {
-    if (S.demo || q.hashOk === true) return null;
+    if (S.demo || (q.hashOk === true && wordingHashed(q))) return null;
     return el("p", { class: "q-warn" }, q.hashOk === false
       ? "This question's published file does not match what was posted on chain, so it is not offered here. Don't answer it from anywhere else either."
-      : "This question could not be checked against the chain yet. Reload the page to try again.");
+      : q.hashOk === true
+        ? "This question was released before its wording was covered by the on-chain hash, so the page can't confirm its options and does not offer it."
+        : "This question could not be checked against the chain yet. Reload the page to try again.");
   }
 
   function renderPlay() {
@@ -862,23 +881,33 @@
   function renderResults() {
     const groups = S.files.slice().reverse().map(({ f, d }) => {
       const qs = (d.questions || []).filter((q) => q.chainId !== undefined);
-      return { f, d, done: qs.filter((q) => q.result && S.height > q.windowEnd), waiting: qs.filter((q) => !(q.result && S.height > q.windowEnd)) };
+      const final = (q) => !!outcomeOf(q) && S.height > q.windowEnd;
+      return { f, d, done: qs.filter(final), waiting: qs.filter((q) => !final(q)) };
     }).filter((g) => g.done.length || g.waiting.length);
     const list = $("#results-list");
     if (!groups.length) { list.replaceChildren(el("div", { class: "empty" }, "No results yet. The first ones arrive a few hours after the first questions close.")); return; }
     const card = (g, q) => {
-      const r = q.result, opt = r.void ? null : q.options[r.option];
-      return el("article", { class: `res${r.void ? " res-void" : ""}` },
+      // The outcome recorded on chain (after any owner correction) decides what is shown; the file's own result only
+      // explains it, and only when it says the same.
+      const oc = outcomeOf(q), isVoid = oc === 1000, opt = isVoid ? null : q.options?.[oc - 1];
+      const r = q.result && typeof q.result === "object" ? q.result : null;
+      const fileOc = r ? (r.void ? 1000 : Number.isInteger(r.option) ? r.option + 1 : null) : null;
+      const agrees = fileOc === oc;
+      const name = (o) => (o === 1000 ? "void" : `option ${String.fromCharCode(64 + o)}`);
+      return el("article", { class: `res${isVoid ? " res-void" : ""}` },
         el("div", { class: "q-top" },
           el("div", { class: "q-tags" }, el("span", { class: "qno" }, `Q${displayQuestionNumber(q)}`), el("span", { class: "kind" }, KIND_LABEL[qKind(q)])),
-          r.void ? el("span", { class: "badge badge-void" }, "Voided") : el("span", { class: "badge badge-ok" }, "Final")),
+          isVoid ? el("span", { class: "badge badge-void" }, "Voided") : el("span", { class: "badge badge-ok" }, "Final")),
         el("h3", { title: q.text }, ...headline(q)), groupView(q),
-        r.void ? el("p", { class: "res-answer void" }, `Voided: ${r.reason || "a producer went offline"}. Nobody gains or loses a point.`)
-          : el("div", { class: "res-answer" }, el("span", { class: "res-letter" }, String.fromCharCode(65 + r.option)), el("span", { class: "opt-text" }, ...optLabel(opt.label))),
-        actualText(q) ? el("p", { class: "q-actual" }, ...actualText(q)) : null,
-        r.vhpCheck?.skipped ? el("p", { class: "meta" }, `The VHP-swing rule was not applied: ${r.vhpCheck.skipped}.`) : null,
+        isVoid ? el("p", { class: "res-answer void" }, `Voided${agrees && r.reason ? `: ${r.reason}` : ""}. Nobody gains or loses a point.`)
+          : el("div", { class: "res-answer" }, el("span", { class: "res-letter" }, String.fromCharCode(64 + oc)), el("span", { class: "opt-text" }, ...(opt ? optLabel(opt.label) : [`Option ${String.fromCharCode(64 + oc)}`]))),
+        agrees && actualText(q) ? el("p", { class: "q-actual" }, ...actualText(q)) : null,
+        agrees && r.vhpCheck?.skipped ? el("p", { class: "meta" }, `The VHP-swing rule was not applied: ${r.vhpCheck.skipped}.`) : null,
+        !agrees && !S.demo ? el("p", { class: "q-warn" }, fileOc === null
+          ? "The question file has no result yet; the result shown is the one recorded on chain."
+          : `The question file says ${name(fileOc)}, but the chain records ${name(oc)} (an owner correction, or an edited file). The chain's result is the one that counts.`) : null,
         q.hashOk === false ? el("p", { class: "q-warn" }, "This question's published file does not match what was posted on chain.") : null,
-        el("p", { class: "meta" }, `Blocks ${fmtN(q.windowStart)} → ${fmtN(q.windowEnd)} · fingerprint ${String(r.dataHash || "").slice(0, 12)}… `,
+        el("p", { class: "meta" }, `Blocks ${fmtN(q.windowStart)} → ${fmtN(q.windowEnd)}${r ? ` · fingerprint ${String(r.dataHash || "").slice(0, 12)}…` : ""} `,
           S.demo ? null : el("a", { href: DATA + g.f }, "full data")));
     };
     const wait = (q) => el("div", { class: "res-wait" },

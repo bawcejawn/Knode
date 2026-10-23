@@ -195,11 +195,12 @@
    *  Throws on rejection or failure, with a readable message. */
   async function send(label, ops, opts = {}) {
     if (!W.address) throw new Error("Connect a wallet first.");
-    return W.kind === "vault" ? sendVault(label, ops) : sendKondor(label, ops, opts);
+    return W.kind === "vault" ? sendVault(label, ops, opts) : sendKondor(label, ops, opts);
   }
 
   /** opts.ownMana: the player's own account must pay the Mana, never the contract. The transaction names the player as
-   *  payer, is signed first, and is not sent if the wallet switched the payer (Kondor's free Mana option). */
+   *  payer and is signed first. It is broadcast only as signed: if the wallet switched the payer (Kondor's free Mana
+   *  option), or did not hand back a signed transaction (so the page can't see who pays), it is not sent. */
   async function sendKondor(label, ops, opts = {}) {
     const signer = window.kondor.getSigner(W.address);
     try { signer.provider = W.provider; } catch {}
@@ -208,8 +209,11 @@
     W.status && W.status(`Confirm “${label}” in Kondor…`);
     if (opts.ownMana) {
       const signed = await tx.sign();
-      if (signed) tx.transaction = signed;
-      const payer = tx.transaction && tx.transaction.header && tx.transaction.header.payer;
+      if (!signed || !Array.isArray(signed.signatures) || !signed.signatures.length) {
+        throw new Error("Kondor did not hand back a signed transaction, so the page can't check that your own Mana pays for it. Nothing was sent; try again, or claim later.");
+      }
+      tx.transaction = signed;
+      const payer = signed.header && signed.header.payer;
       if (payer !== W.address) throw new Error("This one must use your own Mana. Leave Kondor's free Mana option off and try again.");
     }
     const receipt = await tx.send();
@@ -220,7 +224,7 @@
     return null;
   }
 
-  async function sendVault(label, ops) {
+  async function sendVault(label, ops, opts = {}) {
     if (!W.session) { dropVault(); throw new Error("KOIN Vault isn't connected any more. Connect again."); }
     const operations = ops.map((o) => ({ call_contract: { contract_id: o.call_contract.contract_id, entry_point: Number(o.call_contract.entry_point), args: o.call_contract.args } }));
     let req;
@@ -232,7 +236,8 @@
     const status = h("div", { class: "kw-status", role: "status" }, "Waiting for your approval in KOIN Vault…");
     open(h("h3", {}, `Approve in KOIN Vault`), h("p", {}, `“${label}”. Open KOIN Vault, check the details and approve with your fingerprint or face, then come back here.`),
       h("a", { class: "kw-go", href: VAULT + "/", target: "_blank", rel: "noopener noreferrer", referrerpolicy: "no-referrer" }, "Open KOIN Vault"), status,
-      h("p", {}, req.funding && req.funding.payer === "sponsor" ? "Mana for this one is covered by KOIN Vault." : "This uses your wallet's own Mana (from the KOIN it holds)."));
+      h("p", {}, req.funding && req.funding.payer === "sponsor" ? "Mana for this one is covered by KOIN Vault." : "This uses your wallet's own Mana (from the KOIN it holds)."),
+      opts.ownMana ? h("p", { class: "kw-warn" }, "This one must be paid with your own Mana (or KOIN Vault's), not the game's: right now a claim the game pays for could run out of Mana and fail. The page can't check who KOIN Vault charges. If KOIN Vault shows the game contract as the payer, reject it and claim later.") : null);
     let stop = false; onClose = () => { stop = true; };
     const until = Math.min(req.expiresAt || Infinity, Date.now() + 10 * 60000);
     try {
