@@ -154,7 +154,15 @@
         "minVoidBlocks": 600
       },
       "paramsHash": "243cb6191521138e23979229c35c4a43aaeb5563406abfd17d8d8f7b882d7682",
-      "chainId": 11
+      "chainId": 11,
+      "result": {
+        "void": false,
+        "option": 2,
+        "value": "485",
+        "dataHash": "59de7327ce0890b136d07f5c76392dea132a92ba83e035e7e34c82648c8b00f7",
+        "resolvedAt": "2026-10-22T18:22:51.360Z"
+      },
+      "chainOutcome": 3
     },
     {
       "id": "W000-D3-3",
@@ -224,7 +232,15 @@
         "minVoidBlocks": 600
       },
       "paramsHash": "816de73ddde6cfc3b24af2710abd106fea9151907feed66186ccdcaee9738303",
-      "chainId": 12
+      "chainId": 12,
+      "result": {
+        "void": false,
+        "option": 3,
+        "value": "237",
+        "dataHash": "59de7327ce0890b136d07f5c76392dea132a92ba83e035e7e34c82648c8b00f7",
+        "resolvedAt": "2026-10-22T18:22:51.360Z"
+      },
+      "chainOutcome": 4
     },
     {
       "id": "W000-D3-4",
