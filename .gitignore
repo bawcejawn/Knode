@@ -11,3 +11,5 @@ rehearsal-data/
 .env.testnet
 testnet-data/
 game/kpred.pb
+node/heal.log
+node/heal-state.json

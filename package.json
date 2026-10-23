@@ -12,7 +12,8 @@
     "export-blocks": "tsx export-blocks.ts",
     "bot": "tsx bot/bot.ts",
     "test:resolver": "node --import tsx --test resolver.test.ts",
-    "desk": "tsx bot/desk.ts"
+    "desk": "tsx bot/desk.ts",
+    "heal": "node bot/heal.mjs"
   },
   "dependencies": {
     "koilib": "9.4.1"
