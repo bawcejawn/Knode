@@ -37,8 +37,9 @@ function withSnapshot(q: any, vhp = 1_000_000n * 100_000_000n) {
   q.model.voidVhpSwing = 0.1;
   return q;
 }
-/** A reading taken during the window (at its last block), with each subject's VHP changed by `change`. */
-const endWith = (q: any, change: (who: string, start: bigint) => bigint, height = q.windowEnd) => ({
+/** A reading taken during the window, before its blocks decide the answer (readings after that never void: decision
+ *  2026-10, AB-035), with each subject's VHP changed by `change`. */
+const endWith = (q: any, change: (who: string, start: bigint) => bigint, height = q.windowStart + 100) => ({
   height,
   values: Object.fromEntries(vhpSubjects(q).map((w) => [w, change(w, BigInt(q.model.vhp[w])).toString()])),
 });
@@ -94,16 +95,18 @@ test("a subject that gains or loses MORE than 10% of its VHP voids the question;
   const down = at((a) => (a * 88n) / 100n);
   assert.ok(down.ok && down.result.void, "−12% is void");
   assert.equal(down.ok && down.result.vhpCheck?.values[q.subjects[0]].change, "−12.00%");
-  assert.deepEqual(down.ok && down.result.vhpCheck?.readings, [q.windowEnd]);
-  assert.equal(down.ok && down.result.vhpCheck?.values[q.subjects[0]].height, q.windowEnd);
+  assert.deepEqual(down.ok && down.result.vhpCheck?.readings, [q.windowStart + 100]);
+  assert.equal(down.ok && down.result.vhpCheck?.values[q.subjects[0]].height, q.windowStart + 100);
 });
 
-test("every member of a group question counts (M10, which names the Desk), and only members count", () => {
+test("every member of a group question counts toward the group's combined VHP (M10, which names the Desk), and only members count", () => {
   const q = withSnapshot(byT("M10"));
   assert.ok(q.group.includes(DESK), "(context) the live group question names the Desk");
   const blocks = history(q);
   const desk = scoreQuestion(q, blocks, { vhpReadings: [endWith(q, (w, a) => (w === DESK ? a * 2n : a))] });
-  assert.ok(desk.ok && desk.result.void && desk.result.reason!.includes(DESK), "VHP swapped into the Desk voids the group question");
+  // Decision 2026-10 (AB-036): a group question is checked on its members' combined VHP. Doubling one of seven equal
+  // members moves the total by 14%.
+  assert.ok(desk.ok && desk.result.void && /the group's combined VHP/.test(desk.result.reason!), "VHP swapped into the Desk voids the group question");
   const outsider = scoreQuestion(q, blocks, { vhpReadings: [{ ...endWith(q, (_w, a) => a), values: { ...endWith(q, (_w, a) => a).values, "1SomeoneElse": "1" } }] });
   assert.ok(outsider.ok && !outsider.result.void);
 });

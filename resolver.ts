@@ -80,41 +80,109 @@ export function vhpSubjects(q: Pick<QuestionInput, "template" | "subjects" | "gr
   return [...(q.subjects ?? [])];
 }
 
-/** "Void if a producer it is about (or the network) gained or lost MORE than voidVhpSwing of its VHP, compared with
- *  the release snapshot, in any VHP reading taken during the window." Exact integer arithmetic:
- *  |reading − release| × 1,000,000 > release × round(swing × 1,000,000).
- *  - Only readings with windowStart ≤ height ≤ windowEnd count. A reading taken after the window's last block never
- *    voids (by then the outcome is public), whatever it shows.
- *  - With no reading inside the window at all, the rule is skipped and the question resolves on its blocks alone.
+/** Key used for a group question's combined VHP (the sum of its members') in the VHP-swing check. */
+export const GROUP_VHP = "group";
+
+/** "Void if a producer it is about (or the network, or a group's combined VHP) gained or lost MORE than voidVhpSwing of
+ *  its VHP, compared with the release snapshot, in any VHP reading taken during the window before the outcome was
+ *  certain." Exact integer arithmetic: |reading − release| × 1,000,000 > release × round(swing × 1,000,000).
+ *  - Only readings with windowStart ≤ height ≤ decidedHeight count (decidedHeight: the block from which the window's
+ *    blocks already decide the option, see decidedHeight(); windowEnd by default). A reading taken after that block
+ *    never voids (by then the outcome is public), whatever it shows.
+ *  - A group question (M10) is checked on its members' combined VHP, not member by member.
+ *  - With no reading counted at all, the rule is skipped and the question resolves on its blocks alone.
  *  - A subject whose release VHP is 0 is not checked (any amount would be an infinite change). */
-export function vhpSwingCheck(q: QuestionInput, readings: VhpReading[]):
+export function vhpSwingCheck(q: QuestionInput, readings: VhpReading[], decidedAt = q.windowEnd):
   | { ok: true; swung: string[]; heights: number[]; detail: Record<string, { release: string; end: string; change: string; height?: number }> }
   | { ok: false; pending: boolean; reason: string } {
   const start = q.model?.vhp ?? {};
   const limit = q.model?.voidVhpSwing ?? 0;
   const ppm = BigInt(Math.round(limit * 1_000_000));
-  const inWindow = readings.filter((r) => Number.isInteger(r?.height) && r.height >= q.windowStart && r.height <= q.windowEnd)
+  const last = Math.min(decidedAt, q.windowEnd);
+  const inWindow = readings.filter((r) => Number.isInteger(r?.height) && r.height >= q.windowStart && r.height <= last)
     .sort((a, b) => a.height - b.height);
+  const group = KINDS[q.template] === "tail";
+  const members = vhpSubjects(q);
+  for (const who of members) if (start[who] === undefined) return { ok: false, pending: false, reason: `the release snapshot has no VHP for ${who}` };
+  // The value of one checked subject in a reading (a group's is the sum of its members').
+  const valueOf = (r: VhpReading, who: string): bigint | string => {
+    const ws = who === GROUP_VHP ? members : [who];
+    let s = 0n;
+    for (const w of ws) {
+      if (r.values?.[w] === undefined || !/^\d+$/.test(String(r.values[w]))) return `the VHP reading at block ${r.height} has no valid value for ${w}`;
+      s += BigInt(r.values[w]);
+    }
+    return s;
+  };
+  const releaseOf = (who: string) => (who === GROUP_VHP ? members.reduce((s, w) => s + BigInt(start[w]), 0n) : BigInt(start[who]));
   const swung: string[] = [], detail: Record<string, { release: string; end: string; change: string; height?: number }> = {};
-  for (const who of vhpSubjects(q)) {
-    if (start[who] === undefined) return { ok: false, pending: false, reason: `the release snapshot has no VHP for ${who}` };
-    const a = BigInt(start[who]);
-    if (a === 0n) { detail[who] = { release: start[who], end: "", change: "not checked (no VHP at release)" }; continue; }
+  for (const who of group ? [GROUP_VHP] : members) {
+    const a = releaseOf(who);
+    if (a === 0n) { detail[who] = { release: a.toString(), end: "", change: "not checked (no VHP at release)" }; continue; }
     // The reading with the largest change decides (the latest one on a tie).
     let best: { b: bigint; diff: bigint; height: number } | undefined;
     for (const r of inWindow) {
-      if (r.values?.[who] === undefined || !/^\d+$/.test(String(r.values[who]))) {
-        return { ok: false, pending: false, reason: `the VHP reading at block ${r.height} has no valid value for ${who}` };
-      }
-      const b = BigInt(r.values[who]), diff = b > a ? b - a : a - b;
+      const b = valueOf(r, who);
+      if (typeof b === "string") return { ok: false, pending: false, reason: b };
+      const diff = b > a ? b - a : a - b;
       if (!best || diff >= best.diff) best = { b, diff, height: r.height };
     }
-    if (!best) { detail[who] = { release: start[who], end: "", change: "no reading during the window" }; continue; }
+    if (!best) { detail[who] = { release: a.toString(), end: "", change: "no reading during the window" }; continue; }
     const pct = (Number((best.diff * 1_000_000n) / a) / 10_000).toFixed(2);
     detail[who] = { release: start[who], end: best.b.toString(), change: `${best.b >= a ? "+" : "−"}${pct}%`, height: best.height };
     if (best.diff * 1_000_000n > a * ppm) swung.push(who);
   }
   return { ok: true, swung, heights: inWindow.map((r) => r.height), detail };
+}
+
+/** The height of the block from which the window's blocks already decide the option (the question's outcome became
+ *  certain), or windowEnd when that cannot be told earlier. VHP readings taken after it never void.
+ *  - Over/under counts (one producer's blocks, a group's blocks, the network's transactions) and the longest interval:
+ *    the value only grows, so the block where it passed the top threshold.
+ *  - Head-to-head and combined differences: the block after which even every remaining block going one way could not
+ *    change the option (each block moves a difference by at most 1).
+ *  - Share of empty blocks: the block after which neither all-empty nor no-empty remaining blocks change the option.
+ *  - Average interval: not knowable before the last block (windowEnd).
+ *  The offline-void rule is separate: it still applies to every block of the window. */
+export function decidedHeight(q: QuestionInput, win: Blk[]): number {
+  const kind = KINDS[q.template], t = q.thresholds, top = t[t.length - 1], n = win.length;
+  if (!n || !t.length) return q.windowEnd;
+  const passedTop = (step: (i: number) => number) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) { v += step(i); if (v > top) return win[i].h; }
+    return q.windowEnd;
+  };
+  const is = (who: string) => (i: number) => (win[i].signer === who ? 1 : 0);
+  if (kind === "single") return passedTop(is(q.subjects[0]));
+  if (kind === "tail") { const g = new Set(q.group ?? []); return passedTop((i) => (g.has(win[i].signer) ? 1 : 0)); }
+  if (q.template === "M7") return passedTop((i) => win[i].ntx);
+  if (q.template === "M4") {
+    let g = 0;
+    for (let i = 1; i < n; i++) { g = Math.max(g, win[i].ts - win[i - 1].ts); if (g > top) return win[i].h; }
+    return q.windowEnd;
+  }
+  const sure = (lo: number, hi: number, th: number[]) => optionFor(lo, th) === optionFor(hi, th);
+  if (kind === "h2h" || kind === "combo") {
+    const [a, b, c, d] = q.subjects;
+    let d1 = 0, d2 = 0;
+    for (let i = 0; i < n; i++) {
+      const s = win[i].signer, r = n - 1 - i;
+      d1 += (s === a ? 1 : 0) - (s === b ? 1 : 0);
+      if (kind === "h2h") { if (sure(d1 - r, d1 + r, t)) return win[i].h; continue; }
+      d2 += (s === c ? 1 : 0) - (s === d ? 1 : 0);
+      if (sure(d1 - r, d1 + r, [t[0]]) && sure(d2 - r, d2 + r, [t[1]])) return win[i].h;
+    }
+    return q.windowEnd;
+  }
+  if (q.template === "M6") {
+    let e = 0;
+    for (let i = 0; i < n; i++) {
+      if (win[i].ntx === 0) e++;
+      const r = n - 1 - i;
+      if (sure(Math.round((1000 * e) / n), Math.round((1000 * (e + r)) / n), t)) return win[i].h;
+    }
+  }
+  return q.windowEnd;
 }
 
 export type AnswerResult = {
@@ -127,7 +195,7 @@ export type AnswerResult = {
   /** The VHP-swing rule's inputs and outcome (questions released with a VHP snapshot only): the heights of the readings
    *  taken during the window, and per subject the reading with the largest change. `skipped` says why the rule was not
    *  applied (no reading during the window). */
-  vhpCheck?: { limit: number; releaseHeight?: number; readings: number[]; skipped?: string;
+  vhpCheck?: { limit: number; releaseHeight?: number; decidedHeight?: number; readings: number[]; skipped?: string;
     values: Record<string, { release: string; end: string; change: string; height?: number }> };
 };
 
@@ -246,15 +314,20 @@ export function scoreQuestion(q: QuestionInput, blocks: Blk[], opts: { vhpReadin
   let swung: string[] = [], vhpCheck: AnswerResult["vhpCheck"];
   if (q.model?.vhp && q.model.voidVhpSwing !== undefined) {
     // vhpEnd: the single reading files from before this rule change carried. It counts like any other reading.
-    const v = vhpSwingCheck(q, [...(opts.vhpReadings ?? []), ...(opts.vhpEnd ? [opts.vhpEnd] : [])]);
+    const decided = decidedHeight(q, win);
+    const v = vhpSwingCheck(q, [...(opts.vhpReadings ?? []), ...(opts.vhpEnd ? [opts.vhpEnd] : [])], decided);
     if (!v.ok) return v;
     swung = v.swung;
-    vhpCheck = { limit: q.model.voidVhpSwing, releaseHeight: q.model.vhpHeight, readings: v.heights, values: v.detail };
-    if (!v.heights.length) vhpCheck.skipped = "no VHP reading was taken during the window";
+    vhpCheck = { limit: q.model.voidVhpSwing, releaseHeight: q.model.vhpHeight, decidedHeight: decided, readings: v.heights, values: v.detail };
+    if (!v.heights.length) {
+      vhpCheck.skipped = decided < q.windowEnd
+        ? `no VHP reading was taken during the window before block ${decided}, where its blocks decided the answer`
+        : "no VHP reading was taken during the window";
+    }
   }
   const reasons: string[] = [];
   if (offline.length) reasons.push(`${offline.join(", ")} went offline during the window`);
-  if (swung.length) reasons.push(`${swung.map((w) => (w === NETWORK_VHP ? "the network's VHP" : `${w}'s VHP`)).join(", ")} changed by more than ${q.model!.voidVhpSwing! * 100}% during the window`);
+  if (swung.length) reasons.push(`${swung.map((w) => (w === NETWORK_VHP ? "the network's VHP" : w === GROUP_VHP ? "the group's combined VHP" : `${w}'s VHP`)).join(", ")} changed by more than ${q.model!.voidVhpSwing! * 100}% during the window`);
   const result: AnswerResult = reasons.length
     ? { void: true, reason: reasons.join("; "), value: text, dataHash, resolvedAt }
     : { void: false, option, value: text, dataHash, resolvedAt };
