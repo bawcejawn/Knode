@@ -171,7 +171,7 @@ The publish job already refuses anything outside `game-data/`. To have GitHub en
 - Name: `bot can only change game-data`; Enforcement: Active; Target: all branches (push rulesets apply to the whole
   repository).
 - Rule **Restrict file paths**, with every path except the bot's: `.github/**`, `site/**`, `desk-data/**`, `game/**`,
-  `desk/**`, `bot/**`, `node/**`, `probes/**`, `docs/**`, `tests/**`, `data/**`, `game-data/deployment.json`,
+  `desk/**`, `bot/**`, `node/**`, `docs/**`, `tests/**`, `data/**`, `game-data/deployment.json`,
   `game-data/game.json`, and the files in the repository's root folder by name (`package.json`, `package-lock.json`,
   `common.ts`, `resolver.ts`, `generator.ts`, … as they are listed there). Do not use a bare `*.json`: it could also
   match the bot's own files under `game-data/`.

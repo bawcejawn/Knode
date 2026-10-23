@@ -1,5 +1,5 @@
 // Red team (web attacker), fix check of Knode @ 0e75ca8: CI (.github/workflows) and dependency pinning
-// (package.json + package-lock.json in /, game/, desk/, probes/).
+// (package.json + package-lock.json in /, game/, desk/).
 //
 // Guards (expected PASS): every action pinned to a full commit SHA; no pull_request_target / workflow_run triggers;
 // no attacker-controlled ${{ github.event.* }} / head_ref expanded in a run: script; secrets used only by bot.yml's tick
@@ -72,7 +72,7 @@ test("(D) the job that holds OPERATOR_WIF only runs for the default branch (envi
 
 test("(guard) dependencies: exact versions, lock entries from npmjs with sha512, lock root matches package.json", () => {
   const bad = [];
-  for (const d of ["", "game/", "desk/", "probes/"]) {
+  for (const d of ["", "game/", "desk/"]) {
     const pj = `${APP}/${d}package.json`, lj = `${APP}/${d}package-lock.json`;
     if (!fs.existsSync(pj)) continue;
     const p = JSON.parse(fs.readFileSync(pj, "utf8"));

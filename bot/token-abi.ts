@@ -1,6 +1,8 @@
-// The token contract interface (KOIN and VHP), used for approvals before deposits. Same as probes/scripts/abi.ts.
+// The token contract interface (KOIN and VHP), used for approvals before deposits, and the Proof-of-Burn system
+// contract's (burning KOIN into VHP, reading a producer's registered key).
 const ADDR = { "(koinos.btype)": "ADDRESS" };
 const U64 = { jstype: "JS_STRING" };
+const B64 = { "(koinos.btype)": "BASE64" };
 const f = (id: number, type: string, options?: object) => (options ? { type, id, options } : { type, id });
 
 export const tokenAbi = {
@@ -25,6 +27,25 @@ export const tokenAbi = {
           approve_result: { fields: {} },
           total_supply_arguments: { fields: {} },
           total_supply_result: { fields: { value: f(1, "uint64", U64) } },
+        },
+      },
+    },
+  },
+};
+
+export const pobAbi = {
+  methods: {
+    burn:           { entry_point: 0x859facc5, argument: "pob.burn_arguments",           return: "pob.burn_result",           read_only: false },
+    get_public_key: { entry_point: 0x96634f68, argument: "pob.get_public_key_arguments", return: "pob.get_public_key_result", read_only: true },
+  },
+  koilib_types: {
+    nested: {
+      pob: {
+        nested: {
+          burn_arguments: { fields: { token_amount: f(1, "uint64", U64), burn_address: f(2, "bytes", ADDR), vhp_address: f(3, "bytes", ADDR) } },
+          burn_result: { fields: {} },
+          get_public_key_arguments: { fields: { producer: f(1, "bytes", ADDR) } },
+          get_public_key_result: { fields: { value: f(1, "bytes", B64) } },
         },
       },
     },

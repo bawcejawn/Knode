@@ -1,4 +1,5 @@
-// Audit Bot stateful fuzz test (Knode, commit 6b37c46), seed 1. Harness copied unchanged from game/assembly/__tests__/Kpred.spec.ts.
+// Audit Bot stateful fuzz test (Knode, commit 6b37c46), seeds 1, 7, 4242 and 99991 (one file: each run resets the mock VM).
+// Harness copied unchanged from game/assembly/__tests__/Kpred.spec.ts.
 /**
  * Game contract tests on a simulated Koinos chain (MockVM). Token movements use the in-contract test ledger.
  * Run with: npm test
@@ -318,4 +319,13 @@ function runSeed(seed: u32): void {
 
 describe("AUDIT fuzz: Kpred books always balance (seed 1)", () => {
   it("150 random steps keep wallets, stake totals, solvency and pots consistent", () => { runSeed(1); });
+});
+describe("AUDIT fuzz: Kpred books always balance (seed 7)", () => {
+  it("150 random steps keep wallets, stake totals, solvency and pots consistent", () => { runSeed(7); });
+});
+describe("AUDIT fuzz: Kpred books always balance (seed 4242)", () => {
+  it("150 random steps keep wallets, stake totals, solvency and pots consistent", () => { runSeed(4242); });
+});
+describe("AUDIT fuzz: Kpred books always balance (seed 99991)", () => {
+  it("150 random steps keep wallets, stake totals, solvency and pots consistent", () => { runSeed(99991); });
 });

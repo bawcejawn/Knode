@@ -17,7 +17,6 @@
  * bucket widths are learned from the last 7 days of the forecast's actual errors. A 4-week average
  * proved far too slow — the producer set shifted within days.
  *
- * The first run imports blocks from step0-output/cache.json if it exists, so nothing is downloaded twice.
  * Outputs go to ./backtest-output/ (blocks.csv cache, report.json, instances.csv).
  */
 
@@ -54,7 +53,6 @@ const DEFAULTS = {
   maxVoid: 0.05, // void rate must stay under 5%
   minInstances: 30, // fewer replays than this = "not enough data"
   out: "backtest-output",
-  import: "step0-output/cache.json",
 };
 
 const BLOCKS_PER_DAY = 28_800;
@@ -105,11 +103,6 @@ function loadCache(cfg: typeof DEFAULTS): Blk[] {
       const [h, ts, signer, ntx, compute] = l.split(",");
       return { h: +h, ts: +ts, signer, ntx: +ntx, compute: +compute };
     });
-  }
-  if (cfg.import && fs.existsSync(cfg.import)) {
-    console.log(`Importing blocks from ${cfg.import} (Step 0's download) ...`);
-    const rows = JSON.parse(fs.readFileSync(cfg.import, "utf8")).rows as any[];
-    return rows.map((r) => ({ h: r.h, ts: r.ts, signer: r.signer, ntx: r.ntx, compute: r.compute }));
   }
   return [];
 }

@@ -32,7 +32,7 @@ import crypto from "node:crypto";
 import { Signer, Provider, Contract, Transaction, utils } from "koilib";
 import { KoinosChain, Call, showKoin, toSat } from "./chain.ts";
 import { tokenAbi } from "./token-abi.ts";
-import { pobAbi } from "../probes/scripts/abi.ts";
+import { pobAbi } from "./token-abi.ts";
 import { units, normalizeKey, nodePublicKey, isMainnet, utc, HOUR_MS } from "./bot.ts";
 
 const E = process.env;

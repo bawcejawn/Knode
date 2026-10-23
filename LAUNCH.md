@@ -20,7 +20,6 @@ OneDrive uploads its folders to the cloud, including `.env` files that hold keys
 
 ```
 git clone https://github.com/bawcejawn/Knode.git C:\kprediction
-Copy-Item "C:\Users\cpada\OneDrive\Desktop\kprediction-git\probes\.env" "C:\kprediction\probes\.env"
 cd C:\kprediction
 ```
 

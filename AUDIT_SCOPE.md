@@ -29,14 +29,13 @@ lets players deposit, answer, withdraw and claim with the Kondor extension or KO
 | `desk/` | Desk (Knode Swap) contract, tests, checks, `SECURITY.md` |
 | `bot/` | Operator bot (`bot.ts`: tick, admin commands, rehearsal), Desk tools, health/Mana checks, status watcher, their tests |
 | `resolver.ts`, `generator.ts`, `common.ts` | Question rules: scoring from blocks, the VHP-swing and offline voids, the decided block (`resolver.ts`); question release and models (`generator.ts`); block history and VHP reads (`common.ts`) |
-| `backtest.ts`, `step0.ts`, `export-blocks.ts`, `data/` | Off-line analysis used to calibrate the questions (historical block data) |
+| `backtest.ts`, `export-blocks.ts`, `data/` | Off-line analysis used to calibrate the questions (historical block data) |
 | `game-data/` | Live game data published by the bot: `deployment.json`, `game.json` (settings), daily question files, bot state |
 | `desk-data/` | Desk `deployment.json` |
 | `site/`, `index.html` | Static website and wallet code (`site/app.js`, `site/wallet.js`) |
 | `tests/audit/` | Attack and regression tests from earlier internal reviews (each asserts the safe behaviour) |
 | `.github/workflows/` | `bot.yml` (hourly bot: `tick` job with the operator key, `publish` job that pushes `game-data/`), contract/desk/resolver/status test workflows, a workflow guard and a status watcher |
 | `docs/` | `UPGRADE-2026-10.md` (the planned game upgrade runbook), migration notes, an idea note, an earlier security review |
-| `probes/` | Testnet probe contract and scripts used before launch (not deployed by this version) |
 | `node/` | Setup scripts for the owner's block-producing nodes |
 | `README.md`, `LAUNCH.md`, `AUDIT.md` | Overview and rules, launch guide, an earlier review (historical: it describes an older commit) |
 

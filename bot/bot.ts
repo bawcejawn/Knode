@@ -31,7 +31,7 @@ import { Chain, KoinosChain, SimChain, Call, showKoin, toSat, loadAbi } from "./
 import { tokenAbi } from "./token-abi.ts";
 import { readCsv, syncBlocks, fetchRange, readVhp, MAINNET_VHP, type Blk } from "../common.ts";
 import { chainOutcome, scoreQuestion, storedOutcome, paramsHashOf, vhpSubjects, type VhpReading } from "../resolver.ts";
-import { pobAbi } from "../probes/scripts/abi.ts";
+import { pobAbi } from "./token-abi.ts";
 import { formatProduction, loadSigners, signerFromBlockItem, type SignedBlock } from "./production.ts";
 import { contractManaVerdict } from "./mana.ts";
 import { contractMetadata, checkMeta, sha256OfMeta, type Check } from "./chaincheck.ts";

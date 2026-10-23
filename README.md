@@ -2,7 +2,8 @@
 Predictions on Block Producers — Koinos. A weekly prediction game about the Koinos chain: players answer
 multiple-choice questions about block producers and network data; top scorers share the staking rewards.
 
-Folders: the analysis tools are in this folder; `probes/` holds the testnet contract probes.
+Folders: `game/` and `desk/` hold the two contracts, `bot/` the operator bot, `site/` the website; the question
+generator and its tools are in this folder.
 
 ## Open network: anyone can influence the results
 
@@ -76,72 +77,14 @@ How the VHP-swing rule is applied, exactly:
 Read-only. No wallet, no keys, no transactions. It downloads recent public blocks and prints
 the numbers that decide the platform's pool economics, void thresholds, question calibration and accounting.
 
-## Run it
+## Tools in this folder
 
-1. Install Node.js 20 or newer from https://nodejs.org (the "LTS" button).
-   On Windows, if PowerShell says *"npm.ps1 cannot be loaded because running scripts is disabled"*, run this
-   once and answer **Y**: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
-   (or use the **Command Prompt** instead of PowerShell).
-2. Put `step0.ts`, `package.json` and this README in one folder, open a terminal there, and run:
+- `generator.ts`, `resolver.ts`, `common.ts`: build each day's questions and score them (used by the bot).
+- `backtest.ts`: replays real history to check each question template is fair (below).
+- `export-blocks.ts`: packs the block history into `data/blocks-compact.csv.gz` for the bot and the rehearsal.
+- `bot/`: the operator bot and the Desk tools; `game/` and `desk/`: the two contracts; `site/`: the website.
 
-   ```
-   npm install
-   npm run step0
-   ```
-
-   A 7-day scan is about 200,000 blocks and takes roughly 10–30 minutes on the public node.
-   For a quick first look: `npm run step0 -- --days 1`
-
-3. Re-analyze without downloading again (e.g. with a treasury seed amount):
-
-   ```
-   npm run step0 -- --from-cache step0-output/cache.json --seed 1000000 --pools 10000,100000,1000000
-   ```
-
-## Flags
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--days` | 7 | How far back to scan |
-| `--rpc` | https://api.koinos.io | Public JSON-RPC endpoint |
-| `--seed` | 0 | Koinos Federation seed in KOIN (95% burned into VHP, 5% kept as KOIN for Mana) |
-| `--retain-bps` | 0 | Retired owner share (the game now takes only the 5% producer fee) |
-| `--pools` | 10000,100000,1000000,2000000,5000000,10000000 | Total player VHP deposited (any split across wallets — every 1 VHP is one entry) |
-| `--fee-bps` | 500 | Producer fee on the gain, paid in KOIN (500 = 5%) |
-| `--koin`, `--vhp` | mainnet addresses | Verify at docs.koinos.io |
-| `--concurrency` | 2 | Parallel requests; use 1 if the node rate-limits you |
-| `--from-cache` | — | Reuse a previous download |
-
-## What you get
-
-Printed report, plus files in `step0-output/`:
-
-- `report.json` — every headline number, including the suggested void thresholds
-- `producers.csv` — blocks, share, VHP, rewards, VHP burned, biggest VHP jump per producer
-- `daily.csv` — per-day distinct producers, longest streak, biggest gap, avg interval, % empty blocks, compute
-- `producer_days.csv` — per producer per day: VHP at start, expected vs actual blocks, missed %, VHP change
-- `cache.json` — the raw download, for re-runs
-
-## How the numbers are computed
-
-- **Contract addresses**: detected from the data. Per the PoB contract (`process_block_signature`),
-  every block mints KOIN to the signer and burns VHP from the signer, so those contracts are KOIN and VHP.
-  `--koin` / `--vhp` are only fallbacks.
-- **True reward per VHP**: KOIN minted to signers is `block_reward + vhp_reduction`, i.e. the reward
-  plus the burned VHP paid back as KOIN. The true yield is minted − burned, divided by the average VHP
-  of producers that signed at least one block, scaled to 7 days. This is what can go into the pot.
-- **Does producing change VHP?** Yes, if block-level VHP burns from the signer appear. compound() then
-  re-burns the KOIN that replaces the burned VHP, at least daily.
-- **Historical VHP**: balances are read now, then every VHP mint, burn and transfer is walked
-  backwards, so no archive node is needed.
-- **Expected blocks**: VHP snapshot at the start of each day × blocks that day, shared among active
-  producers — the same rule the void check will use at question release.
-- **Pool projection**: block rewards are fixed per block, so the pool earns its share of all producer
-  rewards, and adding VHP dilutes everyone (the table accounts for it). For each deposit level it shows the
-  weekly gain, the 5% producer fee (KOIN), the 95% winners' pot, what 1 VHP earns solo, and what an
-  average winner earns per VHP (winners hold 30% of eligible stake, so ≈ 3.1× solo before any seed).
-- **Concentration markers**: no cap, but the report shows the pool size at which our node would hold a third
-  and half of producing VHP, the points where splitting across several nodes matters.
+Install Node.js 20 or newer from https://nodejs.org (the "LTS" button), then `npm ci` in this folder.
 
 ---
 
