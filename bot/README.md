@@ -20,11 +20,20 @@ hold up a week.
 
 - **The bot's key (operator) can't move any funds.** It can only post and resolve questions. A wrong
   resolution can be corrected by the owner before the week closes, and the owner can replace the operator.
-- **No question is ever lost.** In the GitHub run, a day's questions are saved in the runner (a local commit)
+- **A posted question is not lost.** In the GitHub run, a day's questions are saved in the runner (a local commit)
   *before* they are posted, and the workflow's publish job pushes `game-data/` at the end of every run, even a failed
   one. If the bot crashes after posting but before saving, the next run finds the questions on chain by their hash.
-  If the runner itself dies mid-run, its saved files never reach the publish job: a question it posted is then
-  unknown to the next run, which emails you and resolves it as VOID so its week can still close.
+  - Each run starts from the latest `main`, and the publish job writes the bot's files on top of the latest `main`.
+    So you can commit `deployment.json`, `game.json` or anything else while a run is going: your commit is kept, and
+    so are the run's files. If a question file was also changed on `main` during the run, the two are merged: `main`'s
+    version wins where both changed the same field, and this run's questions and their chain ids are added.
+  - The one way to lose a run's files: the runner itself dies mid-run, so its files never reach the publish job. A
+    question it posted is then unknown to the next run, which emails you and resolves it as VOID so its week can still
+    close.
+- **The bot's own files are sealed.** `bot-state.json` and each VHP reading carry a seal made with a key derived from
+  `OPERATOR_WIF`. If anyone edits them without that key, the bot emails you and does not trust them: an edited alert
+  history cannot silence an email, an edited producer key or orphan list is ignored, and an edited VHP reading is not
+  used. The first run after this change emails you once about `bot-state.json` (it had no seal yet); that is expected.
 - **The bot job holds no push token.** It runs with a read-only GitHub token (not left in `.git/config`) and installs
   exactly `package-lock.json` with install scripts off. A separate `publish` job, which runs no repository code,
   copies only `game-data/questions/*.json`, `bot-state.json`, `state.json` and `index.json` and pushes them.
@@ -32,7 +41,9 @@ hold up a week.
   and the window's blocks are read fresh from the chain (the cached `blocks.csv` is only used to build questions,
   and its rows are spot-checked against the chain on every run).
 - **Settles the bot pays for are capped** at 10 per run (`MAX_BOT_PAID_SETTLES`) when the contract declines to
-  sponsor them, so the bot always keeps Mana for posting and resolving.
+  sponsor them, so the bot always keeps Mana for posting and resolving. In the last 3 hours before a week's
+  `settle_end` the cap is lifted, but the bot still stops when its own Mana falls below 2 KOIN (`BOT_MANA_FLOOR`).
+  It never pays for an entry the player voided by withdrawing everything (it can't be paid anything).
 - **Keys:**
   - Only `OPERATOR_WIF` goes into GitHub.
   - `CONTRACT_WIF` is needed once, to deploy.
@@ -72,6 +83,9 @@ npm run bot -- rehearse --weeks 3     whole weeks on a simulated chain (no netwo
 - the Desk's owner or treasury differs from `desk-data/deployment.json`, or a Desk upgrade or treasury change is
   announced, or its producer key changes;
 - a posted result was changed on chain (a correction), or an on-chain result differs from what the blocks say;
+- an orphan question (one that matches no question file) has any outcome other than VOID;
+- a question was resolved without the VHP-swing rule (no VHP reading before its answer was decided);
+- `bot-state.json` or a VHP reading was not written by the bot (no valid seal);
 - a question file no longer matches its on-chain `params_hash`.
 
 Changes that stay true (a new owner, an announcement) email you once, not every hour.
@@ -101,11 +115,14 @@ Then it checks everything independently:
 ## Launch checklist
 
 1. `game`: run `npm test`, `npm run check` and `npm run build:sim`. Then at the root, run
-   `npm run bot -- rehearse`. Everything must pass.
+   `npm run bot -- rehearse`. Everything must pass. (The rehearsal's own trouble, the stray question, is expected
+   to email you: the rehearsal counts that one email as expected.)
 2. Make the keys: a new **contract** key (an empty address), an **operator** key (holds ~20–30 KOIN for
    its Mana), and the **owner** and **seed** addresses.
 3. `npm run bot -- deploy` (dry run). Check the plan, then `npm run bot -- deploy --send`.
-4. The owner registers the block producer key: `admin register_key '{"public_key":"…"}' --as owner`.
+4. The owner registers the block producer key: `admin register_key '{"public_key":"…"}' --as owner`. Then add the
+   same key as `"producerKey"` to `game-data/deployment.json` (and the Desk's to `desk-data/deployment.json`) and commit:
+   the bot compares the registered key with these files on every run.
 5. Add the seed: `admin seed_deposit_vhp '{"amount":"…"}' --as seed`, then `seed_deposit_koin`.
 6. In GitHub: Settings → Environments → New environment `bot`; under "Deployment branches and tags" choose
    "Selected branches and tags" and add `main`; add the environment secret `OPERATOR_WIF`. Delete any
