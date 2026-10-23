@@ -141,7 +141,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   // ── trouble to inject ──
   let crashInjected = false, strayPosted = false, outageDone = false, strayAlerts = 0;
   const strayHash = "0x" + "5a".repeat(32);
-  let alarmsDuringOutage = 0, falseAlarms = 0;
+  let alarmsDuringOutage = 0, falseAlarms = 0, lateAfterOutage = 0, firstRunAfterOutage = false;
   const otherProblems: string[] = [];
 
   const weekLog: string[] = [];
@@ -209,7 +209,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
       check(strayPosted, "injected: a stray question unknown to the bot was posted on-chain");
     }
     if (!outageDone && week === 1 && dayIdx === 11 && (now - genesisTime) % DAY_MS < 20 * HOUR_MS) { outageSkips++; continue; } // bot down ~20 h
-    if (!outageDone && week === 1 && dayIdx === 11) { outageDone = true; check(outageSkips >= 19, `injected: the bot was down for ${outageSkips} hours`); }
+    if (!outageDone && week === 1 && dayIdx === 11) { outageDone = true; firstRunAfterOutage = true; check(outageSkips >= 19, `injected: the bot was down for ${outageSkips} hours`); }
 
     // ── the bot ──
     const bsFile = P.botState;
@@ -220,10 +220,13 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     ticks++;
     for (const pr of ctx.problems) {
       if (/produced no block/.test(pr)) { if (h > outStart && h <= outEnd + HOUR) alarmsDuringOutage++; else { falseAlarms++; console.log(`  unexpected alarm at ${h}: ${pr}`); } }
+      // The bot was down ~20 h, so its first run back finds results overdue: the late-result alert (audit H-2) must fire.
+      else if (firstRunAfterOutage && /still unresolved [\d.]+ h after its window ended/.test(pr)) lateAfterOutage++;
       else if (strayPosted && pr.includes("matches no question file") && pr.includes(`params_hash ${strayHash}`)) strayAlerts++; // the injected stray question: expected
       else { otherProblems.push(`${h}: ${pr}`); }
     }
     ctx.problems = [];
+    firstRunAfterOutage = false;
     if (!crashInjected && week === 1 && dayIdx === 8) {
       // Crash simulation: the bot posted questions but "died" before saving their on-chain ids.
       const posted = fs.readdirSync(P.questions).filter((f) => !snap.has(f) || snap.get(f) !== fs.readFileSync(path.join(P.questions, f), "utf8"));
@@ -418,6 +421,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     `after everyone left, the contract still covers every unclaimed reward (${showKoin(BigInt(s3.vhp_balance) + BigInt(s3.koin_balance))} ≥ ${showKoin(owed3)})`);
   check(alarmsDuringOutage >= 1, `the 3-hour outage of the pool's node raised the email alarm (${alarmsDuringOutage} hourly run(s) flagged it)`);
   check(falseAlarms === 0, `no false production alarms in ${ticks} hourly runs`);
+  check(lateAfterOutage >= 1, `after the bot's ~20-hour outage, its first run flagged the overdue results (${lateAfterOutage} question(s); audit H-2)`);
   check(otherProblems.length === 0, `no other problems were reported${otherProblems.length ? ": " + otherProblems.slice(0, 3).join("; ") : ""}`);
   check(botFailures.length === 0, `the bot's own transactions never failed (${sim.calls} sent)${botFailures.length ? ": " + botFailures.slice(0, 3).map((f) => `${f.method}: ${f.error}`).join("; ") : ""}`);
 
