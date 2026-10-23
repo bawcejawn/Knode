@@ -293,7 +293,7 @@
       S.dep = dep;
       S.provider = new lib.Provider([dep.rpc || RPC]);
       if (window.KWallet) window.KWallet.init({
-        provider: S.provider, toast,
+        provider: S.provider, toast, chainId: dep.chainId,
         onChange: async (addr) => {
           S.account = addr; S.vhp = null;
           if (addr) { toast(`Connected ${short(addr)} with ${window.KWallet.label()}`); await loadBalance().catch(() => {}); }

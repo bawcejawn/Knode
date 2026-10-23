@@ -26,7 +26,7 @@
   const say = (t) => { $("msg").textContent = t; };
   let account = null, bal = { koin: 0n, vhp: 0n, mana: 0n };
 
-  const show = (u) => { const s = (u < 0n ? 0n : u).toString().padStart(9, "0"); const i = s.slice(0, -8), f = s.slice(-8).replace(/0+$/, ""); return Number(i).toLocaleString() + (f ? "." + f.slice(0, 4) : ""); };
+  const show = (u) => { const s = (u < 0n ? 0n : u).toString().padStart(9, "0"); const i = s.slice(0, -8), f = s.slice(-8).replace(/0+$/, ""); return Number(i).toLocaleString() + (f ? "." + f : ""); };
   function toUnits(text) {
     const m = String(text).trim().match(/^(\d*)(?:\.(\d{0,8})\d*)?$/);
     if (!m || (m[1] === "" && !m[2])) return null;
@@ -64,7 +64,7 @@
   $("max").onclick = () => {
     if (!account) return say("Connect a wallet first.");
     const m = maxBurn();
-    $("amt").value = m > 0n ? (Number(m) / 1e8).toFixed(8).replace(/\.?0+$/, "") : "0";
+    $("amt").value = m > 0n ? `${m / 100000000n}.${(m % 100000000n).toString().padStart(8, "0")}`.replace(/\.?0+$/, "") : "0";
     if (m === 0n) say("Nothing to burn: your KOIN is at or below what you keep, or your Mana is low (it refills over about 5 days).");
   };
 

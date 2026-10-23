@@ -65,7 +65,7 @@ function harness() {
   T.S.game = { functions: { get_question: async ({ id }) => {
     const q = chain.get(Number(id) >>> 0);
     if (q === null) throw new Error("rpc down");
-    return { result: q ? { question: { params_hash: q.params_hash, outcome: q.outcome ?? 0 } } : {} };
+    return { result: q ? { question: { params_hash: q.params_hash, outcome: q.outcome ?? 0, ...(q.facts ?? {}) } } : {} };
   } } };
   const publish = (questions, raw) => {
     files.set("./game-data/index.json", JSON.stringify({ days: ["questions/W001-D2.json"] }));
@@ -88,7 +88,9 @@ function released(n = 1, { hashRule = 2, lockIn = 86400000 } = {}) {
   if (hashRule != null) q.hashRule = hashRule;
   return q;
 }
-async function post(h, id, q, outcome = 0) { h.chain.set(id, { params_hash: await h.T.paramsHashOf(structuredClone(q)), outcome }); }
+/** Posts q as the contract stores it: its fingerprint plus the lock time, window and option count it enforces. */
+const factsOf = (q) => ({ k: (q.options || []).length, lock_time: String(q.lockTime ?? 0), window_start: String(q.windowStart ?? 0), window_end: String(q.windowEnd ?? 0) });
+async function post(h, id, q, outcome = 0) { h.chain.set(id, { params_hash: await h.T.paramsHashOf(structuredClone(q)), outcome, facts: factsOf(q) }); }
 const qOf = (h, id) => h.S.questions.find((q) => Number(q.chainId) === id);
 
 test("WEB3-01 control: a published file identical to what was posted is offered; a relabelled one is not", async () => {
@@ -201,4 +203,14 @@ test("WEB3-08 control: a file's own hashOk, a chainId re-pointed at a sibling, o
   assert.equal(repointed.hashOk, false);
   assert.equal(unchecked.hashOk, null);
   for (const q of [repointed, unchecked]) assert.ok(optButtons(h.T.questionCard(q, "open")).every((b) => b.attrs.disabled !== undefined), q.id);
+});
+
+test("W1-04 a file whose lock time or window differs from what the contract enforces is not offered", async () => {
+  const h = harness();
+  const q = released(1);
+  await post(h, 5, q);
+  h.chain.get(5).facts.lock_time = String(Number(q.lockTime) + 3_600_000);   // the chain closes answers an hour later
+  h.publish([{ ...structuredClone(q), chainId: 5 }]);
+  await h.T.loadQuestions();
+  assert.equal(qOf(h, 5).hashOk, false);
 });

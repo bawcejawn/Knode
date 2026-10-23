@@ -60,7 +60,7 @@ function harness() {
   T.S.game = { functions: { get_question: async ({ id }) => {
     const q = chain.get(Number(id) >>> 0);
     if (q === null) throw new Error("rpc down");
-    return { result: q ? { question: { params_hash: q.params_hash, outcome: q.outcome ?? 0 } } : {} };
+    return { result: q ? { question: { params_hash: q.params_hash, outcome: q.outcome ?? 0, ...(q.facts ?? {}) } } : {} };
   } } };
   const publish = (questions, raw) => {
     files.set("./game-data/index.json", JSON.stringify({ days: ["questions/W001-D2.json"] }));
@@ -83,7 +83,9 @@ function released(n = 1, { hashRule = 2, lockIn = 86400000 } = {}) {
   if (hashRule != null) q.hashRule = hashRule;
   return q;
 }
-async function post(h, id, q, outcome = 0) { h.chain.set(id, { params_hash: await h.T.paramsHashOf(structuredClone(q)), outcome }); }
+/** Posts q as the contract stores it: its fingerprint plus the lock time, window and option count it enforces. */
+const factsOf = (q) => ({ k: (q.options || []).length, lock_time: String(q.lockTime ?? 0), window_start: String(q.windowStart ?? 0), window_end: String(q.windowEnd ?? 0) });
+async function post(h, id, q, outcome = 0) { h.chain.set(id, { params_hash: await h.T.paramsHashOf(structuredClone(q)), outcome, facts: factsOf(q) }); }
 const qOf = (h, id) => h.S.questions.find((q) => Number(q.chainId) === id);
 
 async function results(fileResult, chainOutcome) {

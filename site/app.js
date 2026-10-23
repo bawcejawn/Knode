@@ -1057,7 +1057,7 @@
       armed = 0; window.KWallet.disconnect();
     });
     const initWallet = () => window.KWallet && window.KWallet.init({
-      provider: S.provider, toast,
+      provider: S.provider, toast, chainId: S.dep && S.dep.chainId,
       onChange: (addr) => {
         S.account = addr; S.player = null; S.entry = null; S.activeStake = null; S.balances = null; S.claims = [];
         if (addr) afterConnect(); else { toast("Wallet disconnected"); S.board = {}; renderAll(); }

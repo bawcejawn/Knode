@@ -195,6 +195,12 @@
    *  Throws on rejection or failure, with a readable message. */
   async function send(label, ops, opts = {}) {
     if (!W.address) throw new Error("Connect a wallet first.");
+    // Audit Info: pin the chain. The chain id comes from the RPC; when the page knows the expected one (deployment.json
+    // "chainId", confirmed with "npm run bot -- chain-check"), nothing is signed for any other chain.
+    if (W.chainId) {
+      const id = await W.provider.getChainId().catch(() => null);
+      if (id !== W.chainId) throw new Error("The network node reports a different chain than Knode runs on. Nothing was signed.");
+    }
     return W.kind === "vault" ? sendVault(label, ops, opts) : sendKondor(label, ops, opts);
   }
 
@@ -261,8 +267,8 @@
     } finally { close(); }
   }
 
-  function init({ provider, onChange, toast, status } = {}) {
-    W.provider = provider; W.onChange = onChange || (() => {}); W.toast = toast; W.status = status;
+  function init({ provider, onChange, toast, status, chainId } = {}) {
+    W.provider = provider; W.chainId = chainId || null; W.onChange = onChange || (() => {}); W.toast = toast; W.status = status;
     // An earlier version of this page kept the KOIN Vault session in sessionStorage. Delete any such entry and never
     // use it: another page of this origin could have written it, and the user has not chosen it on this page.
     store.set(sessionStorage, "kw-vault", null);
