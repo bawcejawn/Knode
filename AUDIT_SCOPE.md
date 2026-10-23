@@ -63,8 +63,8 @@ Out of scope: the owner's block-producing nodes themselves (run separately, only
 
 Toolchain: Node 22 (CI uses `actions/setup-node` with 22), npm 10; pinned by the lockfiles: `@koinos/sdk-as` 1.5.1,
 `@koinos/sdk-as-cli` 1.0.2, AssemblyScript 0.27.37, `@as-pect/cli` 8.1.0, `@roamin/protoc` 2.5.0, koilib 9.4.1,
-`@koinos/mock-vm` 1.3.0, tsx 4.23.15. The first contract build needs network access: the protobuf tool installs a
-few helper packages (e.g. `semver`) at build time.
+`@koinos/mock-vm` 1.3.0, tsx 4.23.15. **The first contract build needs network access, once:** the protobuf tool
+installs a few helper packages (e.g. `semver`) at build time. Later builds work offline.
 
 ```
 git clone --branch audit-fixes-1 https://github.com/bawcejawn/Knode.git && cd Knode
@@ -87,8 +87,9 @@ npm run bot -- rehearse --weeks 2
 #   the same against the live code: copy game/test-fixtures/kpred-live-test-build.wasm to game/build/sim/contract.wasm
 ```
 
-Run the node tests one file at a time (`--test-concurrency=1`): run all at once on a busy machine, some of them start
-`git`/`tsx` processes that can fail for lack of resources. A few publish-job tests need bash and git and are skipped on
+**Run the Node test files one at a time** (`--test-concurrency=1`, as above). Run in parallel on a busy machine (as
+`npm run test:audit` does), some fail with tsx `EAGAIN` or `git` processes that cannot start; that is the machine, not
+the tests. A few publish-job tests need bash and git and are skipped on
 Windows.
 
 Expected release builds (sha256 of `build/release/contract.wasm`):

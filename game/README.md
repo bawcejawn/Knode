@@ -91,7 +91,7 @@ From this `game` folder:
 
 ```
 npm install
-npm test          builds the contract and runs the 38 tests on a simulated chain (no network, no KOIN)
+npm test          builds the contract and runs the 104 tests on a simulated chain (no network, no KOIN)
 npm run build     production build → build/release/contract.wasm and abi/kpred.koilib.json
 npm run check     offline safety check of the production build
 npm run build:sim test build for the bot's rehearsal (build/sim — never deploy it)

@@ -59,7 +59,7 @@ untouched.
    ```
    cd game
    npm ci
-   npm test            # 98 contract tests, then the release build
+   npm test            # 104 contract tests, then the release build
    npm run check       # offline safety check
    ```
    ```

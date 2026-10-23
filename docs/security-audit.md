@@ -1,3 +1,5 @@
+> Historical: written before commit 3fd563d and describes older code. Superseded; for the current scope see AUDIT_SCOPE.md.
+
 # Kprediction — security audit (before the first deploy)
 
 Scope: the game contract (`game/assembly/Kpred.ts`, `Tokens.ts`), the bot (`bot/`), and the website (`site/`).

@@ -1,3 +1,5 @@
+> Historical: written before commit 3fd563d and describes older code. Superseded; for the current scope see AUDIT_SCOPE.md.
+
 # Knode audit
 
 Audit date: 2026-10-19. Scope is the whole repository at `main` (`89228ce`): the game contract, the swap desk, the operator bot, the question generator and backtest, the static site, probes, node setup, and CI. This is a review only. No application code was changed.
