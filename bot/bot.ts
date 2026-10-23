@@ -511,7 +511,7 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
             }
             if (mine !== q.chainOutcome) {
               log(`  ⚠ ${q.id} (#${q.chainId}): on-chain outcome ${q.chainOutcome} differs from the blocks (${mine}${scored.result.void ? ", void" : ""}).`);
-              ctx.problems.push(`${q.id} (#${q.chainId}): the on-chain outcome (${q.chainOutcome}) differs from what the blocks say (${mine}${scored.result.void ? ", void" : ""}). Check it; the owner can still correct it before the week closes.`);
+              ctx.problems.push(`${q.id} (#${q.chainId}): the on-chain outcome (${q.chainOutcome}) differs from what the blocks say (${mine}${scored.result.void ? ", void" : ""}). Check it; ${await correctionDeadline(ctx, st, num(onChain.week))}.`);
             }
           }
           continue;
@@ -550,6 +550,15 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
     const g = ctx.generator(["resolve"]);
     if (!g.ok) { log(`  ✖ resolving from block data failed:\n${g.output.slice(-1500)}`); ctx.problems.push("Resolving questions from block data failed."); break; }
   }
+}
+
+/** Until when the owner can still change a result of week w: the contract refuses a change less than a quarter of
+ *  close_delay before 2 × close_delay after max(week end, the week's latest first result), i.e. 21 h with 12 h. */
+async function correctionDeadline(ctx: Ctx, st: { genesis: number; weekLen: number; closeDelay: number; time: number }, w: number): Promise<string> {
+  const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
+  if (wk.closed) return "its week is already closed, so it can no longer be corrected";
+  const end = Math.max(weekEnd(st, w), num(wk.last_result_time)) + 2 * st.closeDelay - Math.floor(st.closeDelay / 4);
+  return st.time <= end ? `the owner can correct it until ${utc(end)}` : `it can no longer be corrected (changes ended ${utc(end)})`;
 }
 
 /** A posted result changed on chain (only the owner can do that, with correct_question): record it and email. */
