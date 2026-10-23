@@ -12,6 +12,7 @@ new review and the same 48-hour upgrade, so they are collected here for v5.
 | G1-13 | `rolled_over` is not counted in the solvency check; add it. | To do |
 | Info | `register_key` accepts any 33 bytes; require a valid compressed public key (prefix 0x02 or 0x03). | To do |
 | Info | An unreachable overflow in a read-only helper; use checked arithmetic there too. | To do |
+| Info | An announced upgrade survives an owner change: clear it when ownership changes. Until then, after any ownership change run `npm run bot -- upgrade status` and cancel anything you didn't announce. | To do |
 | G1-05 | Duplicate sponsored transactions can reserve the contract's Mana in mempools for a while; consider a per-player sponsored-action limit per block. | To decide |
 
 ## Knode Swap Desk, next upgrade
