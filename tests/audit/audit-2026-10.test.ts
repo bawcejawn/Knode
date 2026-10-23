@@ -126,3 +126,54 @@ test("H-2: a question still unresolved 6 hours after its window is reported", as
   const c = w.ctx(); await tick(c);
   assert.ok(c.problems.some((p: string) => /still unresolved .* after its window ended/.test(p)), c.problems.join("\n"));
 });
+
+test("M-12: a VHP-swing void's data hash covers the readings that decided it, and anyone can recompute it", async () => {
+  const { scoreQuestion, dataHashOf, vhpVoidHash } = await import("../../resolver.ts");
+  const P = "1KfD7n93LnnihyygopWUVTkbtWVe5aXXGW";
+  const q: any = { template: "E1s", subjects: [P], unit: "count", windowStart: 1_000, windowEnd: 1_999, thresholds: [100],
+    options: [{ index: 0, label: "No" }, { index: 1, label: "Yes" }],
+    model: { rates: { [P]: 0.5 }, vhp: { [P]: "1000000000000" }, vhpHeight: 900, voidVhpSwing: 0.1, voidAlpha: 0.001, minVoidBlocks: 600 } };
+  const blocks = Array.from({ length: 1_000 }, (_, i) => ({ h: 1_000 + i, ts: 1_700_000_000_000 + i * 3000, signer: i % 2 ? P : "1Other", ntx: 0, compute: 0 }));
+  const readings = [{ height: 1_100, readAt: "x", values: { [P]: "1300000000000" } }];
+  const out = scoreQuestion(q, blocks, { vhpReadings: readings });
+  assert.ok(out.ok && out.result.void, "expected a VHP-swing void");
+  if (!out.ok) return;
+  assert.equal(out.result.blocksHash, dataHashOf(blocks));
+  assert.equal(out.result.dataHash, vhpVoidHash(dataHashOf(blocks), out.result.vhpCheck!.decidedHeight!, q.model.vhp, readings));
+  const other = scoreQuestion(q, blocks, { vhpReadings: [{ ...readings[0], values: { [P]: "1400000000000" } }] });
+  assert.ok(other.ok && other.result.dataHash !== out.result.dataHash, "a different reading must give a different hash");
+  // A result the blocks decided keeps the plain block hash.
+  const calm = scoreQuestion(q, blocks, { vhpReadings: [{ ...readings[0], values: { [P]: "1000000000000" } }] });
+  assert.ok(calm.ok && !calm.result.void && calm.result.dataHash === dataHashOf(blocks));
+});
+
+test("M-9: with a second node set, a result is posted only when both nodes give the same blocks", async () => {
+  const twin = { week: "0", k: 4, window_end: String(original.windowEnd), outcome: 0, params_hash: "0x" + original.paramsHash };
+  const blocksFor = (txEvery: number) => { const out: any[] = []; for (let h = original.windowStart; h <= original.windowEnd; h++) out.push({ h, ts: 1792627200000 + (h - original.windowStart) * 3000, signer: "1P", ntx: (h - original.windowStart) % txEvery === 0 ? 1 : 0, compute: 0 }); return out; };
+  for (const [second, posts] of [[blocksFor(100), 1], [blocksFor(50), 0]] as const) {
+    const w = world({ onchain: [{ ...twin }] });
+    w.writeDay([{ ...original, chainId: 0 }]);
+    const c = w.ctx();
+    c.windowBlocks = async () => blocksFor(100);
+    c.crossCheckBlocks = async () => second;
+    await tick(c);
+    assert.equal(w.sent.filter((x) => x.method === "resolve_question").length, posts, c.problems.join("\n"));
+    if (!posts) assert.ok(c.problems.some((p: string) => /two nodes disagree/.test(p)));
+  }
+});
+
+test("D1-04: the Desk's KOIN leaving other than through swaps, and a lowered fee, are reported", async () => {
+  const w = world();
+  let koin = "100000000000", koinOut = "0", fee = 300;
+  const desk = { deployment: { contract: "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR", feeBps: 300, timelockLength: "172800000" },
+    read: async () => ({ config: { owner: "1O", treasury: "1T", fee_bps: fee, min_swap: "100000000", max_swap: "0", paused: false, timelock_length: "172800000" },
+      totals: { koin_out: koinOut }, koin_balance: koin, time: String(Date.now()) }) };
+  const c1 = { ...w.ctx(), desk }; await tick(c1);
+  assert.ok(!c1.problems.some((p: string) => /The Desk/.test(p)), c1.problems.join("\n"));
+  koin = "40000000000"; koinOut = "10000000000";                 // 600 KOIN gone, swaps explain 100
+  const c2 = { ...w.ctx(), desk }; await tick(c2);
+  assert.ok(c2.problems.some((p: string) => /left another way/.test(p)), c2.problems.join("\n"));
+  fee = 0;
+  const c3 = { ...w.ctx(), desk }; await tick(c3);
+  assert.ok(c3.problems.some((p: string) => /fee is 0%/.test(p)), c3.problems.join("\n"));
+});

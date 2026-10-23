@@ -129,6 +129,8 @@ type BotState = {
   /** For each open question (by paramsHash): how many VHP readings the bot has recorded and the newest one's height.
    *  An older, validly sealed list put back in the question file is noticed against this (audit F-02). */
   vhpLists?: Record<string, { n: number; last: number }>;
+  /** The Desk as last seen (audit D1-04): its settings, KOIN balance and total KOIN paid out by swaps. */
+  desk?: { settings: string; koin: string; koinOut: string; at: number };
 };
 const vhpKey = (q: any) => String(q.paramsHash ?? "").toLowerCase();
 /** Records the list the bot just sealed. */
@@ -172,11 +174,16 @@ export type Ctx = {
   /** A question window's blocks read fresh from the chain (irreversible blocks only). Without it the bot uses
    *  blocks.csv (simulations and tests). */
   windowBlocks?: (from: number, to: number) => Promise<Blk[]>;
+  /** The same window read from a second, independent node (RPC_CHECK). When set, a result is posted only if both
+   *  nodes give the same blocks (audit M-9). */
+  crossCheckBlocks?: (from: number, to: number) => Promise<Blk[]>;
   /** VHP of these addresses ("network" = the whole network) right now, with the block height (read after the values,
    *  so the values are from that block or an earlier one). */
   vhp?: (who: string[]) => Promise<VhpReading>;
   /** The block-producer public key Proof-of-Burn has on record for an address ("" when none). */
   producerKey?: (producer: string) => Promise<string>;
+  /** The code fingerprint and authorize switches the chain holds for a contract (real chain only). */
+  metadata?: (contract: string) => Promise<import("./chaincheck.ts").ContractMeta>;
   /** The Desk Swap contract, for its health check. */
   desk?: { deployment: any; read: (method: string, args?: any) => Promise<any> };
   /** Settles the bot paid for itself this run, because the contract declined to (capped by MAX_BOT_PAID_SETTLES). */
@@ -425,6 +432,12 @@ async function healthPass(ctx: Ctx, bs: BotState) {
     }
     else if (k !== expected) ownerAlert(`key-changed:${k}`, `The block-producer key registered for the game is ${k || "none"}, not ${expected}. If you did not register it, your admin key may be compromised (if you did, set "producerKey" in deployment.json).`);
   }
+  // The code the chain runs, and the three authorize switches, hourly: an upload you did not make shows up here.
+  if (ctx.metadata && dep?.wasmSha256) {
+    const m = await ctx.metadata(C);
+    const bad = checkMeta("game", m, dep.wasmSha256).filter((x) => !x.ok);
+    if (bad.length) ownerAlert(`game-meta:${m.hash}:${m.call}${m.tx}${m.upload}`, `The game contract on chain is not what deployment.json records: ${bad.map((x) => x.text).join("; ")}. If you did not upgrade it, your admin key may be compromised (if you did, record the new fingerprint in deployment.json).`);
+  }
   // Orphans (on-chain questions with no file) must end VOID. Any other outcome was set by the operator key before the bot
   // voided it, or by the owner key since.
   for (const id of bs.orphans) {
@@ -464,6 +477,28 @@ async function deskHealth(ctx: Ctx, bs: BotState, alert: (key: string, text: str
   if (num(up.eta) > 0) alert(`desk-upgrade:${up.hash}:${up.eta}`, `A Desk code upgrade is scheduled (possible from ${utc(num(up.eta))}). If you did not do this, your admin key may be compromised.`);
   if (num(tc.eta) > 0) alert(`desk-treasury:${tc.address}:${tc.eta}`, `A Desk treasury change to ${tc.address} is scheduled (possible from ${utc(num(tc.eta))}). If you did not do this, your admin key may be compromised.`);
   if (c.paused && !ctx.quiet) log(`  the Desk is paused`);
+  // Audit D1-04: the Desk's settings, and its KOIN going out other than through swaps. A stolen owner key can set the fee
+  // to 0 and empty the float at once, or withdraw to the treasury; these are the first signs.
+  const settings = JSON.stringify({ fee_bps: num(c.fee_bps), min_swap: String(c.min_swap ?? "0"), max_swap: String(c.max_swap ?? "0"), paused: !!c.paused, timelock: String(c.timelock_length ?? "0") });
+  const odd: string[] = [];
+  if (dep.feeBps !== undefined && num(c.fee_bps) < num(dep.feeBps)) odd.push(`the fee is ${num(c.fee_bps) / 100}% (deployment.json: ${num(dep.feeBps) / 100}%)`);
+  if (dep.timelockLength !== undefined && big(c.timelock_length) < big(dep.timelockLength)) odd.push(`the timelock is ${num(c.timelock_length) / HOUR_MS} h (deployment.json: ${num(dep.timelockLength) / HOUR_MS} h)`);
+  if (bs.desk && bs.desk.settings !== settings) odd.push(`its settings changed since the last run (${settings})`);
+  if (odd.length) alert(`desk-settings:${settings}`, `The Desk: ${odd.join("; ")}. If you did not do this, your admin key may be compromised (if you did, update desk-data/deployment.json).`);
+  const koin = big(s.koin_balance), koinOut = big(s.totals?.koin_out);
+  if (bs.desk) {
+    const fell = big(bs.desk.koin) - koin, bySwaps = koinOut - big(bs.desk.koinOut);
+    // Swaps explain KOIN paid out; block rewards only add. Anything else left through the owner's withdrawal.
+    if (fell - bySwaps > toSat(1)) alert(`desk-koin:${bs.desk.at}:${koin}`, `The Desk's KOIN fell by ${showKoin(fell)} since the last run, of which swaps paid out ${showKoin(bySwaps > 0n ? bySwaps : 0n)}: ${showKoin(fell - bySwaps)} left another way (an owner withdrawal to the treasury). If you did not do this, your admin key may be compromised.`);
+    if (bySwaps > 0n && big(bs.desk.koin) > 0n && bySwaps * 2n > big(bs.desk.koin)) alert(`desk-drain:${bs.desk.at}`, `Swaps took ${showKoin(bySwaps)} KOIN from the Desk in one hour, more than half of what it held. If that is not normal trading, pause the Desk (npm run desk -- pause on --send).`);
+  }
+  bs.desk = { settings, koin: koin.toString(), koinOut: koinOut.toString(), at: num(s.time) };
+  // Its code and switches (D1-06), hourly.
+  if (ctx.metadata && dep.contract && dep.wasmSha256) {
+    const m = await ctx.metadata(dep.contract);
+    const bad = checkMeta("desk", m, dep.wasmSha256).filter((x) => !x.ok);
+    if (bad.length) alert(`desk-meta:${m.hash}:${m.call}${m.tx}${m.upload}`, `The Desk contract on chain is not what desk-data/deployment.json records: ${bad.map((x) => x.text).join("; ")}. If a switch is off, the Desk's tokens are not protected: act now.`);
+  }
   if (ctx.producerKey && ctx.chain.kind === "koinos") {
     const k = await ctx.producerKey(dep.contract);
     const expected = dep.producerKey ?? bs.deskProducerKey;
@@ -632,6 +667,23 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
           log(`  ${q.id}: VHP-swing check skipped (${scored.result.vhpCheck.skipped})`);
           // Readings were taken, but all after the blocks decided the answer: the bot worked, nothing to report.
           if (!scored.result.vhpCheck.readingsInWindow) ctx.problems.push(`${q.id} (#${q.chainId}) was resolved without the VHP-swing rule: ${scored.result.vhpCheck.skipped} (was the bot down, or every VHP read failing?). Its result on the site says so.`);
+        }
+        // A second node must agree on the window's blocks before anything is posted (M-9): one lying or broken node
+        // can then no longer choose a result.
+        if (ctx.crossCheckBlocks) {
+          let alt: ReturnType<typeof scoreQuestion> | undefined, why = "";
+          try { alt = scoreQuestion(q, await ctx.crossCheckBlocks(q.windowStart, q.windowEnd), { vhpReadings: q.vhpReadings ?? [] }); }
+          catch (e) { why = (e as Error).message ?? String(e); }
+          if (!alt || !alt.ok) {
+            const pending = alt && !alt.ok && alt.pending;
+            if (pending) log(`  ${q.id}: the second node does not have the window's final blocks yet; resolving next run`);
+            else ctx.problems.push(`${q.id} (#${q.chainId}): could not check its blocks on the second node (RPC_CHECK): ${why || (alt && !alt.ok ? alt.reason : "")}. Not resolved this run.`);
+            continue;
+          }
+          if (alt.result.dataHash !== scored.result.dataHash) {
+            ctx.problems.push(`${q.id} (#${q.chainId}): the two nodes disagree about its window's blocks (RPC ${scored.result.dataHash.slice(0, 12)}…, RPC_CHECK ${alt.result.dataHash.slice(0, 12)}…). Not resolved. One node is wrong or lying: check both before anything else.`);
+            continue;
+          }
         }
         const outcome = chainOutcome(scored.result);
         const dataHash = "0x" + scored.result.dataHash;
@@ -1542,6 +1594,13 @@ function liveCtx(dryRun: boolean): Ctx {
       const last = Math.min(to, Number(head.last_irreversible_block));
       return last < from ? [] : fetchRange(chain.provider, head.head_topology.id, from, last);
     },
+    ...(E.RPC_CHECK ? { crossCheckBlocks: async (from: number, to: number) => {
+      const second = new Provider([E.RPC_CHECK!]);
+      const head: any = await second.getHeadInfo();
+      const last = Math.min(to, Number(head.last_irreversible_block));
+      return last < from ? [] : fetchRange(second, head.head_topology.id, from, last);
+    } } : {}),
+    metadata: (c) => contractMetadata(chain.provider, c),
     vhp: (who) => readVhp(chain.provider, dep?.vhp ?? MAINNET_VHP, who),
     producerKey: async (producer) => String(((await (pob.functions as any).get_public_key({ producer })).result ?? {}).value ?? ""),
     desk: deskContract ? { deployment: deskDep, read: async (method, args = {}) => ((await (deskContract.functions as any)[method](args)).result ?? {}) } : undefined,

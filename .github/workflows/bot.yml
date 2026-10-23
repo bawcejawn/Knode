@@ -133,6 +133,8 @@ jobs:
         env:
           OPERATOR_WIF: ${{ secrets.OPERATOR_WIF }}
           RPC: ${{ vars.RPC || 'https://api.koinos.io' }}
+          # A second, independent node: results are posted only when both agree on the window's blocks (audit M-9).
+          RPC_CHECK: ${{ vars.RPC_CHECK }}
           GEN_DIR: game-data
           BOT_GIT_PUSH: "1"
           # Producers the questions must never be about (your own nodes; the game and the Desk are always excluded).

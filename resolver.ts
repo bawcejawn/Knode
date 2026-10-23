@@ -248,6 +248,8 @@ export type AnswerResult = {
   option?: number;
   value: string;
   dataHash: string;
+  /** For a VHP-swing void: the window's block hash alone (dataHash then also covers the readings, see vhpVoidHash). */
+  blocksHash?: string;
   reason?: string;
   resolvedAt: string;
   /** The VHP-swing rule's inputs and outcome (questions released with a VHP snapshot only): the heights of the readings
@@ -279,6 +281,18 @@ export function storedOutcome(result: { void: boolean; option?: number }): numbe
 /** Fingerprint of exactly the blocks the answer used, in height order. Anyone with those blocks gets the same hash. */
 export function dataHashOf(win: Blk[]): string {
   return createHash("sha256").update(win.map((x) => `${x.h},${x.signer},${x.ts},${x.ntx}`).join("\n")).digest("hex");
+}
+
+/** The data_hash of a VHP-swing void (audit M-12): the window's block hash, plus the VHP readings that decided the void
+ *  and the release snapshot they were compared with. The readings are published in the question file, so anyone can
+ *  recompute this hash from the file and the blocks, and the readings cannot be changed afterwards without the
+ *  on-chain hash no longer matching.
+ *    sha256("knode vhp-void v1\n" + blocksHash + "\n" + JSON.stringify({ decided, release, readings }))
+ *  with release and each reading's values as objects with sorted keys, readings in height order. */
+export function vhpVoidHash(blocksHash: string, decided: number, release: Record<string, string>, readings: VhpReading[]): string {
+  const sorted = (o: Record<string, string>) => Object.fromEntries(Object.keys(o).sort().map((k) => [k, String(o[k])]));
+  const body = JSON.stringify({ decided, release: sorted(release ?? {}), readings: [...readings].sort((a, b) => a.height - b.height).map((r) => ({ height: r.height, values: sorted(r.values ?? {}) })) });
+  return createHash("sha256").update(`knode vhp-void v1\n${blocksHash}\n${body}`).digest("hex");
 }
 
 function valueText(unit: string, value: number): string {
@@ -373,12 +387,14 @@ export function scoreQuestion(q: QuestionInput, blocks: Blk[], opts: { vhpReadin
   if (!text) text = valueText(q.unit, value);
   const resolvedAt = new Date(win[win.length - 1].ts).toISOString();
   // Questions released with a VHP snapshot: void when a producer it is about (or the network) moved its VHP too much.
-  let swung: string[] = [], vhpCheck: AnswerResult["vhpCheck"];
+  let swung: string[] = [], vhpCheck: AnswerResult["vhpCheck"], counted: VhpReading[] = [];
   if (q.model?.vhp && q.model.voidVhpSwing !== undefined) {
     // vhpEnd: the single reading files from before this rule change carried. It counts like any other reading.
-    const v = vhpSwingCheck(q, [...(opts.vhpReadings ?? []), ...(opts.vhpEnd ? [opts.vhpEnd] : [])], decided);
+    const all = [...(opts.vhpReadings ?? []), ...(opts.vhpEnd ? [opts.vhpEnd] : [])];
+    const v = vhpSwingCheck(q, all, decided);
     if (!v.ok) return v;
     swung = v.swung;
+    counted = all.filter((r) => v.heights.includes(r.height));
     vhpCheck = { limit: q.model.voidVhpSwing, releaseHeight: q.model.vhpHeight, decidedHeight: decided, readings: v.heights, readingsInWindow: v.inWindow, values: v.detail };
     if (!v.heights.length) {
       vhpCheck.skipped = v.inWindow
@@ -389,8 +405,10 @@ export function scoreQuestion(q: QuestionInput, blocks: Blk[], opts: { vhpReadin
   const reasons: string[] = [];
   if (offline.length) reasons.push(`${offline.join(", ")} went offline during the window`);
   if (swung.length) reasons.push(`${swung.map((w) => (w === NETWORK_VHP ? "the network's VHP" : w === GROUP_VHP ? "the group's combined VHP" : `${w}'s VHP`)).join(", ")} changed by more than ${q.model!.voidVhpSwing! * 100}% during the window`);
+  // A void that the VHP readings decided carries them in its hash (M-12); every other result is the blocks' hash.
+  const voidHash = swung.length ? vhpVoidHash(dataHash, decided, q.model?.vhp ?? {}, counted) : dataHash;
   const result: AnswerResult = reasons.length
-    ? { void: true, reason: reasons.join("; "), value: text, dataHash, resolvedAt }
+    ? { void: true, reason: reasons.join("; "), value: text, dataHash: voidHash, resolvedAt, ...(swung.length ? { blocksHash: dataHash } : {}) }
     : { void: false, option, value: text, dataHash, resolvedAt };
   if (vhpCheck) result.vhpCheck = vhpCheck;
   return { ok: true, result };
