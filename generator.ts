@@ -37,7 +37,7 @@ const MODEL_VERSION = "v5";
 
 type Game = {
   rpc: string;
-  excludeProducers?: string[]; // producers never used in questions (e.g. the game's own pool, the operator's own node)
+  excludeProducers?: string[]; // optional manual exclusion list; empty by default (every active producer plays)
   /** Fairness cap: the most questions in one week any single producer may be part of (named, or in a group).
    *  Default 4. Producers are also picked least-used-this-week first, so the cap is a backstop. */
   maxUsesPerWeek?: number;
@@ -199,9 +199,9 @@ function buildModel(blocks: Blk[], g: Game, excluded: Set<string> = new Set()) {
     if (memo.has(q)) return memo.get(q)!;
     const status = new Map<number, string>(), cand: number[] = [];
     for (const p of tracked.filter((p) => cnt(p, q - R, q) > 0)) {
-      // Never ask about producers tied to the game (the pool itself, the operator's own node): they could
-      // influence the answer by switching their node off.
-      if (excluded.has(names[p])) { status.set(p, "excluded (tied to the game)"); continue; }
+      // An optional, manual exclusion list (game.json "excludeProducers" / --exclude). Empty by default: every active
+      // producer is in the game, and the weekly cap (maxUsesPerWeek) limits how much any one node can sway.
+      if (excluded.has(names[p])) { status.set(p, "excluded (game.json)"); continue; }
       const r = rateAt(p, q);
       if (r * BLOCKS_PER_DAY < m.minSmallDaily || (!smallWindow(r) && r * BLOCKS_PER_DAY < m.minDaily)) { status.set(p, "too small"); continue; }
       if (cnt(p, q - R, q - R / 2) === 0 || cnt(p, q - R / 2, q) === 0) { status.set(p, "new (<2 days)"); continue; }
