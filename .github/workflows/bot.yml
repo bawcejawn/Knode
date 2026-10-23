@@ -181,7 +181,7 @@ jobs:
 
   publish:
     needs: tick
-    if: ${{ always() && vars.BOT_ENABLED == 'true' }}
+    if: ${{ always() && vars.BOT_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -204,7 +204,7 @@ jobs:
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
           # Only the bot's own public files, as plain JSON files: no links, nothing outside these paths.
-          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type f ! -regex "$IN/\(questions/[A-Za-z0-9_-]*\.json\|bot-state\.json\|state\.json\|index\.json\)" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type f ! -regex "$IN/\(questions/[A-Za-z0-9_-]+\.json\|bot-state\.json\|state\.json\|index\.json\)" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           # Real files are a few KB: refuse anything over 2 MB.
           big=$(find "$IN" -type f -size +2048k -print)
