@@ -142,6 +142,8 @@ export type Ctx = {
   botPaidUncapped?: boolean;
   /** Set once this run's bot-paid settles stopped at BOT_MANA_FLOOR. */
   botManaFloorHit?: boolean;
+  /** No operator key (a dry run without OPERATOR_WIF): seals cannot be checked, so the files are shown as they are. */
+  noSealKey?: boolean;
 };
 
 const num = (x: any) => Number(x ?? 0);
@@ -208,7 +210,8 @@ export async function tick(ctx: Ctx) {
   const raw = readJson(P.botState, null);
   const { seal, ...stored } = raw ?? {};
   const bs: BotState = { checkedUpTo: 0, orphans: [], lastCompound: 0, warnings: [], lastProduced: 0, producedByDay: {}, producerScannedTo: 0, ...stored };
-  if (raw && seal !== sealOf(ctx.operator, "bot-state", stored)) {
+  if (ctx.noSealKey) log("  (no OPERATOR_WIF: the seals on bot-state.json and VHP readings are not checked in this dry run)");
+  else if (raw && seal !== sealOf(ctx.operator, "bot-state", stored)) {
     // Not written by this bot (edited by hand, or the first run after seals were added): nothing in it may silence an
     // alert, name the expected producer key, or get a question voided. Those are re-checked from the chain.
     ctx.problems.push(`game-data/bot-state.json was not written by this bot (no valid seal: edited by hand, or the first run after the update that added seals). Its alert history, producer key and orphan list were not trusted; the bot re-checked them from the chain.`);
@@ -493,7 +496,7 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
         }
         // Only VHP readings this bot sealed count; anything else in the file was not written by the bot.
         const all: any[] = [...(q.vhpReadings ?? []), ...(q.vhpEnd ? [q.vhpEnd] : [])];
-        const sealed = all.filter((r) => r && r.seal === readingSeal(ctx.operator, q, r));
+        const sealed = ctx.noSealKey ? all : all.filter((r) => r && r.seal === readingSeal(ctx.operator, q, r));
         if (sealed.length < all.length) ctx.problems.push(`${q.id} (#${q.chainId}): ${all.length - sealed.length} VHP reading(s) in its file were not written by this bot (no valid seal). They were not used; check the file's git history.`);
         const scored = scoreQuestion(q, await windowOf(q, csv), { vhpReadings: sealed });
         if (resolved) {
@@ -1311,7 +1314,7 @@ function liveCtx(dryRun: boolean): Ctx {
     ? new Contract({ id: deskDep.contract, abi: JSON.parse(fs.readFileSync("desk/abi/desk.koilib.json", "utf8")), provider: chain.provider }) : null;
   const pob = new Contract({ id: dep?.pob ?? MAINNET.pob, abi: pobAbi as any, provider: chain.provider });
   return {
-    chain, operator, P, dryRun, generator: generatorRunner(P.dir), checkpoint: gitCheckpoint(P.dir), problems: [],
+    chain, operator, P, dryRun, generator: generatorRunner(P.dir), checkpoint: gitCheckpoint(P.dir), problems: [], noSealKey: !E.OPERATOR_WIF,
     // Window blocks are read fresh from the chain for every resolution; the cached blocks.csv is never trusted for that.
     windowBlocks: async (from, to) => {
       const head: any = await chain.provider.getHeadInfo();
