@@ -19,26 +19,95 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write             # commit and push game-data/ (questions, results, bot state)
+  contents: read              # each job asks for what it needs; only tick may push
 
 jobs:
-  tick:
+  # The block history cache is restored here, in a job with no secrets and no write token, and runs no repository code
+  # after the restore. A poisoned cache could otherwise plant files in the job that holds the operator key (audit H-1).
+  blocks-in:
     if: ${{ vars.BOT_ENABLED == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: game-data/blocks.csv
+          key: blocks-${{ github.run_id }}
+          restore-keys: blocks-
+      - name: Check the block history (format only; the bot spot-checks it against the chain)
+        run: |
+          set -euo pipefail
+          f="${BLOCKS_FILE:-game-data/blocks.csv}"
+          if [ ! -f "$f" ] || [ -L "$f" ]; then echo "No block history yet."; rm -f "$f"; exit 0; fi
+          if /usr/bin/python3 - "$f" <<'PY'
+          import re, sys, os
+          f = sys.argv[1]
+          if os.path.getsize(f) > 200 * 1024 * 1024: sys.exit("block history over 200 MB")
+          row = re.compile(r"^\d{1,10},\d{1,15},(1[1-9A-HJ-NP-Za-km-z]{25,34}|unknown),\d{1,6},\d{1,15}$")
+          prev = None
+          with open(f, encoding="ascii") as fh:
+              for n, line in enumerate(fh.read().split("\n"), 1):
+                  if not line: continue
+                  if not row.match(line): sys.exit(f"bad row {n}")
+                  h = int(line.split(",", 1)[0])
+                  if prev is not None and h != prev + 1: sys.exit(f"gap at row {n}")
+                  prev = h
+          print("block history ok")
+          PY
+          then :; else echo "::warning::Block history failed the format check; the bot downloads it again."; rm -f "$f"; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: blocks-in
+          path: game-data/blocks.csv
+          retention-days: 1
+          if-no-files-found: ignore
+
+  tick:
+    needs: blocks-in
+    if: ${{ always() && vars.BOT_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 180
+    permissions:
+      contents: write         # commit and push game-data/ (questions, results, bot state)
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-      # Exact versions from package-lock.json when it exists (safer: nothing unexpected is installed next to the bot key).
-      - run: if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
-      # Recent block history for the question generator (downloaded once, then topped up each hour).
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      # Exactly package-lock.json, and no package's install script runs next to the bot key.
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      # The block history from the job above: unpacked outside the repository, checked again, and only blocks.csv is used.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
         with:
-          path: game-data/blocks.csv
-          key: blocks-${{ github.run_id }}
-          restore-keys: blocks-
+          name: blocks-in
+          path: ${{ runner.temp }}/blocks-in
+      - name: Check and take the block history
+        env:
+          BLOCKS_FILE: ${{ runner.temp }}/blocks-in/blocks.csv
+        run: |
+          set -euo pipefail
+          f="${BLOCKS_FILE:-game-data/blocks.csv}"
+          if [ ! -f "$f" ] || [ -L "$f" ]; then echo "No block history yet."; rm -f "$f"; exit 0; fi
+          if /usr/bin/python3 - "$f" <<'PY'
+          import re, sys, os
+          f = sys.argv[1]
+          if os.path.getsize(f) > 200 * 1024 * 1024: sys.exit("block history over 200 MB")
+          row = re.compile(r"^\d{1,10},\d{1,15},(1[1-9A-HJ-NP-Za-km-z]{25,34}|unknown),\d{1,6},\d{1,15}$")
+          prev = None
+          with open(f, encoding="ascii") as fh:
+              for n, line in enumerate(fh.read().split("\n"), 1):
+                  if not line: continue
+                  if not row.match(line): sys.exit(f"bad row {n}")
+                  h = int(line.split(",", 1)[0])
+                  if prev is not None and h != prev + 1: sys.exit(f"gap at row {n}")
+                  prev = h
+          print("block history ok")
+          PY
+          then :; else echo "::warning::Block history failed the format check; the bot downloads it again."; rm -f "$f"; fi
+      - run: if [ -f "$RUNNER_TEMP/blocks-in/blocks.csv" ]; then mkdir -p game-data && cp "$RUNNER_TEMP/blocks-in/blocks.csv" game-data/blocks.csv; fi
       - name: Run the bot
         run: npm run bot -- tick
         env:
@@ -46,3 +115,31 @@ jobs:
           RPC: ${{ vars.RPC || 'https://api.koinos.io' }}
           GEN_DIR: game-data
           BOT_GIT_PUSH: "1"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: blocks-out
+          path: game-data/blocks.csv
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # Saving a cache runs nothing from it. The cache path stays game-data/blocks.csv so earlier caches keep matching.
+  blocks-out:
+    needs: tick
+    if: ${{ always() && vars.BOT_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        id: dl
+        continue-on-error: true
+        with:
+          name: blocks-out
+          path: game-data
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        if: ${{ steps.dl.outcome == 'success' && hashFiles('game-data/blocks.csv') != '' }}
+        with:
+          path: game-data/blocks.csv
+          key: blocks-${{ github.run_id }}
