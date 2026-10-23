@@ -117,16 +117,18 @@ jobs:
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           # The commit the tick job started from. The bot's files are written on top of the LATEST main, so every other
           # commit made during the run (your edits to deployment.json, game.json, ...) is kept as it is. A bot file that
-          # also changed on main since that commit is merged: main's version wins where both changed the same field,
-          # and this run's question records (a question, its chain id, its result) are added, never dropped.
+          # also changed on main since that commit is merged three ways (that commit's copy, main's, this run's), field by
+          # field: a field only main changed keeps main's value, a field only this run changed keeps the run's, and where
+          # both changed it main wins (lists of VHP readings and corrections are joined). This run's question records
+          # (a question, its chain id, its result) are added, never dropped.
           start="${START_SHA:-${GITHUB_SHA:-$(git rev-parse HEAD)}}"
           for attempt in 1 2 3 4 5; do
             git cat-file -e "$start^{commit}" 2>/dev/null || git fetch -q "$remote" "$start" 2>/dev/null || true
             git fetch -q "$remote" "$GITHUB_REF_NAME"
             git reset -q --hard FETCH_HEAD
             changed=$(git diff --name-only "$start" HEAD -- game-data/ 2>/dev/null || echo "__all__")
-            CHANGED="$changed" node - "$IN" game-data <<'JS'
-          const fs = require("fs"), path = require("path");
+            CHANGED="$changed" START="$start" node - "$IN" game-data <<'JS'
+          const fs = require("fs"), path = require("path"), { execFileSync } = require("child_process");
           const [IN, OUT] = process.argv.slice(2);
           const changed = new Set(String(process.env.CHANGED || "").split("\n").filter(Boolean));
           const onMain = (rel) => changed.has("__all__") || changed.has("game-data/" + rel);
@@ -135,16 +137,36 @@ jobs:
           const copy = (rel) => { fs.mkdirSync(path.dirname(path.join(OUT, rel)), { recursive: true }); fs.copyFileSync(path.join(IN, rel), path.join(OUT, rel)); };
           const union = (a, b) => { const seen = new Set(a.map((x) => JSON.stringify(x))); return [...a, ...b.filter((x) => !seen.has(JSON.stringify(x)))]; };
           const key = (q) => (q && typeof q.id === "string" ? "id:" + q.id : "json:" + JSON.stringify(q));
-          function mergeDay(m, b) {
-            const out = { ...b, ...m };
+          const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+          const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+          /** The file as it was when the run started (null if it did not exist or cannot be read). */
+          const baseOf = (rel) => { try { return JSON.parse(execFileSync("git", ["show", `${process.env.START}:game-data/${rel}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })); } catch { return null; } };
+          /** Field by field: main's value where only main changed it, the run's where only the run did; main's on a clash
+           *  (joined for the lists below). Without a base copy, main's value wins for every field both have. */
+          function merge3(base, m, r, lists = []) {
+            const out = {};
+            for (const k of new Set([...Object.keys(m), ...Object.keys(r)])) {
+              const bv = isObj(base) ? base[k] : undefined, mv = m[k], rv = r[k];
+              let v;
+              if (!(k in r)) v = mv;
+              else if (!(k in m)) v = isObj(base) && k in base ? undefined : rv;   // deleted on main: stays deleted
+              else if (isObj(base) && same(mv, bv)) v = rv;
+              else if (isObj(base) && same(rv, bv)) v = mv;
+              else if (lists.includes(k) && (Array.isArray(mv) || Array.isArray(rv))) v = union(Array.isArray(mv) ? mv : [], Array.isArray(rv) ? rv : []);
+              else v = mv;
+              if (v !== undefined) out[k] = v;
+            }
+            return out;
+          }
+          function mergeDay(base, m, b) {
+            const out = merge3(base, m, b);
             const mq = Array.isArray(m.questions) ? m.questions : [], bq = Array.isArray(b.questions) ? b.questions : [];
             const byKey = new Map(bq.map((q) => [key(q), q]));
+            const baseQ = new Map((isObj(base) && Array.isArray(base.questions) ? base.questions : []).map((q) => [key(q), q]));
             out.questions = mq.map((q) => {
               const x = byKey.get(key(q));
-              if (!x || typeof q !== "object" || typeof x !== "object") return q;
-              const y = { ...x, ...q };
-              for (const k of ["vhpReadings", "corrections"]) if (Array.isArray(q[k]) || Array.isArray(x[k])) y[k] = union(Array.isArray(q[k]) ? q[k] : [], Array.isArray(x[k]) ? x[k] : []);
-              return y;
+              if (!isObj(x) || !isObj(q)) return q;
+              return merge3(baseQ.get(key(q)), q, x, ["vhpReadings", "corrections"]);
             });
             const have = new Set(mq.map(key));
             for (const q of bq) if (!have.has(key(q))) out.questions.push(q);
@@ -154,8 +176,8 @@ jobs:
           for (const f of fs.existsSync(qdir) ? fs.readdirSync(qdir).filter((n) => /^[A-Za-z0-9_-]*\.json$/.test(n)) : []) {
             const rel = "questions/" + f, dst = path.join(OUT, rel);
             if (!onMain(rel) || !fs.existsSync(dst)) { copy(rel); continue; }
-            write(dst, mergeDay(read(dst), read(path.join(IN, rel))));
-            console.log(`::warning::game-data/${rel} was also changed on main during this run: kept main's version and added this run's records.`);
+            write(dst, mergeDay(baseOf(rel), read(dst), read(path.join(IN, rel))));
+            console.log(`::warning::game-data/${rel} was also changed on main during this run: merged main's changes with this run's.`);
           }
           // bot-state.json and state.json are the bot's own bookkeeping: this run's copy is the newest.
           for (const rel of ["bot-state.json", "state.json"]) if (fs.existsSync(path.join(IN, rel))) {

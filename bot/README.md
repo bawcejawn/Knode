@@ -25,8 +25,10 @@ hold up a week.
   one. If the bot crashes after posting but before saving, the next run finds the questions on chain by their hash.
   - Each run starts from the latest `main`, and the publish job writes the bot's files on top of the latest `main`.
     So you can commit `deployment.json`, `game.json` or anything else while a run is going: your commit is kept, and
-    so are the run's files. If a question file was also changed on `main` during the run, the two are merged: `main`'s
-    version wins where both changed the same field, and this run's questions and their chain ids are added.
+    so are the run's files. If a question file was also changed on `main` during the run, the two are merged three ways
+    against the run's starting copy, field by field: what only you changed keeps your value, what only the run changed
+    (a result, a recorded correction) keeps the run's, and where both changed the same field `main`'s version wins.
+    This run's questions and their chain ids are always added.
   - The one way to lose a run's files: the runner itself dies mid-run, so its files never reach the publish job. A
     question it posted is then unknown to the next run, which emails you and resolves it as VOID so its week can still
     close.
