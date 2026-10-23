@@ -72,6 +72,12 @@ const COMPOUND_MIN = toSat(1);           // compound once at least 1 KOIN of blo
 const SPACE = (n: number) => String(n).padStart(3, "0");
 
 const sha256hex = (s: string | Uint8Array) => crypto.createHash("sha256").update(s).digest("hex");
+/** bot-state.json and the VHP readings in question files are written only by the bot. Each carries a seal (an HMAC with
+ *  a key derived from OPERATOR_WIF), so an edit pushed by anyone without that key is noticed and not trusted. */
+export const sealOf = (op: Signer, what: string, v: unknown) =>
+  crypto.createHmac("sha256", crypto.createHash("sha256").update("kpred bot seal v1:" + op.getPrivateKey("hex")).digest())
+    .update(`${what}:${JSON.stringify(v)}`).digest("hex");
+const readingSeal = (op: Signer, q: any, r: VhpReading) => sealOf(op, `vhp:${String(q.paramsHash ?? "").toLowerCase()}`, { height: r.height, readAt: r.readAt, values: r.values });
 const log = (...a: any[]) => console.log(...a);
 
 // ───────────────────────── files ─────────────────────────
@@ -134,6 +140,8 @@ export type Ctx = {
   botPaid?: number;
   /** Lifts the cap on bot-paid settles (the last hours before a week's settle_end). */
   botPaidUncapped?: boolean;
+  /** Set once this run's bot-paid settles stopped at BOT_MANA_FLOOR. */
+  botManaFloorHit?: boolean;
 };
 
 const num = (x: any) => Number(x ?? 0);
@@ -161,6 +169,8 @@ const minStakeFor = (c: any, w: number) => (big(c.min_stake_next) > 0n && w >= n
 export const MAX_BOT_PAID_SETTLES = Number(E.MAX_BOT_PAID_SETTLES ?? 10);
 /** In the last hours before settle_end the cap is lifted: a player nobody settles by then loses the week's reward. */
 export const SETTLE_LAST_HOURS_MS = 3 * HOUR_MS;
+/** Even then, the bot stops paying for settles when its own Mana falls below this: posting and resolving come first. */
+export const BOT_MANA_FLOOR = toSat(Number(E.BOT_MANA_FLOOR ?? 2));
 
 async function sendOp(ctx: Ctx, what: string, calls: Call[], opts: { sponsored?: boolean } = {}): Promise<boolean> {
   if (ctx.dryRun) { log(`  [dry run] would send: ${what}`); return true; }
@@ -171,6 +181,13 @@ async function sendOp(ctx: Ctx, what: string, calls: Call[], opts: { sponsored?:
     if (!ctx.botPaidUncapped && ctx.botPaid > MAX_BOT_PAID_SETTLES) {
       if (ctx.botPaid === MAX_BOT_PAID_SETTLES + 1) {
         ctx.problems.push(`The contract declined to pay for more than ${MAX_BOT_PAID_SETTLES} settles this run. The bot paid for ${MAX_BOT_PAID_SETTLES} and left the rest for later runs (anyone can settle any player).`);
+      }
+      return false;
+    }
+    if (ctx.botPaidUncapped && await ctx.chain.mana(ctx.operator.getAddress()) < BOT_MANA_FLOOR) {
+      if (!ctx.botManaFloorHit) {
+        ctx.botManaFloorHit = true;
+        ctx.problems.push(`The bot's Mana is below ${showKoin(BOT_MANA_FLOOR)}: it stopped paying for settles, to keep Mana for posting and resolving questions. Send its wallet some KOIN, or settle the remaining players yourself (anyone can).`);
       }
       return false;
     }
@@ -188,8 +205,17 @@ export async function tick(ctx: Ctx) {
   const st0 = await state(ctx);
   if (!st0.c.owner) throw new Error("The contract is not initialised yet (run deploy first).");
   if (st0.weekLen !== 7 * DAY_MS) throw new Error(`week_length (${st0.weekLen}) must be 7 days`);
-  const bs: BotState = { checkedUpTo: 0, orphans: [], lastCompound: 0, warnings: [], lastProduced: 0, producedByDay: {}, producerScannedTo: 0, ...readJson(P.botState) };
-  const save = () => { if (!ctx.dryRun) writeJson(P.botState, bs); };
+  const raw = readJson(P.botState, null);
+  const { seal, ...stored } = raw ?? {};
+  const bs: BotState = { checkedUpTo: 0, orphans: [], lastCompound: 0, warnings: [], lastProduced: 0, producedByDay: {}, producerScannedTo: 0, ...stored };
+  if (raw && seal !== sealOf(ctx.operator, "bot-state", stored)) {
+    // Not written by this bot (edited by hand, or the first run after seals were added): nothing in it may silence an
+    // alert, name the expected producer key, or get a question voided. Those are re-checked from the chain.
+    ctx.problems.push(`game-data/bot-state.json was not written by this bot (no valid seal: edited by hand, or the first run after the update that added seals). Its alert history, producer key and orphan list were not trusted; the bot re-checked them from the chain.`);
+    bs.notified = []; bs.orphans = []; bs.checkedUpTo = 0;
+    delete bs.producerKey; delete bs.deskProducerKey; delete bs.settings;
+  }
+  const save = () => { if (!ctx.dryRun) { const plain = JSON.parse(JSON.stringify(bs)); writeJson(P.botState, { ...plain, seal: sealOf(ctx.operator, "bot-state", plain) }); } };
 
   // Each step is protected: one failing step (a busy RPC node, say) never stops the others.
   const step = async (name: string, fn: () => Promise<void>) => {
@@ -239,6 +265,11 @@ async function healthPass(ctx: Ctx, bs: BotState) {
 
   // 1. Block production by the pool.
   if (ctx.recentBlocks) {
+    if (bs.producerScannedTo > lib) bs.producerScannedTo = 0;
+    if (bs.lastProduced > lib) {
+      ctx.problems.push(`The pool's last block is unknown: bot-state.json says block ${bs.lastProduced}, ahead of the chain (${lib}). Until the bot sees a new one, treat the pool as having produced no block; check the project's node.`);
+      bs.lastProduced = lib;
+    }
     const blocks = await ctx.recentBlocks();
     for (const b of blocks) {
       if (b.h <= bs.producerScannedTo) continue;
@@ -312,6 +343,13 @@ async function healthPass(ctx: Ctx, bs: BotState) {
       }
     }
     else if (k !== expected) ownerAlert(`key-changed:${k}`, `The block-producer key registered for the game is ${k || "none"}, not ${expected}. If you did not register it, your admin key may be compromised (if you did, set "producerKey" in deployment.json).`);
+  }
+  // Orphans (on-chain questions with no file) must end VOID. Any other outcome was set by the operator key before the bot
+  // voided it, or by the owner key since.
+  for (const id of bs.orphans) {
+    const q = (await ctx.chain.read("get_question", { id })).question;
+    const o = num(q?.outcome);
+    if (o !== 0 && o !== 1000) ownerAlert(`orphan-outcome:${id}:${o}:${q?.data_hash ?? ""}`, `Orphan question #${id} (it matches no question file) has outcome ${o} on chain, not VOID. Only the operator key or the owner key can set that: if you did not, a key may be compromised. The owner can void it with correct_question.`);
   }
   if (ctx.desk) await deskHealth(ctx, bs, ownerAlert);
   bs.notified = [...still];
@@ -403,9 +441,18 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
   const { height } = await ctx.chain.head();
   const due = (q: any) => height > num(q.window_end) + RESOLVE_MARGIN;
 
-  // Orphans: void with a hash that says so.
-  for (const id of bs.orphans) {
+  // Orphans: void with a hash that says so. Each is re-checked first: one that matches a question file after all is
+  // linked instead (scanned again), never voided.
+  const fileQs = dayFiles(ctx.P).flatMap((f) => f.data.questions ?? []);
+  for (const id of [...bs.orphans]) {
     const q = (await ctx.chain.read("get_question", { id })).question;
+    const h = String(q?.params_hash ?? "").replace(/^0x/, "").toLowerCase();
+    if (fileQs.some((x: any) => String(x.paramsHash ?? "").toLowerCase() === h && (x.chainId === undefined || x.chainId === id))) {
+      bs.orphans = bs.orphans.filter((x) => x !== id);
+      bs.checkedUpTo = Math.min(bs.checkedUpTo, id);
+      log(`  on-chain question #${id} matches a question file: not an orphan`);
+      continue;
+    }
     if (!q || num(q.outcome) !== 0 || !due(q)) continue;
     const dataHash = "0x" + sha256hex(`orphan question ${id} params ${q.params_hash}`);
     await sendOp(ctx, `resolve orphan #${id} as VOID`, [{ method: "resolve_question", args: { id, outcome: 1000, data_hash: dataHash } }]);
@@ -444,7 +491,11 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
           ctx.problems.push(`${q.id} (#${q.chainId}): the question file no longer matches the on-chain params_hash (file ${fileHash.slice(0, 12)}…, chain ${chainHash.slice(0, 12)}…). Not resolving it from that file: restore the published version (git history).`);
           continue;
         }
-        const scored = scoreQuestion(q, await windowOf(q, csv), { vhpReadings: q.vhpReadings, vhpEnd: q.vhpEnd });
+        // Only VHP readings this bot sealed count; anything else in the file was not written by the bot.
+        const all: any[] = [...(q.vhpReadings ?? []), ...(q.vhpEnd ? [q.vhpEnd] : [])];
+        const sealed = all.filter((r) => r && r.seal === readingSeal(ctx.operator, q, r));
+        if (sealed.length < all.length) ctx.problems.push(`${q.id} (#${q.chainId}): ${all.length - sealed.length} VHP reading(s) in its file were not written by this bot (no valid seal). They were not used; check the file's git history.`);
+        const scored = scoreQuestion(q, await windowOf(q, csv), { vhpReadings: sealed });
         if (resolved) {
           q.chainOutcome = num(onChain.outcome);
           q.chainDataHash = String(onChain.data_hash ?? "");
@@ -480,7 +531,10 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
           q.result = scored.result;
           dirty = true;
         }
-        if (scored.result.vhpCheck?.skipped) log(`  ${q.id}: VHP-swing check skipped (${scored.result.vhpCheck.skipped})`);
+        if (scored.result.vhpCheck?.skipped) {
+          log(`  ${q.id}: VHP-swing check skipped (${scored.result.vhpCheck.skipped})`);
+          ctx.problems.push(`${q.id} (#${q.chainId}) was resolved without the VHP-swing rule: ${scored.result.vhpCheck.skipped} (was the bot down, or every VHP read failing?). Its result on the site says so.`);
+        }
         const outcome = chainOutcome(scored.result);
         const dataHash = "0x" + scored.result.dataHash;
         const label = scored.result.void ? `VOID (${scored.result.reason})` : `option ${String.fromCharCode(65 + (scored.result.option ?? 0))} (actual ${scored.result.value})`;
@@ -542,7 +596,8 @@ async function vhpReadPass(ctx: Ctx, height: number) {
       if (v === undefined || !/^\d+$/.test(String(v))) throw new Error(`the VHP read returned no value for ${w}`);
       values[w] = String(v);
     }
-    (q.vhpReadings ??= []).push({ height: reading.height, readAt, values });
+    const r: VhpReading = { height: reading.height, readAt, values };
+    (q.vhpReadings ??= []).push({ ...r, seal: readingSeal(ctx.operator, q, r) });
     saved.add(f);
     log(`  read ${q.id}'s VHP during its window (block ${reading.height})`);
   }
@@ -667,9 +722,10 @@ async function settlePass(ctx: Ctx) {
   for (let w = st.weeksFinalized; w < st.weeksClosed; w++) {
     const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
     if (h < num(wk.settle_start) || h > num(wk.settle_end)) continue;
-    // Free players (no stake that week) can never be paid, so the bot doesn't spend Mana settling them.
+    // Free players (no stake that week) and voided entries (the player withdrew everything) can never be paid, so the
+    // bot doesn't spend Mana settling them.
     const minStake = minStakeFor(st.c, w);
-    const unsettled = async () => (await allPlayers(ctx.chain, w)).filter((r) => r.entry && !r.entry.settled && big(r.entry.stake) >= minStake && big(r.entry.stake) > 0n);
+    const unsettled = async () => (await allPlayers(ctx.chain, w)).filter((r) => r.entry && !r.entry.settled && !r.entry.voided && big(r.entry.stake) >= minStake && big(r.entry.stake) > 0n);
     // Largest stakes first, so if the bot has to stop paying, it stops at the smallest entries.
     const todo = (await unsettled()).sort((a, b) => (big(b.entry.stake) > big(a.entry.stake) ? 1 : big(b.entry.stake) < big(a.entry.stake) ? -1 : 0));
     const lastHours = num(wk.settle_end) - h <= SETTLE_LAST_HOURS_MS;
