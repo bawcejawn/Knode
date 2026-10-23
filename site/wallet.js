@@ -193,17 +193,25 @@
 
   /** Sign and send. Returns the transaction id once the network has it in a block (or null when it isn't seen yet).
    *  Throws on rejection or failure, with a readable message. */
-  async function send(label, ops) {
+  async function send(label, ops, opts = {}) {
     if (!W.address) throw new Error("Connect a wallet first.");
-    return W.kind === "vault" ? sendVault(label, ops) : sendKondor(label, ops);
+    return W.kind === "vault" ? sendVault(label, ops) : sendKondor(label, ops, opts);
   }
 
-  async function sendKondor(label, ops) {
+  /** opts.ownMana: the player's own account must pay the Mana, never the contract. The transaction names the player as
+   *  payer, is signed first, and is not sent if the wallet switched the payer (Kondor's free Mana option). */
+  async function sendKondor(label, ops, opts = {}) {
     const signer = window.kondor.getSigner(W.address);
     try { signer.provider = W.provider; } catch {}
-    const tx = new lib.Transaction({ signer, provider: W.provider });
+    const tx = new lib.Transaction({ signer, provider: W.provider, ...(opts.ownMana ? { options: { payer: W.address } } : {}) });
     for (const op of ops) await tx.pushOperation(op);
     W.status && W.status(`Confirm “${label}” in Kondor…`);
+    if (opts.ownMana) {
+      const signed = await tx.sign();
+      if (signed) tx.transaction = signed;
+      const payer = tx.transaction && tx.transaction.header && tx.transaction.header.payer;
+      if (payer !== W.address) throw new Error("This one must use your own Mana. Leave Kondor's free Mana option off and try again.");
+    }
     const receipt = await tx.send();
     if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "the contract refused it"));
     const id = tx.transaction && tx.transaction.id;

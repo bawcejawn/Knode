@@ -373,13 +373,13 @@
   }
 
   /** Send one or more operations in one transaction, signed in the player's wallet. */
-  async function send(label, build) {
+  async function send(label, build, opts = {}) {
     if (S.demo) { toast(`Demo: this would ask your wallet to confirm “${label}”.`); return false; }
     if (!S.account) { await connect(); if (!S.account) return false; }
     try {
       const ops = await build();
-      toast(`Confirm “${label}” in ${window.KWallet.label()}…`, 20000);
-      const id = await window.KWallet.send(label, ops);
+      toast(`Confirm “${label}” in ${window.KWallet.label()}…${opts.ownMana ? " This one uses your own Mana: leave Kondor's free Mana option off." : ""}`, 20000);
+      const id = await window.KWallet.send(label, ops, opts);
       toast(id ? `Done: ${label}` : `Sent: ${label}. It may take a minute to show; the page refreshes by itself.`, 8000);
       await loadLive().catch(() => {});
       renderAll();
@@ -405,7 +405,23 @@
 
   const claim = (week) => send(`collect week ${week + 1} reward`, async () => [
     await opOf(writer(), "claim", { player: S.account, week: String(week) }),
-  ]);
+  ], { ownMana: claimNeedsOwnMana(S.claims.find((c) => c.week === week)) });
+
+  // claim-mana:start
+  /** Should this claim be paid with the player's own Mana instead of the contract's? The contract agrees to pay for a
+   *  claim when the VHP it is short can be burned back from spare KOIN within its Mana left after the transaction's own
+   *  limit, but the claim itself may burn up to all of its Mana. So while the pool is short of VHP and its spare KOIN is
+   *  more than its Mana minus the largest limit it pays (max_sponsor_rc), a contract-paid claim could run out of Mana
+   *  and fail at the pool's cost: the player pays instead. An unknown reward counts as short. */
+  function claimNeedsOwnMana(c, st = S.st) {
+    if (!st) return true;
+    const t = st.totals || {}, cfg = st.config || {};
+    const koin = big(st.koin_balance), keep = big(t.seed_koin) + big(t.creator_fee);
+    const spare = koin > keep ? koin - keep : 0n;
+    const short = !c || !c.reward || big(st.vhp_balance) < big(c.reward);
+    return short && spare > 0n && spare + big(cfg.max_sponsor_rc) > big(st.mana);
+  }
+  // claim-mana:end
 
   // ═══════════════ ads (site/ads.json) ═══════════════
   // Ads never get access to this page: network ads run in a sandboxed frame (no access to the page, the wallet or
