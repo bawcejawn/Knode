@@ -179,7 +179,9 @@
 
   async function loadQuestions() {
     const idx = await fetchJson(DATA + "index.json").catch(() => ({ days: [] }));
-    const files = await Promise.all((idx.days || []).slice(-21).map((f) => fetchJson(DATA + f).then((d) => ({ f, d })).catch(() => null)));
+    // Only plain question files from game-data/questions/ (index.json is a published file; never follow other paths).
+    const days = (idx.days || []).filter((f) => typeof f === "string" && /^questions\/[A-Za-z0-9_-]+\.json$/.test(f));
+    const files = await Promise.all(days.slice(-21).map((f) => fetchJson(DATA + f).then((d) => ({ f, d })).catch(() => null)));
     S.files = files.filter(Boolean);
     await checkFiles(S.files);
     S.questions = S.files.flatMap(({ f, d }) => (d.questions || []).filter((q) => q.chainId !== undefined).map((q) => ({ ...q, chainId: Number(q.chainId), file: f })));
@@ -190,14 +192,15 @@
    *  q.hashOk: true (checked), false (does not match), null (could not be checked this time).
    *  q.chainSays: the outcome stored on chain (0 = not resolved, 1000 = void, n = option n − 1), after any owner
    *  correction; null when it could not be read. Results are shown from it, never from the file's own result. */
-  const chainHashes = new Map(), chainOutcomes = new Map();
+  const chainHashes = new Map(), chainOutcomes = new Map(), chainFacts = new Map();
   async function checkFiles(files) {
     const qs = files.flatMap(({ d }) => (d.questions || []).filter((q) => q.chainId !== undefined));
     // Nothing is added to a question before it is hashed (any extra key would change its hash).
     await Promise.all(qs.map(async (q) => {
       try {
         const id = Number(q.chainId);
-        if (!Number.isInteger(id) || id < 0) { q.hashOk = false; return; }
+        // Question ids are 32-bit on chain: a larger one would wrap to another question when answering (Info).
+        if (!Number.isInteger(id) || id < 0 || id >= 2 ** 32) { q.hashOk = false; return; }
         // A question's outcome can still change until its week closes (owner corrections): re-read those of the last
         // nine days, and any not resolved yet.
         const recent = !S.height || num(q.windowEnd) > S.height - 9 * 28800;
@@ -207,8 +210,13 @@
           if (!h) { q.hashOk = null; return; }
           chainHashes.set(id, h);
           chainOutcomes.set(id, num(onChain.outcome));
+          // What the contract enforces must be what the file shows: answers close at the chain's lock time, and the
+          // chain's window and number of options decide the result (audit W1-04).
+          chainFacts.set(id, { lock: num(onChain.lock_time), ws: num(onChain.window_start), we: num(onChain.window_end), k: num(onChain.k) });
         }
-        const ok = (await paramsHashOf(q)) === chainHashes.get(id);
+        const f = chainFacts.get(id);
+        const same = !f || (f.lock === num(q.lockTime) && f.ws === num(q.windowStart) && f.we === num(q.windowEnd) && f.k === (q.options || []).length);
+        const ok = same && (await paramsHashOf(q)) === chainHashes.get(id);
         q.hashOk = ok;
         q.chainSays = chainOutcomes.get(id);
       } catch { q.hashOk = null; }
@@ -241,21 +249,31 @@
     const bal = async (id) => big(((await tok(id).functions.balance_of({ owner: a })).result || {}).value);
     S.balances = { vhp: await bal(S.dep.vhp), koin: await bal(S.dep.koin) };
     // rewards waiting in finished weeks
+    // Every finished week (audit W1-02: not only the last six), a few at a time, newest first.
     const fin = num(S.st.totals?.weeks_finalized);
     const claims = [];
-    for (let w = Math.max(0, fin - 6); w < fin; w++) {
-      const [p, wk] = await Promise.all([read("get_player", { player: a, week: String(w) }), read("get_week", { week: String(w) })]);
-      const e = p.entry, W = wk.week || {};
-      if (!e || !e.eligible || e.claimed || W.rolled_over || num(e.points) < num(W.cutoff)) continue;
-      let est = null;
-      try {
-        if (!S.board[w]) S.board[w] = await loadBoard(w);
-        const me = S.board[w].scored.find((x) => x.address === a);
-        if (me && me.reward !== undefined) est = me.reward;
-      } catch {}
-      claims.push({ week: w, reward: est ?? 0n });
+    const weeks = []; for (let w = fin - 1; w >= 0 && weeks.length < 104; w--) weeks.push(w);
+    for (let i = 0; i < weeks.length; i += 6) {
+      await Promise.all(weeks.slice(i, i + 6).map(async (w) => {
+        const [p, wk] = await Promise.all([read("get_player", { player: a, week: String(w) }), read("get_week", { week: String(w) })]);
+        const e = p.entry, W = wk.week || {};
+        if (!e || !e.eligible || e.claimed || W.rolled_over || num(e.points) < num(W.cutoff)) return;
+        // The exact amount the contract pays, from the week's pots and the player's score group (audit W1-01).
+        claims.push({ week: w, reward: exactReward(W, (wk.buckets || [])[num(e.points)], e) });
+      }));
     }
-    S.claims = claims;
+    S.claims = claims.sort((x, y) => x.week - y.week);
+  }
+
+  /** The reward the contract's claim pays (Kpred.rewardOf): basket A by rank, basket B by rank × stake, each step
+   *  rounded down exactly as the contract's 128-bit muldiv does. */
+  function exactReward(W, b, e) {
+    if (!b || !(num(b.players) > 0) || !(big(W.sum_w) > 0n)) return 0n;
+    const n = BigInt(num(b.players)), sw = big(b.sum_w);
+    let r = (big(W.pot_a) * sw) / (n * big(W.sum_w));
+    const bw = (big(W.bw_hi) << 64n) + big(W.bw_lo);
+    if (bw > 0n) r += (big(W.pot_b) * ((sw * big(e.stake)) / n)) / bw;
+    return r;
   }
 
   // ═══════════════ scoring (same rules as the contract) ═══════════════
@@ -907,6 +925,9 @@
           ? "The question file has no result yet; the result shown is the one recorded on chain."
           : `The question file says ${name(fileOc)}, but the chain records ${name(oc)} (an owner correction, or an edited file). The chain's result is the one that counts.`) : null,
         q.hashOk === false ? el("p", { class: "q-warn" }, "This question's published file does not match what was posted on chain.") : null,
+        // Audit W1-03: before hashRule 2 the on-chain fingerprint did not cover the wording, so the option text shown
+        // (not the letter, which comes from the chain) cannot be confirmed.
+        !S.demo && q.hashOk !== false && !wordingHashed(q) ? el("p", { class: "meta" }, "Released before the wording was covered by the on-chain fingerprint: the winning letter comes from the chain, but the option text shown can't be confirmed against it.") : null,
         el("p", { class: "meta" }, `Blocks ${fmtN(q.windowStart)} → ${fmtN(q.windowEnd)}${r ? ` · fingerprint ${String(r.dataHash || "").slice(0, 12)}…` : ""} `,
           S.demo ? null : el("a", { href: DATA + g.f }, "full data")));
     };
