@@ -72,6 +72,7 @@
     "cleanDays": 2,
     "reliabilityDays": 14,
     "maxVoidHistory": 0.03,
-    "voidVhpSwing": 0.1
+    "voidVhpSwing": 0.1,
+    "decidedChance": 1e-9
   }
 }

@@ -536,7 +536,8 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
         }
         if (scored.result.vhpCheck?.skipped) {
           log(`  ${q.id}: VHP-swing check skipped (${scored.result.vhpCheck.skipped})`);
-          ctx.problems.push(`${q.id} (#${q.chainId}) was resolved without the VHP-swing rule: ${scored.result.vhpCheck.skipped} (was the bot down, or every VHP read failing?). Its result on the site says so.`);
+          // Readings were taken, but all after the blocks decided the answer: the bot worked, nothing to report.
+          if (!scored.result.vhpCheck.readingsInWindow) ctx.problems.push(`${q.id} (#${q.chainId}) was resolved without the VHP-swing rule: ${scored.result.vhpCheck.skipped} (was the bot down, or every VHP read failing?). Its result on the site says so.`);
         }
         const outcome = chainOutcome(scored.result);
         const dataHash = "0x" + scored.result.dataHash;

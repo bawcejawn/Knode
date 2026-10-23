@@ -34,25 +34,32 @@ How the VHP-swing rule is applied, exactly:
   after the balances, so the balances are from that block or earlier. A reading whose height is after the window's
   last block is not kept. The readings are hourly samples: a swing that starts and is undone between two readings is
   not seen.
-- **Only readings taken before the answer was decided count.** The answer is decided at the first block from which the
-  window's blocks already fix the option (`vhpCheck.decidedHeight` in the result):
-  - over/under counts (a producer's blocks, a group's blocks, the network's transactions) and the longest block gap:
-    the block where the value passed the top threshold;
-  - head-to-head and combined differences, and the share of empty blocks: the block after which no remaining block
-    could change the option;
-  - otherwise (the average block interval, or a count that never passed its top threshold): the window's last block.
-  A reading taken after that block never voids, whatever it shows. Without this, the last hourly reading of a window
-  (up to an hour before its end, or at its very last block) would come when most or all of the window is already
-  public, and a loser could buy a void.
+- **Only readings taken before the answer was decided count.** The answer is decided at the first block from which
+  the chance that the window's remaining blocks change the option is below `decidedChance` (a setting in
+  `game-data/game.json`, `model.decidedChance`, default 1e-9; saved with each question at release, so it is part of
+  its `paramsHash`), or from which no remaining block could change it at all (`vhpCheck.decidedHeight` in the result).
+  The chance is a conservative bound: each producer that could move the answer is assumed to produce each remaining
+  block at an upper bound of its own rate so far in this window (k blocks out of n give at most
+  (k + L + √(L² + 2kL)) / n, L = ln(8 / decidedChance), which is wrong with a chance of at most decidedChance / 8),
+  the share of empty blocks likewise; the chance of reaching another option is the Chernoff bound of a binomial count
+  (e^−μ (eμ / m)^m for m more blocks with mean μ), summed over every way the option could change and added to the
+  chance that a rate bound is wrong. Over/under counts, head-to-head and combined differences and the empty-block
+  share are decided this way. The network's transactions and the longest gap are decided only once they passed the
+  top threshold, and the average block interval only at the window's last block. A reading taken after the decided
+  block never voids, whatever it shows. Without this, the last hourly reading of a window would often come when the
+  answer is already public, and a loser could buy a void. With `decidedChance` 0, only certainty counts.
 - The question is void if, in any counted reading (`windowStart ≤ height ≤ decidedHeight`), for any of those producers
   (or the network, or the group's combined VHP), `|reading − release| > voidVhpSwing × release` (exact integer
   arithmetic).
   - A reading taken after the window's last block never voids, whatever it shows.
   - A group question (M10) is checked on its members' combined VHP, so a gift to its smallest member does not void it
     unless it moves the whole group by more than the limit.
-  - If no reading was taken before the answer was decided (the bot was down, or every VHP read failed), the rule is
-    skipped and the question resolves on its blocks alone. The result's `vhpCheck.skipped` says so, the site shows it
-    on the result, and the bot emails you.
+  - If no reading was taken before the answer was decided, the rule is skipped and the question resolves on its
+    blocks alone. The result's `vhpCheck.skipped` says why and the site shows it. The bot emails you when no reading
+    was taken during the window at all (the bot was down, or every VHP read failed); when its readings all came after
+    an early decision, it only logs it.
+  - The offline rule (1. above) also stops at the decided block for these questions: a producer that goes silent once
+    the answer is public no longer voids it.
   - A producer with no VHP at release is not checked (any amount would be an infinite change).
 - The result's `vhpCheck` lists the heights of the readings used and, for each producer (or the group), the reading
   with the largest change, so anyone can check it.

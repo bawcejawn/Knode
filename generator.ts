@@ -27,7 +27,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { BLOCKS_PER_DAY, fmt, pct, quant, sampleThresholds, optionFor, syncBlocks, readCsv, readVhp, MAINNET_VHP, type Blk } from "./common.ts";
-import { scoreQuestion, paramsHashOf, vhpSubjects, HASH_RULE } from "./resolver.ts";
+import { scoreQuestion, paramsHashOf, vhpSubjects, HASH_RULE, DECIDED_CHANCE } from "./resolver.ts";
 import { pathToFileURL } from "node:url";
 
 const DIR = process.env.GEN_DIR ?? "generator-data"; // the bot uses game-data/ (committed, public)
@@ -48,7 +48,10 @@ type Game = {
     coreRateDays?: number; smallRateDays?: number; minVoidBlocks?: number; cleanDays?: number; reliabilityDays?: number; maxVoidHistory?: number;
     /** Void a question when a producer it is about (or the network, for M4–M7) gains or loses MORE than this share of
      *  its VHP between release and the window's end (0.10 = 10%). Saved with each question at release. */
-    voidVhpSwing?: number };
+    voidVhpSwing?: number;
+    /** With the VHP-swing rule: readings count only until the chance that the window's remaining blocks change the
+     *  answer falls below this (default 1e-9; 0 = only once certain). Saved with each question at release. */
+    decidedChance?: number };
 };
 
 function nextMonday(): string {
@@ -71,7 +74,7 @@ function loadGame(): Game {
       // From the 120-day backtest (model v5). E3/M9 are fair but void ~6% (smaller nodes have more outages).
       enabled: ["E1s", "E2s", "E3", "M1", "M4", "M5", "M6", "M7", "M9", "M10", "H1", "H3"],
       model: { rateDays: 2, calibDays: 7, aggDays: 3, minDaily: 1400, minSmallDaily: 20, minExpected: 60, maxDrift: 0.25, voidAlpha: 0.001, tolerance: 0.05, step: 1200,
-        pairCleanDays: 14, coreRateDays: 0.25, smallRateDays: 1, minVoidBlocks: 600, cleanDays: 2, reliabilityDays: 14, maxVoidHistory: 0.03, voidVhpSwing: 0.1 },
+        pairCleanDays: 14, coreRateDays: 0.25, smallRateDays: 1, minVoidBlocks: 600, cleanDays: 2, reliabilityDays: 14, maxVoidHistory: 0.03, voidVhpSwing: 0.1, decidedChance: 1e-9 },
     };
     fs.mkdirSync(DIR, { recursive: true });
     fs.writeFileSync(file, JSON.stringify(g, null, 2));
@@ -299,7 +302,7 @@ type Question = {
   releaseHeight: number; lockHeight: number; lockTime?: number; windowStart: number; windowEnd: number;
   thresholds: number[]; options: Option[]; predicted: number[];
   model: { version: string; rates: Record<string, number>; forecast?: Record<string, number>; window: number; voidAlpha?: number; minVoidBlocks?: number;
-    vhp?: Record<string, string>; vhpHeight?: number; voidVhpSwing?: number }; // rates and the void rules are fixed at release; forecast: what set the options
+    vhp?: Record<string, string>; vhpHeight?: number; voidVhpSwing?: number; decidedChance?: number }; // rates and the void rules are fixed at release; forecast: what set the options
   paramsHash?: string; result?: any;
 };
 
@@ -539,6 +542,7 @@ async function run() {
         q.model.vhp = Object.fromEntries(vhpSubjects(q).map((w) => [w, snap.values[w]]));
         q.model.vhpHeight = snap.height;
         q.model.voidVhpSwing = g.model.voidVhpSwing;
+        q.model.decidedChance = g.model.decidedChance ?? DECIDED_CHANCE;
       }
     }
   }
