@@ -39,10 +39,17 @@ jobs:
     timeout-minutes: 180
     permissions:
       contents: read
+    outputs:
+      start: ${{ steps.start.outputs.sha }}
     steps:
+      # The branch head as it is now, not the commit the run was created for: a run queued behind a long one (or a
+      # "Run workflow" click during a run) must see the previous run's published files.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: main
           persist-credentials: false
+      - id: start
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
@@ -96,6 +103,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           IN: ${{ runner.temp }}/incoming
+          START_SHA: ${{ needs.tick.outputs.start }}
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
@@ -106,29 +114,72 @@ jobs:
           big=$(find "$IN" -type f -size +2048k -print)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
           find "$IN" -type f -name '*.json' -print0 | xargs -0 -r -n1 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))'
-          mkdir -p game-data/questions
-          if [ -d "$IN/questions" ]; then cp "$IN"/questions/*.json game-data/questions/ 2>/dev/null || true; fi
-          for f in bot-state.json state.json index.json; do if [ -f "$IN/$f" ]; then cp "$IN/$f" "game-data/$f"; fi; done
-          # Files changed on main since this run started (your own edits) are left as they are on main.
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          start="${GITHUB_SHA:-$(git rev-parse HEAD)}"
-          git fetch -q "$remote" "$GITHUB_REF_NAME"
-          for f in $(git diff --name-only "$start" FETCH_HEAD -- game-data/); do
-            if ! git diff --quiet "$start" -- "$f"; then echo "::warning::Not publishing $f: it was also changed on main during this run."; fi
-            git checkout -q FETCH_HEAD -- "$f" 2>/dev/null || rm -f "$f"
-          done
-          for p in game-data/questions game-data/bot-state.json game-data/state.json game-data/index.json; do
-            if [ -e "$p" ]; then git add -- "$p"; fi
-          done
-          if git diff --cached --quiet; then echo "No changes."; exit 0; fi
-          # A run changes a handful of files (today's questions, results, bot state): refuse a flood.
-          n=$(git diff --cached --name-only | wc -l)
-          if [ "$n" -gt 50 ]; then echo "::error::Refusing to publish $n changed files in one run (at most 50)."; exit 1; fi
-          outside=$(git diff --cached --name-only | grep -Ev '^game-data/(questions/[A-Za-z0-9_-]+\.json|bot-state\.json|state\.json|index\.json)$' || true)
-          if [ -n "$outside" ]; then echo "::error::Refusing to publish: $outside"; exit 1; fi
-          git -c user.name="kpred-bot" -c user.email="kpred-bot@users.noreply.github.com" commit -q -m "bot: tick"
+          # The commit the tick job started from. The bot's files are written on top of the LATEST main, so every other
+          # commit made during the run (your edits to deployment.json, game.json, ...) is kept as it is. A bot file that
+          # also changed on main since that commit is merged: main's version wins where both changed the same field,
+          # and this run's question records (a question, its chain id, its result) are added, never dropped.
+          start="${START_SHA:-${GITHUB_SHA:-$(git rev-parse HEAD)}}"
           for attempt in 1 2 3 4 5; do
-            if git pull -q --rebase "$remote" "$GITHUB_REF_NAME" && git push -q "$remote" "HEAD:$GITHUB_REF_NAME"; then exit 0; fi
+            git cat-file -e "$start^{commit}" 2>/dev/null || git fetch -q "$remote" "$start" 2>/dev/null || true
+            git fetch -q "$remote" "$GITHUB_REF_NAME"
+            git reset -q --hard FETCH_HEAD
+            changed=$(git diff --name-only "$start" HEAD -- game-data/ 2>/dev/null || echo "__all__")
+            CHANGED="$changed" node - "$IN" game-data <<'JS'
+          const fs = require("fs"), path = require("path");
+          const [IN, OUT] = process.argv.slice(2);
+          const changed = new Set(String(process.env.CHANGED || "").split("\n").filter(Boolean));
+          const onMain = (rel) => changed.has("__all__") || changed.has("game-data/" + rel);
+          const read = (f) => JSON.parse(fs.readFileSync(f, "utf8"));
+          const write = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v, null, 2) + "\n"); };
+          const copy = (rel) => { fs.mkdirSync(path.dirname(path.join(OUT, rel)), { recursive: true }); fs.copyFileSync(path.join(IN, rel), path.join(OUT, rel)); };
+          const union = (a, b) => { const seen = new Set(a.map((x) => JSON.stringify(x))); return [...a, ...b.filter((x) => !seen.has(JSON.stringify(x)))]; };
+          const key = (q) => (q && typeof q.id === "string" ? "id:" + q.id : "json:" + JSON.stringify(q));
+          function mergeDay(m, b) {
+            const out = { ...b, ...m };
+            const mq = Array.isArray(m.questions) ? m.questions : [], bq = Array.isArray(b.questions) ? b.questions : [];
+            const byKey = new Map(bq.map((q) => [key(q), q]));
+            out.questions = mq.map((q) => {
+              const x = byKey.get(key(q));
+              if (!x || typeof q !== "object" || typeof x !== "object") return q;
+              const y = { ...x, ...q };
+              for (const k of ["vhpReadings", "corrections"]) if (Array.isArray(q[k]) || Array.isArray(x[k])) y[k] = union(Array.isArray(q[k]) ? q[k] : [], Array.isArray(x[k]) ? x[k] : []);
+              return y;
+            });
+            const have = new Set(mq.map(key));
+            for (const q of bq) if (!have.has(key(q))) out.questions.push(q);
+            return out;
+          }
+          const qdir = path.join(IN, "questions");
+          for (const f of fs.existsSync(qdir) ? fs.readdirSync(qdir).filter((n) => /^[A-Za-z0-9_-]*\.json$/.test(n)) : []) {
+            const rel = "questions/" + f, dst = path.join(OUT, rel);
+            if (!onMain(rel) || !fs.existsSync(dst)) { copy(rel); continue; }
+            write(dst, mergeDay(read(dst), read(path.join(IN, rel))));
+            console.log(`::warning::game-data/${rel} was also changed on main during this run: kept main's version and added this run's records.`);
+          }
+          // bot-state.json and state.json are the bot's own bookkeeping: this run's copy is the newest.
+          for (const rel of ["bot-state.json", "state.json"]) if (fs.existsSync(path.join(IN, rel))) {
+            if (onMain(rel) && fs.existsSync(path.join(OUT, rel))) console.log(`::warning::game-data/${rel} was also changed on main during this run: this run's copy is published.`);
+            copy(rel);
+          }
+          if (fs.existsSync(path.join(IN, "index.json"))) {
+            const b = read(path.join(IN, "index.json")), dst = path.join(OUT, "index.json");
+            const m = fs.existsSync(dst) ? read(dst) : {};
+            const days = union(Array.isArray(m.days) ? m.days : [], Array.isArray(b.days) ? b.days : []).filter((d) => typeof d === "string").sort();
+            write(dst, { ...m, ...b, days });
+          }
+          JS
+            for p in game-data/questions game-data/bot-state.json game-data/state.json game-data/index.json; do
+              if [ -e "$p" ]; then git add -- "$p"; fi
+            done
+            if git diff --cached --quiet; then echo "No changes."; exit 0; fi
+            # A run changes a handful of files (today's questions, results, bot state): refuse a flood.
+            n=$(git diff --cached --name-only | wc -l)
+            if [ "$n" -gt 50 ]; then echo "::error::Refusing to publish $n changed files in one run (at most 50)."; exit 1; fi
+            outside=$(git diff --cached --name-only | grep -Ev '^game-data/(questions/[A-Za-z0-9_-]+\.json|bot-state\.json|state\.json|index\.json)$' || true)
+            if [ -n "$outside" ]; then echo "::error::Refusing to publish: $outside"; exit 1; fi
+            git -c user.name="kpred-bot" -c user.email="kpred-bot@users.noreply.github.com" commit -q -m "bot: tick"
+            if git push -q "$remote" "HEAD:$GITHUB_REF_NAME"; then exit 0; fi
             echo "Push attempt $attempt failed; retrying."; sleep $((attempt * 5))
           done
           echo "::error::Could not push game-data/."; exit 1
