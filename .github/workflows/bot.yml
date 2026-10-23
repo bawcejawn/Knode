@@ -137,8 +137,6 @@ jobs:
           RPC_CHECK: ${{ vars.RPC_CHECK }}
           GEN_DIR: game-data
           BOT_GIT_PUSH: "1"
-          # Producers the questions must never be about (your own nodes; the game and the Desk are always excluded).
-          EXCLUDE_PRODUCERS: ${{ vars.PERSONAL_PRODUCER }}
       # Even when the run failed (it emails you), whatever it posted must still become public.
       - name: Hand the public files to the publish job
         if: always()

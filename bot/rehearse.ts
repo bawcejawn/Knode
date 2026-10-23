@@ -80,7 +80,6 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   const standIn = [...count.keys()].filter((a) => (maxGap.get(a) ?? 1e9) < 600 && endHeight - (lastSeen.get(a) ?? 0) < 600)
     .sort((a, b) => count.get(b)! - count.get(a)!)[0];
   if (!standIn) throw new Error("no steady producer in the history to stand in for the pool");
-  process.env.EXCLUDE_PRODUCERS = standIn; // "our" node must never be the subject of a question
   const outStart = heightAt(genesisTime + (opts.weeks * 7 - 5) * DAY_MS + 6 * HOUR_MS), outEnd = outStart + 3 * HOUR;
   let returnedTo = 0;
   const recentBlocks = async () => {
@@ -297,7 +296,10 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   let strayVoid = false;
   for (let id = 0; id < nq; id++) { const q = (await sim.read("get_question", { id })).question; if (String(q.params_hash) === strayHash) strayVoid = N(q.outcome) === 1000; }
   check(strayVoid && strayAlerts === 1, `the stray question was emailed about once (${strayAlerts} time(s)) and resolved as VOID, so its week could close`);
-  check(!local.some((q: any) => [...(q.subjects ?? []), ...(q.group ?? [])].includes(standIn)), "no question was ever about the pool's own node (it could sway the answer)");
+  const usesBy = new Map<string, number>();
+  for (const q of local) for (const a of new Set<string>([...(q.subjects ?? []), ...(q.group ?? [])])) usesBy.set(`${q.week}:${a}`, (usesBy.get(`${q.week}:${a}`) ?? 0) + 1);
+  const most = Math.max(0, ...usesBy.values()), cap = JSON.parse(fs.readFileSync(path.join("game-data", "game.json"), "utf8")).maxUsesPerWeek ?? 4;
+  check(most <= cap, `no producer was part of more than ${cap} questions in one week (most: ${most})`);
   const lateSkips = local.filter((q: any) => q.postSkipped).length;
   const dayFilesSkipped = files.filter((d: any) => d.skipped).length;
   check(true, `bot outage handled: ${lateSkips} question(s) skipped as too late to answer, ${dayFilesSkipped} day(s) skipped`);

@@ -778,14 +778,6 @@ async function vhpReadPass(ctx: Ctx, height: number, bs: BotState) {
   if (!ctx.dryRun) for (const f of saved) writeJson(f.file, f.data);
 }
 
-/** Producers no question may be about: the game itself, the Desk, and every producer in EXCLUDE_PRODUCERS (the
- *  workflow passes your personal node). Audit F-09. */
-export function ownProducers(ctx: Ctx): string[] {
-  const deskDep = readJson(path.join("desk-data", "deployment.json"), null);
-  const list = [ctx.chain.contractId, deskDep?.contract, PINNED_MAINNET.desk, ...(E.EXCLUDE_PRODUCERS ?? "").split(",")];
-  return [...new Set(list.map((x) => String(x ?? "").trim()).filter(Boolean))];
-}
-
 // ───────────── post today's questions ─────────────
 
 async function postPass(ctx: Ctx, bs: BotState) {
@@ -816,9 +808,9 @@ async function postPass(ctx: Ctx, bs: BotState) {
     log(`  releasing ${label} (week ${w + 1}, day ${dd + 1}) — answers close ${utc(lockTime)}; watched blocks from ${windowStart}`);
     if (ctx.dryRun) { log(`  [dry run] would run the generator and post its questions`); return; }
     const g = ctx.generator(["release", "--label", label, "--week", String(w), "--day", String(dd),
-      "--lock-height", String(windowStart - 1), "--lock-time", String(lockTime), "--max-end", String(maxEnd),
-      // never ask about the pool itself, the Desk, or the owner's own producer(s): they could sway the answer (F-09)
-      "--exclude", ownProducers(ctx).join(",")]);
+      "--lock-height", String(windowStart - 1), "--lock-time", String(lockTime), "--max-end", String(maxEnd)]);
+    // Every active producer stays in the game (owner decision on audit F-09); the generator's weekly cap
+    // (game.json "maxUsesPerWeek") keeps any one node out of too many questions.
     if (!g.ok) {
       if (/Too late/i.test(g.output)) {
         writeJson(file, { date: label, week: w, day: dd + 1, questions: [], skipped: "too late to release today's questions" });
@@ -1280,6 +1272,10 @@ async function chainCheck() {
   const checks: Check[] = [];
   const say = (ok: boolean, text: string) => checks.push({ ok, text });
   log(`Reading ${rpc} (read-only: nothing is signed or sent)\n`);
+
+  // The chain id the website pins (deployment.json "chainId"; Koinos mainnet's is EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==)
+  const chainId = await provider.getChainId();
+  say(!dep.chainId || dep.chainId === chainId, `chain id ${chainId} (deployment.json: ${dep.chainId ?? "not pinned yet: copy this value into game-data and desk-data deployment.json"})`);
 
   // The game
   const gm = await contractMetadata(provider, dep.contract);

@@ -38,6 +38,9 @@ const MODEL_VERSION = "v5";
 type Game = {
   rpc: string;
   excludeProducers?: string[]; // producers never used in questions (e.g. the game's own pool, the operator's own node)
+  /** Fairness cap: the most questions in one week any single producer may be part of (named, or in a group).
+   *  Default 4. Producers are also picked least-used-this-week first, so the cap is a backstop. */
+  maxUsesPerWeek?: number;
   weekOneStart: string; // YYYY-MM-DD (UTC); day 0 of week 1
   lockBlocks: number; // answers close this many blocks after release; the window starts right after
   questionsPerDay: number[]; // 7 entries
@@ -83,7 +86,7 @@ function loadGame(): Game {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
-type State = { featured: Record<string, number>; voidedByWeek: Record<string, string[]> };
+type State = { featured: Record<string, number>; voidedByWeek: Record<string, string[]>; usesByWeek?: Record<string, Record<string, number>> };
 const stateFile = path.join(DIR, "state.json");
 const loadState = (): State => (fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, "utf8")) : { featured: {}, voidedByWeek: {} });
 const saveState = (s: State) => fs.writeFileSync(stateFile, JSON.stringify(s, null, 2));
@@ -406,12 +409,17 @@ async function run() {
   if (args.maxLock !== undefined && lockHeight > args.maxLock) throw new Error(`Too late in the week to release: answers would close at ${lockHeight}, after the week ends at ${args.maxLock}.`);
   const maxEnd = args.maxEnd ?? Infinity; // the window must end early enough for the week to close on time
   const usedToday = new Set<string>();
+  // Fairness: how many of this week's questions each producer is already part of. No producer goes past the cap, so
+  // no single node carries enough of the week's questions to make gaming it worthwhile.
+  const cap = g.maxUsesPerWeek ?? 4;
+  const uses = (st.usesByWeek ??= {})[String(week)] ??= {};
+  const usable = (a: string) => !usedToday.has(a) && !voided.has(a) && (uses[a] ?? 0) < cap;
 
-  // Rotation: never-featured first, then longest since featured; ties broken by the day's seed.
+  // Rotation: least used this week first, then never-featured, then longest since featured; ties by the day's seed.
   const order = (ps: number[]) => ps
-    .map((p) => ({ p, a: M.names[p], last: st.featured[M.names[p]] ?? -1e9, tie: rand() }))
-    .filter((x) => !usedToday.has(x.a) && !voided.has(x.a))
-    .sort((x, y) => x.last - y.last || x.tie - y.tie)
+    .map((p) => ({ p, a: M.names[p], n: uses[M.names[p]] ?? 0, last: st.featured[M.names[p]] ?? -1e9, tie: rand() }))
+    .filter((x) => usable(x.a))
+    .sort((x, y) => x.n - y.n || x.last - y.last || x.tie - y.tie)
     .map((x) => x.p);
 
   const questions: Question[] = [];
@@ -460,7 +468,7 @@ async function run() {
     } else if (T.kind === "h2h" || T.kind === "combo") {
       const z = M.pairCalib(T.W);
       if (z.length < 50) continue;
-      const zMid = quant(z, 0.5), sp = cl.pairs.filter((p) => !usedToday.has(M.names[p]) && !voided.has(M.names[p]));
+      const zMid = quant(z, 0.5), sp = cl.pairs.filter((p) => usable(M.names[p]));
       const line = (a: number, b: number) => {
         const ra = M.fc(a, M.r, "core"), rb = M.fc(b, M.r, "core");
         return Math.floor(T.W * (ra - rb) + Math.sqrt(T.W * (ra + rb - (ra - rb) ** 2)) * zMid);
@@ -503,6 +511,8 @@ async function run() {
       const z = M.tailCalib(T.W);
       if (z.length < 50) continue;
       const tail = M.tailAt(M.r);
+      // A group question is about every member's blocks, so each member counts as used (it is skipped if one is capped).
+      if (tail.some((p) => !usable(M.names[p]))) continue;
       const rt = tail.reduce((s, p) => s + M.fc(p, M.r, "small"), 0), mean = T.W * rt, sd = Math.sqrt(mean * (1 - rt));
       const t = Array.from({ length: T.k - 1 }, (_, j) => Math.floor(mean + sd * quant(z, (j + 1) / T.k)));
       if (t.some((v, j) => j > 0 && v <= t[j - 1])) continue;
@@ -511,6 +521,7 @@ async function run() {
         subjects: [], group: tail.map((p) => M.names[p]), unit: "count", windowStart: lockHeight + 1, windowEnd: lockHeight + T.W,
         thresholds: t, options: rangeOptions(t, unitShow.count), predicted: predictedFromZ(z, mean, sd, 0, t),
         model: publishedModel(g, Object.fromEntries(tail.map((p) => [M.names[p], M.rateAt(p, M.r)])), T.W) };
+      tail.forEach((p) => usedToday.add(M.names[p]));
     } else {
       if (questions.some((x) => x.template === id)) continue;
       const S = M.stats[T.stat!], sample = M.aggSample(T.stat!, T.W), t = sampleThresholds(sample, T.k);
@@ -551,6 +562,8 @@ async function run() {
   for (const q of questions) { (q as any).hashRule = HASH_RULE; q.paramsHash = paramsHashOf(q); }
 
   for (const q of questions) for (const a of [...q.subjects]) st.featured[a] = dayNumber;
+  for (const q of questions) for (const a of new Set([...q.subjects, ...(q.group ?? [])])) uses[a] = (uses[a] ?? 0) + 1;
+  for (const w of Object.keys(st.usesByWeek!)) if (Number(w) < week - 1) delete st.usesByWeek![w]; // keep two weeks
   fs.writeFileSync(file, JSON.stringify({ date: args.date, week, day: day + 1, tier, released: new Date().toISOString(), questions }, null, 2));
   saveState(st);
   printDay(questions);

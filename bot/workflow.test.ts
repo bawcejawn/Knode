@@ -112,13 +112,12 @@ test("no job that holds a secret restores a cache, and caches are only restored 
   }
 });
 
-test("the bot job gets the block history only through a checked artifact, and never asks about your own producers", () => {
+test("the bot job gets the block history only through a checked artifact", () => {
   const jobs = jobsOf(fs.readFileSync(".github/workflows/bot.yml", "utf8"));
   assert.ok(jobs["blocks-in"] && jobs["blocks-out"], "blocks-in and blocks-out jobs");
   assert.match(jobs.tick, /needs:\s*blocks-in/);
   assert.match(jobs.tick, /download-artifact@[0-9a-f]{40}[^\n]*\n(?:.*\n){0,4}\s*name: blocks-in\n\s*path: \$\{\{ runner\.temp \}\}/);
   assert.match(jobs.tick, /block history ok/);
-  assert.match(jobs.tick, /EXCLUDE_PRODUCERS:\s*\$\{\{\s*vars\.PERSONAL_PRODUCER\s*\}\}/);
   assert.doesNotMatch(jobs["blocks-in"] + jobs["blocks-out"], /secrets\.|environment:|contents:\s*write/);
 });
 

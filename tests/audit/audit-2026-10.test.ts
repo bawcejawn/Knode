@@ -1,6 +1,6 @@
 // Audit 2026-10 (cccc116) fixes: bot side. Each test asserts the safe behaviour.
 //   M-8   the question generator never receives the operator key
-//   F-09  the game, the Desk and your own producers are always excluded from questions
+//   F-09  owner decision: no producer is excluded; the generator caps how many questions a week one producer is in
 //   M-10  only a day file this bot generated and sealed is posted; a file planted on main is reported, not posted
 //   F-10  a question that landed twice (a retried post) is voided without a "key compromised" alarm
 //   F-02  an older, validly sealed list of VHP readings put back in the file is not used
@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { Signer } from "koilib";
 import { paramsHashOf } from "../../resolver.ts";
-import { tick, paths, generatorEnv, ownProducers, daySeal, sealReadings, PINNED_MAINNET, LATE_RESULT_BLOCKS, DAY_MS, HOUR_MS } from "../../bot/bot.ts";
+import { tick, paths, generatorEnv, daySeal, sealReadings, PINNED_MAINNET, LATE_RESULT_BLOCKS, DAY_MS, HOUR_MS } from "../../bot/bot.ts";
 
 const fixture = JSON.parse(fs.readFileSync("tests/audit/fixtures/W000-D3.at-6b37c46.json", "utf8"));
 const original = fixture.questions.find((q: any) => q.template === "M7");
@@ -59,15 +59,6 @@ const unposted = () => { const q = { ...original }; delete q.chainId; return q; 
 test("M-8: the question generator's environment carries no keys or tokens", () => {
   const env = generatorEnv({ PATH: "/bin", RPC: "https://x", OPERATOR_WIF: "5K", PREVIOUS_OPERATOR_WIF: "5J", OWNER_WIF: "5H", GITHUB_TOKEN: "t", ACTIONS_RUNTIME_TOKEN: "r", NODE_KEY: "k", HOME: "/h" }, "game-data");
   assert.deepEqual(Object.keys(env).sort(), ["GEN_DIR", "HOME", "PATH", "RPC"]);
-});
-
-test("F-09: the game, the Desk and EXCLUDE_PRODUCERS are always excluded", () => {
-  const before = process.env.EXCLUDE_PRODUCERS;
-  process.env.EXCLUDE_PRODUCERS = " 1DAHmrQJMAbn4FmMMrew78wPUizjVdbBrd ,";
-  try {
-    const list = ownProducers({ chain: { contractId: PINNED_MAINNET.game } } as any);
-    for (const a of [PINNED_MAINNET.game, PINNED_MAINNET.desk, "1DAHmrQJMAbn4FmMMrew78wPUizjVdbBrd"]) assert.ok(list.includes(a), a);
-  } finally { if (before === undefined) delete process.env.EXCLUDE_PRODUCERS; else process.env.EXCLUDE_PRODUCERS = before; }
 });
 
 test("M-10: a day file that was not generated and sealed by the bot is never posted", async () => {
