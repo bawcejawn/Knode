@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Signer } from "koilib";
-import { tick, paths } from "../../bot/bot.ts";
+import { tick, paths, sealReadings } from "../../bot/bot.ts";
 import { paramsHashOf } from "../../resolver.ts";
 
 const day = JSON.parse(fs.readFileSync("tests/audit/fixtures/W000-D3.at-6b37c46.json", "utf8"));
@@ -114,6 +114,7 @@ test("INS2-V1 editing vhpReadings in a published question file must not change t
   const bad: string[] = [];
   for (const c of cases) {
     const h = structuredClone(pub); h.vhpReadings = c.honest;
+    sealReadings(Signer.fromSeed("bot-ins2-test-only"), h);   // the bot's own readings are sealed (each and the whole list)
     const e = structuredClone(pub); e.vhpReadings = c.edited;
     assert.equal(paramsHashOf(e), paramsHashOf(h), "precondition: vhpReadings are outside params_hash");
     const ctl = world({ questions: [h], onchain: [onchainFor(h, 0)] });

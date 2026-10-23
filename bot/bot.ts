@@ -78,6 +78,24 @@ export const sealOf = (op: Signer, what: string, v: unknown) =>
   crypto.createHmac("sha256", crypto.createHash("sha256").update("kpred bot seal v1:" + op.getPrivateKey("hex")).digest())
     .update(`${what}:${JSON.stringify(v)}`).digest("hex");
 const readingSeal = (op: Signer, q: any, r: VhpReading) => sealOf(op, `vhp:${String(q.paramsHash ?? "").toLowerCase()}`, { height: r.height, readAt: r.readAt, values: r.values });
+/** The seal over a question's whole list of VHP readings (each reading, how many there are, and the latest height), so
+ *  a reading removed, added, reordered or changed is noticed, not only an edited one. */
+const readingsSeal = (op: Signer, q: any) => {
+  const list = (q.vhpReadings ?? []).map((r: any) => ({ height: r.height, readAt: r.readAt, values: r.values }));
+  return sealOf(op, `vhp-set:${String(q.paramsHash ?? "").toLowerCase()}`, { n: list.length, last: list.length ? list[list.length - 1].height : null, list });
+};
+/** Seals a question's VHP readings as the bot writes them: each reading, and the whole list (q.vhpSeal). */
+export function sealReadings(op: Signer, q: any) {
+  for (const r of q.vhpReadings ?? []) r.seal = readingSeal(op, q, r);
+  q.vhpSeal = readingsSeal(op, q);
+}
+/** Which of the bot's keys made `seal` (the operator key, or PREVIOUS_OPERATOR_WIF after a rotation), if any. */
+const sealKey = (ctx: Ctx, seal: unknown, f: (op: Signer) => string): Signer | undefined =>
+  [ctx.operator, ...(ctx.previousOperator ? [ctx.previousOperator] : [])].find((op) => seal === f(op));
+/** bot-state.json saved longer ago than this (in blocks, 90 minutes; the bot runs every hour) has its alert history
+ *  re-checked: an older copy put back could otherwise hide a change that was emailed, undone and made again. Only the
+ *  previous run's copy is younger, and its alert history holds only what was still live then. */
+export const BOT_STATE_MAX_AGE = 1_800;
 const log = (...a: any[]) => console.log(...a);
 
 // ───────────────────────── files ─────────────────────────
@@ -99,6 +117,8 @@ type BotState = {
   producerKey?: string; deskProducerKey?: string;
   /** The owner-only settings seen on the last run (to report a change). */
   settings?: string;
+  /** The last irreversible block when the bot last saved this file (sealed: an old copy put back is noticed). */
+  sealedAt?: number;
 };
 type DayFile = { date: string; week: number; day: number; questions: any[]; skipped?: string };
 
@@ -144,6 +164,10 @@ export type Ctx = {
   botManaFloorHit?: boolean;
   /** No operator key (a dry run without OPERATOR_WIF): seals cannot be checked, so the files are shown as they are. */
   noSealKey?: boolean;
+  /** The operator key before a rotation (PREVIOUS_OPERATOR_WIF): seals it made are still accepted, and re-sealed. */
+  previousOperator?: Signer;
+  /** Set when bot-state.json was not trusted this run and the state started afresh. */
+  stateReset?: boolean;
 };
 
 const num = (x: any) => Number(x ?? 0);
@@ -209,16 +233,34 @@ export async function tick(ctx: Ctx) {
   if (st0.weekLen !== 7 * DAY_MS) throw new Error(`week_length (${st0.weekLen}) must be 7 days`);
   const raw = readJson(P.botState, null);
   const { seal, ...stored } = raw ?? {};
-  const bs: BotState = { checkedUpTo: 0, orphans: [], lastCompound: 0, warnings: [], lastProduced: 0, producedByDay: {}, producerScannedTo: 0, ...stored };
+  const fresh = (): BotState => ({ checkedUpTo: 0, orphans: [], lastCompound: 0, warnings: [], lastProduced: 0, producedByDay: {}, producerScannedTo: 0 });
+  let bs: BotState = { ...fresh(), ...stored };
+  const { lib } = await ctx.chain.head();
   if (ctx.noSealKey) log("  (no OPERATOR_WIF: the seals on bot-state.json and VHP readings are not checked in this dry run)");
-  else if (raw && seal !== sealOf(ctx.operator, "bot-state", stored)) {
-    // Not written by this bot (edited by hand, or the first run after seals were added): nothing in it may silence an
-    // alert, name the expected producer key, or get a question voided. Those are re-checked from the chain.
-    ctx.problems.push(`game-data/bot-state.json was not written by this bot (no valid seal: edited by hand, or the first run after the update that added seals). Its alert history, producer key and orphan list were not trusted; the bot re-checked them from the chain.`);
-    bs.notified = []; bs.orphans = []; bs.checkedUpTo = 0;
-    delete bs.producerKey; delete bs.deskProducerKey; delete bs.settings;
+  else {
+    // Nothing from a file the bot did not write, or from an old copy of one, may silence an alert, name the expected
+    // producer key, get a question voided or hold back compounding: the state starts afresh, is re-checked from the
+    // chain, and you are told why.
+    let distrust = "";
+    if (!raw) {
+      if (fs.existsSync(path.join(P.dir, "index.json"))) {
+        distrust = "game-data/bot-state.json is missing although the bot has run before. Its alert history and the owner-settings baseline are gone, so an owner-only change made since the last run cannot be reported as a change: check the settings on chain, and the file's git history.";
+      }
+    } else if (!sealKey(ctx, seal, (op) => sealOf(op, "bot-state", stored))) {
+      distrust = "game-data/bot-state.json was not written by this bot (no valid seal: edited by hand, the operator key changed, or the first run after the update that added seals). None of it was trusted; the bot started its state afresh and re-checked it from the chain.";
+    } else if (!Number.isInteger(stored.sealedAt) || stored.sealedAt > lib || lib - stored.sealedAt > BOT_STATE_MAX_AGE) {
+      // Sealed, but old: the bot was down, or an older copy was put back. Its alert history may predate a change that
+      // happened since, so every live owner-only change is emailed again.
+      log(`  bot-state.json was last written at block ${stored.sealedAt ?? "?"} (now ${lib}): its alert history is not trusted`);
+      bs.notified = [];
+    }
+    if (distrust) { ctx.problems.push(distrust); bs = fresh(); ctx.stateReset = true; }
   }
-  const save = () => { if (!ctx.dryRun) { const plain = JSON.parse(JSON.stringify(bs)); writeJson(P.botState, { ...plain, seal: sealOf(ctx.operator, "bot-state", plain) }); } };
+  const save = () => {
+    if (ctx.dryRun) return;
+    const plain = JSON.parse(JSON.stringify({ ...bs, sealedAt: lib }));
+    writeJson(P.botState, { ...plain, seal: sealOf(ctx.operator, "bot-state", plain) });
+  };
 
   // Each step is protected: one failing step (a busy RPC node, say) never stops the others.
   const step = async (name: string, fn: () => Promise<void>) => {
@@ -286,7 +328,10 @@ async function healthPass(ctx: Ctx, bs: BotState) {
     const today = Math.floor(lib / DAY);
     for (const d of Object.keys(bs.producedByDay)) if (Number(d) < today - 8) delete bs.producedByDay[d];
     const rate = productionRate(bs, lib);
-    if (bs.lastProduced === 0) {
+    if (bs.lastProduced === 0 && ctx.stateReset) {
+      // The production history was not trusted: whether the pool still produces is unknown until it is seen again.
+      ctx.problems.push(`The pool's last block is unknown (bot-state.json was not trusted). Until the bot sees a new one, treat the pool as having produced no block; check the project's node.`);
+    } else if (bs.lastProduced === 0) {
       if (!ctx.quiet) log(`  the pool has not produced a block yet (normal until the producer key is registered and the seed is in)`);
     } else {
       const gap = lib - bs.lastProduced, limit = alertAfter(rate);
@@ -494,11 +539,17 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
           ctx.problems.push(`${q.id} (#${q.chainId}): the question file no longer matches the on-chain params_hash (file ${fileHash.slice(0, 12)}…, chain ${chainHash.slice(0, 12)}…). Not resolving it from that file: restore the published version (git history).`);
           continue;
         }
-        // Only VHP readings this bot sealed count; anything else in the file was not written by the bot.
-        const all: any[] = [...(q.vhpReadings ?? []), ...(q.vhpEnd ? [q.vhpEnd] : [])];
-        const sealed = ctx.noSealKey ? all : all.filter((r) => r && r.seal === readingSeal(ctx.operator, q, r));
-        if (sealed.length < all.length) ctx.problems.push(`${q.id} (#${q.chainId}): ${all.length - sealed.length} VHP reading(s) in its file were not written by this bot (no valid seal). They were not used; check the file's git history.`);
-        const scored = scoreQuestion(q, await windowOf(q, csv), { vhpReadings: sealed });
+        // The VHP readings must be exactly the list this bot recorded (one seal over the whole list). A reading removed,
+        // added or changed holds the question back: it is reported, never resolved silently.
+        if (!ctx.noSealKey && !resolved && (q.vhpReadings?.length || q.vhpEnd || q.vhpSeal !== undefined)) {
+          const by = q.vhpEnd ? undefined : sealKey(ctx, q.vhpSeal, (op) => readingsSeal(op, q));
+          if (!by) {
+            ctx.problems.push(`${q.id} (#${q.chainId}): its VHP readings are not the list this bot recorded (a VHP reading was removed, added or changed, or the operator key changed). Not resolving it: restore the file from git history; after an operator-key change, set PREVIOUS_OPERATOR_WIF; or void it with the owner key.`);
+            continue;
+          }
+          if (by !== ctx.operator) { sealReadings(ctx.operator, q); dirty = true; }
+        }
+        const scored = scoreQuestion(q, await windowOf(q, csv), { vhpReadings: q.vhpReadings ?? [] });
         if (resolved) {
           q.chainOutcome = num(onChain.outcome);
           q.chainDataHash = String(onChain.data_hash ?? "");
@@ -610,7 +661,14 @@ async function vhpReadPass(ctx: Ctx, height: number) {
       values[w] = String(v);
     }
     const r: VhpReading = { height: reading.height, readAt, values };
-    (q.vhpReadings ??= []).push({ ...r, seal: readingSeal(ctx.operator, q, r) });
+    // The list already in the file must still be the one this bot sealed, or a new seal would cover the edit: the
+    // reading is then not added, and the resolve step reports the file.
+    if (!ctx.noSealKey && (q.vhpReadings?.length || q.vhpSeal !== undefined) && !sealKey(ctx, q.vhpSeal, (op) => readingsSeal(op, q))) {
+      log(`  ${q.id}: its VHP readings are not the list this bot recorded; reading not added`);
+      continue;
+    }
+    (q.vhpReadings ??= []).push(r);
+    if (!ctx.noSealKey) sealReadings(ctx.operator, q);
     saved.add(f);
     log(`  read ${q.id}'s VHP during its window (block ${reading.height})`);
   }
@@ -1316,6 +1374,7 @@ function liveCtx(dryRun: boolean): Ctx {
   const pob = new Contract({ id: dep?.pob ?? MAINNET.pob, abi: pobAbi as any, provider: chain.provider });
   return {
     chain, operator, P, dryRun, generator: generatorRunner(P.dir), checkpoint: gitCheckpoint(P.dir), problems: [], noSealKey: !E.OPERATOR_WIF,
+    previousOperator: E.PREVIOUS_OPERATOR_WIF ? Signer.fromWif(E.PREVIOUS_OPERATOR_WIF) : undefined,
     // Window blocks are read fresh from the chain for every resolution; the cached blocks.csv is never trusted for that.
     windowBlocks: async (from, to) => {
       const head: any = await chain.provider.getHeadInfo();

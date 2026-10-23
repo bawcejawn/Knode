@@ -30,10 +30,17 @@ hold up a week.
   - The one way to lose a run's files: the runner itself dies mid-run, so its files never reach the publish job. A
     question it posted is then unknown to the next run, which emails you and resolves it as VOID so its week can still
     close.
-- **The bot's own files are sealed.** `bot-state.json` and each VHP reading carry a seal made with a key derived from
-  `OPERATOR_WIF`. If anyone edits them without that key, the bot emails you and does not trust them: an edited alert
-  history cannot silence an email, an edited producer key or orphan list is ignored, and an edited VHP reading is not
-  used. The first run after this change emails you once about `bot-state.json` (it had no seal yet); that is expected.
+- **The bot's own files are sealed.** `bot-state.json` and each question's VHP readings carry a seal made with a key
+  derived from `OPERATOR_WIF`.
+  - The readings are sealed as a whole list (`vhpSeal`: every reading, how many, and the latest height). If a reading is
+    removed, added or changed, the bot emails you and does not resolve that question: restore the file from git
+    history, or void the question with the owner key.
+  - `bot-state.json` is sealed with the block it was saved at. If it was edited, the bot emails you and starts its state
+    afresh (nothing in it is kept, and the pool's last block counts as unknown until it is seen again). If it was
+    deleted after the bot had run, the bot emails you (the owner-settings baseline is gone). If it is more than 90
+    minutes old (the bot was down, or an older copy was put back), the bot re-checks its alert history, so every live
+    owner-only change is emailed again.
+  - The first run after this change emails you once about `bot-state.json` (it had no seal yet); that is expected.
 - **The bot job holds no push token.** It runs with a read-only GitHub token (not left in `.git/config`) and installs
   exactly `package-lock.json` with install scripts off. A separate `publish` job, which runs no repository code,
   copies only `game-data/questions/*.json`, `bot-state.json`, `state.json` and `index.json` and pushes them.
@@ -130,6 +137,14 @@ Then it checks everything independently:
    variable `BOT_ENABLED=true`.
 
 ## Rotating the operator key
+
+Rotate it only while no question's counting window is open: the seals on VHP readings are made with the operator
+key, so readings taken before a rotation no longer match it. The windows of Saturday's questions end on Sunday (no
+questions are released on Sunday); the bot's last run log then has no "read … VHP during its window" line. If you
+rotated while a window was open, the bot holds those questions back and emails you. Then, on your PC, put the old key
+in `.env` as `PREVIOUS_OPERATOR_WIF` (next to the new `OPERATOR_WIF`) and run `npm run bot -- tick` once their results
+are due: seals made with the old key are accepted, re-sealed with the new one, and the questions resolved. Commit and
+push `game-data/`, then delete `PREVIOUS_OPERATOR_WIF` from `.env`. (GitHub only ever holds `OPERATOR_WIF`.)
 
 The bot's key must be its own: never a key that was used for anything else (the probes' owner wallet was reused
 before; rotate away from it). Nothing in this list has been done for you.

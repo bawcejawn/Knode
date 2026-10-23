@@ -103,12 +103,13 @@ test("FC3-VHP-3: a healthy bot is not told 'was the bot down' when the blocks de
   fs.mkdirSync(P.questions, { recursive: true });
   const op = Signer.fromSeed("fc3-vhp-test-only");
   // A healthy bot: one sealed reading every hour of the window (all after the early decision).
-  const { sealOf } = await import("../../bot/bot.ts");
+  const { sealReadings } = await import("../../bot/bot.ts");
   q.vhpReadings = [];
   for (let h = q.windowStart + 1_150; h <= q.windowEnd; h += HOUR) {
     const r = { height: h, readAt: new Date(1_792_627_200_000 + (h - q.windowStart) * 3000).toISOString(), values: { [q.subjects[0]]: RELEASE.toString() } };
-    q.vhpReadings.push({ ...r, seal: sealOf(op, `vhp:${q.paramsHash}`, r) });
+    q.vhpReadings.push(r);
   }
+  sealReadings(op, q);   // as the bot writes them: each reading and the whole list
   fs.writeFileSync(path.join(P.questions, "W000-D3.json"), JSON.stringify({ ...day, questions: [q] }));
   fs.writeFileSync(path.join(dir, "blocks.csv"), blocks.map((b) => `${b.h},${b.ts},${b.signer},0,0`).join("\n") + "\n");
   const height = q.windowEnd + 500;

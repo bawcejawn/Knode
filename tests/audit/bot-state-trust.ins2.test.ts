@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Signer } from "koilib";
-import { tick, paths } from "../../bot/bot.ts";
+import { tick, paths, sealOf } from "../../bot/bot.ts";
 import { paramsHashOf } from "../../resolver.ts";
 
 const day = JSON.parse(fs.readFileSync("tests/audit/fixtures/W000-D3.at-6b37c46.json", "utf8"));
@@ -134,7 +134,9 @@ test("INS2-S5 a planted lastProduced must not silence the 'pool produced no bloc
   const byDay: Record<string, number> = {};
   for (let d = today - 7; d < today; d++) byDay[String(d)] = 100;
   const base = { producedByDay: byDay, producerScannedTo: lib };
-  const ctl = world({ botState: { ...base, lastProduced: lib - 5_000 } });
+  // The honest control is the state as the bot writes it (sealed); the planted one below is a hand edit.
+  const honest = { ...base, lastProduced: lib - 5_000, sealedAt: lib };
+  const ctl = world({ botState: { ...honest, seal: sealOf(Signer.fromSeed("bot-ins2-test-only"), "bot-state", honest) } });
   assert.ok(count(await ctl.run({ recentBlocks: async () => [] }), /produced no block/) >= 1, "control: 5,000 silent blocks raise the alarm");
   const w = world({ botState: { ...base, lastProduced: 9_000_000_000_000 } });
   assert.ok(count(await w.run({ recentBlocks: async () => [] }), /produced no block/) >= 1,

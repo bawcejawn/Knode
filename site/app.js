@@ -39,7 +39,7 @@
 
   // ═══════════════ params hash: is this question file exactly what was posted on chain? ═══════════════
   // params-hash:start (the same rule as paramsHashOf in resolver.ts; tests/audit/site.params-hash.test.mjs compares them)
-  const AFTER_RELEASE = ["paramsHash", "result", "text", "title", "options", "chainId", "chainOutcome", "postSkipped", "vhpEnd", "vhpReadings", "corrections", "chainDataHash"];
+  const AFTER_RELEASE = ["paramsHash", "result", "text", "title", "options", "chainId", "chainOutcome", "postSkipped", "vhpEnd", "vhpReadings", "vhpSeal", "corrections", "chainDataHash"];
   const WORDING = ["title", "text", "options"];
   async function paramsHashOf(q) {
     const withWording = Number(q.hashRule ?? 0) >= 2;

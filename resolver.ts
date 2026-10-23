@@ -58,7 +58,7 @@ export type VhpReading = { height: number; readAt?: string; values: Record<strin
 export const NETWORK_VHP = "network";
 
 /** Fields the bot adds to a question file after it was released. They are not part of the published parameters. */
-const AFTER_RELEASE = ["paramsHash", "result", "text", "title", "options", "chainId", "chainOutcome", "postSkipped", "vhpEnd", "vhpReadings", "corrections", "chainDataHash"];
+const AFTER_RELEASE = ["paramsHash", "result", "text", "title", "options", "chainId", "chainOutcome", "postSkipped", "vhpEnd", "vhpReadings", "vhpSeal", "corrections", "chainDataHash"];
 
 /** Released with hashRule 2 or later: the wording players see (title, text, option labels and ranges) is hashed too. */
 export const HASH_RULE = 2;

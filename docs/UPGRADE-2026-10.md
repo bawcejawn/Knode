@@ -71,6 +71,10 @@ untouched.
 5. Pick the timing: schedule on a Tuesday or Wednesday so the upload lands mid-week, away from the weekly close
    (Monday 12:00 UTC) and finalization (Tuesday 12:00 UTC). It is safe at any time (tested), this only keeps it simple.
 6. The bot wallet (`OPERATOR_WIF`) needs about 60 KOIN of Mana for the upload.
+7. If you rotate `OPERATOR_WIF` around the upgrade, do it only while no VHP window is open (see "Rotating the operator
+   key" in bot/README.md: for example on a Sunday, after Saturday's windows have ended). A rotation during an open
+   window makes the bot hold those questions back until you run it once on your PC with the old key as
+   `PREVIOUS_OPERATOR_WIF` (bot/README.md explains how).
 
 ## 1. Schedule (starts the 48 hours)
 
