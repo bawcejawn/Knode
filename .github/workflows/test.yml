@@ -22,7 +22,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-      - run: if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+      # Exactly the lockfile, with no package install scripts (a compromised package could otherwise run code here).
+      - run: npm ci --no-audit --no-fund --ignore-scripts
       - name: npm test
         run: |
           set -o pipefail

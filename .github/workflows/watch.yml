@@ -17,20 +17,49 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  watch:
+  # The saved state is restored in a job of its own that runs no repository code afterwards, and handed over only as a
+  # checked JSON file: a planted cache could otherwise change the watcher and silence the outage emails.
+  state:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
-      # Which outage was already emailed (so one outage = one email, plus a reminder every 3 hours).
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: watch-state.json
           key: watch-state-${{ github.run_id }}
           restore-keys: watch-state-
+      - name: Keep it only if it is a small JSON object
+        run: |
+          if [ -f watch-state.json ] && [ ! -L watch-state.json ] && [ "$(stat -c %s watch-state.json)" -lt 65536 ] \
+            && /usr/bin/python3 -c 'import json,sys; v=json.load(open("watch-state.json")); sys.exit(0 if isinstance(v, dict) else 1)'; then :
+          else echo '{}' > watch-state.json; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: watch-state
+          path: watch-state.json
+          retention-days: 1
+
+  watch:
+    needs: state
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      # Which outage was already emailed (so one outage = one email, plus a reminder every 3 hours).
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: watch-state
+          path: ${{ runner.temp }}/watch-state
+      - run: |
+          f="$RUNNER_TEMP/watch-state/watch-state.json"
+          if [ -f "$f" ] && [ ! -L "$f" ] && /usr/bin/python3 -c 'import json,sys; v=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(v, dict) else 1)' "$f"; then cp "$f" watch-state.json; fi
       - name: Check the personal node
         run: node bot/watch.mjs
         env:

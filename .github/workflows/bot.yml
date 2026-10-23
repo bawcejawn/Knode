@@ -32,8 +32,51 @@ permissions:
   contents: read              # the bot job can only read; only the publish job below can push
 
 jobs:
-  tick:
+  # The block history cache is restored here, in a job with no secrets and no write token, and runs no repository code
+  # after the restore. A poisoned cache could otherwise plant files in the job that holds the operator key (audit H-1).
+  blocks-in:
     if: ${{ vars.BOT_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: game-data/blocks.csv
+          key: blocks-${{ github.run_id }}
+          restore-keys: blocks-
+      - name: Check the block history (format only; the bot spot-checks it against the chain)
+        run: |
+          set -euo pipefail
+          f="${BLOCKS_FILE:-game-data/blocks.csv}"
+          if [ ! -f "$f" ] || [ -L "$f" ]; then echo "No block history yet."; rm -f "$f"; exit 0; fi
+          if /usr/bin/python3 - "$f" <<'PY'
+          import re, sys, os
+          f = sys.argv[1]
+          if os.path.getsize(f) > 200 * 1024 * 1024: sys.exit("block history over 200 MB")
+          row = re.compile(r"^\d{1,10},\d{1,15},(1[1-9A-HJ-NP-Za-km-z]{25,34}|unknown),\d{1,6},\d{1,15}$")
+          prev = None
+          with open(f, encoding="ascii") as fh:
+              for n, line in enumerate(fh.read().split("\n"), 1):
+                  if not line: continue
+                  if not row.match(line): sys.exit(f"bad row {n}")
+                  h = int(line.split(",", 1)[0])
+                  if prev is not None and h != prev + 1: sys.exit(f"gap at row {n}")
+                  prev = h
+          print("block history ok")
+          PY
+          then :; else echo "::warning::Block history failed the format check; the bot downloads it again."; rm -f "$f"; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: blocks-in
+          path: game-data/blocks.csv
+          retention-days: 1
+          if-no-files-found: ignore
+
+  tick:
+    needs: blocks-in
+    if: ${{ always() && vars.BOT_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
     environment: bot          # holds OPERATOR_WIF; its deployment-branch rule allows main only
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -55,13 +98,36 @@ jobs:
           node-version: 22
       # Exactly package-lock.json, and no package's install script runs next to the bot key.
       - run: npm ci --no-audit --no-fund --ignore-scripts
-      # Recent block history for the question generator (downloaded once, then topped up each hour). The bot does not
-      # trust it: cached rows are spot-checked against the chain, and every resolution reads its window fresh.
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      # The block history from the job above: unpacked outside the repository, checked again, and only blocks.csv is used.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
         with:
-          path: game-data/blocks.csv
-          key: blocks-${{ github.run_id }}
-          restore-keys: blocks-
+          name: blocks-in
+          path: ${{ runner.temp }}/blocks-in
+      - name: Check and take the block history
+        env:
+          BLOCKS_FILE: ${{ runner.temp }}/blocks-in/blocks.csv
+        run: |
+          set -euo pipefail
+          f="${BLOCKS_FILE:-game-data/blocks.csv}"
+          if [ ! -f "$f" ] || [ -L "$f" ]; then echo "No block history yet."; rm -f "$f"; exit 0; fi
+          if /usr/bin/python3 - "$f" <<'PY'
+          import re, sys, os
+          f = sys.argv[1]
+          if os.path.getsize(f) > 200 * 1024 * 1024: sys.exit("block history over 200 MB")
+          row = re.compile(r"^\d{1,10},\d{1,15},(1[1-9A-HJ-NP-Za-km-z]{25,34}|unknown),\d{1,6},\d{1,15}$")
+          prev = None
+          with open(f, encoding="ascii") as fh:
+              for n, line in enumerate(fh.read().split("\n"), 1):
+                  if not line: continue
+                  if not row.match(line): sys.exit(f"bad row {n}")
+                  h = int(line.split(",", 1)[0])
+                  if prev is not None and h != prev + 1: sys.exit(f"gap at row {n}")
+                  prev = h
+          print("block history ok")
+          PY
+          then :; else echo "::warning::Block history failed the format check; the bot downloads it again."; rm -f "$f"; fi
+      - run: if [ -f "$RUNNER_TEMP/blocks-in/blocks.csv" ]; then mkdir -p game-data && cp "$RUNNER_TEMP/blocks-in/blocks.csv" game-data/blocks.csv; fi
       - name: Run the bot
         run: npm run bot -- tick
         env:
@@ -69,6 +135,8 @@ jobs:
           RPC: ${{ vars.RPC || 'https://api.koinos.io' }}
           GEN_DIR: game-data
           BOT_GIT_PUSH: "1"
+          # Producers the questions must never be about (your own nodes; the game and the Desk are always excluded).
+          EXCLUDE_PRODUCERS: ${{ vars.PERSONAL_PRODUCER }}
       # Even when the run failed (it emails you), whatever it posted must still become public.
       - name: Hand the public files to the publish job
         if: always()
@@ -82,6 +150,34 @@ jobs:
             game-data/index.json
           retention-days: 3
           if-no-files-found: ignore
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: blocks-out
+          path: game-data/blocks.csv
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # Saving a cache runs nothing from it. The cache path stays game-data/blocks.csv so earlier caches keep matching.
+  blocks-out:
+    needs: tick
+    if: ${{ always() && vars.BOT_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        id: dl
+        continue-on-error: true
+        with:
+          name: blocks-out
+          path: game-data
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        if: ${{ steps.dl.outcome == 'success' && hashFiles('game-data/blocks.csv') != '' }}
+        with:
+          path: game-data/blocks.csv
+          key: blocks-${{ github.run_id }}
 
   publish:
     needs: tick
@@ -114,6 +210,35 @@ jobs:
           big=$(find "$IN" -type f -size +2048k -print)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
           find "$IN" -type f -name '*.json' -print0 | xargs -0 -r -n1 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))'
+          # The content must look like the bot's own files, not only parse as JSON.
+          node - "$IN" <<'JS'
+          const fs = require("fs"), path = require("path");
+          const IN = process.argv[2], bad = [];
+          const read = (rel) => JSON.parse(fs.readFileSync(path.join(IN, rel), "utf8"));
+          const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+          const hex = (v, n) => typeof v === "string" && new RegExp(`^(0x)?[0-9a-fA-F]{${n}}$`).test(v);
+          const qdir = path.join(IN, "questions");
+          for (const f of fs.existsSync(qdir) ? fs.readdirSync(qdir) : []) {
+            const d = read("questions/" + f), rel = "questions/" + f;
+            if (!isObj(d) || !Array.isArray(d.questions) || (d.date !== undefined && typeof d.date !== "string") || (d.week !== undefined && !Number.isInteger(d.week)) || (d.day !== undefined && !Number.isInteger(d.day))) { bad.push(`${rel}: not a question day file`); continue; }
+            if (d.questions.length > 50) bad.push(`${rel}: ${d.questions.length} questions`);
+            for (const q of d.questions) {
+              if (!isObj(q) || typeof q.id !== "string" || !/^[A-Za-z0-9_-]{1,40}$/.test(q.id)) { bad.push(`${rel}: a question without a valid id`); continue; }
+              if (q.paramsHash !== undefined && !hex(q.paramsHash, 64)) bad.push(`${rel} ${q.id}: paramsHash`);
+              if (q.options !== undefined && (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 12)) bad.push(`${rel} ${q.id}: options`);
+              if (q.chainId !== undefined && !(Number.isInteger(q.chainId) && q.chainId >= 0 && q.chainId < 2 ** 32)) bad.push(`${rel} ${q.id}: chainId`);
+              if (q.text !== undefined && (typeof q.text !== "string" || q.text.length > 2000)) bad.push(`${rel} ${q.id}: text`);
+              if (JSON.stringify(q).length > 200000) bad.push(`${rel} ${q.id}: too large`);
+            }
+          }
+          if (fs.existsSync(path.join(IN, "bot-state.json"))) { const b = read("bot-state.json"); if (!isObj(b) || (b.seal !== undefined && !hex(b.seal, 64))) bad.push("bot-state.json: not the bot's state"); }
+          if (fs.existsSync(path.join(IN, "state.json")) && !isObj(read("state.json"))) bad.push("state.json: not an object");
+          if (fs.existsSync(path.join(IN, "index.json"))) {
+            const x = read("index.json");
+            if (!isObj(x) || !Array.isArray(x.days) || x.days.some((d) => typeof d !== "string" || !/^questions\/[A-Za-z0-9_-]+\.json$/.test(d))) bad.push("index.json: days");
+          }
+          if (bad.length) { console.log(`::error::Refusing to publish: ${bad.slice(0, 10).join("; ")}`); process.exit(1); }
+          JS
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           # The commit the tick job started from. The bot's files are written on top of the LATEST main, so every other
           # commit made during the run (your edits to deployment.json, game.json, ...) is kept as it is. A bot file that
@@ -166,7 +291,11 @@ jobs:
             out.questions = mq.map((q) => {
               const x = byKey.get(key(q));
               if (!isObj(x) || !isObj(q)) return q;
-              return merge3(baseQ.get(key(q)), q, x, ["vhpReadings", "corrections"]);
+              const out = merge3(baseQ.get(key(q)), q, x, ["corrections"]);
+              // Only the bot writes VHP readings, and their seal covers the whole list: this run's list and seal are
+              // published together, never joined with main's (a joined list breaks the seal and holds the question).
+              if ("vhpReadings" in x || "vhpSeal" in x) { out.vhpReadings = x.vhpReadings; out.vhpSeal = x.vhpSeal; }
+              return out;
             });
             const have = new Set(mq.map(key));
             for (const q of bq) if (!have.has(key(q))) out.questions.push(q);

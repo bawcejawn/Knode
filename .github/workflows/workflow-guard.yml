@@ -1,11 +1,12 @@
-# Checks that the workflows stay pinned and that the hourly bot job is still intact.
+# Checks that the workflows stay pinned and that the hourly bot job is still intact, and runs the publish-job tests, so a
+# change to the workflows alone (no code change) still meets the same tests as the code that guards them (audit C1-4).
 name: Workflow guard
 
 on:
   push:
-    paths: [".github/workflows/**", "bot/workflow.test.ts"]
+    paths: [".github/workflows/**", "bot/workflow.test.ts", "tests/audit/*publish*", "tests/audit/published-files.test.ts"]
   pull_request:
-    paths: [".github/workflows/**", "bot/workflow.test.ts"]
+    paths: [".github/workflows/**", "bot/workflow.test.ts", "tests/audit/*publish*", "tests/audit/published-files.test.ts"]
   workflow_dispatch: {}
 
 permissions:
@@ -14,10 +15,13 @@ permissions:
 jobs:
   guard:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - run: node --experimental-strip-types --test bot/workflow.test.ts
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      # The publish job's own tests (they run its shell and merge code against a scratch repository).
+      - run: node --import tsx --test --test-concurrency=1 tests/audit/*publish*.test.ts tests/audit/*publish*.test.mjs tests/audit/published-files.test.ts

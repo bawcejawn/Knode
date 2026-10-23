@@ -90,9 +90,12 @@ linux("both changed the same field: main's value wins", () => {
   assert.equal(qs[0].chainOutcome, 4);
 });
 
-linux("readings added on both sides are joined, and a field the owner deleted stays deleted", () => {
+// Audit F-12: only the bot writes VHP readings, and one seal covers the whole list. Joining main's list with the run's
+// broke that seal and held the question back, so the run's list and seal are published together, as one unit.
+linux("VHP readings and their seal are this run's, never joined with main's (F-12); a field the owner deleted stays deleted", () => {
   const a = { height: 1, values: {} }, b = { height: 2, values: {} }, c = { height: 3, values: {} };
-  const qs = setup([{ ...Q1, vhpReadings: [a], note: "x" }], [{ ...Q1, vhpReadings: [a, b] }], [{ ...Q1, vhpReadings: [a, c], note: "x" }]);
-  assert.deepEqual(qs[0].vhpReadings.map((r) => r.height), [1, 2, 3]);
+  const qs = setup([{ ...Q1, vhpReadings: [a], note: "x" }], [{ ...Q1, vhpReadings: [a, b], vhpSeal: "main" }], [{ ...Q1, vhpReadings: [a, c], vhpSeal: "run", note: "x" }]);
+  assert.deepEqual(qs[0].vhpReadings.map((r) => r.height), [1, 3]);
+  assert.equal(qs[0].vhpSeal, "run");
   assert.equal("note" in qs[0], false);
 });

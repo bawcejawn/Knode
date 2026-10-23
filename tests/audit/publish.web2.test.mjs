@@ -107,7 +107,7 @@ test("P3 the tick job starts from the latest main (not a stale github.sha queued
 // (guard) names allowed by the filter that look like options are copied as plain files and nothing else is staged.
 linux("(guard) option-like question file names are published as plain files only", () => {
   const r = repo();
-  for (const n of ["-n.json", "--all.json", "_.json"]) put(r, `questions/${n}`, "{}");
+  for (const n of ["-n.json", "--all.json", "_.json"]) put(r, `questions/${n}`, '{"questions":[]}');
   const x = publish(r);
   assert.equal(x.status, 0, x.stderr);
   const t = tree(r);
@@ -120,4 +120,20 @@ test("(guard) publish downloads only this run's artifact (no run-id / github-tok
   const pub = YML.slice(YML.indexOf("\n  publish:"));
   assert.match(pub, /needs:\s*tick/);
   assert.doesNotMatch(pub, /run-id:|github-token:|repository:/);
+});
+
+// Audit C1-5: the publish job checks what the files hold, not only their names, size and JSON syntax.
+linux("(C1-5) a question file that is not the bot's kind of file is refused", () => {
+  const r = repo();
+  put(r, "questions/W009-D1.json", '{"questions":[{"id":"W009-D1-1","text":' + JSON.stringify("x".repeat(3000)) + '}]}');
+  const x = publish(r);
+  assert.notEqual(x.status, 0);
+  assert.match(x.stdout + x.stderr, /Refusing to publish/);
+});
+linux("(C1-5) index.json may only list question files", () => {
+  const r = repo();
+  put(r, "index.json", '{"days":["../../site/index.html"]}');
+  const x = publish(r);
+  assert.notEqual(x.status, 0);
+  assert.match(x.stdout + x.stderr, /index\.json: days/);
 });
