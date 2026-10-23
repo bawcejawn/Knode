@@ -1,0 +1,128 @@
+// Audit 2026-10 (cccc116) fixes: bot side. Each test asserts the safe behaviour.
+//   M-8   the question generator never receives the operator key
+//   F-09  the game, the Desk and your own producers are always excluded from questions
+//   M-10  only a day file this bot generated and sealed is posted; a file planted on main is reported, not posted
+//   F-10  a question that landed twice (a retried post) is voided without a "key compromised" alarm
+//   F-02  an older, validly sealed list of VHP readings put back in the file is not used
+//   H-2   a question still unresolved 6 hours after its window is reported
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { Signer } from "koilib";
+import { paramsHashOf } from "../../resolver.ts";
+import { tick, paths, generatorEnv, ownProducers, daySeal, sealReadings, PINNED_MAINNET, LATE_RESULT_BLOCKS, DAY_MS, HOUR_MS } from "../../bot/bot.ts";
+
+const fixture = JSON.parse(fs.readFileSync("tests/audit/fixtures/W000-D3.at-6b37c46.json", "utf8"));
+const original = fixture.questions.find((q: any) => q.template === "M7");
+const op = Signer.fromSeed("audit-test-only");
+
+/** A small fake chain and game-data folder. `today` makes the bot's clock fall on the question's release day. */
+function world(opts: { today?: boolean; height?: number; onchain?: any[] } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "a2610-"));
+  const P = paths(dir);
+  fs.mkdirSync(P.questions, { recursive: true });
+  const genesis = original.lockTime - 3 * DAY_MS;              // so that W000-D3's release day is "today"
+  const time = opts.today ? genesis + 2 * DAY_MS + 13 * HOUR_MS : 1_700_000_000_000;
+  const height = opts.height ?? original.windowEnd + 500;
+  const onchain: any[] = opts.onchain ?? [];
+  const sent: any[] = [];
+  const chain: any = {
+    kind: "sim", contractId: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr",
+    async head() { return { height, lib: height - 60 }; },
+    async mana() { return 10n ** 12n; },
+    async read(method: string, args: any) {
+      if (method === "get_state") return { height: String(height), time: String(time),
+        config: { owner: "1Owner", operator: "1Op", genesis_time: String(genesis), week_length: String(7 * DAY_MS), close_delay: "43200000", min_stake: "100000000" },
+        totals: { weeks_closed: "0", weeks_finalized: "0", next_question_id: onchain.length }, koin_balance: "0" };
+      if (method === "get_week") return { week: { questions: onchain.length, resolved: onchain.filter((x) => x.outcome).length } };
+      if (method === "get_question") return { question: onchain[Number(args.id)] };
+      if (method === "list_players") return { rows: [] };
+      return {};
+    },
+    async send(calls: any[]) {
+      for (const c of calls) {
+        sent.push(c);
+        if (c.method === "post_question") onchain.push({ week: "0", k: c.args.k, window_end: c.args.window_end, outcome: 0, params_hash: c.args.params_hash });
+        if (c.method === "resolve_question") { const x = onchain[Number(c.args.id)]; x.outcome = c.args.outcome === 1000 ? 1000 : c.args.outcome + 1; }
+      }
+      return { ok: true };
+    },
+  };
+  const ctx = () => ({ chain, operator: op, P, dryRun: false, problems: [] as string[], generator: () => ({ ok: true, output: "" }), checkpoint: () => {}, quiet: true } as any);
+  const writeDay = (questions: any[], extra: any = {}) => fs.writeFileSync(path.join(P.questions, "W000-D3.json"), JSON.stringify({ ...fixture, questions, ...extra }));
+  return { P, chain, sent, onchain, ctx, writeDay, dir };
+}
+const unposted = () => { const q = { ...original }; delete q.chainId; return q; };
+
+test("M-8: the question generator's environment carries no keys or tokens", () => {
+  const env = generatorEnv({ PATH: "/bin", RPC: "https://x", OPERATOR_WIF: "5K", PREVIOUS_OPERATOR_WIF: "5J", OWNER_WIF: "5H", GITHUB_TOKEN: "t", ACTIONS_RUNTIME_TOKEN: "r", NODE_KEY: "k", HOME: "/h" }, "game-data");
+  assert.deepEqual(Object.keys(env).sort(), ["GEN_DIR", "HOME", "PATH", "RPC"]);
+});
+
+test("F-09: the game, the Desk and EXCLUDE_PRODUCERS are always excluded", () => {
+  const before = process.env.EXCLUDE_PRODUCERS;
+  process.env.EXCLUDE_PRODUCERS = " 1DAHmrQJMAbn4FmMMrew78wPUizjVdbBrd ,";
+  try {
+    const list = ownProducers({ chain: { contractId: PINNED_MAINNET.game } } as any);
+    for (const a of [PINNED_MAINNET.game, PINNED_MAINNET.desk, "1DAHmrQJMAbn4FmMMrew78wPUizjVdbBrd"]) assert.ok(list.includes(a), a);
+  } finally { if (before === undefined) delete process.env.EXCLUDE_PRODUCERS; else process.env.EXCLUDE_PRODUCERS = before; }
+});
+
+test("M-10: a day file that was not generated and sealed by the bot is never posted", async () => {
+  const w = world({ today: true, height: original.lockHeight - 14_000 });
+  w.writeDay([unposted()]);                                    // planted: no seal
+  const c = w.ctx(); await tick(c);
+  assert.equal(w.sent.filter((x) => x.method === "post_question").length, 0, "a planted file was posted");
+  assert.ok(c.problems.some((p: string) => /not generated by this bot/.test(p)), c.problems.join("\n"));
+});
+
+test("M-10: the same file, sealed by the bot, is posted; edited after sealing, it is not", async () => {
+  const ok = world({ today: true, height: original.lockHeight - 14_000 });
+  const day = { ...fixture, questions: [unposted()] };
+  ok.writeDay(day.questions, { daySeal: daySeal(op, day) });
+  await tick(ok.ctx());
+  assert.equal(ok.sent.filter((x) => x.method === "post_question").length, 1);
+
+  const bad = world({ today: true, height: original.lockHeight - 14_000 });
+  const edited = { ...unposted(), windowEnd: original.windowEnd + 1 };     // a parameter changed after sealing
+  bad.writeDay([edited], { daySeal: daySeal(op, day) });
+  const c = bad.ctx(); await tick(c);
+  assert.equal(bad.sent.filter((x) => x.method === "post_question").length, 0);
+});
+
+test("F-10: a question that landed twice is voided without a 'key compromised' alarm", async () => {
+  const twin = () => ({ week: "0", k: 4, window_end: String(original.windowEnd), outcome: 0, params_hash: "0x" + original.paramsHash });
+  const w = world({ onchain: [twin(), twin()] });
+  w.writeDay([{ ...original, chainId: 0 }]);
+  const c = w.ctx(); await tick(c);
+  assert.equal(w.onchain[1].outcome, 1000, "the second copy must be VOID");
+  assert.ok(!c.problems.some((p: string) => /compromised/.test(p) && /#1\b/.test(p)), c.problems.join("\n"));
+});
+
+test("F-02: an older sealed list of VHP readings put back in the file is not used", async () => {
+  const q = { ...original, chainId: 0, model: { ...original.model, vhp: { network: "1000" }, voidVhpSwing: 0.1 } } as any;
+  const r = (h: number) => ({ height: h, readAt: "2026-10-21T00:00:00Z", values: { network: "1000" } });
+  q.paramsHash = paramsHashOf(q);
+  const w = world({ onchain: [{ week: "0", k: 4, window_end: String(original.windowEnd), outcome: 0, params_hash: "0x" + q.paramsHash }] });
+  // The bot recorded two readings; the file now holds an earlier copy with one (validly sealed when it was written).
+  q.vhpReadings = [r(original.windowStart + 10)]; sealReadings(op, q);
+  w.writeDay([q]);
+  const plain = { checkedUpTo: 1, orphans: [], lastCompound: 0, warnings: [], lastProduced: 0, producedByDay: {}, producerScannedTo: 0,
+    vhpLists: { [q.paramsHash]: { n: 2, last: original.windowStart + 1210 } }, sealedAt: original.windowEnd + 440 };
+  const { sealOf } = await import("../../bot/bot.ts");
+  fs.writeFileSync(w.P.botState, JSON.stringify({ ...plain, seal: sealOf(op, "bot-state", plain) }));
+  const c = w.ctx(); await tick(c);
+  assert.equal(w.sent.filter((x) => x.method === "resolve_question").length, 0, "resolved from an old list");
+  assert.ok(c.problems.some((p: string) => /older list/.test(p)), c.problems.join("\n"));
+});
+
+test("H-2: a question still unresolved 6 hours after its window is reported", async () => {
+  const w = world({ height: original.windowEnd + 60 + LATE_RESULT_BLOCKS + 100,
+    onchain: [{ week: "0", k: 4, window_end: String(original.windowEnd), outcome: 0, params_hash: "0x" + original.paramsHash }] });
+  // A changed file (so the bot cannot resolve it) stands in for whatever holds a result back.
+  w.writeDay([{ ...original, chainId: 0, windowStart: original.windowStart + 1 }]);
+  const c = w.ctx(); await tick(c);
+  assert.ok(c.problems.some((p: string) => /still unresolved .* after its window ended/.test(p)), c.problems.join("\n"));
+});

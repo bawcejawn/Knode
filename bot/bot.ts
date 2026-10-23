@@ -34,6 +34,7 @@ import { chainOutcome, scoreQuestion, storedOutcome, paramsHashOf, vhpSubjects, 
 import { pobAbi } from "../probes/scripts/abi.ts";
 import { formatProduction, loadSigners, signerFromBlockItem, type SignedBlock } from "./production.ts";
 import { contractManaVerdict } from "./mana.ts";
+import { contractMetadata, checkMeta, sha256OfMeta, type Check } from "./chaincheck.ts";
 
 // ───────────────────────── settings ─────────────────────────
 
@@ -65,6 +66,8 @@ export const HOUR_MS = 3_600_000, DAY_MS = 24 * HOUR_MS;
 export const RELEASE_HOUR = 12, LOCK_HOUR = 24, QUESTION_DAYS = 6;
 const MIN_BLOCK_MS = 2_800, MAX_BLOCK_MS = 3_500; // the same bounds the contract enforces
 const RESOLVE_MARGIN = 60;               // the contract resolves only after window_end + 60
+/** A posted question still unresolved this many blocks (about 6 hours) after its window is reported (audit H-2). */
+export const LATE_RESULT_BLOCKS = 7_200;
 const RESOLVE_SLACK = 1_200;             // windows must end ≥ ~1 hour (in blocks) before the week can close, so the bot has time
 const MIN_ANSWER_MS = HOUR_MS;           // never post a question with less than 1 hour left to answer
 export const utc = (ms: number) => new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC";
@@ -89,6 +92,10 @@ export function sealReadings(op: Signer, q: any) {
   for (const r of q.vhpReadings ?? []) r.seal = readingSeal(op, q, r);
   q.vhpSeal = readingsSeal(op, q);
 }
+/** The seal on a day of questions, made when the bot generates them (audit M-10). It covers each question's id and the
+ *  hash of its parameters, so a question file planted on main (a future day, or extra questions) is never posted. */
+export const daySeal = (op: Signer, d: { date?: string; questions?: any[] }) =>
+  sealOf(op, `day:${d.date ?? ""}`, (d.questions ?? []).map((q: any) => [String(q.id), paramsHashOf(q)]));
 /** Which of the bot's keys made `seal` (the operator key, or PREVIOUS_OPERATOR_WIF after a rotation), if any. */
 const sealKey = (ctx: Ctx, seal: unknown, f: (op: Signer) => string): Signer | undefined =>
   [ctx.operator, ...(ctx.previousOperator ? [ctx.previousOperator] : [])].find((op) => seal === f(op));
@@ -119,7 +126,23 @@ type BotState = {
   settings?: string;
   /** The last irreversible block when the bot last saved this file (sealed: an old copy put back is noticed). */
   sealedAt?: number;
+  /** For each open question (by paramsHash): how many VHP readings the bot has recorded and the newest one's height.
+   *  An older, validly sealed list put back in the question file is noticed against this (audit F-02). */
+  vhpLists?: Record<string, { n: number; last: number }>;
 };
+const vhpKey = (q: any) => String(q.paramsHash ?? "").toLowerCase();
+/** Records the list the bot just sealed. */
+function noteReadings(bs: BotState, q: any) {
+  const list = q.vhpReadings ?? [];
+  (bs.vhpLists ??= {})[vhpKey(q)] = { n: list.length, last: list.length ? Number(list[list.length - 1].height) : 0 };
+}
+/** True when the file's (validly sealed) list is older than the one the bot last recorded. */
+function staleReadings(bs: BotState, q: any): boolean {
+  const seen = bs.vhpLists?.[vhpKey(q)];
+  if (!seen) return false;
+  const list = q.vhpReadings ?? [];
+  return list.length < seen.n || (list.length ? Number(list[list.length - 1].height) : 0) < seen.last;
+}
 type DayFile = { date: string; week: number; day: number; questions: any[]; skipped?: string };
 
 function dayFiles(P: Paths): Array<{ file: string; data: DayFile }> {
@@ -341,6 +364,16 @@ async function healthPass(ctx: Ctx, bs: BotState) {
     }
   }
 
+  // 1b. A question still unresolved 6 hours after its window ended (audit H-2). On the live contract, the operator key
+  //     holding a result back past the week's end and then resolving late is how a stolen key would lock in its own
+  //     answers; the bot normally resolves within an hour. If this fires: pause deposits and void the question.
+  const { height } = await ctx.chain.head();
+  for (const f of dayFiles(ctx.P)) for (const q of f.data.questions ?? []) {
+    if (q.chainId === undefined || q.chainOutcome !== undefined || !q.windowEnd) continue;
+    const late = height - num(q.windowEnd) - RESOLVE_MARGIN;
+    if (late > LATE_RESULT_BLOCKS) ctx.problems.push(`${q.id} (#${q.chainId}) is still unresolved ${(late / 1200).toFixed(1)} h after its window ended. The bot resolves within about an hour, so something is holding it back (read this run's log). If a result then appears late that you did not expect, pause deposits (npm run bot -- pause on --send) and void the question (npm run bot -- void ${q.chainId} --send).`);
+  }
+
   // 2. A week that should have closed but has not. Measured from its normal close (week end + close_delay) as well as
   //    from the close time that corrections move, so a week held open by repeated corrections is reported too.
   const w = st.weeksClosed;
@@ -468,7 +501,12 @@ async function scanIds(ctx: Ctx, bs: BotState) {
     } else if (!bs.orphans.includes(id)) {
       bs.orphans.push(id);
       log(`  ⚠ on-chain question #${id} has no matching local question — it will be resolved as VOID`);
-      ctx.problems.push(`On-chain question #${id} matches no question file (params_hash ${String(q?.params_hash ?? "")}). It will be voided. Unless the bot crashed right after posting it, the operator key may be compromised.`);
+      if (hit) {
+        // The same question landed twice: a post the bot thought had failed (not seen in time) was included after all,
+        // and the next run posted it again (audit F-10). The copy is voided; nobody's key was misused.
+        log(`  (#${id} is a second copy of ${hit.q.id}, already posted as #${hit.q.chainId}: a retried post that landed twice)`);
+        if (!ctx.quiet && process.env.GITHUB_ACTIONS) console.log(`::warning title=Duplicate question::#${id} is a second copy of ${hit.q.id} (#${hit.q.chainId}); it is voided.`);
+      } else ctx.problems.push(`On-chain question #${id} matches no question file (params_hash ${String(q?.params_hash ?? "")}). It will be voided. Unless the bot crashed right after posting it, the operator key may be compromised.`);
     }
     bs.checkedUpTo = id + 1;
   }
@@ -507,7 +545,7 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
   }
 
   // A failed VHP read only costs this run's reading; every other question is still resolved below.
-  try { await vhpReadPass(ctx, height); }
+  try { await vhpReadPass(ctx, height, bs); }
   catch (e) { ctx.problems.push(`Reading VHP for open question windows failed: ${(e as Error).message ?? e}`); log(`  ✖ reading VHP failed: ${(e as Error).message ?? e}`); }
 
   // Local questions: the answer is recomputed every time from the window's blocks (read fresh from the chain on the
@@ -547,10 +585,15 @@ async function resolvePass(ctx: Ctx, bs: BotState) {
             ctx.problems.push(`${q.id} (#${q.chainId}): its VHP readings are not the list this bot recorded (a VHP reading was removed, added or changed, or the operator key changed). Not resolving it: restore the file from git history; after an operator-key change, set PREVIOUS_OPERATOR_WIF; or void it with the owner key.`);
             continue;
           }
-          if (by !== ctx.operator) { sealReadings(ctx.operator, q); dirty = true; }
+          if (staleReadings(bs, q)) {
+            ctx.problems.push(`${q.id} (#${q.chainId}): its VHP readings are an older list than the one this bot last recorded (an earlier copy of the file was put back). Not resolving it: restore the newest version from git history, or void it with the owner key.`);
+            continue;
+          }
+          if (by !== ctx.operator) { sealReadings(ctx.operator, q); noteReadings(bs, q); dirty = true; }
         }
         const scored = scoreQuestion(q, await windowOf(q, csv), { vhpReadings: q.vhpReadings ?? [] });
         if (resolved) {
+          if (bs.vhpLists) delete bs.vhpLists[vhpKey(q)];
           q.chainOutcome = num(onChain.outcome);
           q.chainDataHash = String(onChain.data_hash ?? "");
           dirty = true;
@@ -641,7 +684,7 @@ async function correctionCheck(ctx: Ctx, q: any): Promise<boolean> {
 /** The VHP-swing rule's readings: on every run while a posted question's window is open, read the VHP of the producers
  *  it is about (or the network's) and add the reading (height and values) to the question file. Only readings taken
  *  inside the window count; one that lands after the window's last block is dropped. */
-async function vhpReadPass(ctx: Ctx, height: number) {
+async function vhpReadPass(ctx: Ctx, height: number, bs: BotState) {
   const open: Array<{ f: { file: string; data: DayFile }; q: any }> = [];
   for (const f of dayFiles(ctx.P)) for (const q of f.data.questions ?? []) {
     if (q.chainId === undefined || q.chainOutcome !== undefined || !q.model?.vhp || q.model.voidVhpSwing === undefined) continue;
@@ -649,7 +692,15 @@ async function vhpReadPass(ctx: Ctx, height: number) {
   }
   if (!open.length) return;
   if (!ctx.vhp) { ctx.problems.push(`${open.length} question(s) have an open window and need a VHP reading, but this run cannot read VHP.`); return; }
-  const reading = await ctx.vhp([...new Set(open.flatMap(({ q }) => vhpSubjects(q)))]);
+  // A failed read is tried again a few times: one hiccup would otherwise lose this hour's reading for every open
+  // window (audit F-11).
+  const who = [...new Set(open.flatMap(({ q }) => vhpSubjects(q)))];
+  let reading: VhpReading | undefined, lastErr: unknown;
+  for (let attempt = 1; attempt <= 3 && !reading; attempt++) {
+    try { reading = await ctx.vhp(who); }
+    catch (e) { lastErr = e; if (attempt < 3) await new Promise((r) => setTimeout(r, (ctx.chain.kind === "koinos" ? 2000 : 0) * attempt)); }
+  }
+  if (!reading) throw lastErr;
   const readAt = new Date().toISOString();
   const saved = new Set<{ file: string; data: DayFile }>();
   for (const { f, q } of open) {
@@ -663,16 +714,24 @@ async function vhpReadPass(ctx: Ctx, height: number) {
     const r: VhpReading = { height: reading.height, readAt, values };
     // The list already in the file must still be the one this bot sealed, or a new seal would cover the edit: the
     // reading is then not added, and the resolve step reports the file.
-    if (!ctx.noSealKey && (q.vhpReadings?.length || q.vhpSeal !== undefined) && !sealKey(ctx, q.vhpSeal, (op) => readingsSeal(op, q))) {
-      log(`  ${q.id}: its VHP readings are not the list this bot recorded; reading not added`);
+    if (!ctx.noSealKey && (q.vhpReadings?.length || q.vhpSeal !== undefined) && (!sealKey(ctx, q.vhpSeal, (op) => readingsSeal(op, q)) || staleReadings(bs, q))) {
+      log(`  ${q.id}: its VHP readings are not the newest list this bot recorded; reading not added`);
       continue;
     }
     (q.vhpReadings ??= []).push(r);
-    if (!ctx.noSealKey) sealReadings(ctx.operator, q);
+    if (!ctx.noSealKey) { sealReadings(ctx.operator, q); noteReadings(bs, q); }
     saved.add(f);
     log(`  read ${q.id}'s VHP during its window (block ${reading.height})`);
   }
   if (!ctx.dryRun) for (const f of saved) writeJson(f.file, f.data);
+}
+
+/** Producers no question may be about: the game itself, the Desk, and every producer in EXCLUDE_PRODUCERS (the
+ *  workflow passes your personal node). Audit F-09. */
+export function ownProducers(ctx: Ctx): string[] {
+  const deskDep = readJson(path.join("desk-data", "deployment.json"), null);
+  const list = [ctx.chain.contractId, deskDep?.contract, PINNED_MAINNET.desk, ...(E.EXCLUDE_PRODUCERS ?? "").split(",")];
+  return [...new Set(list.map((x) => String(x ?? "").trim()).filter(Boolean))];
 }
 
 // ───────────── post today's questions ─────────────
@@ -706,8 +765,8 @@ async function postPass(ctx: Ctx, bs: BotState) {
     if (ctx.dryRun) { log(`  [dry run] would run the generator and post its questions`); return; }
     const g = ctx.generator(["release", "--label", label, "--week", String(w), "--day", String(dd),
       "--lock-height", String(windowStart - 1), "--lock-time", String(lockTime), "--max-end", String(maxEnd),
-      // never ask about the pool itself or the operator's own producer(s): they could sway the answer
-      "--exclude", [ctx.chain.contractId, ...(E.EXCLUDE_PRODUCERS ?? "").split(",")].map((x) => x.trim()).filter(Boolean).join(",")]);
+      // never ask about the pool itself, the Desk, or the owner's own producer(s): they could sway the answer (F-09)
+      "--exclude", ownProducers(ctx).join(",")]);
     if (!g.ok) {
       if (/Too late/i.test(g.output)) {
         writeJson(file, { date: label, week: w, day: dd + 1, questions: [], skipped: "too late to release today's questions" });
@@ -715,12 +774,30 @@ async function postPass(ctx: Ctx, bs: BotState) {
       } else { log(`  ✖ the generator failed (will retry next run):\n${g.output.slice(-1500)}`); ctx.problems.push(`The question generator failed for ${label}.`); }
       return;
     }
-    // Save the questions publicly BEFORE posting them, so their details can never be lost.
+    // Seal what the generator made (only this run's generator output is ever posted), then save the questions publicly
+    // BEFORE posting them, so their details can never be lost.
+    const made: DayFile & { daySeal?: string } = readJson(file);
+    for (const q of made.questions ?? []) {
+      if (paramsHashOf(q) !== String(q.paramsHash ?? "").toLowerCase()) throw new Error(`the generator wrote ${q.id} with a paramsHash that does not match its parameters`);
+    }
+    if (!ctx.noSealKey) { made.daySeal = daySeal(ctx.operator, made); writeJson(file, made); }
     ctx.checkpoint(`bot: questions for ${label}`);
   }
 
-  const data: DayFile = readJson(file);
+  const data: DayFile & { daySeal?: string } = readJson(file);
   if (!data.questions?.some((q: any) => q.chainId === undefined && !q.postSkipped)) return;
+  // Post only questions this bot generated and sealed, whose parameters still hash to the recorded paramsHash. A file
+  // that arrived some other way (a commit to main) is reported and never posted (audit M-10).
+  if (!ctx.noSealKey && !sealKey(ctx, data.daySeal, (op) => daySeal(op, data))) {
+    ctx.problems.push(`${label}: the question file was not generated by this bot (no valid seal: edited or added by a commit, or made before seals). Nothing from it is posted. If you did not change it, check the file's git history; to start the day over, delete the file and the bot generates it again.`);
+    return;
+  }
+  for (const q of data.questions ?? []) {
+    if (q.chainId === undefined && paramsHashOf(q) !== String(q.paramsHash ?? "").toLowerCase()) {
+      ctx.problems.push(`${label}: ${q.id}'s parameters no longer hash to its paramsHash. Nothing from this file is posted.`);
+      return;
+    }
+  }
   await scanIds(ctx, bs); // a previous run may have posted some of these already (crash before saving)
   for (let i = 0; ; i++) {
     const cur: DayFile = readJson(file); // re-read every time: scanIds may have linked questions meanwhile
@@ -1049,7 +1126,7 @@ async function deploy(send: boolean) {
 //   upgrade schedule          announce the local build (game/build/release/contract.wasm); the 48 hours start
 //   upgrade apply             after the 48 hours: upload exactly that build, then clear the notice
 //   upgrade cancel            withdraw the announcement
-async function upgrade(sub: string | undefined, send: boolean) {
+async function upgrade(sub: string | undefined, send: boolean, botPays = false) {
   const P = paths(E.GEN_DIR ?? "game-data");
   const dep = readJson(P.deployment, null);
   if (!dep?.contract) throw new Error(`${P.deployment} not found — deploy first.`);
@@ -1083,35 +1160,54 @@ async function upgrade(sub: string | undefined, send: boolean) {
   if (eta === 0) throw new Error("Nothing is announced. Run: npm run bot -- upgrade schedule --send   (then wait 48 hours)");
   if (announced !== local) throw new Error("The announced code is not this build. Rebuild the exact announced version, or cancel and schedule this one.");
   if (now < eta) throw new Error(`Too early: the upload is accepted from ${utc(eta)}.`);
-  if (!E.OWNER_WIF || !E.OPERATOR_WIF) throw new Error("OWNER_WIF and OPERATOR_WIF are needed in .env (owner authorizes, the bot wallet pays the Mana).");
+  if (!E.OWNER_WIF) throw new Error("OWNER_WIF is needed in .env (the owner authorizes the upload).");
+  if (botPays && !E.OPERATOR_WIF) throw new Error("--bot-pays needs OPERATOR_WIF in .env.");
   const provider = new Provider([rpc]);
-  const owner = Signer.fromWif(E.OWNER_WIF), operator = Signer.fromWif(E.OPERATOR_WIF);
-  owner.provider = provider; operator.provider = provider;
+  const owner = Signer.fromWif(E.OWNER_WIF);
+  owner.provider = provider;
   if (owner.getAddress() !== st.config?.owner) throw new Error(`OWNER_WIF is ${owner.getAddress()}, but the contract's owner is ${st.config?.owner}.`);
+  // The owner's wallet pays the upload's Mana by default (audit U1-05): the bot wallet's key lives on GitHub, so it
+  // should never hold the ~60 KOIN an upload needs. --bot-pays keeps the old way (then move the KOIN out afterwards).
+  const payer = botPays ? Signer.fromWif(E.OPERATOR_WIF!) : owner;
+  payer.provider = provider;
+  // Before: the contract must still decide for its own account (all three switches on), or the timelock means nothing.
+  const before = await contractMetadata(provider, dep.contract);
+  const pre = checkMeta("the live contract", before);
+  for (const x of pre) log(`${x.ok ? "  ✔" : "  ✖"} ${x.text}`);
+  if (pre.some((x) => !x.ok)) throw new Error("The live contract's metadata is not as expected (see above). Stop: re-plan the upgrade.");
   const abiText = JSON.stringify(loadAbi());
-  const opMana = BigInt(await provider.getAccountRc(operator.getAddress()));
-  const rcLimit = (opMana * 95n) / 100n;
-  log(`Pays the Mana      bot wallet ${operator.getAddress()} (has ${showKoin(opMana)} Mana; an upload needs about 60)`);
-  if (opMana < toSat(60)) throw new Error("The bot wallet needs about 60 Mana for the upload. Send it more KOIN and let the Mana refill.");
+  const mana = BigInt(await provider.getAccountRc(payer.getAddress()));
+  const rcLimit = (mana * 95n) / 100n;
+  log(`Pays the Mana      ${botPays ? "bot" : "owner"} wallet ${payer.getAddress()} (has ${showKoin(mana)} Mana; an upload needs about 60)`);
+  if (mana < toSat(60)) throw new Error(`The ${botPays ? "bot" : "owner"} wallet needs about 60 Mana for the upload. Add KOIN to it and let the Mana refill${botPays ? "" : " (or use --bot-pays, then move the KOIN out of the bot wallet afterwards)"}.`);
   if (!send) { log("\nDry run only — nothing was sent. Add --send to upload."); return; }
-  log("\n1/2 Uploading the announced code (owner authorizes, bot wallet pays) ...");
+  log(`\n1/2 Uploading the announced code (owner authorizes, ${botPays ? "bot" : "owner"} wallet pays) ...`);
   const c = new Contract({ id: dep.contract, abi: loadAbi(), provider, signer: owner, bytecode: new Uint8Array(wasm) });
   // The three switches must stay on: the contract refuses any upload that turns one off.
   const { operation } = await c.deploy({ abi: abiText, authorizesCallContract: true, authorizesTransactionApplication: true, authorizesUploadContract: true, onlyOperation: true } as any);
-  const tx = new (await import("koilib")).Transaction({ signer: operator, provider, options: { payer: operator.getAddress(), payee: operator.getAddress(), rcLimit: rcLimit.toString() } });
+  const tx = new (await import("koilib")).Transaction({ signer: payer, provider, options: { payer: payer.getAddress(), payee: payer.getAddress(), rcLimit: rcLimit.toString() } });
   await tx.pushOperation(operation);
   await tx.prepare();
   let t: any = tx.transaction;
-  t = await operator.signTransaction(t);
-  t = await owner.signTransaction(t);
+  t = await payer.signTransaction(t);
+  if (payer !== owner) t = await owner.signTransaction(t);
   const { receipt, transaction } = await provider.sendTransaction(t);
   if ((receipt as any)?.reverted) throw new Error(`upload reverted: ${JSON.stringify((receipt as any).logs)}`);
   await transaction.wait("byBlock", 300_000).catch(() => { throw new Error("Sent but not confirmed within 5 minutes. Check `npm run bot -- upgrade status` before trying again."); });
   log(`    uploaded — Mana used ${showKoin((receipt as any).rc_used)}`);
-  // The new code is live from here on, whatever happens next: record it.
-  dep.wasmSha256 = local.slice(2);
+  // After: what the chain now runs (audit U1-04). deployment.json records the chain's fingerprint, never the local
+  // build's, and a mismatch stops here.
+  const after = await contractMetadata(provider, dep.contract);
+  const post = checkMeta("the upgraded contract", after, local.slice(2));
+  for (const x of post) log(`${x.ok ? "  ✔" : "  ✖"} ${x.text}`);
+  dep.wasmSha256 = sha256OfMeta(after) || dep.wasmSha256;
   dep.upgradedAt = new Date().toISOString();
   writeJson(P.deployment, dep);
+  if (post.some((x) => !x.ok)) {
+    log(`\n✖ The chain does not run the announced build with all three switches on (see above). ${P.deployment} records what the chain runs. Do not clear the notice; investigate first.`);
+    process.exitCode = 1;
+    return;
+  }
   log("2/2 Clearing the notice ...");
   if (!(await act("owner", "cancel_upgrade", {}, true))) {
     log(`\n✖ The code is uploaded (${P.deployment} is updated), but clearing the notice failed. Run: npm run bot -- upgrade cancel --send`);
@@ -1119,6 +1215,57 @@ async function upgrade(sub: string | undefined, send: boolean) {
     return;
   }
   log(`\nDone. Commit ${P.deployment}. Check everything with: npm run bot -- status`);
+}
+
+/** Read-only checks of both contracts on chain (audit 2026-10 Section 10): code fingerprints, the three authorize
+ *  switches, announced changes, roles. Nothing is signed. Exits with an error if anything is unexpected. */
+async function chainCheck() {
+  const P = paths(E.GEN_DIR ?? "game-data");
+  const dep = readJson(P.deployment, null), deskDep = readJson(path.join("desk-data", "deployment.json"), null);
+  if (!dep?.contract) throw new Error(`${P.deployment} not found.`);
+  const rpc = E.RPC ?? dep.rpc ?? "https://api.koinos.io";
+  const provider = new Provider([rpc]);
+  const checks: Check[] = [];
+  const say = (ok: boolean, text: string) => checks.push({ ok, text });
+  log(`Reading ${rpc} (read-only: nothing is signed or sent)\n`);
+
+  // The game
+  const gm = await contractMetadata(provider, dep.contract);
+  checks.push(...checkMeta(`game ${dep.contract}`, gm, dep.wasmSha256));
+  const g = await new KoinosChain(rpc, dep.contract).read("get_state", {});
+  const c = g.config ?? {}, t = g.totals ?? {};
+  say(!dep.owner || c.owner === dep.owner, `game owner ${c.owner} (deployment.json: ${dep.owner ?? "not recorded"})`);
+  say(!dep.operator || c.operator === dep.operator, `game operator ${c.operator} (deployment.json: ${dep.operator ?? "not recorded"})`);
+  say(!c.pending_owner, `game ownership transfer: ${c.pending_owner ? `PENDING to ${c.pending_owner}` : "none"}`);
+  const up = g.upgrade ?? {}, wd = g.seed_withdrawal ?? {};
+  say(true, `game announced upgrade: ${num(up.eta) > 0 ? `sha256 ${String(up.hash).replace(/^0x/, "")}, from ${utc(num(up.eta))}  ← make sure this is the one you announced` : "none"}`);
+  say(!(num(wd.eta) > 0), `game seed withdrawal: ${num(wd.eta) > 0 ? `ANNOUNCED (${showKoin(wd.vhp ?? 0)} VHP + ${showKoin(wd.koin ?? 0)} KOIN, from ${utc(num(wd.eta))})` : "none"}`);
+  say(big(t.owner_share) === 0n, `game retired owner share: ${showKoin(t.owner_share ?? 0)} (must be 0)`);
+  say(!c.paused, `game paused: ${!!c.paused}`);
+
+  // The Desk
+  if (deskDep?.contract) {
+    const dm = await contractMetadata(provider, deskDep.contract);
+    checks.push(...checkMeta(`desk ${deskDep.contract}`, dm, deskDep.wasmSha256));
+    if (fs.existsSync("desk/abi/desk.koilib.json")) {
+      const desk = new Contract({ id: deskDep.contract, abi: JSON.parse(fs.readFileSync("desk/abi/desk.koilib.json", "utf8")), provider });
+      const d: any = (await (desk.functions as any).get_state({})).result ?? {};
+      const dc = d.config ?? {};
+      say(!deskDep.owner || dc.owner === deskDep.owner, `desk owner ${dc.owner} (deployment.json: ${deskDep.owner ?? "not recorded"})`);
+      say(!deskDep.treasury || dc.treasury === deskDep.treasury, `desk treasury ${dc.treasury} (deployment.json: ${deskDep.treasury ?? "not recorded"})${dc.treasury === dc.owner ? "  (note: the treasury is the owner wallet)" : ""}`);
+      const du = d.upgrade ?? {}, dt = d.treasury_change ?? {};
+      say(true, `desk announced upgrade: ${num(du.eta) > 0 ? `sha256 ${String(du.hash).replace(/^0x/, "")}, from ${utc(num(du.eta))}  ← make sure this is yours` : "none"}`);
+      say(!(num(dt.eta) > 0), `desk treasury change: ${num(dt.eta) > 0 ? `ANNOUNCED to ${dt.address}, from ${utc(num(dt.eta))}` : "none"}`);
+      say(true, `desk fee ${num(dc.fee_bps) / 100}%, swaps ${showKoin(dc.min_swap ?? 0)} to ${big(dc.max_swap) > 0n ? showKoin(dc.max_swap) : "unlimited"} VHP, paused ${!!dc.paused}; holds ${showKoin(d.koin_balance ?? 0)} KOIN + ${showKoin(d.vhp_balance ?? 0)} VHP`);
+    } else say(false, "desk: desk/abi/desk.koilib.json missing (build the desk once) — its state was not checked");
+  }
+
+  for (const x of checks) log(`${x.ok ? "  ✔" : "  ✖"} ${x.text}`);
+  const bad = checks.filter((x) => !x.ok);
+  if (bad.length) {
+    log(`\n✖ ${bad.length} check(s) failed. Do not schedule or apply an upgrade until each one is understood.`);
+    process.exitCode = 1;
+  } else log("\n✔ Everything matches.");
 }
 
 // ═══════════════════════════════ actions with your own keys (owner / seed / player) ═══════════════════════════════
@@ -1333,10 +1480,17 @@ TESTNET: get free test KOIN for each wallet in the Koinos Discord (#faucet):  !f
 // ═══════════════════════════════ wiring ═══════════════════════════════
 
 const require = createRequire(import.meta.url);
+/** The environment the question generator runs with: everything except keys and tokens. The generator signs nothing,
+ *  so it never gets the operator key (audit M-8): a compromised package it loads cannot read it. */
+export function generatorEnv(env: NodeJS.ProcessEnv, dir: string): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(env)) if (!/WIF|SECRET|TOKEN|PASSWORD|PRIVATE|(^|_)KEY$|^ACTIONS_ID_TOKEN|^ACTIONS_RUNTIME/i.test(k)) out[k] = v;
+  return { ...out, GEN_DIR: dir };
+}
 export function generatorRunner(dir: string, extra: string[] = []) {
   return (args: string[]) => {
     const r = spawnSync(process.execPath, [require.resolve("tsx/cli"), "generator.ts", ...args, ...extra], {
-      env: { ...process.env, GEN_DIR: dir }, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
+      env: generatorEnv(process.env, dir), encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
     });
     return { ok: r.status === 0, output: (r.stdout ?? "") + (r.stderr ?? "") };
   };
@@ -1358,17 +1512,24 @@ function gitCheckpoint(dir: string) {
   };
 }
 
+/** The mainnet contracts, pinned in code: an edit to the (unsealed) deployment.json cannot point the bot at another
+ *  contract (audit F-03, Info). A deliberate change sets CONTRACT_ADDRESS / DESK_CONTRACT_ADDRESS. */
+export const PINNED_MAINNET = { game: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", desk: "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR" };
+
 function liveCtx(dryRun: boolean): Ctx {
   const P = paths(E.GEN_DIR ?? "game-data");
   const dep = readJson(P.deployment, null);
   const contract = E.CONTRACT_ADDRESS ?? dep?.contract;
   if (!contract) throw new Error(`No contract yet: ${P.deployment} is missing (run deploy) or set CONTRACT_ADDRESS.`);
   const rpc = E.RPC ?? dep?.rpc ?? "https://api.koinos.io";
+  if (isMainnet(rpc) && !E.CONTRACT_ADDRESS && contract !== PINNED_MAINNET.game)
+    throw new Error(`${P.deployment} names the game contract ${contract}, not ${PINNED_MAINNET.game}. If that change is intended, set CONTRACT_ADDRESS (and update PINNED_MAINNET in bot/bot.ts).`);
   const chain = new KoinosChain(rpc, contract);
   const operator = E.OPERATOR_WIF ? Signer.fromWif(E.OPERATOR_WIF) : Signer.fromSeed("read-only placeholder");
   operator.provider = chain.provider;
   if (!dryRun && !E.OPERATOR_WIF) throw new Error("OPERATOR_WIF is missing (use --dry-run to look without a key).");
   const deskDep = readJson(path.join("desk-data", "deployment.json"), null);
+  if (deskDep && isMainnet(rpc)) deskDep.contract = E.DESK_CONTRACT_ADDRESS ?? PINNED_MAINNET.desk;
   const deskContract = deskDep?.contract && fs.existsSync("desk/abi/desk.koilib.json")
     ? new Contract({ id: deskDep.contract, abi: JSON.parse(fs.readFileSync("desk/abi/desk.koilib.json", "utf8")), provider: chain.provider }) : null;
   const pob = new Contract({ id: dep?.pob ?? MAINNET.pob, abi: pobAbi as any, provider: chain.provider });
@@ -1441,7 +1602,8 @@ async function main() {
     for (const kv of rest.slice(1)) { const m = kv.match(/^([a-z_]+)=(.*)$/); if (m) args[m[1]] = m[2]; }
     return act(opt("--as", "owner")!, rest[0], args, flag("--send"));
   }
-  if (cmd === "upgrade") return upgrade(rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined, flag("--send"));
+  if (cmd === "upgrade") return upgrade(rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined, flag("--send"), flag("--bot-pays"));
+  if (cmd === "chain-check") return chainCheck();
   if (await friendly(cmd, rest, flag("--send"))) return;
   if (cmd === "rehearse") { const { rehearse } = await import("./rehearse.ts"); return rehearse({ weeks: Number(opt("--weeks", "3")), verbose: flag("--verbose") }); }
   throw new Error(`Unknown command "${cmd}". See bot/README.md for the list of commands.`);

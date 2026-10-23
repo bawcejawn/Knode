@@ -364,7 +364,9 @@ async function run() {
   fs.mkdirSync(path.join(DIR, "questions"), { recursive: true });
   if (args.cmd === "show") return show(args.date);
 
-  const provider = new Provider([g.rpc]);
+  // The node to read from comes from the environment (the workflow sets RPC), never from game.json, which anyone who
+  // can commit could edit (audit M-11). game.json's value is only a fallback on your own PC.
+  const provider = new Provider([process.env.RPC || (process.env.GITHUB_ACTIONS ? "https://api.koinos.io" : g.rpc)]);
   // History: 2-day rates + 7 days of calibration + 14 days of reliability record, plus a margin.
   const need = g.model.rateDays + g.model.calibDays + (g.model.reliabilityDays ?? 14) + 2;
   const { blocks, lib } = args.offline
