@@ -68,9 +68,14 @@ untouched.
    It must print `565e7eefa37098cfe83f58ef279b08c8092bd798939f966049eb153df972bc6f`. If it does not, stop: you are not building the reviewed code.
 3. `npm run bot -- status` and save the output (`npm run bot -- status > before-upgrade.txt`) to compare afterwards.
 4. `npm run bot -- upgrade status`: nothing should be announced. If something is, find out why before going on.
+4a. `npm run bot -- chain-check` (read-only, audit U1-03): the live code fingerprint must be the one in
+   `deployment.json`, all three authorize switches must be true, the owner/operator must match, the retired owner share
+   must be 0, and nothing (upgrade, seed withdrawal, ownership transfer) may already be announced. Do not schedule
+   if any line says ✖. `upgrade schedule` also refuses to go on if a switch is off.
 5. Pick the timing: schedule on a Tuesday or Wednesday so the upload lands mid-week, away from the weekly close
    (Monday 12:00 UTC) and finalization (Tuesday 12:00 UTC). It is safe at any time (tested), this only keeps it simple.
-6. The bot wallet (`OPERATOR_WIF`) needs about 60 KOIN of Mana for the upload.
+6. The upload is paid from the **owner** wallet (audit U1-05), so the owner wallet needs about 60 KOIN of Mana for
+   it; the bot wallet keeps only what the daily posts need. (`--bot-pays` makes the bot wallet pay instead.)
 7. If you rotate `OPERATOR_WIF` around the upgrade, do it only while no VHP window is open (see "Rotating the operator
    key" in bot/README.md: for example on a Sunday, after Saturday's windows have ended). A rotation during an open
    window makes the bot hold those questions back until you run it once on your PC with the old key as
@@ -99,12 +104,14 @@ npm run bot -- upgrade apply             (dry run: checks the hash, the time, th
 npm run bot -- upgrade apply --send
 ```
 
-It uploads exactly the announced code (owner authorizes, bot wallet pays), then clears the notice
-(`cancel_upgrade`) and writes the new hash into `game-data/deployment.json`. Commit and push that file.
+It uploads exactly the announced code (owner authorizes and pays), then clears the notice (`cancel_upgrade`). It then
+reads the code fingerprint **from the chain** (audit U1-04), checks it is the announced one with all three switches on,
+and only then writes it into `game-data/deployment.json`. Commit and push that file.
 
 ## 4. Verify
 
-1. Code hash on chain (read-only; nothing is signed). Fetch the contract's metadata and check it with the audit tool,
+1. `npm run bot -- chain-check`: every line ✔ (it reads the same metadata as below).
+   Optional second opinion, the code hash on chain (read-only; nothing is signed). Fetch the contract's metadata and check it with the audit tool,
    as in the audit report's §KX-26, expecting `0x1220565e7eefa37098cfe83f58ef279b08c8092bd798939f966049eb153df972bc6f` and all three authorize flags true:
    ```
    curl -s -X POST https://api.koinos.io -H "content-type: application/json" -d "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"chain.invoke_system_call\", \"params\": {\"id\": 303, \"args\": \"CgYIARIAGAMSGQDka1eqiZY46QAtkl2DCfUVJJ_OmXITQJU=\"}}" > meta-kpred.json
@@ -125,8 +132,25 @@ It uploads exactly the announced code (owner authorizes, bot wallet pays), then 
   `npm run bot -- sponsor-limit 2 0.5 --send`. To switch it off: `npm run bot -- sponsor-limit 0 --send`.
 - A pending ownership transfer from before the upgrade must be proposed again (there should be none).
 
+## While the game runs: a late result
+
+If a question is still unresolved 6 hours after its window ends, the bot emails a problem (audit H-2): its result
+would land after most of the 21-hour correction window. Look at the bot's log. If the result can't be trusted in
+time, pause new answers (`npm run bot -- pause on --send`; `pause off` later) or void the question
+(`npm run bot -- void <id> --send`) rather than letting a doubtful result stand.
+
 ## If something goes wrong
 
 There is no instant rollback: the only way back is another upgrade through the same 48-hour timelock (schedule the
 live code's hash `917708a7…` built from commit `1c25791`). Players can withdraw at any time meanwhile. If the upload
 itself fails, nothing changes; check `npm run bot -- upgrade status` before trying again.
+
+**What a rollback to the old code loses (audit U1-02).** The old code does not know the v4 fields, so it silently
+ignores them:
+- a pending ownership transfer proposed under v4 becomes acceptable at once (the old code has no waiting time):
+  cancel any pending transfer before rolling back;
+- a minimum-stake change made under v4 is lost (back to 1 VHP);
+- weeks that started under the new winners' rule finalize under the old one.
+
+The rollback is itself an upgrade: it must be uploaded within 7 days of its timelock ending, or scheduled again.
+The rollback path is covered by the storage-compatibility test (`game/scripts/storage-compat.test.ts`).

@@ -170,18 +170,40 @@ export class SimChain implements Chain {
   private async run(method: string, args: any, authorities: string[]): Promise<{ ok: boolean; result?: any; error?: string }> {
     const m = this.abi.methods[method];
     if (!m) throw new Error(`no method ${method}`);
-    const k = this.koinos;
     const argBytes = await this.ser.serialize(args ?? {}, m.argument);
+    const r = await this.exec(m.entry_point | 0, argBytes, authorities);
+    if (!r.ok) return r;
+    const result = m.return && r.bytes!.length ? await this.ser.deserialize(r.bytes!, m.return) : {};
+    return { ok: true, result };
+  }
+
+  /** An upgrade as the chain applies it: the transaction carries an upload_contract operation for this contract, and
+   *  the code is replaced only if the running contract's own `authorize(contract_upload)` agrees (audit U1-01). */
+  async uploadAuthorized(wasmFile: string, authorities: string[], flags = { call: true, tx: true, upload: true }): Promise<boolean> {
+    const k = this.koinos;
+    const tx = k.protocol.transaction.encode({ operations: [{ upload_contract: {
+      contract_id: utils.decodeBase58(this.contractId), bytecode: fs.readFileSync(wasmFile),
+      authorizes_call_contract: flags.call, authorizes_transaction_application: flags.tx, authorizes_upload_contract: flags.upload } }] }).finish();
+    const args = k.chain.authorize_arguments.encode({ type: k.chain.authorization_type.contract_upload }).finish();
+    const r = await this.exec(0x4a2dbd90, args, authorities, tx);           // the authorize entry point
+    const yes = r.ok && !!k.chain.authorize_result.decode(r.bytes!).value;
+    if (yes) await this.setCode(wasmFile);
+    return yes;
+  }
+
+  /** Runs one entry point with raw argument bytes; returns the raw result bytes. */
+  private async exec(entryPoint: number, argBytes: Uint8Array, authorities: string[], txBytes?: Uint8Array): Promise<{ ok: boolean; bytes?: Uint8Array; error?: string }> {
+    const k = this.koinos;
     this.vm.db.commitTransaction(); // snapshot: a failing call rolls back to here
     this.put(this.K.CONTRACT_ID_KEY, utils.decodeBase58(this.contractId));
-    this.put(this.K.ENTRY_POINT_KEY, k.chain.value_type.encode({ int32_value: m.entry_point | 0 }).finish());
+    this.put(this.K.ENTRY_POINT_KEY, k.chain.value_type.encode({ int32_value: entryPoint }).finish());
     this.put(this.K.CONTRACT_ARGUMENTS_KEY, argBytes);
     this.put(this.K.CONTRACT_RESULT_KEY, new Uint8Array(0));
     this.put(this.K.EXIT_CODE_KEY, k.chain.value_type.encode({ int32_value: 0 }).finish());
     this.put(this.K.BLOCK_KEY, k.protocol.block.encode({ header: { height: String(this.height), timestamp: String(this.time) } }).finish());
     this.put(this.K.HEAD_INFO_KEY, k.chain.head_info.encode({ head_topology: { height: String(this.height) }, last_irreversible_block: String(this.height - 60) }).finish());
     this.put(this.K.CALLER_KEY, k.chain.caller_data.encode({ caller: new Uint8Array(0), caller_privilege: 1 }).finish());
-    this.put(this.K.TRANSACTION_KEY, k.protocol.transaction.encode({}).finish());
+    this.put(this.K.TRANSACTION_KEY, txBytes ?? k.protocol.transaction.encode({}).finish());
     this.put(this.K.AUTHORITY_KEY, k.chain.list_type.encode({
       values: authorities.map((a) => ({ bytes_value: utils.decodeBase58(a), int32_value: 0, bool_value: true })),
     }).finish());
@@ -202,9 +224,7 @@ export class SimChain implements Chain {
     }
     if (code !== 0) return { ok: false, error: message || `exit code ${code}` };
     const res = this.vm.db.getObject(this.K.METADATA_SPACE, this.K.CONTRACT_RESULT_KEY);
-    const bytes: Uint8Array = res?.value ?? new Uint8Array(0);
-    const result = m.return && bytes.length ? await this.ser.deserialize(bytes, m.return) : {};
-    return { ok: true, result };
+    return { ok: true, bytes: res?.value ?? new Uint8Array(0) };
   }
 
   async read(method: string, args: any = {}) {
