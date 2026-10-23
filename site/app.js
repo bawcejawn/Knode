@@ -37,6 +37,19 @@
     account: null, player: null, entry: null, balances: null, board: {}, boardWeek: null, claims: [],
   };
 
+  // ═══════════════ params hash: is this question file exactly what was posted on chain? ═══════════════
+  // params-hash:start (the same rule as paramsHashOf in resolver.ts; tests/audit/site.params-hash.test.mjs compares them)
+  const AFTER_RELEASE = ["paramsHash", "result", "text", "title", "options", "chainId", "chainOutcome", "postSkipped", "vhpEnd", "vhpReadings", "corrections", "chainDataHash"];
+  const WORDING = ["title", "text", "options"];
+  async function paramsHashOf(q) {
+    const withWording = Number(q.hashRule ?? 0) >= 2;
+    const canonical = {};
+    for (const [k, v] of Object.entries(q)) if (!AFTER_RELEASE.includes(k) || (withWording && WORDING.includes(k))) canonical[k] = v;
+    const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(canonical)));
+    return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  // params-hash:end
+
   // ═══════════════ small helpers ═══════════════
   const $ = (s) => document.querySelector(s);
   const el = (tag, attrs = {}, ...kids) => {
@@ -168,7 +181,28 @@
     const idx = await fetchJson(DATA + "index.json").catch(() => ({ days: [] }));
     const files = await Promise.all((idx.days || []).slice(-21).map((f) => fetchJson(DATA + f).then((d) => ({ f, d })).catch(() => null)));
     S.files = files.filter(Boolean);
+    await checkFiles(S.files);
     S.questions = S.files.flatMap(({ f, d }) => (d.questions || []).filter((q) => q.chainId !== undefined).map((q) => ({ ...q, file: f })));
+  }
+
+  /** Each question file must hash to the params_hash posted on chain for its id, or the page will not offer it for
+   *  answering: an edited or swapped file could show reversed option labels, or another question's id.
+   *  q.hashOk: true (checked), false (does not match), null (could not be checked this time). */
+  const chainHashes = new Map();
+  async function checkFiles(files) {
+    const qs = files.flatMap(({ d }) => (d.questions || []).filter((q) => q.chainId !== undefined));
+    await Promise.all(qs.map(async (q) => {
+      try {
+        const id = Number(q.chainId);
+        if (!Number.isInteger(id) || id < 0) { q.hashOk = false; return; }
+        if (!chainHashes.has(id)) {
+          const h = String(((await read("get_question", { id })).question || {}).params_hash || "").replace(/^0x/, "").toLowerCase();
+          if (!h) { q.hashOk = null; return; }
+          chainHashes.set(id, h);
+        }
+        q.hashOk = (await paramsHashOf(q)) === chainHashes.get(id);
+      } catch { q.hashOk = null; }
+    }));
   }
 
   async function loadLive() {
@@ -680,7 +714,7 @@
       if (mine === o.index) cls += " picked";
       if (oc && oc !== 1000 && oc === o.index + 1) cls += " correct";
       else if (oc && oc !== 1000 && mine === o.index) cls += " wrong";
-      const canAnswer = mode === "open" && mine === null;
+      const canAnswer = mode === "open" && mine === null && q.hashOk !== false && (S.demo || q.hashOk === true);
       return el("button", {
         class: cls, type: "button", disabled: !canAnswer,
         "aria-label": `Option ${String.fromCharCode(65 + o.index)}: ${o.label}`,
@@ -695,7 +729,14 @@
       el("h3", { title: q.text }, ...headline(q)), groupView(q),
       el("div", { class: "q-facts" }, ...windowFacts(q), mode === "open" ? el("span", { class: "fact" }, "Counting starts when answers close") : null),
       mode === "locked" && !oc ? raceView(q) : null,
-      opts, act ? el("p", { class: "q-actual" }, ...act) : null, foot);
+      opts, act ? el("p", { class: "q-actual" }, ...act) : null, hashNote(q), foot);
+  }
+
+  function hashNote(q) {
+    if (S.demo || q.hashOk === true) return null;
+    return el("p", { class: "q-warn" }, q.hashOk === false
+      ? "This question's published file does not match what was posted on chain, so it is not offered here. Don't answer it from anywhere else either."
+      : "This question could not be checked against the chain yet. Reload the page to try again.");
   }
 
   function renderPlay() {
@@ -819,6 +860,8 @@
         r.void ? el("p", { class: "res-answer void" }, `Voided: ${r.reason || "a producer went offline"}. Nobody gains or loses a point.`)
           : el("div", { class: "res-answer" }, el("span", { class: "res-letter" }, String.fromCharCode(65 + r.option)), el("span", { class: "opt-text" }, ...optLabel(opt.label))),
         actualText(q) ? el("p", { class: "q-actual" }, ...actualText(q)) : null,
+        r.vhpCheck?.skipped ? el("p", { class: "meta" }, `The VHP-swing rule was not applied: ${r.vhpCheck.skipped}.`) : null,
+        q.hashOk === false ? el("p", { class: "q-warn" }, "This question's published file does not match what was posted on chain.") : null,
         el("p", { class: "meta" }, `Blocks ${fmtN(q.windowStart)} → ${fmtN(q.windowEnd)} · fingerprint ${String(r.dataHash || "").slice(0, 12)}… `,
           S.demo ? null : el("a", { href: DATA + g.f }, "full data")));
     };

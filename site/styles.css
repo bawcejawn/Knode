@@ -170,6 +170,7 @@ a { color: var(--violet); }
 @media (max-width: 560px) { .opt.pace::after { display: none; } }
 .opt.pace::after { content: "on pace"; margin-left: auto; font-size: .72rem; font-weight: 800; color: var(--violet); text-transform: uppercase; letter-spacing: .04em; }
 .q-actual { margin-top: 12px; font-weight: 600; color: var(--ink); line-height: 1.7; }
+.q-warn { margin-top: 12px; padding: 8px 12px; border-radius: var(--r-sm); background: var(--rose-soft); color: var(--rose); font-weight: 600; }
 .q-foot { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: space-between; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); font-size: .86rem; color: var(--muted); }
 .q-cta { color: var(--violet); font-weight: 700; }
 .badge { font-weight: 800; padding: 4px 10px; border-radius: 999px; font-size: .8rem; }

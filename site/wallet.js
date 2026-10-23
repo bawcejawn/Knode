@@ -145,6 +145,7 @@
         if (cancelled) break;
         let st; try { st = await vaultApi("status", { query: { sessionId: s.sessionId, secret: s.secret } }); }
         catch (e) { if (e.status === 404 || e.status === 410) throw new Error("The connection expired. Try again."); status.textContent = "Connection hiccup, still waiting…"; continue; }
+        if (cancelled) break;                                     // the dialog was closed while the status call ran
         if (st.connected && st.address) {
           W.session = { sessionId: s.sessionId, secret: s.secret, expiresAt: s.expiresAt };
           store.set(sessionStorage, "kw-vault", null);           // the secret stays in this page's memory only
