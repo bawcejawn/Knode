@@ -140,7 +140,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   };
 
   // ── trouble to inject ──
-  let crashInjected = false, strayPosted = false, outageDone = false;
+  let crashInjected = false, strayPosted = false, outageDone = false, strayAlerts = 0;
   const strayHash = "0x" + "5a".repeat(32);
   let alarmsDuringOutage = 0, falseAlarms = 0;
   const otherProblems: string[] = [];
@@ -221,6 +221,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     ticks++;
     for (const pr of ctx.problems) {
       if (/produced no block/.test(pr)) { if (h > outStart && h <= outEnd + HOUR) alarmsDuringOutage++; else { falseAlarms++; console.log(`  unexpected alarm at ${h}: ${pr}`); } }
+      else if (strayPosted && pr.includes("matches no question file") && pr.includes(`params_hash ${strayHash}`)) strayAlerts++; // the injected stray question: expected
       else { otherProblems.push(`${h}: ${pr}`); }
     }
     ctx.problems = [];
@@ -295,7 +296,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   check([...perWeek.entries()].filter(([w]) => w < W).every(([, n]) => n >= 28 && n <= 31), `about 30 questions each week (${[...perWeek.entries()].filter(([w]) => w < W).map(([w, n]) => `week ${w + 1}: ${n}`).join(", ")})`);
   let strayVoid = false;
   for (let id = 0; id < nq; id++) { const q = (await sim.read("get_question", { id })).question; if (String(q.params_hash) === strayHash) strayVoid = N(q.outcome) === 1000; }
-  check(strayVoid, "the stray question was resolved as VOID, so its week could close");
+  check(strayVoid && strayAlerts === 1, `the stray question was emailed about once (${strayAlerts} time(s)) and resolved as VOID, so its week could close`);
   check(!local.some((q: any) => [...(q.subjects ?? []), ...(q.group ?? [])].includes(standIn)), "no question was ever about the pool's own node (it could sway the answer)");
   const lateSkips = local.filter((q: any) => q.postSkipped).length;
   const dayFilesSkipped = files.filter((d: any) => d.skipped).length;
