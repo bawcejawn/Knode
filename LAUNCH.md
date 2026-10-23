@@ -241,6 +241,10 @@ Edit `site/ads.json` (on github.com you can click the file, then the pencil icon
 commit. Two kinds:
 - **Direct sponsor:** put their image in `site/ads/` and fill in `image`, `link` and `alt`.
 - **Ad network** (A-Ads and similar): paste the ad link from the network's dashboard as `src`, with its width and height.
+  These ads are shown in a frame, and the page blocks every frame by default (`frame-src 'none'` in the
+  Content-Security-Policy line at the top of `site/index.html`). Before the first network ad, change that part to the
+  network's exact address, for example `frame-src https://ad.a-ads.com`, and commit both files together. Never use
+  `frame-src https:` (any site).
 
 Ads always run walled off from the page: they can't see or touch the wallet connection. Only `https` links are accepted.
 
