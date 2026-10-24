@@ -184,3 +184,21 @@ describe("v2: a daily cap on what all swaps together pay out", () => {
     expect(s.config!.daily_cap).toBe(100 * VHP);
   });
 });
+
+describe("v2: the daily cap frees up gradually (no burst at a window boundary)", () => {
+  it("half a day after using the whole cap, only half of it is free again", () => {
+    const d = setup();
+    as(OWNER);
+    d.set_daily_cap(new desk.set_daily_cap_arguments(100 * VHP));
+    swap(d, A, 103 * VHP, 0);                                     // pays 99.91 KOIN: almost the whole cap
+    at(1_000_000 + 43_200_000);                                   // 12 hours later
+    const left = d.get_state(new desk.get_state_arguments()).swap_left_today;
+    expect(left > 49 * VHP && left < 51 * VHP).toBe(true);
+    gD = d; gWho = B; gAmt = 60 * VHP; gMin = 0;
+    give(ALLOW_TAG, B, 60 * VHP);
+    as(B);
+    MockVM.commitTransaction();
+    expect(() => { tryThrow(); }).toThrow();                      // 58.2 KOIN > ~50 free
+    swap(d, B, 50 * VHP, 0);                                      // 48.5 KOIN fits
+  });
+});

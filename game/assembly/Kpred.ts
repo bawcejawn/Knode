@@ -35,8 +35,9 @@ const MAX_QUESTIONS_PER_WEEK: u32 = 30;   // v5: at most 30 questions, so at mos
 const FEE_BPS: u64 = 500;       // 5% producer fee (KOIN), charged once on everything the pool earns
 const WIN_PCT: u64 = 30;        // winners = the top 30% of eligible (staked) players by headcount, ties included
 const BASKET_A_BPS: u64 = 6500; // before v5: basket A = 65% of what the house (seed + unclaimed pots) earned, by rank only
-// v5: basket A = 40% of the whole pot, shared by rank x stake counted up to 10 VHP (splitting a stake across wallets
-// gains nothing there); basket B = the other 60%, by rank x full stake.
+// v5: basket A = 40% of the whole pot, shared by rank x stake counted up to 10 VHP; basket B = the other 60%, by rank x
+// full stake. Splitting a stake of up to 10 VHP across wallets gains about nothing in basket A; a larger stake split into
+// wallets of up to 10 VHP each does count more there (the cap is per wallet), at the cost of playing every wallet.
 const V5_BASKET_A_BPS: u64 = 4000;
 const V5_CAP_A: u64 = 10 * 100_000_000;
 const W_SCALE: u64 = 1_000_000_000_000_000_000; // rank weight of place r = sqrt(W_SCALE / r) = 1e9 / √r
@@ -132,7 +133,7 @@ function txOps(): protocol.operation[] {
 function txSignatureCount(): i32 {
   if (BUILD_FOR_TESTING) return System.getTransaction().signatures.length;
   const f = System.getTransactionField("signatures");
-  if (f == null || f.message_value == null) return 0;
+  if (f == null || f.message_value == null) return i32.MAX_VALUE;   // unreadable: refuse to sponsor
   return Protobuf.decode<value.list_type>(f.message_value!.value!, value.list_type.decode).values.length;
 }
 
@@ -990,6 +991,10 @@ export class Kpred {
     System.require(this.isOwner(c), "owner only");
     System.require(args.min_stake > 0, "the minimum stake can never be 0");
     const cur = this.weekOf(c, this.now());
+    // v5 (review): a change already promised for a week that starts within the notice time can't be overridden: the
+    // players who deposited for it were told that value.
+    System.require(!(c.min_stake_next > 0 && c.min_stake_next_week > cur && this.weekEnd(c, c.min_stake_next_week - 1) - this.now() < c.timelock_length),
+      "a minimum-stake change already takes effect within 48 hours: try again after it starts");
     if (c.min_stake_next > 0 && c.min_stake_next_week <= cur) {
       // The earlier change is in use. Fold it in only once no unfinalized week still uses the value before it.
       const wf = this.totals.get()!.weeks_finalized;
@@ -1055,6 +1060,7 @@ export class Kpred {
     const c = this.cfg();
     System.requireAuthority(authority.authorization_type.contract_call, c.seed_owner!);
     System.require(isAddress(args.new_seed_owner), "address required");
+    System.require(!Arrays.equal(args.new_seed_owner, this.contractId), "the seed owner must be a wallet, not the game itself");
     c.pending_seed_owner = args.new_seed_owner;
     c.pending_seed_owner_height = this.height();
     this.config.put(c);

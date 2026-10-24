@@ -14,7 +14,7 @@ message config_object {
   uint64 max_swap = 5 [jstype = JS_STRING];            // largest single swap in VHP units; 0 = only limited by what is available
   bool paused = 6;                                     // stops swaps (withdrawals to the treasury still work)
   uint64 timelock_length = 7 [jstype = JS_STRING];     // delay (ms) for treasury changes and code upgrades
-  uint64 daily_cap = 8 [jstype = JS_STRING];           // v2: most KOIN all swaps together may pay out per 24 h; 0 = no cap
+  uint64 daily_cap = 8 [jstype = JS_STRING];           // v2: most KOIN swaps may pay out at once; room frees up at this much per 24 h; 0 = no cap
 }
 
 message totals_object {
@@ -22,8 +22,8 @@ message totals_object {
   uint64 vhp_in = 2 [jstype = JS_STRING];              // all VHP received from swaps
   uint64 koin_out = 3 [jstype = JS_STRING];            // all KOIN paid out by swaps
   uint32 next_slot = 4;                                // where the next swap goes in the recent-swaps list
-  uint64 day_start = 5 [jstype = JS_STRING];           // v2: start (ms) of the current 24-hour cap window
-  uint64 day_out = 6 [jstype = JS_STRING];             // v2: KOIN paid out by swaps in that window
+  uint64 day_start = 5 [jstype = JS_STRING];           // v2: time (ms) of the last swap
+  uint64 day_out = 6 [jstype = JS_STRING];             // v2: KOIN counted against the daily cap at that time (it drains at daily_cap per 24 h)
 }
 
 message swap_record {

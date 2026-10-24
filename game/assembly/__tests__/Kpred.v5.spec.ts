@@ -229,9 +229,10 @@ describe("v5: a minimum-stake change gets at least 48 hours' notice (audit M-4)"
     at(1100);
     as(OWNER);
     expect(k.set_min_stake(new kpred.set_min_stake_arguments(2 * VHP)).from_week).toBe(1);
+    const k2 = setup();
     at(1970);                                         // 30 blocks before week 1: too short
     as(OWNER);
-    expect(k.set_min_stake(new kpred.set_min_stake_arguments(3 * VHP)).from_week).toBe(2);
+    expect(k2.set_min_stake(new kpred.set_min_stake_arguments(3 * VHP)).from_week).toBe(2);
   });
 });
 
@@ -257,5 +258,28 @@ describe("v5: one signature per sponsored transaction (audit M-3)", () => {
     MockVM.setTransaction(tx);
     System.resetCache();
     expect(sponsor(k)).toBe(false);
+  });
+});
+
+describe("v5 review fixes", () => {
+  it("a minimum-stake change promised for the coming week can't be overridden inside the notice time", () => {
+    const k = setup();
+    at(1100);
+    as(OWNER);
+    expect(k.set_min_stake(new kpred.set_min_stake_arguments(2 * VHP)).from_week).toBe(1);
+    at(1970);                                         // 30 blocks (less than the 50-block timelock) before week 1
+    gK = k;
+    as(OWNER);
+    MockVM.commitTransaction();
+    expect(() => { gK!.set_min_stake(new kpred.set_min_stake_arguments(10 * VHP)); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("a minimum-stake change already takes effect within 48 hours: try again after it starts");
+  });
+
+  it("the seed can't be handed to the game contract itself", () => {
+    const k = setup();
+    gK = k;
+    as(SEED);
+    MockVM.commitTransaction();
+    expect(() => { gK!.propose_seed_owner(new kpred.propose_seed_owner_arguments(CONTRACT)); }).toThrow();
   });
 });

@@ -16,7 +16,8 @@
  *   timelock   changing the treasury, the owner (v2) or the code takes an announced delay (48 h at launch), and so
  *              does anything that loosens the desk (v2): a lower fee, a higher daily cap, a new node key. A stolen
  *              owner key can't drain or redirect the desk before the real owner sees it and acts.
- *   daily cap  (v2) all swaps together pay out at most daily_cap KOIN per 24 hours (0 = no cap)
+ *   daily cap  (v2) swaps pay out at most daily_cap KOIN at once, and room frees up at daily_cap per 24 hours
+ *              (0 = no cap)
  *   nobody     can move the desk's tokens from outside — not the deploy key, not anyone
  */
 import { System, Storage, Protobuf, Arrays, Crypto, authority, value, protocol, u128 } from "@koinos/sdk-as";
@@ -99,11 +100,20 @@ export class Desk {
     return min64(Tokens.koinBalance(this.contractId), Tokens.mana(this.contractId));
   }
 
-  /** v2: KOIN the daily cap still allows in the current 24-hour window (u64 max when there is no cap). */
+  /** v2: the daily cap is a bucket that drains at daily_cap per 24 hours: what swaps paid out counts against it and
+   *  frees up gradually, so payouts can never burst past the cap at a window boundary. */
+  capUsed(c: desk.config_object, t: desk.totals_object): u64 {
+    if (t.day_out == 0 || t.day_start == 0) return 0;
+    const now = this.now();
+    const elapsed = now > t.day_start ? now - t.day_start : 0;
+    const drained = elapsed >= DAY_MS ? u64.MAX_VALUE : u128.muldiv(u128.fromU64(c.daily_cap), u128.fromU64(elapsed), u128.fromU64(DAY_MS)).toU64();
+    return t.day_out > drained ? t.day_out - drained : 0;
+  }
+
+  /** v2: KOIN the daily cap still allows right now (u64 max when there is no cap). */
   capLeft(c: desk.config_object): u64 {
     if (c.daily_cap == 0) return u64.MAX_VALUE;
-    const t = this.totals.get()!;
-    const used = t.day_start > 0 && this.now() < t.day_start + DAY_MS ? t.day_out : 0;
+    const used = this.capUsed(c, this.totals.get()!);
     return used >= c.daily_cap ? 0 : c.daily_cap - used;
   }
 
@@ -237,8 +247,8 @@ export class Desk {
     Tokens.sendKoin(args.from!, out);
 
     const t = this.totals.get()!;
-    if (t.day_start == 0 || this.now() >= t.day_start + DAY_MS) { t.day_start = this.now(); t.day_out = 0; }
-    t.day_out += out;
+    t.day_out = (c.daily_cap > 0 ? this.capUsed(c, t) : 0) + out;   // what still counts, plus this swap
+    t.day_start = this.now();
     t.swaps += 1;
     t.vhp_in += amount;
     t.koin_out += out;
