@@ -21,6 +21,8 @@ const P7 = Base58.decode("185Djfb4GWSnvNhiTugz3za5pJKqfzcEWv");
 const P8 = Base58.decode("1GN9xyV95FD5jthuzmQJjo9rBxWL5tRhjx");
 const P9 = Base58.decode("19B5aaeahBD9HX1V64Wq3sXJw9XkckEp46");
 const P10 = Base58.decode("1pWpb9BdnDQoZR1nzrWe9WhRJKENNu6KL");
+/** 30 more real addresses for the split-wallet test. */
+const RIVALS: string[] = ["1AGvUAvSHjt8HB7kit8Y2a53VKb1WtJxZQ", "1NQxrPFTmJRLxbouR2xLYsQSDrkKoJzik8", "12ixiX21L5VnNJepmipcnLfdLpLiN5yx8P", "1N1GsD8sfMkuVbqbhA7AQs4BtC6weQb6Cp", "1WgXcJBQccR4sDMU236vCN2roVJ35V3vA", "1CUW3YBfxJ8bVXTSmYP6UPjuBoakYaGFeT", "1Mo1UyerX3NhjCHc6A7ph4HjgQmixLHnQc", "168i9VwGUfYzzbX6XDYDYNCbL6S2thGJPT", "1KATVW4LsjV43Jyb2iW3iVG6WSJRAMAHWx", "1CSLTiEfZpgoqyVzFQLsUQ2CWLFok4MH7X", "125KNJWjXdkWzzmmNsXmAJVAUmUETTQBRf", "1BTy2aJEgzwjmf1ywBYb4QwefYURQEvVq7", "16a9XPnUVA27X6vLFJnzPoSyPsJGnhqPYt", "1NqYzjb25ETUdNL9WfmuRourKSh2MQPDVZ", "1BhSzeXZE58up271b9L3H36G43CDjEUm76", "1QKEXYi1CqvySxovEuFU4FKaEEBeXr9yim", "142Xj8GjpGLW29d16MnXM8JJBXVJ7jYiFf", "1MhaH9AgaDkg8ee15zcRVp59rkcFCTx8Ma", "1Hgb1uR1zC491tC95MNNpjYZzfKGhhcYQf", "1Jrj8f8wtU9XpV9SSQbT9wW2GbPNmMTdip", "1NZ4ae3K6fZshhNu7ibXexnD16eKt1mmQz", "14Xy5y1VPsr2MAVtBk9FqvDccTSGciNpKo", "1PcLxKr1FRi8uEfBVMtrarXF8oTrHUZP86", "13cSTUezQdGRCAyLBHtMCUELMSwYgbdgqK", "1JVy8DWTFQJ422UdMCXGu9CQvnLAc6xdxL", "17LJtST5i85HoEyjmaCamenQDYZ9UNZeG4", "19BTw4pqcVjtJPYPUqjn13ySDNaa71Sej5", "1QDa4CuPPL5oJFZGY9c4AFppBsTi4VkzFN", "1EGcuRVo8am99bd5h7hJ4hj3viy7CZ7fop", "1CJBDVq46LecmTt39vfEnmXCRQoRyUDrsH"];
 
 const VHP: u64 = 100_000_000;
 const KOIN_TAG: u8 = 1, VHP_TAG: u8 = 2, MANA_TAG: u8 = 3;
@@ -392,10 +394,11 @@ describe("a full week", () => {
     // Baskets: the house (1,000 seed VHP) produced 1000/1210 of the week, players' stake (210 VHP) the rest.
     const wf = k.get_week(new kpred.get_week_arguments(0)).week!;
     expect(wf.house_ppm).toBe(826446);                         // 1000 / 1210, in parts per million
-    const houseNet = u64(95 * VHP) * 826446 / 1_000_000;
-    expect(wf.pot_a).toBe(houseNet * 6500 / 10000);            // basket A: 65% of the house's earnings
-    expect(wf.pot_a + wf.pot_b).toBe(95 * VHP);
-    // A and E tie for places 1 and 2: basket A splits evenly; basket B by stake (A 100, E 10). Spare KOIN → VHP on demand.
+    expect(wf.reward_rule).toBe(true);                         // v5 split
+    expect(wf.pot_a).toBe(38 * VHP);                           // basket A: 40% of the pot
+    expect(wf.pot_b).toBe(57 * VHP);                           // basket B: the other 60%
+    // A and E tie for places 1 and 2. Basket A counts stake only up to 10 VHP, so A (100) and E (10) split it evenly;
+    // basket B by full stake (A 100, E 10). Spare KOIN → VHP on demand.
     const aBefore = Tokens.testGet(VHP_TAG, A);
     as(A);
     const ra = k.claim(new kpred.claim_arguments(A, 0)).reward;
@@ -470,7 +473,7 @@ describe("a full week", () => {
     expect(MockVM.getErrorMessage()).toBe("not eligible that week");
   });
 
-  it("the rank curve: 1st > 2nd > 3rd …, a small staker on top beats a whale below in basket A, and stake still pays in B", () => {
+  it("the rank curve: 1st > 2nd > 3rd …; basket A counts stake only up to 10 VHP, basket B the full stake (v5)", () => {
     const k = setup();
     as(SEED);
     k.seed_deposit_vhp(new kpred.seed_deposit_vhp_arguments(5000 * VHP));
@@ -479,7 +482,7 @@ describe("a full week", () => {
     for (let i = 0; i < who.length; i++) { give(VHP_TAG, who[i], 2000 * VHP); give(MANA_TAG, who[i], 10 * VHP); }
     deposit(k, A, 1 * VHP);                          // 1st place with the minimum stake
     deposit(k, B, 1000 * VHP);                       // 2nd place, a whale
-    deposit(k, C, 10 * VHP);                         // 3rd place
+    deposit(k, C, 10 * VHP);                         // 3rd place, exactly the basket-A cap
     for (let i = 3; i < who.length; i++) deposit(k, who[i], 5 * VHP);
     at(1100);
     const qs: u32[] = [];
@@ -500,21 +503,30 @@ describe("a full week", () => {
     expect(fw.cutoff).toBe(8);
     const wk = k.get_week(new kpred.get_week_arguments(0)).week!;
     expect(wk.sum_w).toBe(rankWeight(1) + rankWeight(2) + rankWeight(3));
+    expect(wk.pot_a).toBe(wk.pot * 4000 / 10000);
     as(A); const ra = k.claim(new kpred.claim_arguments(A, 0)).reward;
     as(B); const rb = k.claim(new kpred.claim_arguments(B, 0)).reward;
     as(C); const rc = k.claim(new kpred.claim_arguments(C, 0)).reward;
-    // Basket A alone: 1st > 2nd > 3rd, in the 1/√rank ratio.
-    const pa = <f64>wk.pot_a, sw = <f64>wk.sum_w;
-    const a1 = <u64>(pa * <f64>rankWeight(1) / sw), a2 = <u64>(pa * <f64>rankWeight(2) / sw), a3 = <u64>(pa * <f64>rankWeight(3) / sw);
-    expect(a1 > a2 && a2 > a3).toBe(true);
-    // Basket B: rank weight × stake, so the whale's 1,000 VHP earns it the most of B.
-    const bwT = rankWeight(1) * 1 + rankWeight(2) * 1000 + rankWeight(3) * 10;
-    expect(near(ra, a1 + <u64>(<f64>wk.pot_b * <f64>(rankWeight(1) * 1) / <f64>bwT))).toBe(true);
-    expect(near(rb, a2 + <u64>(<f64>wk.pot_b * <f64>(rankWeight(2) * 1000) / <f64>bwT))).toBe(true);
-    expect(near(rc, a3 + <u64>(<f64>wk.pot_b * <f64>(rankWeight(3) * 10) / <f64>bwT))).toBe(true);
-    // With the seed producing most of the week, the 1-VHP leader still takes far more than their stake earned.
-    expect(ra > 50 * VHP).toBe(true);
+    // Basket A: rank weight × stake up to 10 VHP (A 1, B 10, C 10). Basket B: rank weight × full stake.
+    const awT = <f64>(rankWeight(1) * 1 + rankWeight(2) * 10 + rankWeight(3) * 10);
+    const bwT = <f64>(rankWeight(1) * 1 + rankWeight(2) * 1000 + rankWeight(3) * 10);
+    const pa = <f64>wk.pot_a, pb = <f64>wk.pot_b;
+    expect(near(ra, v5Expected(pa, pb, awT, bwT, 1, 1, 1))).toBe(true);
+    expect(near(rb, v5Expected(pa, pb, awT, bwT, 2, 10, 1000))).toBe(true);
+    expect(near(rc, v5Expected(pa, pb, awT, bwT, 3, 10, 10))).toBe(true);
+    // In basket A the whale's 1,000 VHP counts as 10: 2nd place with 10 VHP beats 3rd with 10 VHP only by rank.
+    const bA = <u64>(pa * <f64>(rankWeight(2) * 10) / awT), cA = <u64>(pa * <f64>(rankWeight(3) * 10) / awT);
+    expect(bA > cA).toBe(true);
+    // The 1-VHP leader takes far more than a stake-proportional share (1 of 1,011 VHP).
+    expect(ra > wk.pot / 1011 * 10).toBe(true);
     expect(ra + rb + rc <= wk.pot).toBe(true);
+  });
+
+  it("splitting one stake across many wallets gains nothing in basket A at or below 10 VHP (v5, audit M-2)", () => {
+    // Two worlds with the same scores. World 1: X stakes 10 VHP in one wallet. World 2: X splits the same 10 VHP into
+    // 10 wallets of 1 VHP that all answer the same way. X's total reward must not be higher in world 2.
+    const one = splitWorld(false), many = splitWorld(true);
+    expect(many <= one + 10).toBe(true, "splitting must not pay more (rounding aside)");
   });
 
   it("a deposit just before the close barely moves the basket split (production is weighted by time)", () => {
@@ -1307,23 +1319,23 @@ describe("listing players (for the bot and the website)", () => {
 });
 
 describe("extreme edge cases", () => {
-  it("a full week of 64 questions: the 65th is refused, a perfect score of 64 is counted and paid even when claimed 5 weeks later", () => {
+  it("a full week of 30 questions (v5 cap): the 31st is refused, a perfect score of 30 is counted and paid even when claimed 5 weeks later", () => {
     const k = setup();
     deposit(k, A, 10 * VHP);
     deposit(k, B, 10 * VHP);
     at(1100);
-    for (let i = 0; i < 64; i++) post(k, 2, 1300, 1301, 1400);
+    for (let i = 0; i < 30; i++) post(k, 2, 1300, 1301, 1400);
     gK = k;
     as(OPERATOR);
     MockVM.commitTransaction();
     expect(() => { gK!.post_question(new kpred.post_question_arguments(2, 1300 * MS, 1301, 1400, hash32(1))); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe("too many questions this week");
     at(1200);
-    for (let i: u32 = 0; i < 64; i++) answer(k, A, i, 1);
+    for (let i: u32 = 0; i < 30; i++) answer(k, A, i, 1);
     answer(k, B, 0, 0);
     answer(k, B, 1, 0);
     at(1500);
-    for (let i: u32 = 0; i < 64; i++) resolve(k, i, 1);
+    for (let i: u32 = 0; i < 30; i++) resolve(k, i, 1);
     give(KOIN_TAG, CONTRACT, 100 * VHP);
     give(MANA_TAG, CONTRACT, 100 * VHP);
     at(2015);
@@ -1331,7 +1343,7 @@ describe("extreme edge cases", () => {
     k.compound(new kpred.compound_arguments());               // any action closes the finished week
     expect(k.get_week(new kpred.get_week_arguments(0)).week!.closed).toBe(true);
     at(2016);
-    expect(k.settle(new kpred.settle_arguments(A, 0)).points).toBe(64);
+    expect(k.settle(new kpred.settle_arguments(A, 0)).points).toBe(30);
     expect(k.settle(new kpred.settle_arguments(B, 0)).points).toBe(0);
     // five weeks later, the reward is still there, exactly
     at(7000);
@@ -1340,7 +1352,7 @@ describe("extreme edge cases", () => {
     expect(k.claim(new kpred.claim_arguments(A, 0)).reward).toBe(95 * VHP);
     expect(Tokens.testGet(VHP_TAG, A) - before).toBe(95 * VHP);
     const w0 = k.get_week(new kpred.get_week_arguments(0)).week!;
-    expect(w0.cutoff).toBe(64);
+    expect(w0.cutoff).toBe(30);
     expect(w0.winners).toBe(1);
   });
 
@@ -1458,12 +1470,46 @@ describe("extreme edge cases", () => {
     as(B);
     const rb = k.claim(new kpred.claim_arguments(B, 0)).reward;
     const pot: u64 = 950_000 * VHP;                 // 95% of the 1,000,000 earned
-    // shares 1e9 : 1 of the pot (both have 2 points), rounded down, never more than the pot
-    expect(rb).toBe(<u64>(<f64>0) + pot / 1_000_000_001);
+    // v5: basket A (40%) counts stake up to 10 VHP, so 10 : 1; basket B (60%) by full stake, 1e9 : 1. Rounded down,
+    // never more than the pot.
+    const potA: u64 = pot * 4000 / 10000, potB: u64 = pot - potA;
+    expect(near(rb, potA / 11 + potB / 1_000_000_001)).toBe(true);
     expect(ra + rb <= pot).toBe(true);
-    expect(pot - ra - rb < 2).toBe(true);
+    expect(pot - ra - rb < 5).toBe(true);           // each basket rounds down per player: a few units of dust stay
   });
 });
+
+/** v5 reward of place r: basket A by rank x capped stake, basket B by rank x full stake (test model, floating point). */
+function v5Expected(pa: f64, pb: f64, awT: f64, bwT: f64, r: u64, capped: u64, stake: u64): u64 {
+  return <u64>(pa * <f64>(rankWeight(r) * capped) / awT) + <u64>(pb * <f64>(rankWeight(r) * stake) / bwT);
+}
+/** One week in which player X holds 10 VHP, either in one wallet or split into ten 1-VHP wallets; X's total reward. */
+function splitWorld(split: bool): u64 {
+  const k = setup();
+  const X: Uint8Array[] = split ? [A, B, C, D, E, P6, P7, P8, P9, P10] : [A];
+  for (let i = 0; i < X.length; i++) { give(VHP_TAG, X[i], 100 * VHP); give(MANA_TAG, X[i], 10 * VHP); }
+  for (let i = 0; i < X.length; i++) deposit(k, X[i], (split ? 1 : 10) * VHP);
+  // 30 rivals so the top 30% is wide enough to hold every X wallet: rivals score less than X but are staked.
+  const rivals: Uint8Array[] = [];
+  for (let i = 0; i < 30; i++) { const r = Base58.decode(RIVALS[i]); rivals.push(r); give(VHP_TAG, r, 100 * VHP); give(MANA_TAG, r, 10 * VHP); deposit(k, r, 5 * VHP); }
+  at(1100);
+  const q0 = post(k, 2, 1300, 1301, 1400);
+  const q1 = post(k, 2, 1300, 1301, 1400);
+  at(1200);
+  for (let i = 0; i < X.length; i++) { answer(k, X[i], q0, 1); answer(k, X[i], q1, 1); }      // 2 points
+  for (let i = 0; i < rivals.length; i++) { answer(k, rivals[i], q0, 1); answer(k, rivals[i], q1, i < 10 ? 1 : 0); }
+  at(1500); resolve(k, q0, 1); resolve(k, q1, 1);
+  give(KOIN_TAG, CONTRACT, 1000 * VHP); give(MANA_TAG, CONTRACT, 1000 * VHP);
+  at(2010);
+  k.close_week(new kpred.close_week_arguments(0));
+  for (let i = 0; i < X.length; i++) k.settle(new kpred.settle_arguments(X[i], 0));
+  for (let i = 0; i < rivals.length; i++) k.settle(new kpred.settle_arguments(rivals[i], 0));
+  at(2200);
+  k.finalize_week(new kpred.finalize_week_arguments(0));
+  let sum: u64 = 0;
+  for (let i = 0; i < X.length; i++) { as(X[i]); sum += k.claim(new kpred.claim_arguments(X[i], 0)).reward; }
+  return sum;
+}
 
 function bpsT(amount: u64, b: u64): u64 { return amount * b / 10000; }
 

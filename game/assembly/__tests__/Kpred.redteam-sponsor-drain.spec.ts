@@ -167,14 +167,14 @@ describe("RED TEAM saboteur: the pool's sponsored Mana cannot be farmed by dust 
     deposit(k, A, 1 * VHP);
     at(1100);
     const ids: u32[] = [];
-    for (let i = 0; i < 30; i++) ids.push(post(k, 2, 1300, 1301, 1400));
+    for (let i = 0; i < 29; i++) ids.push(post(k, 2, 1300, 1301, 1400));   // v5: at most 30 a week, so 29 + 1 later
     at(1200);
     for (let i = 0; i < ids.length; i++) answer(k, A, ids[i], 0);
-    // A 31st answer this week: there is no 31st question, so any further answer (here: one of the same questions
+    // A 30th answer this week: there is no 30th question yet, so any further answer (here: one of the same questions
     // again) is refused before the pool pays anything.
     as(A);
     setTx(0x0db52f40, Protobuf.encode(new kpred.answer_arguments(A, ids[0], 1), kpred.answer_arguments.encode), VHP, 1);
-    expect(sponsor(k)).toBe(false, "a 31st answer in a 30-question week must not be sponsored");
+    expect(sponsor(k)).toBe(false, "a 30th answer in a 29-question week must not be sponsored");
     // one more question is posted the same week: one more sponsored answer
     at(1210);
     const extra = post(k, 2, 1300, 1301, 1400);

@@ -10,8 +10,10 @@
  *   finalize_week  finds the winners: the top 30% of staked players by points (headcount), everyone tied included,
  *                  and gives each place a rank weight 1/√rank (players tied share their places' weights evenly)
  *   claim          pays each winner, in VHP, from two baskets:
- *                    A = 65% of what the house (seed + unclaimed pots) earned, by rank weight only
- *                    B = the other 35% plus everything players' stake earned, by rank weight × stake
+ *                    A = 40% of the pot, by rank weight × stake counted up to 10 VHP (v5; before: 65% of what the
+ *                        house earned, by rank weight only)
+ *                    B = the other 60%, by rank weight × full stake
+ *                  At most 30 questions a week, so at most 30 points (v5).
  * All of this runs on-chain. The only off-chain inputs are the operator's question parameters and resolutions.
  *
  * Who can do what:
@@ -21,7 +23,7 @@
  *   owner       correct a resolution before its week closes, set operator, pause NEW deposits, register the node key,
  *               claim the producer fee, change the minimum stake (from next week), schedule an upgrade (uploadable only
  *               after the timelock, and only for 7 days after it)
- *   seed owner  add seed VHP/KOIN; withdraw it only after an announced timelock
+ *   seed owner  add seed VHP/KOIN; withdraw it only after an announced timelock; hand the seed over (two steps, v5)
  *   nobody      can take players' stakes or rewards, or the seed — not the owner, not the deploy key
  */
 import { System, Storage, Protobuf, Arrays, Crypto, authority, value, protocol, Base58, u128 } from "@koinos/sdk-as";
@@ -29,10 +31,14 @@ import { kpred } from "./proto/kpred";
 import { Tokens } from "./Tokens";
 
 const VOID: u32 = 1000;
-const MAX_QUESTIONS_PER_WEEK: u32 = 64;
+const MAX_QUESTIONS_PER_WEEK: u32 = 30;   // v5: at most 30 questions, so at most 30 points, a week
 const FEE_BPS: u64 = 500;       // 5% producer fee (KOIN), charged once on everything the pool earns
 const WIN_PCT: u64 = 30;        // winners = the top 30% of eligible (staked) players by headcount, ties included
-const BASKET_A_BPS: u64 = 6500; // basket A = 65% of what the house (seed + unclaimed pots) earned: shared by rank only
+const BASKET_A_BPS: u64 = 6500; // before v5: basket A = 65% of what the house (seed + unclaimed pots) earned, by rank only
+// v5: basket A = 40% of the whole pot, shared by rank x stake counted up to 10 VHP (splitting a stake across wallets
+// gains nothing there); basket B = the other 60%, by rank x full stake.
+const V5_BASKET_A_BPS: u64 = 4000;
+const V5_CAP_A: u64 = 10 * 100_000_000;
 const W_SCALE: u64 = 1_000_000_000_000_000_000; // rank weight of place r = sqrt(W_SCALE / r) = 1e9 / √r
 const RESOLVE_MARGIN: u64 = 60; // resolve only after the window's blocks are irreversible (~3 minutes)
 // Weeks and answer deadlines follow the block timestamps (ms, UTC), so they land on exact calendar times. The blocks a
@@ -121,6 +127,15 @@ function txOps(): protocol.operation[] {
   return out;
 }
 
+/** How many signatures the transaction carries. A sponsored transaction needs exactly one (the player's or the
+ *  sender's); extra ones only make it cost the pool more Mana (audit M-3). */
+function txSignatureCount(): i32 {
+  if (BUILD_FOR_TESTING) return System.getTransaction().signatures.length;
+  const f = System.getTransactionField("signatures");
+  if (f == null || f.message_value == null) return 0;
+  return Protobuf.decode<value.list_type>(f.message_value!.value!, value.list_type.decode).values.length;
+}
+
 export class Kpred {
   contractId: Uint8Array = System.getContractId();
 
@@ -149,11 +164,19 @@ export class Kpred {
     const c = this.config.get()!;
     System.require(isAddress(c.owner), "not initialised");
     // First action after the v4 upgrade: the new winners' rule starts with the NEXT week, never one being played.
-    if (c.scorer_rule_week_plus_one == 0) {
-      c.scorer_rule_week_plus_one = this.weekOf(c, this.now()) + 2;
+    if (c.scorer_rule_week_plus_one == 0 || c.reward_rule_week_plus_one == 0) {
+      if (c.scorer_rule_week_plus_one == 0) c.scorer_rule_week_plus_one = this.weekOf(c, this.now()) + 2;
+      // First action after the v5 upgrade: the v5 reward split starts with the NEXT week, so every stake it counts
+      // was settled by v5 code.
+      if (c.reward_rule_week_plus_one == 0) c.reward_rule_week_plus_one = this.weekOf(c, this.now()) + 2;
       this.config.put(c);
     }
     return c;
+  }
+
+  /** Whether week `w` is paid by the v5 reward split. */
+  rewardRule(c: kpred.config_object, w: u64): bool {
+    return c.reward_rule_week_plus_one > 0 && w + 1 >= c.reward_rule_week_plus_one;
   }
 
   /** The minimum stake for week `w`: a change applies from the week after it was made. */
@@ -232,7 +255,8 @@ export class Kpred {
   assertSolvent(): void {
     const t = this.totals.get()!;
     const holdings = Tokens.vhpBalance(this.contractId) + Tokens.koinBalance(this.contractId);
-    System.require(holdings >= this.liabilities(t), "solvency check failed: payout would exceed earned rewards");
+    // v5 (audit G1-13): pots with no winners, waiting for the next close, are owed too.
+    System.require(holdings >= this.liabilities(t) + t.rolled_over, "solvency check failed: payout would exceed earned rewards");
   }
 
   // ───────────── automatic week progression ─────────────
@@ -422,6 +446,7 @@ export class Kpred {
     c.min_stake = args.min_stake;
     c.max_sponsor_rc = args.max_sponsor_rc;
     c.scorer_rule_week_plus_one = 1;
+    c.reward_rule_week_plus_one = 1;
     this.config.put(c);
     return new kpred.init_result();
   }
@@ -579,6 +604,7 @@ export class Kpred {
       const bk = this.bucketKey(week, points);
       const b = this.buckets.get(bk)!;
       b.stake += e.stake;
+      b.capped += e.stake < V5_CAP_A ? e.stake : V5_CAP_A;
       b.players += 1;
       this.buckets.put(bk, b);
       wk.eligible_stake += e.stake;
@@ -599,7 +625,17 @@ export class Kpred {
     // Every step rounds down, so the claims of a week can never add up to more than its pot.
     const b = this.buckets.get(this.bucketKey(w, e.points))!;
     const n = u128.fromU64(<u64>b.players);
-    let reward = u128.muldiv(u128.fromU64(wk.pot_a), u128.fromU64(b.sum_w), n * u128.fromU64(wk.sum_w)).toU64();
+    let reward: u64 = 0;
+    const aw = new u128(wk.aw_lo, wk.aw_hi);
+    if (wk.reward_rule) {
+      // v5 basket A (by rank x stake up to 10 VHP): pot_a x (rank weight / players x capped stake) / the same over all winners.
+      if (!aw.isZero()) {
+        const capped = e.stake < V5_CAP_A ? e.stake : V5_CAP_A;
+        reward = u128.muldiv(u128.fromU64(wk.pot_a), u128.muldiv(u128.fromU64(b.sum_w), u128.fromU64(capped), n), aw).toU64();
+      }
+    } else {
+      reward = u128.muldiv(u128.fromU64(wk.pot_a), u128.fromU64(b.sum_w), n * u128.fromU64(wk.sum_w)).toU64();
+    }
     const bw = new u128(wk.bw_lo, wk.bw_hi);
     if (!bw.isZero()) {
       const mine = u128.muldiv(u128.fromU64(b.sum_w), u128.fromU64(e.stake), n);
@@ -684,8 +720,9 @@ export class Kpred {
       housePpm = u128.muldiv(ah, u128.fromU64(1_000_000), ap + ah).toU64();
     }
     const houseNet = u128.muldiv(u128.fromU64(net), u128.fromU64(housePpm), u128.fromU64(1_000_000)).toU64() + carried;
-    const potA = bps(houseNet, BASKET_A_BPS);
     const pot = gain - fee;
+    const v5 = this.rewardRule(c, week);
+    const potA = v5 ? bps(pot, V5_BASKET_A_BPS) : bps(houseNet, BASKET_A_BPS);
     const retained: u64 = 0;                          // the owner share is retired
     t.acc_player_lo = 0; t.acc_player_hi = 0; t.acc_house_lo = 0; t.acc_house_hi = 0;
     t.rolled_over = 0;
@@ -702,6 +739,7 @@ export class Kpred {
     wk.pot_a = potA;
     wk.pot_b = pot - potA;
     wk.house_ppm = housePpm;
+    wk.reward_rule = v5;
     wk.settle_start = h;
     wk.settle_end = h + c.settle_length;
     this.weeks.put(wkKey, wk);
@@ -751,11 +789,14 @@ export class Kpred {
       wk.sum_w = 0;
       wk.bw_lo = 0;
       wk.bw_hi = 0;
+      wk.aw_lo = 0;
+      wk.aw_hi = 0;
     }
     // Give each winning score group its places' rank weights (players tied share their places evenly).
     const cutoff = wk.cutoff;
     let budget = finalizePage;
     let bw = new u128(wk.bw_lo, wk.bw_hi);
+    let aw = new u128(wk.aw_lo, wk.aw_hi);
     while (cutoff >= 1 && wk.fin_points >= cutoff && budget > 0) {
       const bk = this.bucketKey(week, wk.fin_points);
       const b = this.buckets.get(bk)!;
@@ -771,6 +812,7 @@ export class Kpred {
         this.buckets.put(bk, b);
         wk.sum_w += wk.fin_gw;
         bw = bw + u128.muldiv(u128.fromU64(wk.fin_gw), u128.fromU64(b.stake), u128.fromU64(<u64>b.players));
+        aw = aw + u128.muldiv(u128.fromU64(wk.fin_gw), u128.fromU64(b.capped), u128.fromU64(<u64>b.players));
         wk.winners += b.players;
       }
       wk.fin_points -= 1;
@@ -779,6 +821,8 @@ export class Kpred {
     }
     wk.bw_lo = bw.lo;
     wk.bw_hi = bw.hi;
+    wk.aw_lo = aw.lo;
+    wk.aw_hi = aw.hi;
     const done = cutoff < 1 || wk.fin_points < cutoff;
     if (done) {
       wk.finalized = true;
@@ -786,6 +830,7 @@ export class Kpred {
       tf.weeks_finalized += 1;
       this.totals.put(tf);
       if (wk.winners > 0 && bw.isZero()) { wk.pot_a += wk.pot_b; wk.pot_b = 0; }   // only if every winner had 0 stake (not possible from v4)
+      if (wk.reward_rule && wk.winners > 0 && aw.isZero()) { wk.pot_b += wk.pot_a; wk.pot_a = 0; }   // likewise (not possible: winners hold >= 1 VHP)
       if (wk.winners == 0) {
         // Nobody scored: the pot goes back into the pool and is paid out with the next week's (without a second fee).
         wk.rolled_over = true;
@@ -952,11 +997,13 @@ export class Kpred {
         "the previous change still decides week " + wf.toString() + "'s results: try again after that week is finalized");
       c.min_stake = c.min_stake_next;
     }
+    // v5 (audit M-4): at least one timelock (48 h) of notice. Too close to the next week: from the week after it.
+    const from = this.weekEnd(c, cur) - this.now() >= c.timelock_length ? cur + 1 : cur + 2;
     c.min_stake_next = args.min_stake;
-    c.min_stake_next_week = cur + 1;                // never the current week
+    c.min_stake_next_week = from;                   // never the current week
     this.config.put(c);
     const r = new kpred.set_min_stake_result();
-    r.from_week = cur + 1;
+    r.from_week = from;
     return r;
   }
 
@@ -997,7 +1044,34 @@ export class Kpred {
     c.pending_owner = null;
     c.pending_owner_height = 0;
     this.config.put(c);
+    // v5: an upgrade announced by the previous owner does not survive the handover; the new owner announces their own.
+    this.upgrade.put(new kpred.timelock_object());
     return new kpred.accept_owner_result();
+  }
+
+  /** v5: the seed can change hands in two steps, like ownership. The seed owner proposes; the new one accepts a day
+   *  later. A seed withdrawal requested by the previous seed owner is cancelled. */
+  propose_seed_owner(args: kpred.propose_seed_owner_arguments): kpred.propose_seed_owner_result {
+    const c = this.cfg();
+    System.requireAuthority(authority.authorization_type.contract_call, c.seed_owner!);
+    System.require(isAddress(args.new_seed_owner), "address required");
+    c.pending_seed_owner = args.new_seed_owner;
+    c.pending_seed_owner_height = this.height();
+    this.config.put(c);
+    return new kpred.propose_seed_owner_result();
+  }
+  accept_seed_owner(args: kpred.accept_seed_owner_arguments): kpred.accept_seed_owner_result {
+    const c = this.cfg();
+    System.require(isAddress(c.pending_seed_owner), "no seed owner change proposed");
+    System.requireAuthority(authority.authorization_type.contract_call, c.pending_seed_owner!);
+    System.require(c.pending_seed_owner_height > 0 && this.height() >= c.pending_seed_owner_height + OWNER_ACCEPT_DELAY,
+      "the seed can be accepted only 28,800 blocks (about a day) after it was proposed");
+    c.seed_owner = c.pending_seed_owner;
+    c.pending_seed_owner = null;
+    c.pending_seed_owner_height = 0;
+    this.config.put(c);
+    this.seedWd.put(new kpred.timelock_object());
+    return new kpred.accept_seed_owner_result();
   }
 
   register_key(args: kpred.register_key_arguments): kpred.register_key_result {
@@ -1153,6 +1227,7 @@ export class Kpred {
     if (rcLimit > c.max_sponsor_rc || rcLimit < this.minSponsorRc(c) || rcLimit == 0) return false;
     const ops = txOps();
     if (ops.length != 1) return false;
+    if (txSignatureCount() > 1) return false;           // v5 (M-3): no padding with extra signatures
     const op = ops[0];
     if (op.call_contract == null) return false;
     const cc = op.call_contract!;

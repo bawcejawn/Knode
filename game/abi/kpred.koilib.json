@@ -161,6 +161,20 @@
       "read_only": false,
       "description": "Step 2: the proposed owner accepts, at least 28,800 blocks (about a day) after step 1."
     },
+    "propose_seed_owner": {
+      "entry_point": 3381904782,
+      "argument": "kpred.propose_seed_owner_arguments",
+      "return": "kpred.propose_seed_owner_result",
+      "read_only": false,
+      "description": "Step 1 of handing over the seed (seed owner only). The new seed owner must accept. (v5)"
+    },
+    "accept_seed_owner": {
+      "entry_point": 2146087014,
+      "argument": "kpred.accept_seed_owner_arguments",
+      "return": "kpred.accept_seed_owner_result",
+      "read_only": false,
+      "description": "Step 2: the proposed seed owner accepts, at least 28,800 blocks (about a day) after step 1. (v5)"
+    },
     "register_key": {
       "entry_point": 2765249345,
       "argument": "kpred.register_key_arguments",
@@ -357,6 +371,27 @@
               "scorer_rule_week_plus_one": {
                 "type": "uint64",
                 "id": 17,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pending_seed_owner": {
+                "type": "bytes",
+                "id": 18,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "pending_seed_owner_height": {
+                "type": "uint64",
+                "id": 19,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "reward_rule_week_plus_one": {
+                "type": "uint64",
+                "id": 20,
                 "options": {
                   "jstype": "JS_STRING"
                 }
@@ -831,6 +866,24 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "aw_hi": {
+                "type": "uint64",
+                "id": 33,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "aw_lo": {
+                "type": "uint64",
+                "id": 34,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "reward_rule": {
+                "type": "bool",
+                "id": 35
               }
             }
           },
@@ -850,6 +903,13 @@
               "sum_w": {
                 "type": "uint64",
                 "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "capped": {
+                "type": "uint64",
+                "id": 4,
                 "options": {
                   "jstype": "JS_STRING"
                 }
@@ -1516,6 +1576,26 @@
             "fields": {}
           },
           "accept_owner_result": {
+            "fields": {}
+          },
+          "propose_seed_owner_arguments": {
+            "fields": {
+              "new_seed_owner": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "propose_seed_owner_result": {
+            "fields": {}
+          },
+          "accept_seed_owner_arguments": {
+            "fields": {}
+          },
+          "accept_seed_owner_result": {
             "fields": {}
           },
           "register_key_arguments": {

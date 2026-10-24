@@ -26,6 +26,9 @@ message config_object {
   uint64 pending_owner_height = 15 [jstype = JS_STRING];// block height of propose_owner; accept_owner waits a day after it
   uint64 min_sponsor_rc = 16 [jstype = JS_STRING];      // smallest rc_limit the contract will pay for; 0 = half of max_sponsor_rc
   uint64 scorer_rule_week_plus_one = 17 [jstype = JS_STRING]; // first week (+1) whose winners are the top 30% of players WITH POINTS; 0 = not set yet
+  bytes pending_seed_owner = 18 [(koinos.btype) = ADDRESS];   // v5: a proposed new seed owner
+  uint64 pending_seed_owner_height = 19 [jstype = JS_STRING]; // v5: block height of propose_seed_owner; accept waits a day
+  uint64 reward_rule_week_plus_one = 20 [jstype = JS_STRING]; // v5: first week (+1) paid 40% by rank x capped stake / 60% by rank x stake; 0 = not set yet
 }
 
 message totals_object {
@@ -122,12 +125,16 @@ message week_object {
   uint64 fin_rank = 30 [jstype = JS_STRING];          // next place (rank) to give out
   uint64 fin_gw = 31 [jstype = JS_STRING];            // rank weight given to that group so far
   uint64 last_result_time = 32 [jstype = JS_STRING];  // time (ms) of the latest first result (a resolution, or the owner voiding an open question); changes to posted results end 2 x close_delay after max(week end, this)
+  uint64 aw_hi = 33 [jstype = JS_STRING];             // v5: sum of rank weight x capped stake over winners (128-bit)
+  uint64 aw_lo = 34 [jstype = JS_STRING];
+  bool reward_rule = 35;                              // v5: this week is paid by the v5 rule (set when it closes)
 }
 
 message bucket_object {
   uint64 stake = 1 [jstype = JS_STRING];
   uint32 players = 2;
   uint64 sum_w = 3 [jstype = JS_STRING];              // sum of the rank weights of the places this score group holds
+  uint64 capped = 4 [jstype = JS_STRING];             // v5: sum of each player's stake counted up to 10 VHP (basket A)
 }
 
 message timelock_object {
@@ -391,6 +398,20 @@ message propose_owner_result {}
 message accept_owner_arguments {}
 
 message accept_owner_result {}
+
+// @description Step 1 of handing over the seed (seed owner only). The new seed owner must accept. (v5)
+// @read-only false
+message propose_seed_owner_arguments {
+  bytes new_seed_owner = 1 [(koinos.btype) = ADDRESS];
+}
+
+message propose_seed_owner_result {}
+
+// @description Step 2: the proposed seed owner accepts, at least 28,800 blocks (about a day) after step 1. (v5)
+// @read-only false
+message accept_seed_owner_arguments {}
+
+message accept_seed_owner_result {}
 
 // @description Register the block-producer key for this contract's node (owner only).
 // @read-only false
