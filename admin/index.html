@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Knode Admin</title>
+<style>
+  :root { --bg: #f6f7f9; --panel: #fff; --ink: #14181f; --muted: #5b6573; --line: #dde1e7; --accent: #2457d6; --ok: #127a43; --warn: #a35a00; --bad: #b42318; --code: #0f1420; --codeink: #dfe6f2; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0f1218; --panel: #171b23; --ink: #e8ecf2; --muted: #9aa5b4; --line: #2a303b; --accent: #7aa2ff; --ok: #4cc38a; --warn: #f0a540; --bad: #ff7b72; --code: #0a0d12; --codeink: #d6deea; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { padding: 20px 24px 8px; max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0; }
+  .banner { margin: 12px 0 0; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); }
+  .banner.bad { border-color: var(--bad); color: var(--bad); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; padding: 16px 24px 40px; max-width: 1200px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  nav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  nav button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 6px 12px; border-radius: 999px; cursor: pointer; font: inherit; }
+  nav button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+  .card h3 { margin: 0 0 2px; font-size: 16px; }
+  .card p { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+  label { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); flex: 1 1 160px; }
+  input, select { font: inherit; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  .btn { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.send { border-color: var(--bad); background: var(--bad); color: #fff; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .tag { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); margin-left: 6px; vertical-align: 2px; }
+  .out { position: sticky; top: 12px; }
+  .out .card { padding: 0; overflow: hidden; }
+  .out .head { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .out .cmd { font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--muted); word-break: break-all; }
+  pre { margin: 0; padding: 14px; background: var(--code); color: var(--codeink); font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; min-height: 360px; max-height: 75vh; overflow: auto; }
+  .status-ok { color: var(--ok); } .status-bad { color: var(--bad); } .status-run { color: var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Knode Admin</h1>
+  <p class="sub">Runs on this computer only. Every button runs the same command you would type; anything that sends is previewed first.</p>
+  <div id="banner" class="banner" hidden></div>
+</header>
+<main>
+  <section>
+    <nav id="tabs" aria-label="Sections"></nav>
+    <div id="cards"></div>
+  </section>
+  <section class="out" aria-live="polite">
+    <div class="card">
+      <div class="head"><span id="state">Ready.</span><button class="btn" id="clear" type="button">Clear</button></div>
+      <div class="head"><span class="cmd" id="cmd">Pick an action on the left.</span></div>
+      <pre id="output"></pre>
+    </div>
+  </section>
+</main>
+<script>
+(() => {
+  // The one-time key comes in the link's #fragment (never sent to any server, never in history after this).
+  const KEY = location.hash.slice(1);
+  history.replaceState(null, "", location.pathname);
+  const $ = (s) => document.querySelector(s);
+  const el = (tag, attrs = {}, ...kids) => {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) { if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : String(v)); }
+    for (const k of kids) e.append(k);
+    return e;
+  };
+  const banner = (text, bad) => { const b = $("#banner"); b.hidden = !text; b.textContent = text || ""; b.className = "banner" + (bad ? " bad" : ""); };
+  const api = async (path, body) => {
+    const r = await fetch(path, { method: body ? "POST" : "GET", headers: { "x-admin-key": KEY, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    return j;
+  };
+  let running = false;
+  const show = (state, cls, cmd, out) => { $("#state").textContent = state; $("#state").className = cls; if (cmd !== undefined) $("#cmd").textContent = cmd; if (out !== undefined) $("#output").textContent = out; };
+  $("#clear").addEventListener("click", () => show("Ready.", "", "Pick an action on the left.", ""));
+
+  function card(a) {
+    const inputs = (a.params || []).map((p) => {
+      const input = p.choices ? el("select", { name: p.name }, ...p.choices.map((c) => el("option", { value: c }, c))) : el("input", { name: p.name, placeholder: p.hint, autocomplete: "off", spellcheck: "false" });
+      return el("label", {}, p.label, input);
+    });
+    const values = () => Object.fromEntries(inputs.map((l) => { const i = l.querySelector("input,select"); return [i.name, i.value.trim()]; }));
+    const preview = el("button", { class: "btn primary", type: "button" }, a.sends ? "Preview (dry run)" : "Run");
+    const sendBtn = a.sends ? el("button", { class: "btn send", type: "button", disabled: true }, "Send for real") : null;
+    let previewed = "";
+    for (const l of inputs) l.querySelector("input,select").addEventListener("input", () => { if (sendBtn) { sendBtn.disabled = true; previewed = ""; } });
+    const go = async (doSend) => {
+      if (running) return;
+      const v = values();
+      if (doSend && JSON.stringify(v) !== previewed) return banner("The values changed since the preview: preview again.", true);
+      if (doSend && !confirm(`Send “${a.label}” to the chain for real?\n\nThis signs with the key in your .env file.`)) return;
+      running = true; banner("");
+      show(doSend ? "Sending…" : "Running…", "status-run", "", "");
+      try {
+        const r = await api("/api/run", { action: a.id, values: v, send: doSend });
+        show(r.code === 0 ? (doSend ? "Sent. Read the result below." : a.sends ? "Preview done: nothing was sent. Check it, then Send." : "Done.") : "Finished with an error.", r.code === 0 ? "status-ok" : "status-bad", r.command, r.output || "(no output)");
+        if (sendBtn) { sendBtn.disabled = !(r.previewed); previewed = r.previewed ? JSON.stringify(v) : ""; }
+      } catch (e) { show("Not run.", "status-bad", "", String(e.message || e)); }
+      finally { running = false; }
+    };
+    preview.addEventListener("click", () => go(false));
+    if (sendBtn) sendBtn.addEventListener("click", () => go(true));
+    return el("div", { class: "card" },
+      el("h3", {}, a.label, a.sends ? el("span", { class: "tag" }, "sends") : el("span", { class: "tag" }, "read-only")),
+      el("p", {}, a.help),
+      el("div", { class: "row" }, ...inputs, preview, ...(sendBtn ? [sendBtn] : [])));
+  }
+
+  (async () => {
+    if (!KEY) return banner("Open the link printed in the terminal window (it carries this session's key).", true);
+    let actions;
+    try { actions = await api("/api/actions"); } catch (e) { return banner(String(e.message || e), true); }
+    const groups = [...new Set(actions.map((a) => a.group))];
+    const pick = (g) => {
+      for (const b of $("#tabs").children) b.setAttribute("aria-pressed", String(b.dataset.g === g));
+      $("#cards").replaceChildren(...actions.filter((a) => a.group === g).map(card));
+    };
+    for (const g of groups) { const b = el("button", { type: "button", "aria-pressed": "false" }, g); b.dataset.g = g; b.addEventListener("click", () => pick(g)); $("#tabs").append(b); }
+    pick(groups[0]);
+  })();
+})();
+</script>
+</body>
+</html>

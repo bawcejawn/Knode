@@ -2,7 +2,7 @@
   "name": "kprediction",
   "version": "1.0.0",
   "license": "UNLICENSED",
-  "description": "Kprediction: weekly Koinos block-producer prediction game — analysis tools, question generator and operator bot",
+  "description": "Kprediction: weekly Koinos block-producer prediction game \u2014 analysis tools, question generator and operator bot",
   "type": "module",
   "private": true,
   "scripts": {
@@ -12,7 +12,8 @@
     "bot": "tsx bot/bot.ts",
     "test:resolver": "node --import tsx --test resolver.test.ts",
     "test:audit": "node --import tsx --test tests/audit/*.test.ts tests/audit/*.test.mjs",
-    "desk": "tsx bot/desk.ts"
+    "desk": "tsx bot/desk.ts",
+    "admin": "tsx admin/server.ts"
   },
   "dependencies": {
     "koilib": "9.4.1"
