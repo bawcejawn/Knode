@@ -11,11 +11,14 @@
  *   npm run bot -- admin <method> '<json>' --as owner|seed|operator [--send]
  *                                             one owner / seed-owner action (dry run unless --send)
  *   npm run bot -- rehearse [--weeks 3]       run whole weeks on a simulated chain built from real block history
+ *   npm run bot -- chain-check                read-only: code fingerprints, switches, owners, chain id
+ *   npm run bot -- verify-results [--days 3]  on your PC: recount posted results from YOUR OWN node (127.0.0.1 only)
  *
  * Keys come only from the environment (.env on your PC, or GitHub secrets for the scheduled bot):
  *   OPERATOR_WIF   the bot's key: posts and resolves questions, pays for its own transactions. It cannot move funds.
  *   CONTRACT_WIF   the contract's own key — only for `deploy` (keep it offline afterwards)
  *   OWNER_WIF / SEED_WIF   only for `admin` on your PC — never put these in GitHub
+ *   NEW_OWNER_WIF  only while a new owner / seed owner accepts a handover (--as new); remove it afterwards
  *
  * Public data lives in game-data/ and is committed to the repo so anyone can check every question:
  *   deployment.json   contract address, settings, block heights        questions/W003-D2.json   one day's questions
@@ -1267,6 +1270,91 @@ async function upgrade(sub: string | undefined, send: boolean, botPays = false) 
 
 /** Read-only checks of both contracts on chain (audit 2026-10 Section 10): code fingerprints, the three authorize
  *  switches, announced changes, roles. Nothing is signed. Exits with an error if anything is unexpected. */
+/**
+ * verify-results — on YOUR PC, against YOUR OWN node: recount every posted result from your node's blocks and compare
+ * with what the contract recorded. Read-only and local: it only reads from a node on this computer (127.0.0.1), opens
+ * no port and sends nothing. It finds the node by itself (or: --rpc http://127.0.0.1:<port>).
+ *
+ *   npm run bot -- verify-results [--days 3] [--rpc http://127.0.0.1:8080]
+ *
+ * Run `git pull` first so the question files are current. Exit code 1 (and VERIFY-ALERT lines in verify-results.log)
+ * when a posted result disagrees with your node's blocks.
+ */
+const LOCAL_PORTS = [8080, 8081, 8082, 8083, 8100, 8101, 8102, 8200, 8090, 8000];
+const withTimeout = <T,>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+
+async function findLocalNode(expectChainId: string | null): Promise<{ rpc: string; lib: number; headId: string } | null> {
+  const found: Array<{ rpc: string; lib: number; headId: string }> = [];
+  const candidates = [...new Set([E.NODE_RPC, ...LOCAL_PORTS.map((p) => `http://127.0.0.1:${p}`)].filter(Boolean) as string[])]
+    .filter((u) => /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(u));   // this computer only
+  await Promise.all(candidates.map(async (rpc) => {
+    try {
+      const pr = new Provider([rpc]);
+      const head: any = await withTimeout(pr.getHeadInfo(), 3000);
+      const id = await withTimeout(pr.getChainId(), 3000);
+      if (expectChainId && id !== expectChainId) { log(`  ${rpc}: a Koinos node, but not mainnet (chain ${id}); skipped`); return; }
+      found.push({ rpc, lib: Number(head.last_irreversible_block), headId: head.head_topology.id });
+    } catch { /* nothing on that port */ }
+  }));
+  found.sort((a, b) => b.lib - a.lib);
+  return found[0] ?? null;
+}
+
+async function verifyResults(days: number, rpcArg?: string) {
+  const P = paths(E.GEN_DIR ?? "game-data");
+  const dep = readJson(P.deployment, null);
+  if (!dep?.contract) throw new Error(`${P.deployment} not found.`);
+  // Which chain is mainnet: deployment.json's pinned id, else the public node's (one read), else the known value.
+  let expect: string | null = dep.chainId ?? null;
+  if (!expect) { try { expect = await withTimeout(new Provider([dep.rpc ?? "https://api.koinos.io"]).getChainId(), 5000); } catch { expect = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA=="; } }
+  let node: { rpc: string; lib: number; headId: string } | null;
+  if (rpcArg) {
+    if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(rpcArg)) throw new Error("--rpc must be a node on this computer (http://127.0.0.1:<port>).");
+    const pr = new Provider([rpcArg]);
+    const head: any = await withTimeout(pr.getHeadInfo(), 5000);
+    if ((await pr.getChainId()) !== expect) throw new Error(`${rpcArg} is not a mainnet node.`);
+    node = { rpc: rpcArg, lib: Number(head.last_irreversible_block), headId: head.head_topology.id };
+  } else {
+    log("Looking for a Koinos node on this computer (127.0.0.1) ...");
+    node = await findLocalNode(expect);
+    if (!node) throw new Error(`No mainnet node answered on this computer (ports ${LOCAL_PORTS.join(", ")}). Is Docker running? If your node uses another port, add --rpc http://127.0.0.1:<port>.`);
+  }
+  const pubLib = await withTimeout(new Provider([dep.rpc ?? "https://api.koinos.io"]).getHeadInfo(), 5000).then((h: any) => Number(h.last_irreversible_block)).catch(() => 0);
+  log(`Using your node at ${node.rpc} (final block ${node.lib.toLocaleString()})${pubLib && pubLib - node.lib > 200 ? ` — it is ${(pubLib - node.lib).toLocaleString()} blocks behind the network, so the newest windows are skipped` : ""}.\n`);
+  const provider = new Provider([node.rpc]);
+  const local = new KoinosChain(node.rpc, dep.contract);   // the contract's records, read through YOUR node too
+  const since = Date.now() - days * DAY_MS;
+  let checked = 0, pending = 0, bad = 0;
+  const lines: string[] = [];
+  for (const { data } of dayFiles(P)) for (const q of data.questions ?? []) {
+    if (q.chainId === undefined || !q.windowEnd) continue;
+    if (data.date && Date.parse(data.date) < since - DAY_MS) continue;
+    if (q.windowEnd > node.lib) { pending++; continue; }
+    const oc = (await local.read("get_question", { id: q.chainId })).question ?? {};
+    const outcome = num(oc.outcome);
+    if (outcome === 0) { pending++; continue; }
+    const blocks = await fetchRange(provider, node.headId, q.windowStart, q.windowEnd);
+    const sc = scoreQuestion(q, blocks, { vhpReadings: q.vhpReadings ?? [] });
+    if (!sc.ok) { lines.push(`?  ${q.id} (#${q.chainId}): could not recount (${sc.reason})`); continue; }
+    checked++;
+    const mine = storedOutcome(sc.result), hashOk = String(oc.data_hash ?? "").replace(/^0x/, "").toLowerCase() === sc.result.dataHash;
+    const show = (o: number) => (o === 1000 ? "void" : `option ${String.fromCharCode(64 + o)}`);
+    if (mine === outcome && hashOk) lines.push(`✔  ${q.id} (#${q.chainId}): ${show(outcome)} — matches your node's blocks`);
+    else {
+      bad++;
+      lines.push(`VERIFY-ALERT ✖ ${q.id} (#${q.chainId}): the contract says ${show(outcome)}, your node's blocks say ${show(mine)}${hashOk ? "" : " (and the blocks used differ)"}.`);
+    }
+  }
+  for (const l of lines) log(l);
+  log(`\n${checked} result(s) checked against your node, ${bad} disagree, ${pending} not final yet.`);
+  try { fs.appendFileSync("verify-results.log", `${new Date().toISOString()} node ${node.rpc}: ${checked} checked, ${bad} disagree\n${lines.filter((l) => l.startsWith("VERIFY-ALERT")).map((l) => l + "\n").join("")}`); } catch {}
+  if (bad) {
+    log(`\n✖ Something disagrees. Results can still be corrected for about 21 hours after the week ends (after the October upgrade).`);
+    log(`  Check the bot's latest run first (GitHub → Actions), then, to void a wrong result: npm run bot -- void <#> --send`);
+    process.exitCode = 1;
+  }
+}
+
 async function chainCheck() {
   const P = paths(E.GEN_DIR ?? "game-data");
   const dep = readJson(P.deployment, null), deskDep = readJson(path.join("desk-data", "deployment.json"), null);
@@ -1665,6 +1753,7 @@ async function main() {
   }
   if (cmd === "upgrade") return upgrade(rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined, flag("--send"), flag("--bot-pays"));
   if (cmd === "chain-check") return chainCheck();
+  if (cmd === "verify-results") return verifyResults(Number(opt("--days", "3")), opt("--rpc"));
   if (await friendly(cmd, rest, flag("--send"))) return;
   if (cmd === "rehearse") { const { rehearse } = await import("./rehearse.ts"); return rehearse({ weeks: Number(opt("--weeks", "3")), verbose: flag("--verbose") }); }
   throw new Error(`Unknown command "${cmd}". See bot/README.md for the list of commands.`);

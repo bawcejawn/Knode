@@ -7,3 +7,4 @@ rehearsal-data/
 .env.testnet
 testnet-data/
 game/kpred.pb
+verify-results.log
