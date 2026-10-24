@@ -130,8 +130,8 @@ const require = createRequire(import.meta.url);
  *  the real chain) against a database that is rolled back when the call fails. */
 export class SimChain implements Chain {
   readonly kind = "sim" as const;
-  readonly abi = loadAbi();
-  private ser = new Serializer(this.abi.koilib_types);
+  readonly abi: any;
+  private ser: Serializer;
   private vm: any;
   private koinos: any;
   private module!: WebAssembly.Module;
@@ -141,7 +141,10 @@ export class SimChain implements Chain {
   failures: Array<{ method: string; error: string }> = [];
   calls = 0;
 
-  constructor(readonly contractId: string, private wasmFile: string) {
+  /** `abi`: the game's by default; the Desk's for the Desk's compatibility test. */
+  constructor(readonly contractId: string, private wasmFile: string, abi: any = loadAbi()) {
+    this.abi = abi;
+    this.ser = new Serializer(abi.koilib_types);
     const { MockVM } = require("@koinos/mock-vm");
     this.K = require("@koinos/mock-vm/src/constants");
     this.koinos = require("@koinos/proto-js").koinos;
@@ -267,12 +270,21 @@ export class SimChain implements Chain {
   async ledgerGet(tag: number, who: string): Promise<bigint> {
     const o = this.vm.db.getObject(this.space(), this.ledgerKey(tag, who));
     if (!o) return 0n;
-    const v: any = await this.ser.deserialize(o.value, "kpred.bucket_object");
-    return BigInt(v.stake ?? 0);
+    // The test ledger's record is { uint64 amount = 1 } in both contracts: read field 1 (a varint) directly.
+    const b: Uint8Array = o.value;
+    let i = 0, out = 0n;
+    while (i < b.length) {
+      const key = b[i++];
+      let v = 0n, shift = 0n, byte: number;
+      do { byte = b[i++]; v |= BigInt(byte & 0x7f) << shift; shift += 7n; } while (byte & 0x80);
+      if (key === 0x08) out = v;
+    }
+    return out;
   }
   async ledgerSet(tag: number, who: string, amount: bigint) {
-    const bytes = await this.ser.serialize({ stake: amount.toString(), players: 0 }, "kpred.bucket_object");
-    this.vm.db.putObject(this.space(), this.ledgerKey(tag, who), bytes);
+    const bytes: number[] = [];
+    if (amount > 0n) { bytes.push(0x08); let v = amount; do { let x = Number(v & 0x7fn); v >>= 7n; if (v) x |= 0x80; bytes.push(x); } while (v); }
+    this.vm.db.putObject(this.space(), this.ledgerKey(tag, who), new Uint8Array(bytes));
     this.vm.db.commitTransaction();
   }
   async ledgerAdd(tag: number, who: string, amount: bigint) {

@@ -3,9 +3,9 @@ name: Desk contract tests
 
 on:
   push:
-    paths: ["desk/**", ".github/workflows/desk-test.yml"]
+    paths: ["desk/**", "bot/chain.ts", ".github/workflows/desk-test.yml"]
   pull_request:
-    paths: ["desk/**", ".github/workflows/desk-test.yml"]
+    paths: ["desk/**", "bot/chain.ts", ".github/workflows/desk-test.yml"]
   workflow_dispatch: {}
 
 permissions:
@@ -38,6 +38,12 @@ jobs:
         if: failure()
         run: |
           sed 's/\x1b\[[0-9;]*m//g' test.log | grep -E "❌|\[Actual\]|\[Expected\]|ERROR|Error|error|Tests\]" | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+      # The upgraded code must read everything the live desk stored, exactly as it was written.
+      - name: Upgrade compatibility with the live desk's data
+        run: |
+          npm run build:sim
+          cd .. && npm ci --no-audit --no-fund --ignore-scripts
+          node --import tsx --test desk/scripts/storage-compat.test.ts
       - name: npm run check
         run: |
           set -o pipefail

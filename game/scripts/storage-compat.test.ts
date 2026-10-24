@@ -38,7 +38,9 @@ const addr = (s: Signer) => s.getAddress();
 
 /** New fields of v4: absent in old reads, their defaults in new ones. */
 const NEW_FIELDS = new Set(["min_stake_next", "min_stake_next_week", "pending_owner_height", "min_sponsor_rc", "scorer_rule_week_plus_one",
-  "last_resolved_time", "fin_started", "fin_points", "fin_index", "fin_rank", "fin_gw", "done"]);
+  "last_resolved_time", "fin_started", "fin_points", "fin_index", "fin_rank", "fin_gw", "done",
+  // v5
+  "pending_seed_owner", "pending_seed_owner_height", "reward_rule_week_plus_one", "aw_hi", "aw_lo", "reward_rule", "capped"]);
 const isDefault = (v: any) => v === undefined || v === null || v === false || v === 0 || v === "0" || v === "";
 
 /** Every value in `before` must be in `after` unchanged; anything only in `after` must be a new field at its default
@@ -147,6 +149,7 @@ test("the new contract reads the live contract's stored data unchanged and keeps
   await resolve(4, 0);
   // The first write under the new code starts the new winners' rule with the week after the running one (week 1 + 1).
   assert.equal((await sim.read("get_state", {})).config.scorer_rule_week_plus_one, "3");
+  assert.equal((await sim.read("get_state", {})).config.reward_rule_week_plus_one, "3");   // v5 split from week 2
   at(GENESIS + 2 * WEEK + 12 * HOUR);
   await ok([["close_week", { week: "1" }]], []);
   for (const p of [A, B, D]) await ok([["settle", { player: addr(p), week: "1" }]], []);
@@ -226,7 +229,7 @@ for (const point of POINTS) {
     assert.equal(await sim.uploadAuthorized(NEW, [addr(operator)]), false, "operator alone may not upload");
     assert.equal(await sim.uploadAuthorized(NEW, [addr(owner)], { call: true, tx: true, upload: false }), false, "a switch off is refused");
     assert.equal(await sim.uploadAuthorized(NEW, [addr(owner)]), true, "owner-authorized upload of the announced code");
-    sameAsBefore(before, { state: await sim.read("get_state", {}), week: await sim.read("get_week", { week: "0" }) }, "view", new Set(["scorer_rule_week_plus_one"]));
+    sameAsBefore(before, { state: await sim.read("get_state", {}), week: await sim.read("get_week", { week: "0" }) }, "view", new Set(["scorer_rule_week_plus_one", "reward_rule_week_plus_one"]));
 
     // the new code finishes the week
     if (point === "week ended, not closed") { await close(); await settle(players); }
