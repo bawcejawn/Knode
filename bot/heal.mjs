@@ -6,7 +6,9 @@
  *     or that doesn't answer at two checks in a row, is frozen → it does a full restart (docker compose down, then up -d);
  *   - a node that is behind but moving is catching up → it's left alone;
  *   - after a restart it waits at least 50 minutes before restarting the same node again;
- *   - if 3 restarts in 6 hours haven't fixed a node, it stops restarting it and emails you to check by hand.
+ *   - if 3 restarts in 6 hours haven't fixed a node, it stops restarting it and emails you to check by hand;
+ *   - if a node's block store keeps crashing (3+ starts in 20 minutes, the desk's problem on 2026-10-23), it emails
+ *     you instead of restarting: a restart doesn't cure that, the data needs repairing (node\repair-desk-data.ps1).
  * Every restart (and every problem it can't fix) emails you through GitHub: it starts the "Heal alert" workflow,
  * which fails on purpose, and GitHub emails you about the failed run. That needs GITHUB_ALERT_TOKEN in .env.
  *
@@ -81,6 +83,23 @@ function docker(args, cwd) {
   return execFileSync("docker", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 180_000, windowsHide: true });
 }
 
+// How many times the node's block store started in the last `ms` (read from its own log file). Docker restarts a
+// crashed block store by itself within seconds, so a crash loop shows up here even when the height looks fine.
+function blockStoreStarts(dir, ms) {
+  try {
+    const env = fs.readFileSync(path.join(dir, ".env"), "utf8");
+    const base = (env.match(/^\s*BASEDIR\s*=\s*(.+?)\s*$/m) || [])[1];
+    if (!base) return 0;
+    const f = path.join(base.replace(/\//g, path.sep), "block_store", "logs", "block_store.log");
+    const size = fs.statSync(f).size, len = Math.min(size, 400_000);
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(f, "r"); fs.readSync(fd, buf, 0, len, size - len); fs.closeSync(fd);
+    const since = Date.now() - ms;
+    return buf.toString("utf8").split("\n").filter((l) => l.includes("Koinos Block Store v"))
+      .map((l) => Date.parse(l.slice(0, 19).replace(" ", "T") + "Z")).filter((t) => t >= since).length;
+  } catch { return 0; }
+}
+
 async function alert(node, detail) {
   const token = process.env.GITHUB_ALERT_TOKEN;
   if (DRY) { log(`(dry run) would email: [${node}] ${detail}`); return; }
@@ -122,6 +141,16 @@ async function main() {
     if (!fs.existsSync(n.dir)) continue;
     const s = (st.nodes[n.name] ??= { heals: [] });
     s.heals = (s.heals || []).filter((t) => now - t < WINDOW_MS);
+    const starts = blockStoreStarts(n.dir, 20 * 60_000);
+    if (starts >= 3) {
+      log(`${n.name}: its block store started ${starts} times in the last 20 minutes (crash loop). Not restarting: that doesn't fix it.`);
+      if (!s.loopAlert || now - s.loopAlert > NAG_MS) {
+        await alert(n.name, `The block store keeps crashing (${starts} starts in 20 minutes), so the node freezes again and again. A restart doesn't fix this; its data needs repairing. Ask Claude, or for the desk node run: powershell -ExecutionPolicy Bypass -File node\\repair-desk-data.ps1`);
+        s.loopAlert = now;
+      }
+      continue;
+    }
+    s.loopAlert = 0;
     let local = null, why = "";
     try { local = await height(n.rpc); } catch (e) { why = `doesn't answer on ${n.rpc} (${e.message})`; }
     const behind = local === null ? null : net - local;
