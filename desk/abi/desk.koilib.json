@@ -61,7 +61,7 @@
       "argument": "desk.set_fee_arguments",
       "return": "desk.set_fee_result",
       "read_only": false,
-      "description": "Set the fee in basis points, at most 1000 = 10% (owner only)."
+      "description": "Set the fee in basis points, at most 1000 = 10% (owner only). A higher fee applies at once; a lower one waits for the timelock and apply_settings (v2)."
     },
     "set_limits": {
       "entry_point": 148863102,
@@ -69,6 +69,48 @@
       "return": "desk.set_limits_result",
       "read_only": false,
       "description": "Set the smallest and largest single swap in VHP units; max 0 = no fixed cap (owner only)."
+    },
+    "set_daily_cap": {
+      "entry_point": 1975928371,
+      "argument": "desk.set_daily_cap_arguments",
+      "return": "desk.set_daily_cap_result",
+      "read_only": false,
+      "description": "Set the most KOIN all swaps may pay out per 24 hours; 0 = no cap. Lowering it applies at once; raising"
+    },
+    "apply_settings": {
+      "entry_point": 470142790,
+      "argument": "desk.apply_settings_arguments",
+      "return": "desk.apply_settings_result",
+      "read_only": false,
+      "description": "Carry out the waiting fee cut, cap increase and/or producer key once the timelock has passed (owner only). (v2)"
+    },
+    "cancel_settings": {
+      "entry_point": 2430894050,
+      "argument": "desk.cancel_settings_arguments",
+      "return": "desk.cancel_settings_result",
+      "read_only": false,
+      "description": "Drop the waiting settings changes (owner only). (v2)"
+    },
+    "propose_owner": {
+      "entry_point": 198312784,
+      "argument": "desk.propose_owner_arguments",
+      "return": "desk.propose_owner_result",
+      "read_only": false,
+      "description": "Step 1 of handing over the desk: the owner proposes a new owner, who can accept after the timelock. (v2)"
+    },
+    "accept_owner": {
+      "entry_point": 3668871220,
+      "argument": "desk.accept_owner_arguments",
+      "return": "desk.accept_owner_result",
+      "read_only": false,
+      "description": "Step 2: the proposed owner accepts, after the timelock. Waiting changes and an announced upgrade or treasury change are cleared. (v2)"
+    },
+    "cancel_owner": {
+      "entry_point": 3325205576,
+      "argument": "desk.cancel_owner_arguments",
+      "return": "desk.cancel_owner_result",
+      "read_only": false,
+      "description": "Cancel a proposed owner change (owner only). (v2)"
     },
     "set_paused": {
       "entry_point": 905688855,
@@ -82,7 +124,7 @@
       "argument": "desk.register_key_arguments",
       "return": "desk.register_key_result",
       "read_only": false,
-      "description": "Register the desk's block-producer key with Proof-of-Burn (owner only)."
+      "description": "Announce the desk's block-producer key; apply_settings registers it with Proof-of-Burn after the timelock (owner only, v2)."
     },
     "schedule_treasury": {
       "entry_point": 2864153417,
@@ -168,6 +210,13 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "daily_cap": {
+                "type": "uint64",
+                "id": 8,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
@@ -197,6 +246,20 @@
               "next_slot": {
                 "type": "uint32",
                 "id": 4
+              },
+              "day_start": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "day_out": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
@@ -251,6 +314,40 @@
               "eta": {
                 "type": "uint64",
                 "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "pending_settings": {
+            "fields": {
+              "has_fee": {
+                "type": "bool",
+                "id": 1
+              },
+              "fee_bps": {
+                "type": "uint32",
+                "id": 2
+              },
+              "has_cap": {
+                "type": "bool",
+                "id": 3
+              },
+              "daily_cap": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "public_key": {
+                "type": "bytes",
+                "id": 5
+              },
+              "eta": {
+                "type": "uint64",
+                "id": 6,
                 "options": {
                   "jstype": "JS_STRING"
                 }
@@ -330,6 +427,21 @@
               "treasury_change": {
                 "type": "timelock_object",
                 "id": 10
+              },
+              "owner_change": {
+                "type": "timelock_object",
+                "id": 11
+              },
+              "pending": {
+                "type": "pending_settings",
+                "id": 12
+              },
+              "swap_left_today": {
+                "type": "uint64",
+                "id": 13,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
@@ -512,7 +624,15 @@
             }
           },
           "set_fee_result": {
-            "fields": {}
+            "fields": {
+              "eta": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
           },
           "set_limits_arguments": {
             "fields": {
@@ -533,6 +653,74 @@
             }
           },
           "set_limits_result": {
+            "fields": {}
+          },
+          "set_daily_cap_arguments": {
+            "fields": {
+              "daily_cap": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "set_daily_cap_result": {
+            "fields": {
+              "eta": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "apply_settings_arguments": {
+            "fields": {}
+          },
+          "apply_settings_result": {
+            "fields": {}
+          },
+          "cancel_settings_arguments": {
+            "fields": {}
+          },
+          "cancel_settings_result": {
+            "fields": {}
+          },
+          "propose_owner_arguments": {
+            "fields": {
+              "new_owner": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "propose_owner_result": {
+            "fields": {
+              "eta": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "accept_owner_arguments": {
+            "fields": {}
+          },
+          "accept_owner_result": {
+            "fields": {}
+          },
+          "cancel_owner_arguments": {
+            "fields": {}
+          },
+          "cancel_owner_result": {
             "fields": {}
           },
           "set_paused_arguments": {
@@ -558,7 +746,15 @@
             }
           },
           "register_key_result": {
-            "fields": {}
+            "fields": {
+              "eta": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
           },
           "schedule_treasury_arguments": {
             "fields": {

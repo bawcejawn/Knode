@@ -13,8 +13,10 @@
  *   users      a swap takes their VHP only if they signed it, pays at least the min_koin_out they chose (or fails
  *              and nothing moves), and settles in one transaction: the desk never holds anyone else's money
  *   owner      fee (never above 10%), swap limits, pause, node key; withdrawals go ONLY to the treasury address
- *   timelock   changing the treasury or the code takes an announced delay (48 h at launch), so a stolen owner key
- *              cannot redirect funds before the real owner withdraws everything to the treasury
+ *   timelock   changing the treasury, the owner (v2) or the code takes an announced delay (48 h at launch), and so
+ *              does anything that loosens the desk (v2): a lower fee, a higher daily cap, a new node key. A stolen
+ *              owner key can't drain or redirect the desk before the real owner sees it and acts.
+ *   daily cap  (v2) all swaps together pay out at most daily_cap KOIN per 24 hours (0 = no cap)
  *   nobody     can move the desk's tokens from outside — not the deploy key, not anyone
  */
 import { System, Storage, Protobuf, Arrays, Crypto, authority, value, protocol, u128 } from "@koinos/sdk-as";
@@ -30,6 +32,9 @@ const S_TOTALS: u32 = 1;
 const S_RECENT: u32 = 2;
 const S_UPGRADE: u32 = 3;
 const S_TREASURY: u32 = 4;
+const S_OWNER_CHANGE: u32 = 5;   // v2
+const S_PENDING: u32 = 6;        // v2
+const DAY_MS: u64 = 86_400_000;
 
 function u32Key(v: u32): Uint8Array {
   const k = new Uint8Array(4);
@@ -70,6 +75,8 @@ export class Desk {
   recent: Storage.Map<Uint8Array, desk.swap_record> = new Storage.Map(System.getContractId(), S_RECENT, desk.swap_record.decode, desk.swap_record.encode, null);
   upgrade: Storage.Obj<desk.timelock_object> = new Storage.Obj(System.getContractId(), S_UPGRADE, desk.timelock_object.decode, desk.timelock_object.encode, () => new desk.timelock_object());
   treasuryChange: Storage.Obj<desk.timelock_object> = new Storage.Obj(System.getContractId(), S_TREASURY, desk.timelock_object.decode, desk.timelock_object.encode, () => new desk.timelock_object());
+  ownerChange: Storage.Obj<desk.timelock_object> = new Storage.Obj(System.getContractId(), S_OWNER_CHANGE, desk.timelock_object.decode, desk.timelock_object.encode, () => new desk.timelock_object());
+  pending: Storage.Obj<desk.pending_settings> = new Storage.Obj(System.getContractId(), S_PENDING, desk.pending_settings.decode, desk.pending_settings.encode, () => new desk.pending_settings());
 
   // ═══════════════════════ helpers ═══════════════════════
 
@@ -92,6 +99,19 @@ export class Desk {
     return min64(Tokens.koinBalance(this.contractId), Tokens.mana(this.contractId));
   }
 
+  /** v2: KOIN the daily cap still allows in the current 24-hour window (u64 max when there is no cap). */
+  capLeft(c: desk.config_object): u64 {
+    if (c.daily_cap == 0) return u64.MAX_VALUE;
+    const t = this.totals.get()!;
+    const used = t.day_start > 0 && this.now() < t.day_start + DAY_MS ? t.day_out : 0;
+    return used >= c.daily_cap ? 0 : c.daily_cap - used;
+  }
+
+  /** Most KOIN one swap can pay out right now: what is available, within the daily cap. */
+  swapAvailable(c: desk.config_object): u64 {
+    return min64(this.available(), this.capLeft(c));
+  }
+
   /** "" when a swap of `amount` VHP is possible right now, otherwise the reason. */
   swapProblem(c: desk.config_object, amount: u64, out: u64): string {
     if (c.paused) return "swaps are paused";
@@ -100,19 +120,22 @@ export class Desk {
     if (c.max_swap > 0 && amount > c.max_swap) return "above the maximum swap";
     if (out == 0) return "amount too small";
     if (out > this.available()) return "not enough KOIN available right now";
+    if (out > this.capLeft(c)) return "the desk's daily swap limit is reached: try a smaller amount or again later";
     return "";
   }
 
   /** Largest VHP amount one swap can take right now (0 when swaps are impossible). */
   maxVhpIn(c: desk.config_object): u64 {
     if (c.paused) return 0;
-    const avail = this.available();
+    const avail = this.swapAvailable(c);
     if (avail == 0) return 0;
     // Invert koin_out = amount − fee, then adjust by single units for rounding (koin_out never decreases as the
     // amount grows, so this lands on the largest amount that fits; at most a few steps either way).
-    let amount = (u128.fromU64(avail) * u128.fromU64(10000) / u128.fromU64(<u64>(10000 - c.fee_bps))).toU64();
+    const q = u128.fromU64(avail) * u128.fromU64(10000) / u128.fromU64(<u64>(10000 - c.fee_bps));
+    // v2: clamp instead of truncating (unreachable with real balances, but never wrong).
+    let amount: u64 = q > u128.fromU64(u64.MAX_VALUE - 1) ? u64.MAX_VALUE - 1 : q.toU64();
     while (amount > 0 && amount - feeOf(amount, c.fee_bps) > avail) amount -= 1;
-    while (amount + 1 - feeOf(amount + 1, c.fee_bps) <= avail) amount += 1;
+    while (amount < u64.MAX_VALUE - 1 && amount + 1 - feeOf(amount + 1, c.fee_bps) <= avail) amount += 1;
     if (c.max_swap > 0 && amount > c.max_swap) amount = c.max_swap;
     return amount < c.min_swap ? 0 : amount;
   }
@@ -132,6 +155,9 @@ export class Desk {
     r.time = this.now();
     r.upgrade = this.upgrade.get()!;
     r.treasury_change = this.treasuryChange.get()!;
+    r.owner_change = this.ownerChange.get()!;
+    r.pending = this.pending.get()!;
+    if (isAddress(c.owner) && c.daily_cap > 0) r.swap_left_today = this.capLeft(c);
     return r;
   }
 
@@ -211,6 +237,8 @@ export class Desk {
     Tokens.sendKoin(args.from!, out);
 
     const t = this.totals.get()!;
+    if (t.day_start == 0 || this.now() >= t.day_start + DAY_MS) { t.day_start = this.now(); t.day_out = 0; }
+    t.day_out += out;
     t.swaps += 1;
     t.vhp_in += amount;
     t.koin_out += out;
@@ -254,9 +282,20 @@ export class Desk {
     const c = this.cfg();
     this.requireOwner(c);
     System.require(args.fee_bps <= MAX_FEE_BPS, "fee at most 10%");
-    c.fee_bps = args.fee_bps;
-    this.config.put(c);
-    return new desk.set_fee_result();
+    const r = new desk.set_fee_result();
+    const p = this.pending.get()!;
+    if (args.fee_bps >= c.fee_bps) {
+      c.fee_bps = args.fee_bps;                      // a higher (or the same) fee protects the desk: at once
+      this.config.put(c);
+      if (p.has_fee) { p.has_fee = false; p.fee_bps = 0; this.pending.put(p); }
+    } else {
+      p.has_fee = true;                              // a lower fee waits for the timelock (v2, audit M-7)
+      p.fee_bps = args.fee_bps;
+      p.eta = this.now() + c.timelock_length;
+      this.pending.put(p);
+      r.eta = p.eta;
+    }
+    return r;
   }
 
   set_limits(args: desk.set_limits_arguments): desk.set_limits_result {
@@ -282,8 +321,95 @@ export class Desk {
     const c = this.cfg();
     this.requireOwner(c);
     System.require(args.public_key != null && args.public_key!.length == 33, "33-byte compressed public key required");
-    Tokens.registerProducerKey(args.public_key!);
-    return new desk.register_key_result();
+    const k0 = args.public_key![0];
+    System.require(k0 == 0x02 || k0 == 0x03, "not a compressed public key (it must start with 02 or 03)");
+    // v2 (audit M-7): a new key redirects the desk's block production, so it waits for the timelock.
+    const p = this.pending.get()!;
+    p.public_key = args.public_key;
+    p.eta = this.now() + c.timelock_length;
+    this.pending.put(p);
+    const r = new desk.register_key_result();
+    r.eta = p.eta;
+    return r;
+  }
+
+  set_daily_cap(args: desk.set_daily_cap_arguments): desk.set_daily_cap_result {
+    const c = this.cfg();
+    this.requireOwner(c);
+    const r = new desk.set_daily_cap_result();
+    const tighter = args.daily_cap > 0 && (c.daily_cap == 0 || args.daily_cap <= c.daily_cap);
+    const p = this.pending.get()!;
+    if (tighter) {
+      c.daily_cap = args.daily_cap;
+      this.config.put(c);
+      if (p.has_cap) { p.has_cap = false; p.daily_cap = 0; this.pending.put(p); }
+    } else {
+      p.has_cap = true;
+      p.daily_cap = args.daily_cap;
+      p.eta = this.now() + c.timelock_length;
+      this.pending.put(p);
+      r.eta = p.eta;
+    }
+    return r;
+  }
+
+  apply_settings(args: desk.apply_settings_arguments): desk.apply_settings_result {
+    const c = this.cfg();
+    this.requireOwner(c);
+    const p = this.pending.get()!;
+    System.require(p.eta > 0 && (p.has_fee || p.has_cap || (p.public_key != null && p.public_key!.length == 33)), "no settings change waiting");
+    System.require(this.now() >= p.eta, "the timelock has not passed yet");
+    if (p.has_fee) c.fee_bps = p.fee_bps;
+    if (p.has_cap) c.daily_cap = p.daily_cap;
+    this.config.put(c);
+    if (p.public_key != null && p.public_key!.length == 33) Tokens.registerProducerKey(p.public_key!);
+    this.pending.put(new desk.pending_settings());
+    return new desk.apply_settings_result();
+  }
+
+  cancel_settings(args: desk.cancel_settings_arguments): desk.cancel_settings_result {
+    const c = this.cfg();
+    this.requireOwner(c);
+    this.pending.put(new desk.pending_settings());
+    return new desk.cancel_settings_result();
+  }
+
+  // v2 (audit M-6): the desk can change hands, in two steps with the timelock in between.
+  propose_owner(args: desk.propose_owner_arguments): desk.propose_owner_result {
+    const c = this.cfg();
+    this.requireOwner(c);
+    System.require(isAddress(args.new_owner), "address required");
+    System.require(!Arrays.equal(args.new_owner, this.contractId), "the owner must be a wallet, not the desk itself");
+    const o = new desk.timelock_object();
+    o.address = args.new_owner;
+    o.eta = this.now() + c.timelock_length;
+    this.ownerChange.put(o);
+    const r = new desk.propose_owner_result();
+    r.eta = o.eta;
+    return r;
+  }
+
+  accept_owner(args: desk.accept_owner_arguments): desk.accept_owner_result {
+    const c = this.cfg();
+    const o = this.ownerChange.get()!;
+    System.require(isAddress(o.address) && o.eta > 0, "no owner change proposed");
+    System.requireAuthority(authority.authorization_type.contract_call, o.address!);
+    System.require(this.now() >= o.eta, "the timelock has not passed yet");
+    c.owner = o.address;
+    this.config.put(c);
+    // The new owner starts clean: nothing the previous owner announced carries over.
+    this.ownerChange.put(new desk.timelock_object());
+    this.upgrade.put(new desk.timelock_object());
+    this.treasuryChange.put(new desk.timelock_object());
+    this.pending.put(new desk.pending_settings());
+    return new desk.accept_owner_result();
+  }
+
+  cancel_owner(args: desk.cancel_owner_arguments): desk.cancel_owner_result {
+    const c = this.cfg();
+    this.requireOwner(c);
+    this.ownerChange.put(new desk.timelock_object());
+    return new desk.cancel_owner_result();
   }
 
   schedule_treasury(args: desk.schedule_treasury_arguments): desk.schedule_treasury_result {

@@ -14,6 +14,7 @@ message config_object {
   uint64 max_swap = 5 [jstype = JS_STRING];            // largest single swap in VHP units; 0 = only limited by what is available
   bool paused = 6;                                     // stops swaps (withdrawals to the treasury still work)
   uint64 timelock_length = 7 [jstype = JS_STRING];     // delay (ms) for treasury changes and code upgrades
+  uint64 daily_cap = 8 [jstype = JS_STRING];           // v2: most KOIN all swaps together may pay out per 24 h; 0 = no cap
 }
 
 message totals_object {
@@ -21,6 +22,8 @@ message totals_object {
   uint64 vhp_in = 2 [jstype = JS_STRING];              // all VHP received from swaps
   uint64 koin_out = 3 [jstype = JS_STRING];            // all KOIN paid out by swaps
   uint32 next_slot = 4;                                // where the next swap goes in the recent-swaps list
+  uint64 day_start = 5 [jstype = JS_STRING];           // v2: start (ms) of the current 24-hour cap window
+  uint64 day_out = 6 [jstype = JS_STRING];             // v2: KOIN paid out by swaps in that window
 }
 
 message swap_record {
@@ -34,6 +37,16 @@ message timelock_object {
   bytes hash = 1 [(koinos.btype) = HEX];               // upgrades: sha256 of the announced bytecode
   bytes address = 2 [(koinos.btype) = ADDRESS];        // treasury change: the new treasury
   uint64 eta = 3 [jstype = JS_STRING];                 // time (ms) from which it can be carried out
+}
+
+// v2: changes that loosen a setting wait for the timelock (a stolen owner key can't drain the desk at once).
+message pending_settings {
+  bool has_fee = 1;
+  uint32 fee_bps = 2;                                  // a LOWER fee
+  bool has_cap = 3;
+  uint64 daily_cap = 4 [jstype = JS_STRING];           // a HIGHER daily cap (or 0 = none)
+  bytes public_key = 5;                                // a new block-producer key
+  uint64 eta = 6 [jstype = JS_STRING];                 // time (ms) from which apply_settings carries them out
 }
 
 message ledger_object {                               // test builds only: simulated token balances
@@ -57,6 +70,9 @@ message get_state_result {
   uint64 time = 8 [jstype = JS_STRING];
   timelock_object upgrade = 9;
   timelock_object treasury_change = 10;
+  timelock_object owner_change = 11;                   // v2: a proposed new owner (address) and from when it can accept
+  pending_settings pending = 12;                       // v2
+  uint64 swap_left_today = 13 [jstype = JS_STRING];    // v2: KOIN the daily cap still allows (0 with no cap: see available)
 }
 
 // @description What a swap of this many VHP would pay right now.
@@ -129,13 +145,15 @@ message withdraw_vhp_arguments {
 
 message withdraw_vhp_result {}
 
-// @description Set the fee in basis points, at most 1000 = 10% (owner only).
+// @description Set the fee in basis points, at most 1000 = 10% (owner only). A higher fee applies at once; a lower one waits for the timelock and apply_settings (v2).
 // @read-only false
 message set_fee_arguments {
   uint32 fee_bps = 1;
 }
 
-message set_fee_result {}
+message set_fee_result {
+  uint64 eta = 1 [jstype = JS_STRING];                 // v2: 0 = applied now; a lower fee waits until this time
+}
 
 // @description Set the smallest and largest single swap in VHP units; max 0 = no fixed cap (owner only).
 // @read-only false
@@ -146,6 +164,51 @@ message set_limits_arguments {
 
 message set_limits_result {}
 
+// @description Set the most KOIN all swaps may pay out per 24 hours; 0 = no cap. Lowering it applies at once; raising
+// it (or removing it) waits for the timelock and apply_settings (owner only). (v2)
+// @read-only false
+message set_daily_cap_arguments {
+  uint64 daily_cap = 1 [jstype = JS_STRING];
+}
+
+message set_daily_cap_result {
+  uint64 eta = 1 [jstype = JS_STRING];                 // 0 = applied now
+}
+
+// @description Carry out the waiting fee cut, cap increase and/or producer key once the timelock has passed (owner only). (v2)
+// @read-only false
+message apply_settings_arguments {}
+
+message apply_settings_result {}
+
+// @description Drop the waiting settings changes (owner only). (v2)
+// @read-only false
+message cancel_settings_arguments {}
+
+message cancel_settings_result {}
+
+// @description Step 1 of handing over the desk: the owner proposes a new owner, who can accept after the timelock. (v2)
+// @read-only false
+message propose_owner_arguments {
+  bytes new_owner = 1 [(koinos.btype) = ADDRESS];
+}
+
+message propose_owner_result {
+  uint64 eta = 1 [jstype = JS_STRING];
+}
+
+// @description Step 2: the proposed owner accepts, after the timelock. Waiting changes and an announced upgrade or treasury change are cleared. (v2)
+// @read-only false
+message accept_owner_arguments {}
+
+message accept_owner_result {}
+
+// @description Cancel a proposed owner change (owner only). (v2)
+// @read-only false
+message cancel_owner_arguments {}
+
+message cancel_owner_result {}
+
 // @description Pause or resume swaps (owner only).
 // @read-only false
 message set_paused_arguments {
@@ -154,13 +217,15 @@ message set_paused_arguments {
 
 message set_paused_result {}
 
-// @description Register the desk's block-producer key with Proof-of-Burn (owner only).
+// @description Announce the desk's block-producer key; apply_settings registers it with Proof-of-Burn after the timelock (owner only, v2).
 // @read-only false
 message register_key_arguments {
   bytes public_key = 1 [(koinos.btype) = BASE64];
 }
 
-message register_key_result {}
+message register_key_result {
+  uint64 eta = 1 [jstype = JS_STRING];                 // v2: the key is registered by apply_settings from this time
+}
 
 // @description Announce a new treasury address; it takes effect with apply_treasury after the timelock (owner only).
 // @read-only false
