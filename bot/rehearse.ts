@@ -222,6 +222,8 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
       if (/produced no block/.test(pr)) { if (h > outStart && h <= outEnd + HOUR) alarmsDuringOutage++; else { falseAlarms++; console.log(`  unexpected alarm at ${h}: ${pr}`); } }
       // The bot was down ~20 h, so its first run back finds results overdue: the late-result alert (audit H-2) must fire.
       else if (firstRunAfterOutage && /still unresolved [\d.]+ h after its window ended/.test(pr)) lateAfterOutage++;
+      // The injected stray question used one of the week's 30 slots, so one real question can't be posted: expected.
+      else if (strayPosted && /was not posted: the week already has 30 questions on chain/.test(pr)) { /* expected */ }
       else if (strayPosted && pr.includes("matches no question file") && pr.includes(`params_hash ${strayHash}`)) strayAlerts++; // the injected stray question: expected
       else { otherProblems.push(`${h}: ${pr}`); }
     }

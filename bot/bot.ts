@@ -862,6 +862,18 @@ async function postPass(ctx: Ctx, bs: BotState) {
       writeJson(file, cur);
       continue;
     }
+    // v5 takes at most 30 questions a week (v3 64). A stray or duplicate post can use up a slot: then the remaining
+    // questions are skipped once, with a note, instead of failing (and costing Mana) every hour.
+    const gs = await ctx.chain.read("get_state", {});
+    const maxQ = num(gs.config?.reward_rule_week_plus_one) > 0 ? 30 : 64;
+    const wkQ = num(((await ctx.chain.read("get_week", { week: String(cur.week ?? q.week) })).week ?? {}).questions);
+    if (wkQ >= maxQ) {
+      q.postSkipped = `the week already has ${wkQ} questions on chain (the most it takes)`;
+      log(`  skipped ${q.id}: ${q.postSkipped}`);
+      ctx.problems.push(`${label}: ${q.id} was not posted: the week already has ${wkQ} questions on chain (a stray or duplicate question used a slot). Players get one question fewer this week; nothing else to do.`);
+      writeJson(file, cur);
+      continue;
+    }
     const before = await state(ctx);
     const args = { k: q.options.length, lock_time: String(q.lockTime), window_start: String(q.windowStart), window_end: String(q.windowEnd), params_hash: "0x" + q.paramsHash };
     const ok = await sendOp(ctx, `post ${q.id}: ${q.title}`, [{ method: "post_question", args }]);
