@@ -8,15 +8,20 @@
  *   npm run desk -- fund koin|vhp <amount> [--send]      send KOIN or VHP from the admin wallet into the desk
  *   npm run desk -- try-swap <vhp> [--send]      swap from the test player wallet (PLAYER_WIF), like a visitor would
  *   npm run desk -- withdraw koin|vhp <amount> [--send]  move KOIN or VHP out — always to the treasury address
- *   npm run desk -- fee <percent> [--send]       e.g. fee 3   (never above 10)
+ *   npm run desk -- fee <percent> [--send]       e.g. fee 3   (never above 10; a LOWER fee waits 48 h, then: settings apply)
  *   npm run desk -- limits <min> <max> [--send]  smallest / largest single swap in VHP (max 0 = no fixed cap)
  *   npm run desk -- pause on|off [--send]        stop or restart swaps
  *   npm run desk -- node-key                     the desk node's PUBLIC key (read from its key file)
  *   npm run desk -- node-status                  is the desk's node (RPC 8100) caught up with the chain?
  *   npm run desk -- chain-rate [blocks]          how fast producers turn VHP back into KOIN (what the swap page shows)
  *   npm run desk -- key-status                   which producer key Proof-of-Burn has on record for the desk
- *   npm run desk -- register-key node [--send]   register the desk node's key, so the desk's VHP produces blocks
+ *   npm run desk -- register-key node [--send]   announce the desk node's key; after 48 h "settings apply" registers it
  *   npm run desk -- treasury schedule <address> | apply | cancel [--send]   change the treasury (48 h timelock)
+ *   npm run desk -- daily-cap <KOIN> [--send]    most KOIN all swaps may pay out per 24 h (0 = no cap). Lowering it is
+ *                                                immediate; raising or removing it waits 48 h (then: settings apply)
+ *   npm run desk -- settings apply | cancel [--send]   carry out (after 48 h) or drop a waiting fee cut, cap raise or key
+ *   npm run desk -- owner propose <address> | accept | cancel [--send]   hand the desk over (48 h); "accept" signs
+ *                                                with NEW_OWNER_WIF (the new owner's key, in .env only for that step)
  *   npm run desk -- upgrade status | schedule | apply | cancel [--send]     replace the code (48 h timelock)
  *
  * Keys come from the root .env (never GitHub):
@@ -33,6 +38,7 @@ import { Signer, Provider, Contract, Transaction, utils } from "koilib";
 import { KoinosChain, Call, showKoin, toSat } from "./chain.ts";
 import { tokenAbi } from "./token-abi.ts";
 import { pobAbi } from "./token-abi.ts";
+import { contractMetadata, checkMeta, sha256OfMeta } from "./chaincheck.ts";
 import { units, normalizeKey, nodePublicKey, isMainnet, utc, HOUR_MS } from "./bot.ts";
 
 const E = process.env;
@@ -207,10 +213,10 @@ function keys() {
 }
 
 // ═══════════════════════════════ owner actions ═══════════════════════════════
-async function asOwner(what: string, calls: (owner: string, dep: any, abi: any) => Call[], send: boolean) {
+async function asOwner(what: string, calls: (owner: string, dep: any, abi: any) => Call[], send: boolean, wifVar = "OWNER_WIF") {
   const { dep, rpc, chain, abi } = deployed();
   if (send && isMainnet(rpc) && E.CONFIRM_MAINNET !== "yes") throw new Error("MAINNET: add CONFIRM_MAINNET=yes to .env first.");
-  const owner = Signer.fromWif(need("OWNER_WIF"));
+  const owner = Signer.fromWif(need(wifVar));
   owner.provider = chain.provider;
   const list = calls(owner.getAddress(), dep, abi);
   log(`${what}\nAs ${owner.getAddress()} on ${rpc}:`);
@@ -232,7 +238,12 @@ async function upgrade(sub: string | undefined, send: boolean) {
     log(announced ? `Announced: ${announced}, possible from ${utc(Number(st.upgrade.eta))}\nLocal build: ${local} ${announced === local ? "(matches)" : "(DIFFERENT)"}` : `No upgrade announced. Local build: ${local}`);
     return;
   }
-  if (sub === "schedule") return asOwner(`Announce the local build as the desk's next code (it can be uploaded after the timelock).`, (_o, d, a) => [desk(d, a, "schedule_upgrade", { hash: local })], send);
+  if (sub === "schedule") {
+    // The timelock protects nothing unless the live desk decides its own uploads: all three switches must be on.
+    const bad = checkMeta("desk", await contractMetadata(chain.provider, dep.contract)).filter((x) => !x.ok);
+    if (bad.length) throw new Error(`Not scheduling: ${bad.map((x) => x.text).join("; ")}`);
+    return asOwner(`Announce the local build as the desk's next code (it can be uploaded after the timelock).`, (_o, d, a) => [desk(d, a, "schedule_upgrade", { hash: local })], send);
+  }
   if (sub === "cancel") return asOwner("Cancel the announced upgrade.", (_o, d, a) => [desk(d, a, "cancel_upgrade")], send);
   if (sub !== "apply") throw new Error("upgrade status | schedule | apply | cancel");
   if (announced !== local) throw new Error(`The local build (${local}) is not the announced one (${announced || "none"}).`);
@@ -249,7 +260,15 @@ async function upgrade(sub: string | undefined, send: boolean) {
   const receipt: any = await tx.send();
   if (receipt?.reverted) throw new Error(`upgrade reverted: ${JSON.stringify(receipt.logs)}`);
   await tx.wait("byBlock", 300_000);
-  log(`✔ upgraded. Now clear the notice: npm run desk -- upgrade cancel --send`);
+  // Record the code fingerprint read FROM THE CHAIN, never just the local build's (as for the game, audit U1-04).
+  const m = await contractMetadata(chain.provider, dep.contract);
+  const bad = checkMeta("desk", m, local.replace(/^0x/, "")).filter((x) => !x.ok);
+  if (bad.length) throw new Error(`Uploaded, but the chain does not show the expected code: ${bad.map((x) => x.text).join("; ")}`);
+  dep.wasmSha256 = sha256OfMeta(m);
+  dep.upgradedAt = new Date().toISOString();
+  fs.writeFileSync(path.join(DIR, "deployment.json"), JSON.stringify(dep, null, 2) + "\n");
+  log(`✔ upgraded; the chain shows ${dep.wasmSha256}, written to desk-data/deployment.json (commit it).`);
+  log(`Now clear the notice: npm run desk -- upgrade cancel --send`);
 }
 
 // ═══════════════════════════════ producer key check ═══════════════════════════════
@@ -408,6 +427,24 @@ async function main() {
       if (sub === "apply") return asOwner("Make the announced treasury change.", (_o, d, ab) => [desk(d, ab, "apply_treasury")], send);
       if (sub === "cancel") return asOwner("Cancel the announced treasury change.", (_o, d, ab) => [desk(d, ab, "cancel_treasury")], send);
       throw new Error("treasury schedule <address> | apply | cancel");
+    }
+    case "daily-cap": {
+      const cap = units(arg(0, "KOIN per 24 hours (0 = no cap)"));
+      return asOwner(cap === "0" ? "Remove the daily swap cap (waits 48 h, then: settings apply)." : `Set the daily swap cap to ${showKoin(cap)} KOIN (lowering applies now; raising waits 48 h).`,
+        (_o, d, ab) => [desk(d, ab, "set_daily_cap", { daily_cap: cap })], send);
+    }
+    case "settings": {
+      const sub = arg(0, "apply or cancel");
+      if (sub === "apply") return asOwner("Carry out the waiting settings change (fee cut, cap raise and/or node key).", (_o, d, ab) => [desk(d, ab, "apply_settings")], send);
+      if (sub === "cancel") return asOwner("Drop the waiting settings change.", (_o, d, ab) => [desk(d, ab, "cancel_settings")], send);
+      throw new Error("settings apply | cancel");
+    }
+    case "owner": {
+      const sub = arg(0, "propose, accept or cancel");
+      if (sub === "propose") { const to = arg(1, "new owner address"); return asOwner(`Propose ${to} as the desk's new owner (it can accept after the timelock).`, (_o, d, ab) => [desk(d, ab, "propose_owner", { new_owner: to })], send); }
+      if (sub === "accept") return asOwner("Accept ownership of the desk (signed by the NEW owner).", (_o, d, ab) => [desk(d, ab, "accept_owner")], send, "NEW_OWNER_WIF");
+      if (sub === "cancel") return asOwner("Cancel the proposed owner change.", (_o, d, ab) => [desk(d, ab, "cancel_owner")], send);
+      throw new Error("owner propose <address> | accept | cancel");
     }
     case "upgrade": return upgrade(a[0] && !a[0].startsWith("--") ? a[0] : undefined, send);
     default: throw new Error(`Unknown command "${cmd}". The list is at the top of bot/desk.ts and in desk/README.md.`);

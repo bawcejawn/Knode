@@ -331,18 +331,21 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     check(allSettled, `week ${w}: all ${staked.length} staked entries settled (players who never came back were settled by the bot)`);
     check(freeNeverPaid, `week ${w}: ${entries.length - staked.length} free player(s) played without stake and were never eligible or paid`);
     check(pointsMatch, `week ${w}: every player's points and eligibility match an independent recount`);
-    check(N(wk.cutoff) === W8.cutoff && N(wk.winners) === winners.length && BigInt(wk.sum_w ?? 0) === W8.sumW && onBw === W8.bw,
+    const onAw = (BigInt(wk.aw_hi ?? 0) << 64n) + BigInt(wk.aw_lo ?? 0);
+    check(N(wk.cutoff) === W8.cutoff && N(wk.winners) === winners.length && BigInt(wk.sum_w ?? 0) === W8.sumW && onBw === W8.bw && (!wk.reward_rule || onAw === W8.aw),
       `week ${w}: winners match the independent recount — cutoff ${W8.cutoff} pts, ${winners.length} winner(s) = top 30% of ${elig.length} staked players (ties included)`);
-    check(BigInt(wk.pot_a ?? 0) + BigInt(wk.pot_b ?? 0) === BigInt(wk.pot ?? 0),
-      `week ${w}: the pot splits exactly into basket A ${showKoin(wk.pot_a)} (by rank) + basket B ${showKoin(wk.pot_b)} (by rank × stake); the house produced ${(N(wk.house_ppm) / 10000).toFixed(1)}%`);
+    check(BigInt(wk.pot_a ?? 0) + BigInt(wk.pot_b ?? 0) === BigInt(wk.pot ?? 0) && (!wk.reward_rule || BigInt(wk.pot_a ?? 0) === BigInt(wk.pot ?? 0) * 4000n / 10000n),
+      wk.reward_rule
+        ? `week ${w}: the pot splits exactly into basket A ${showKoin(wk.pot_a)} (40%, by rank × stake up to 10 VHP) + basket B ${showKoin(wk.pot_b)} (60%, by rank × stake)`
+        : `week ${w}: the pot splits exactly into basket A ${showKoin(wk.pot_a)} (by rank) + basket B ${showKoin(wk.pot_b)} (by rank × stake); the house produced ${(N(wk.house_ppm) / 10000).toFixed(1)}%`);
     let payOk = true;
     for (const s of winners) {
       if (!s.e.claimed) continue;
       const g = W8.groups.find((x) => x.pts === s.pts)!;
-      const expect = rewardOf(g, s.stake, BigInt(wk.pot_a), BigInt(wk.pot_b), W8.sumW, W8.bw);
+      const expect = rewardOf(g, s.stake, BigInt(wk.pot_a), BigInt(wk.pot_b), W8.sumW, W8.bw, wk.reward_rule ? W8.aw : undefined);
       if (BigInt(s.e.reward) !== expect) payOk = false;
     }
-    check(payOk, `week ${w}: every claimed reward = basket A by rank + basket B by rank × stake, to the unit`);
+    check(payOk, `week ${w}: every claimed reward = basket A + basket B exactly as the rules say, to the unit`);
     const voided = entries.filter((r) => r.entry.voided).length;
     weekLog.push(`week ${w}: ${wk.questions} questions · gain ${showKoin(wk.gain)} → fee ${showKoin(wk.fee)} / pot ${showKoin(wk.pot)} (A ${showKoin(wk.pot_a)} by rank + B ${showKoin(wk.pot_b)} by rank × stake) · ${entries.length} played (${voided} voided), ${wk.eligible_players} eligible · cutoff ${wk.cutoff} pts · ${wk.winners} winner(s) · claimed ${showKoin(wk.claimed)}${wk.rolled_over ? " · ROLLED OVER" : ""}`);
   }

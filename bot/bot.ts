@@ -476,10 +476,14 @@ async function deskHealth(ctx: Ctx, bs: BotState, alert: (key: string, text: str
   const up = s.upgrade ?? {}, tc = s.treasury_change ?? {};
   if (num(up.eta) > 0) alert(`desk-upgrade:${up.hash}:${up.eta}`, `A Desk code upgrade is scheduled (possible from ${utc(num(up.eta))}). If you did not do this, your admin key may be compromised.`);
   if (num(tc.eta) > 0) alert(`desk-treasury:${tc.address}:${tc.eta}`, `A Desk treasury change to ${tc.address} is scheduled (possible from ${utc(num(tc.eta))}). If you did not do this, your admin key may be compromised.`);
+  // Desk v2: a proposed owner change and waiting loosenings (fee cut, cap raise, node key) are announced 48 h ahead.
+  const oc = s.owner_change ?? {}, pend = s.pending ?? {};
+  if (num(oc.eta) > 0) alert(`desk-owner-change:${oc.address}:${oc.eta}`, `A Desk owner change to ${oc.address} is proposed (it can accept from ${utc(num(oc.eta))}). If you did not do this, your admin key is compromised: cancel it (npm run desk -- owner cancel --send) and withdraw the Desk to the treasury.`);
+  if (num(pend.eta) > 0) alert(`desk-pending:${pend.eta}:${pend.fee_bps}:${pend.daily_cap}:${pend.public_key}`, `A Desk settings change is waiting (from ${utc(num(pend.eta))}):${pend.has_fee ? ` fee to ${num(pend.fee_bps) / 100}%` : ""}${pend.has_cap ? ` daily cap to ${big(pend.daily_cap) === 0n ? "none" : showKoin(pend.daily_cap) + " KOIN"}` : ""}${pend.public_key ? ` new node key ${pend.public_key}` : ""}. If you did not do this, cancel it (npm run desk -- settings cancel --send).`);
   if (c.paused && !ctx.quiet) log(`  the Desk is paused`);
   // Audit D1-04: the Desk's settings, and its KOIN going out other than through swaps. A stolen owner key can set the fee
   // to 0 and empty the float at once, or withdraw to the treasury; these are the first signs.
-  const settings = JSON.stringify({ fee_bps: num(c.fee_bps), min_swap: String(c.min_swap ?? "0"), max_swap: String(c.max_swap ?? "0"), paused: !!c.paused, timelock: String(c.timelock_length ?? "0") });
+  const settings = JSON.stringify({ fee_bps: num(c.fee_bps), min_swap: String(c.min_swap ?? "0"), max_swap: String(c.max_swap ?? "0"), paused: !!c.paused, timelock: String(c.timelock_length ?? "0"), ...(big(c.daily_cap ?? 0) > 0n ? { daily_cap: String(c.daily_cap) } : {}) });
   const odd: string[] = [];
   if (dep.feeBps !== undefined && num(c.fee_bps) < num(dep.feeBps)) odd.push(`the fee is ${num(c.fee_bps) / 100}% (deployment.json: ${num(dep.feeBps) / 100}%)`);
   if (dep.timelockLength !== undefined && big(c.timelock_length) < big(dep.timelockLength)) odd.push(`the timelock is ${num(c.timelock_length) / HOUR_MS} h (deployment.json: ${num(dep.timelockLength) / HOUR_MS} h)`);
@@ -1343,6 +1347,8 @@ export function normalizeKey(k: string): string {
 
 const ROLES: Record<string, { key: string; fallback?: string }> = {
   owner: { key: "OWNER_WIF" }, seed: { key: "SEED_WIF", fallback: "OWNER_WIF" }, operator: { key: "OPERATOR_WIF" }, player: { key: "PLAYER_WIF" },
+  // a new owner / seed owner accepting a handover (v5): its key sits in .env only for that one step
+  new: { key: "NEW_OWNER_WIF" },
 };
 
 async function act(role: string, method: string, args: any, send: boolean): Promise<boolean> {
