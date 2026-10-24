@@ -198,7 +198,8 @@
         "value": "280",
         "dataHash": "720e7addfc0cf091d0472d69046ebf19d0e4b3a85ec0ed3453d3584f0ae7db4a",
         "resolvedAt": "2026-10-24T05:27:57.170Z"
-      }
+      },
+      "chainOutcome": 6
     },
     {
       "id": "W000-D5-3",
@@ -393,7 +394,8 @@
         "value": "815",
         "dataHash": "720e7addfc0cf091d0472d69046ebf19d0e4b3a85ec0ed3453d3584f0ae7db4a",
         "resolvedAt": "2026-10-24T05:27:57.170Z"
-      }
+      },
+      "chainOutcome": 1
     },
     {
       "id": "W000-D5-5",
