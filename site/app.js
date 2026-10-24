@@ -265,12 +265,17 @@
     S.claims = claims.sort((x, y) => x.week - y.week);
   }
 
-  /** The reward the contract's claim pays (Kpred.rewardOf): basket A by rank, basket B by rank × stake, each step
-   *  rounded down exactly as the contract's 128-bit muldiv does. */
+  /** The reward the contract's claim pays (Kpred.rewardOf), each step rounded down exactly as the contract's 128-bit
+   *  muldiv does. v5 weeks (W.reward_rule): basket A by rank × stake up to 10 VHP; before: basket A by rank only.
+   *  Basket B by rank × stake. */
   function exactReward(W, b, e) {
     if (!b || !(num(b.players) > 0) || !(big(W.sum_w) > 0n)) return 0n;
     const n = BigInt(num(b.players)), sw = big(b.sum_w);
-    let r = (big(W.pot_a) * sw) / (n * big(W.sum_w));
+    let r = 0n;
+    if (W.reward_rule) {
+      const aw = (big(W.aw_hi) << 64n) + big(W.aw_lo);
+      if (aw > 0n) r = (big(W.pot_a) * ((sw * capA(big(e.stake))) / n)) / aw;
+    } else r = (big(W.pot_a) * sw) / (n * big(W.sum_w));
     const bw = (big(W.bw_hi) << 64n) + big(W.bw_lo);
     if (bw > 0n) r += (big(W.pot_b) * ((sw * big(e.stake)) / n)) / bw;
     return r;
@@ -283,6 +288,11 @@
   const minStakeFor = (week) => { const c = (S.st && S.st.config) || {}; const next = big(c.min_stake_next || 0);
     return next > 0n && week >= num(c.min_stake_next_week) ? next : big(c.min_stake || UNIT); };
   const scorerRule = (week) => { const v = num((S.st && S.st.config || {}).scorer_rule_week_plus_one); return v > 0 && week + 1 >= v; };
+  /** v5: from the week the contract records (config.reward_rule_week_plus_one), basket A is 40% of the pot by rank ×
+   *  stake counted up to 10 VHP, and basket B the other 60% by rank × full stake. */
+  const rewardRule = (week) => { const v = num((S.st && S.st.config || {}).reward_rule_week_plus_one); return v > 0 && week + 1 >= v; };
+  const CAP_A = 10n * UNIT;
+  const capA = (stake) => (stake < CAP_A ? stake : CAP_A);
   function score(rows, outcomes, week = S.week) {
     const scored = rows.map((r) => {
       let pts = 0, counted = 0;
@@ -304,37 +314,42 @@
     if (need > 0) for (let p = maxP; p >= 1; p--) { cum += elig.filter((s) => s.pts === p).length; cutoff = p; if (cum >= need) break; }
     // Rank weights 1/√rank; players tied share their places' weights evenly.
     const groups = new Map();
-    let rank = 1n, sumW = 0n, bw = 0n;
+    let rank = 1n, sumW = 0n, bw = 0n, aw = 0n;
     if (cutoff >= 1) for (let p = maxP; p >= cutoff; p--) {
       const members = elig.filter((s) => s.pts === p);
       if (!members.length) continue;
       let gw = 0n;
       for (let i = 0; i < members.length; i++) { gw += rankWeight(rank); rank++; }
       const stake = members.reduce((a, x) => a + x.stake, 0n);
+      const capped = members.reduce((a, x) => a + capA(x.stake), 0n);
       groups.set(p, { n: BigInt(members.length), sumW: gw });
       sumW += gw;
       bw += (gw * stake) / BigInt(members.length);
+      aw += (gw * capped) / BigInt(members.length);
     }
     for (const s of scored) {
       s.winner = s.eligible && cutoff >= 1 && s.pts >= cutoff;
       s.group = s.winner ? groups.get(s.pts) : null;
     }
-    return { scored, cutoff, total, sumW, bw };
+    return { scored, cutoff, total, sumW, bw, aw };
   }
 
-  /** Fill in each winner's reward for pots A and B (exactly the contract's arithmetic, rounded down). */
-  function applyPots(board, potA, potB) {
+  /** Fill in each winner's reward for pots A and B (exactly the contract's arithmetic, rounded down). `v5`: basket A
+   *  by rank × stake up to 10 VHP; otherwise by rank only. */
+  function applyPots(board, potA, potB, v5) {
     for (const s of board.scored) {
       if (!s.winner || !s.group) { s.reward = undefined; continue; }
       const g = s.group;
-      let r = board.sumW > 0n ? (potA * g.sumW) / (g.n * board.sumW) : 0n;
+      let r = 0n;
+      if (v5) { if (board.aw > 0n) r = (potA * ((g.sumW * capA(s.stake)) / g.n)) / board.aw; }
+      else r = board.sumW > 0n ? (potA * g.sumW) / (g.n * board.sumW) : 0n;
       if (board.bw > 0n) r += (potB * ((g.sumW * s.stake) / g.n)) / board.bw;
       s.reward = r;
     }
   }
 
-  /** This week's pots if it closed now: 5% fee off new earnings, then 65% of the house's part by rank, the rest by
-   *  rank × stake. An estimate (the real split weighs who produced what over the whole week). */
+  /** This week's pots if it closed now: 5% fee off new earnings; v5: 40% / 60%; before: 65% of the house's part by
+   *  rank, the rest by rank × stake. An estimate (gains can still change before the week closes). */
   function livePots() {
     const t = S.st?.totals || {};
     const holdings = big(S.st?.vhp_balance) + big(S.st?.koin_balance);
@@ -344,7 +359,7 @@
     const fresh = gain - carried, net = fresh - (fresh * 500n) / 10000n;
     const house = big(t.seed_vhp) + big(t.pots_outstanding) + big(t.rolled_over), all = house + big(t.total_stake);
     const houseNet = (all > 0n ? (net * house) / all : net) + carried;
-    const potA = (houseNet * 6500n) / 10000n;
+    const potA = rewardRule(S.week) ? ((net + carried) * 4000n) / 10000n : (houseNet * 6500n) / 10000n;
     return { potA, potB: net + carried - potA };
   }
 
@@ -368,9 +383,9 @@
     const res = score(rows, outcomes, week);
     if (week < num(S.st.totals?.weeks_finalized)) {
       res.final = (await read("get_week", { week: String(week) })).week || {};
-      applyPots(res, big(res.final.pot_a), big(res.final.pot_b));
+      applyPots(res, big(res.final.pot_a), big(res.final.pot_b), !!res.final.reward_rule);
     } else if (week === S.week) {
-      const lp = livePots(); applyPots(res, lp.potA, lp.potB); res.estimate = true;
+      const lp = livePots(); applyPots(res, lp.potA, lp.potB, rewardRule(week)); res.estimate = true;
     }
     return res;
   }
