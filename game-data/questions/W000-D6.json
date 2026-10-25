@@ -96,7 +96,8 @@
         "value": "459",
         "dataHash": "0b49f14d7b9e62123490d60a4cd1d8af43dcbd914198b0dd382a416f08e1fc20",
         "resolvedAt": "2026-10-25T05:15:04.830Z"
-      }
+      },
+      "chainOutcome": 1
     },
     {
       "id": "W000-D6-2",
@@ -291,7 +292,8 @@
         "value": "782",
         "dataHash": "0b49f14d7b9e62123490d60a4cd1d8af43dcbd914198b0dd382a416f08e1fc20",
         "resolvedAt": "2026-10-25T05:15:04.830Z"
-      }
+      },
+      "chainOutcome": 1
     },
     {
       "id": "W000-D6-4",
@@ -486,7 +488,8 @@
         "value": "1,013",
         "dataHash": "0b49f14d7b9e62123490d60a4cd1d8af43dcbd914198b0dd382a416f08e1fc20",
         "resolvedAt": "2026-10-25T05:15:04.830Z"
-      }
+      },
+      "chainOutcome": 6
     }
   ]
 }
