@@ -1,9 +1,9 @@
 {
   "checkedUpTo": 30,
   "orphans": [],
-  "lastCompound": 40484133,
+  "lastCompound": 40513522,
   "warnings": [],
-  "lastProduced": 40511594,
+  "lastProduced": 40513452,
   "producedByDay": {
     "1398": 35,
     "1399": 56,
@@ -13,8 +13,8 @@
     "1403": 68,
     "1404": 66,
     "1405": 53,
-    "1406": 36
+    "1406": 38
   },
-  "producerScannedTo": 40512315,
+  "producerScannedTo": 40513465,
   "notified": []
 }
