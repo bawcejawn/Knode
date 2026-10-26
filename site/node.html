@@ -235,10 +235,36 @@
       return { signers, ts, ntx };
     }
 
+    /** The bot publishes the last two days of blocks every hour as one file (branch blocks-data). One download instead
+     *  of ~144 requests to the public node. It is only used if a random sample of its blocks matches the chain. */
+    const SNAPSHOT = "https://raw.githubusercontent.com/bawcejawn/Knode/blocks-data/recent-blocks.json";
+    async function loadSnapshot(needFrom, top, headId) {
+      try {
+        say("Loading recent blocks…");
+        const r = await (await fetch(SNAPSHOT, { cache: "no-cache" })).json();
+        const n = r && Array.isArray(r.sig) ? r.sig.length : 0;
+        if (!n || r.v !== 1 || r.dts.length !== n || r.ntx.length !== n || r.top !== r.from + n - 1 || r.from > needFrom || r.top > top) return null;
+        if (!r.signers.every(isAddr) || !r.sig.every((i) => Number.isInteger(i) && i >= 0 && i < r.signers.length)) return null;
+        const ts = new Array(n); let t = r.t0;
+        for (let i = 0; i < n; i++) { t += r.dts[i]; ts[i] = t; }
+        // Spot-check 8 random blocks (older than the newest 60, which can still change) against the chain.
+        const picks = Array.from({ length: 8 }, () => r.from + Math.floor(Math.random() * Math.max(1, n - REORG)));
+        const ok = await Promise.all(picks.map(async (h) => {
+          const res = await provider.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(h), num_blocks: 1, return_block: true, return_receipt: false });
+          const it = (res.block_items || [])[0];
+          return it && Number(it.block_height) === h && it.block.header.signer === r.signers[r.sig[h - r.from]] && Number(it.block.header.timestamp) === ts[h - r.from];
+        }));
+        if (!ok.every(Boolean)) return null;
+        return { from: r.from, top: r.top, signers: r.signers.slice(), sig: r.sig.slice(), ts, ntx: r.ntx.slice() };
+      } catch { return null; }
+    }
+
     async function ensureBlocks(needFrom, head) {
       const top = Number(head.head_topology.height), headId = head.head_topology.id;
       needFrom = Math.max(needFrom, top - MAX_BLOCKS + 1);
       if (!B) B = loadStore();
+      // Nothing (or too little) kept in this browser: start from the bot's snapshot when it is good.
+      if (!B || B.from > needFrom || B.top < top - 1200) { const snap = await loadSnapshot(needFrom, top, headId); if (snap && (!B || snap.top > B.top || snap.from < B.from)) B = snap; }
       sIdx.clear(); if (B) B.signers.forEach((a, i) => sIdx.set(a, i));
       if (!B || B.top < needFrom - 1 || B.top > top || B.sig.length === 0) { B = { from: top + 1, top, signers: [], sig: [], ts: [], ntx: [] }; sIdx.clear(); }
       else { // the newest ~60 blocks can still change: re-read them

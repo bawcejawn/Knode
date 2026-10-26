@@ -1028,6 +1028,34 @@ export function generatorRunner(dir: string, extra: string[] = []) {
   };
 }
 
+/** For the website's producer lookup: the last two days of blocks (signer, time, transaction count) as one compact
+ *  file, so a visitor's browser reads one file instead of ~144 requests to the public node. It goes to the branch
+ *  "blocks-data" as a single commit that is replaced every run (no history piles up). Display only: the page
+ *  spot-checks it against the chain and falls back to reading blocks itself if anything differs. */
+const SNAPSHOT_BLOCKS = 57_600;
+export function publishBlockSnapshot(P: Paths) {
+  if (E.BOT_GIT_PUSH !== "1") return;
+  try {
+    const all = readCsv(path.join(P.dir, "blocks.csv"));
+    const rows = all.slice(-SNAPSHOT_BLOCKS);
+    if (rows.length < 1000) return;
+    for (let i = 1; i < rows.length; i++) if (rows[i].h !== rows[i - 1].h + 1) throw new Error(`gap in the block history at ${rows[i].h}`);
+    const signers: string[] = [], idx = new Map<string, number>();
+    const sig = rows.map((b) => { let i = idx.get(b.signer); if (i === undefined) { i = signers.length; signers.push(b.signer); idx.set(b.signer, i); } return i; });
+    const dts = rows.map((b, i) => (i === 0 ? 0 : b.ts - rows[i - 1].ts));
+    const file = path.join(fs.mkdtempSync(path.join(process.env.RUNNER_TEMP ?? "/tmp", "snap-")), "recent-blocks.json");
+    fs.writeFileSync(file, JSON.stringify({ v: 1, made: new Date().toISOString(), from: rows[0].h, top: rows[rows.length - 1].h, t0: rows[0].ts, signers, sig, dts, ntx: rows.map((b) => b.ntx) }));
+    const git = (c: string) => execSync(c, { encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "kpred-bot", GIT_AUTHOR_EMAIL: "kpred-bot@users.noreply.github.com", GIT_COMMITTER_NAME: "kpred-bot", GIT_COMMITTER_EMAIL: "kpred-bot@users.noreply.github.com" } }).trim();
+    const blob = git(`git hash-object -w "${file}"`);
+    const tree = execSync("git mktree", { input: `100644 blob ${blob}\trecent-blocks.json\n`, encoding: "utf8" }).trim();
+    const commit = git(`git commit-tree ${tree} -m "blocks ${rows[0].h}-${rows[rows.length - 1].h}"`);
+    git(`git push -q --force origin ${commit}:refs/heads/blocks-data`);
+    log(`  published the block snapshot (${rows.length.toLocaleString()} blocks, to ${rows[rows.length - 1].h})`);
+  } catch (e) {
+    log(`  ⚠ block snapshot not published: ${(e as Error).message}`);
+  }
+}
+
 /** In the scheduled GitHub run (BOT_GIT_PUSH=1), commit and push game-data/ so nothing posted is ever lost. */
 function gitCheckpoint(dir: string) {
   return (message: string) => {
@@ -1092,6 +1120,7 @@ async function main() {
     log(`tick at ${new Date().toISOString()}${ctx.dryRun ? " (dry run)" : ""}`);
     try { await tick(ctx); }
     catch (e) { ctx.problems.push(`the tick stopped early: ${(e as Error).message ?? e}`); }
+    if (!ctx.dryRun) publishBlockSnapshot(ctx.P);
     // The status summary is only a printout: a hiccup reading it (a busy RPC node) is not a reason to fail the run.
     try { await status(ctx); }
     catch (e) { log(`  (status summary skipped: ${(e as Error).message ?? e})`); }
