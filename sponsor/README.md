@@ -54,7 +54,7 @@ website says: the page then falls back to the player's own Mana.
    The hash must match the one in this README's "Build" line.
 4. **Upload**: `npm run sponsor -- upload`, read it, then `npm run sponsor -- upload --send`.
 5. **Set the caps** (dry run first, then `--send`):
-   `npm run sponsor -- config --per-tx 1 --per-player-day 5 --per-player-week 20 --per-day 50`
+   `npm run sponsor -- config --per-tx 1 --per-player-day 5 --per-player-week 20 --per-day 100`
 6. **Switch it on**: `npm run sponsor -- enable --send`.
 7. **Point the website at it**: `npm run sponsor -- payer sponsor --send`, then
    `git add game-data/deployment.json desk-data/deployment.json sponsor-data/deployment.json`,

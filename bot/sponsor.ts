@@ -4,7 +4,7 @@
  *
  *   npm run sponsor -- status                       the sponsor right now: on/off, caps, KOIN and Mana, today's use
  *   npm run sponsor -- upload [--send]              put the sponsor contract on the sponsor wallet (SPONSOR_WIF)
- *   npm run sponsor -- config [--per-tx 1] [--per-player-day 5] [--per-player-week 20] [--per-day 50] [--send]
+ *   npm run sponsor -- config [--per-tx 1] [--per-player-day 5] [--per-player-week 20] [--per-day 100] [--send]
  *                                                   set the caps (in Mana; 1 Mana = 1 KOIN of Mana); keeps on/off as is
  *   npm run sponsor -- enable [--send]              switch the sponsor on (it pays within the caps)
  *   npm run sponsor -- disable [--send]             switch it off (players pay their own Mana)
@@ -34,7 +34,7 @@ const STATE = path.join("sponsor-data", "deployment.json");
 const GAME_DEP = path.join("game-data", "deployment.json");
 const DESK_DEP = path.join("desk-data", "deployment.json");
 /** Suggested caps (Mana): per transaction, per player per day, per player per week, everyone per day. */
-export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "5", perPlayerWeek: "20", perDay: "50" };
+export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "5", perPlayerWeek: "20", perDay: "100" };
 
 const sha256hex = (b: Uint8Array) => crypto.createHash("sha256").update(b).digest("hex");
 const readJson = (f: string, d: any = null) => (fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : d);
