@@ -1672,6 +1672,30 @@ export function generatorRunner(dir: string, extra: string[] = []) {
   };
 }
 
+/** For the website's producer lookup: the last two days of blocks (signer, time, transaction count) as one compact
+ *  file, so a visitor's browser reads one file instead of ~144 requests to the public node. The bot holds no push
+ *  token (audit H-1): it writes the file to SNAPSHOT_OUT, and the workflow's publish job checks its shape and puts it
+ *  on the branch "blocks-data" as a single commit that is replaced every run (no history piles up). Display only:
+ *  the page spot-checks it against the chain and falls back to reading blocks itself if anything differs. */
+const SNAPSHOT_BLOCKS = 57_600;
+export function publishBlockSnapshot(P: Paths) {
+  const out = E.SNAPSHOT_OUT;
+  if (!out) return;
+  try {
+    const rows = readCsv(path.join(P.dir, "blocks.csv")).slice(-SNAPSHOT_BLOCKS);
+    if (rows.length < 1000) return;
+    for (let i = 1; i < rows.length; i++) if (rows[i].h !== rows[i - 1].h + 1) throw new Error(`gap in the block history at ${rows[i].h}`);
+    const signers: string[] = [], idx = new Map<string, number>();
+    const sig = rows.map((b) => { let i = idx.get(b.signer); if (i === undefined) { i = signers.length; signers.push(b.signer); idx.set(b.signer, i); } return i; });
+    const dts = rows.map((b, i) => (i === 0 ? 0 : b.ts - rows[i - 1].ts));
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    fs.writeFileSync(out, JSON.stringify({ v: 1, made: new Date().toISOString(), from: rows[0].h, top: rows[rows.length - 1].h, t0: rows[0].ts, signers, sig, dts, ntx: rows.map((b) => b.ntx) }));
+    log(`  wrote the block snapshot (${rows.length.toLocaleString()} blocks, to ${rows[rows.length - 1].h})`);
+  } catch (e) {
+    log(`  ⚠ block snapshot not written: ${(e as Error).message}`);
+  }
+}
+
 /** In the scheduled GitHub run (BOT_GIT_PUSH=1), commit game-data/ locally at each checkpoint. The bot itself holds
  *  no push token: the workflow's separate publish job pushes game-data/ (and nothing else) when the run ends, even
  *  if the run failed, so nothing posted is lost. */
@@ -1766,6 +1790,7 @@ async function main() {
     log(`tick at ${new Date().toISOString()}${ctx.dryRun ? " (dry run)" : ""}`);
     try { await tick(ctx); }
     catch (e) { ctx.problems.push(`the tick stopped early: ${(e as Error).message ?? e}`); }
+    if (!ctx.dryRun) publishBlockSnapshot(ctx.P);
     // The status summary is only a printout: a hiccup reading it (a busy RPC node) is not a reason to fail the run.
     try { await status(ctx); }
     catch (e) { log(`  (status summary skipped: ${(e as Error).message ?? e})`); }

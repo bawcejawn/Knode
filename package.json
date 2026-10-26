@@ -13,7 +13,8 @@
     "test:resolver": "node --import tsx --test resolver.test.ts",
     "test:audit": "node --import tsx --test tests/audit/*.test.ts tests/audit/*.test.mjs",
     "desk": "tsx bot/desk.ts",
-    "admin": "tsx admin/server.ts"
+    "admin": "tsx admin/server.ts",
+    "heal": "node bot/heal.mjs"
   },
   "dependencies": {
     "koilib": "9.4.1"

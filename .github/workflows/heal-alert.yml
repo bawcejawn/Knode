@@ -1,0 +1,33 @@
+# Started by the self-healing script on your PC (bot/heal.mjs) whenever it restarts a node, or finds a problem it can't
+# fix. This run fails on purpose, so GitHub emails you about it. The email's link shows which node and why.
+name: Heal alert
+
+on:
+  workflow_dispatch:
+    inputs:
+      node:
+        description: Which node
+        required: true
+        type: string
+      detail:
+        description: What happened
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Self-healing alert
+        env:
+          NODE_NAME: ${{ inputs.node }}
+          DETAIL: ${{ inputs.detail }}
+        run: |
+          echo "::error title=Self-healing: $NODE_NAME::$DETAIL"
+          echo "Node: $NODE_NAME"
+          echo "What happened: $DETAIL"
+          exit 1

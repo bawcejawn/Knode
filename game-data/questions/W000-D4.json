@@ -222,7 +222,8 @@
         "value": "248",
         "dataHash": "e2e60ae68555ae422c08580b1d751e4a33a06fecfac80570644ec4e0fd9a34ee",
         "resolvedAt": "2026-10-23T18:15:40.530Z"
-      }
+      },
+      "chainOutcome": 2
     },
     {
       "id": "W000-D4-4",
@@ -370,7 +371,8 @@
         "value": "222",
         "dataHash": "e2e60ae68555ae422c08580b1d751e4a33a06fecfac80570644ec4e0fd9a34ee",
         "resolvedAt": "2026-10-23T18:15:40.530Z"
-      }
+      },
+      "chainOutcome": 2
     }
   ]
 }

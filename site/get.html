@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- Only these sources may run scripts, load data or be framed. This page signs nothing and loads no wallet code. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Get KOIN and VHP · Knode</title>
+  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="media/icon-180.png">
+  <meta name="theme-color" content="#5a43e6">
+  <meta name="description" content="How to get KOIN and VHP to play Knode: buy vKOIN on Ethereum or Solana, bridge it to Koinos with Vortex, burn it into VHP, stake.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .gk { max-width: 660px; margin: 0 auto; padding: 28px 16px 60px; }
+    .gk h1 { font-family: var(--display); font-size: clamp(28px, 4vw, 38px); margin: 0 0 6px; }
+    .gk .lede { color: var(--muted); margin: 0 0 22px; }
+    .gk-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+    .gk-step { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; box-shadow: var(--shadow); display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 4px 14px; }
+    .gk-num { grid-row: span 3; width: 40px; height: 40px; border-radius: 50%; background: var(--ink); color: var(--surface); display: grid; place-items: center; font-family: var(--display); font-weight: 800; font-size: 18px; }
+    .gk-step h2 { margin: 0; font-size: 18px; font-family: var(--display); }
+    .gk-step p { margin: 4px 0 0; color: var(--muted); }
+    .gk-routes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+    .gk-route { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 12px; background: var(--paper); }
+    .gk-route b { display: block; margin-bottom: 4px; }
+    .addr { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
+    .addr code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all; flex: 1; }
+    .copy { font: inherit; font-size: 12px; font-weight: 700; padding: 6px 10px; min-height: 32px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+    .links { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; font-weight: 700; }
+    .links a { color: var(--violet); }
+    .warn { margin-top: 18px; padding: 14px 16px; border-radius: var(--r-sm); background: var(--rose-soft); color: var(--rose); font-weight: 600; }
+    @media (max-width: 520px) { .gk-routes { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href="./" aria-label="Knode home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="brand-name">Knode</span>
+      </a>
+      <a class="btn btn-wallet" href="./">Play Knode</a>
+    </div>
+  </header>
+  <main class="gk">
+    <h1>Get KOIN and VHP</h1>
+    <p class="lede">To share in the weekly rewards you need at least 1 VHP staked in Knode. Here is the whole way there, from nothing. You can also play free without any of this.</p>
+
+    <ol class="gk-steps">
+      <li class="gk-step">
+        <span class="gk-num" aria-hidden="true">1</span>
+        <h2>Get a Koinos wallet</h2>
+        <p>KOIN Vault on your phone, or Kondor in Chrome on a computer. Write your recovery words on paper and keep them safe.</p>
+        <div class="links"><a href="https://koinvault.app" target="_blank" rel="noopener">KOIN Vault</a><a href="https://chromewebstore.google.com/search/kondor" target="_blank" rel="noopener">Kondor</a></div>
+      </li>
+
+      <li class="gk-step">
+        <span class="gk-num" aria-hidden="true">2</span>
+        <h2>Buy vKOIN</h2>
+        <p>vKOIN is KOIN on another blockchain. Buy it on Ethereum or Solana, whichever you already use. Always check the address below matches before you buy.</p>
+        <div class="gk-routes">
+          <div class="gk-route">
+            <b>On Ethereum</b>
+            <div class="addr"><code id="eth">0xa50ad3a559a10f384a5bb2e27516f63e0b937b1a</code><button class="copy" type="button" data-copy="eth">Copy</button></div>
+            <a href="https://app.uniswap.org/explore/tokens/ethereum/0xa50ad3a559a10f384a5bb2e27516f63e0b937b1a" target="_blank" rel="noopener">Buy on Uniswap</a>
+          </div>
+          <div class="gk-route">
+            <b>On Solana</b>
+            <div class="addr"><code id="sol">8AUxdPqYU4FBy5rZDhMJxTniPs7gtEfdHjP3UKM71m6G</code><button class="copy" type="button" data-copy="sol">Copy</button></div>
+            <a href="https://jup.ag/swap/SOL-8AUxdPqYU4FBy5rZDhMJxTniPs7gtEfdHjP3UKM71m6G" target="_blank" rel="noopener">Buy on Jupiter</a>
+          </div>
+        </div>
+      </li>
+
+      <li class="gk-step">
+        <span class="gk-num" aria-hidden="true">3</span>
+        <h2>Bridge it to Koinos</h2>
+        <p>Vortex moves your vKOIN to Koinos, where it arrives as KOIN in your Koinos wallet.</p>
+        <div class="links"><a href="https://vortexbridge.io/bridge" target="_blank" rel="noopener">Open Vortex bridge</a></div>
+      </li>
+
+      <li class="gk-step">
+        <span class="gk-num" aria-hidden="true">4</span>
+        <h2>Turn KOIN into VHP</h2>
+        <p>Burn KOIN into VHP, 1 for 1. Keep a little KOIN: it gives your wallet the Mana it needs to send transactions. Or skip this step: Knode can take KOIN and burn it for you when you stake.</p>
+        <div class="links"><a href="burn.html">Burn KOIN into VHP</a></div>
+      </li>
+
+      <li class="gk-step">
+        <span class="gk-num" aria-hidden="true">5</span>
+        <h2>Stake and play</h2>
+        <p>Stake 1 VHP or more in Knode, then answer each day's questions. Your stake stays yours: take it back any time.</p>
+        <div class="links"><a href="./">Stake in Knode</a></div>
+      </li>
+    </ol>
+
+    <p class="warn">Knode will never message you first or ask for your recovery words. Use only the links on this page, and check every address before you buy or bridge.</p>
+    <p class="muted" style="margin-top: 14px">Already have VHP and want KOIN back? Use <a href="swap.html">Knode Swap</a>.</p>
+  </main>
+  <script src="get.js"></script>
+</body>
+</html>

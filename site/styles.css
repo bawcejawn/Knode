@@ -293,6 +293,16 @@ dialog h2 { margin-bottom: 6px; }
   .ticker { min-height: 0; }
   .layout { grid-template-columns: 1fr; }
   .col-side { position: static; }
+  /* Phones and tablets: right under the intro comes "Your game" (stake, withdraw, rewards to collect), then the
+     questions; the live block ticker and the pool facts move below them. */
+  #view-play { display: flex; flex-direction: column; gap: 14px; }
+  #view-play .hero, #view-play .layout, #view-play .col-side { display: contents; }
+  #view-play .hero-copy { order: -5; }
+  #panel-you { order: -4; }
+  #panel-claim { order: -3; }
+  #view-play .col-main { order: 0; }
+  #view-play .col-side > :not(#panel-you):not(#panel-claim) { order: 1; }
+  #view-play .ticker { order: 2; margin-top: 8px; }
 }
 @media (max-width: 720px) {
   .top-row { flex-wrap: wrap; gap: 10px; padding: 10px 0; }

@@ -137,6 +137,15 @@ jobs:
           RPC_CHECK: ${{ vars.RPC_CHECK }}
           GEN_DIR: game-data
           BOT_GIT_PUSH: "1"
+          # The producer lookup's block snapshot (display only); the publish job puts it on the blocks-data branch.
+          SNAPSHOT_OUT: ${{ runner.temp }}/snapshot/recent-blocks.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: blocks-snapshot
+          path: ${{ runner.temp }}/snapshot/recent-blocks.json
+          retention-days: 1
+          if-no-files-found: ignore
       # Even when the run failed (it emails you), whatever it posted must still become public.
       - name: Hand the public files to the publish job
         if: always()
@@ -334,3 +343,37 @@ jobs:
             echo "Push attempt $attempt failed; retrying."; sleep $((attempt * 5))
           done
           echo "::error::Could not push game-data/."; exit 1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: always()
+        continue-on-error: true    # no snapshot this run: the website keeps the last one
+        with:
+          name: blocks-snapshot
+          path: ${{ runner.temp }}/snapshot
+      # The producer lookup's snapshot goes to its own branch as one commit, replaced each run (no history). Only a file
+      # that has exactly the expected shape is pushed; the website spot-checks it against the chain anyway.
+      - name: Push the block snapshot to blocks-data
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SNAP: ${{ runner.temp }}/snapshot/recent-blocks.json
+        run: |
+          set -euo pipefail
+          if [ ! -f "$SNAP" ] || [ -L "$SNAP" ]; then echo "No block snapshot this run."; exit 0; fi
+          if [ "$(stat -c %s "$SNAP")" -gt 4000000 ]; then echo "::warning::Block snapshot too large; not published."; exit 0; fi
+          if ! /usr/bin/python3 - "$SNAP" <<'PY'
+          import json, re, sys
+          d = json.load(open(sys.argv[1], encoding="ascii"))
+          assert set(d) == {"v", "made", "from", "top", "t0", "signers", "sig", "dts", "ntx"} and d["v"] == 1
+          n = len(d["sig"])
+          assert 1000 <= n <= 60000 and len(d["dts"]) == n and len(d["ntx"]) == n and d["top"] == d["from"] + n - 1
+          assert all(re.fullmatch(r"1[1-9A-HJ-NP-Za-km-z]{25,34}", a) for a in d["signers"]) and len(d["signers"]) < 1000
+          assert all(type(x) is int and 0 <= x < len(d["signers"]) for x in d["sig"])
+          assert all(type(x) is int and 0 <= x < 10**7 for x in d["dts"]) and all(type(x) is int and 0 <= x < 10**5 for x in d["ntx"])
+          assert type(d["t0"]) is int and type(d["from"]) is int and re.fullmatch(r"[0-9T:.\-Z]{10,30}", d["made"])
+          PY
+          then echo "::warning::Block snapshot failed the shape check; not published."; exit 0; fi
+          blob=$(git hash-object -w "$SNAP")
+          tree=$(printf '100644 blob %s\trecent-blocks.json\n' "$blob" | git mktree)
+          commit=$(GIT_AUTHOR_NAME=kpred-bot GIT_AUTHOR_EMAIL=kpred-bot@users.noreply.github.com GIT_COMMITTER_NAME=kpred-bot GIT_COMMITTER_EMAIL=kpred-bot@users.noreply.github.com git commit-tree "$tree" -m "block snapshot")
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$commit:refs/heads/blocks-data"
+          echo "Block snapshot published."

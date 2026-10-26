@@ -105,7 +105,15 @@
         "minVoidBlocks": 600
       },
       "paramsHash": "3c49be3a97ce34540e842b320a6306f59f3e25f6399b1f9c1d26f17951abe322",
-      "chainId": 20
+      "chainId": 20,
+      "result": {
+        "void": false,
+        "option": 0,
+        "value": "1,320",
+        "dataHash": "d0ea8f41b6be8ab83b8547467fc1a362b2daffbeda5d05ce2e939a5823f9f0d7",
+        "resolvedAt": "2026-10-24T09:46:28.770Z"
+      },
+      "chainOutcome": 1
     },
     {
       "id": "W000-D5-2",
@@ -191,7 +199,15 @@
         "minVoidBlocks": 600
       },
       "paramsHash": "8b50cd15fbd1933fa3794e58833931d60394cc76b45dd45d98507f88b9af6966",
-      "chainId": 21
+      "chainId": 21,
+      "result": {
+        "void": false,
+        "option": 5,
+        "value": "280",
+        "dataHash": "720e7addfc0cf091d0472d69046ebf19d0e4b3a85ec0ed3453d3584f0ae7db4a",
+        "resolvedAt": "2026-10-24T05:27:57.170Z"
+      },
+      "chainOutcome": 6
     },
     {
       "id": "W000-D5-3",
@@ -293,7 +309,15 @@
         "minVoidBlocks": 600
       },
       "paramsHash": "7f5d05d3304e4792b6cf080327b7e55384914dd0e59a7f3f71b7244824b30aec",
-      "chainId": 22
+      "chainId": 22,
+      "result": {
+        "void": false,
+        "option": 2,
+        "value": "1,289",
+        "dataHash": "d0ea8f41b6be8ab83b8547467fc1a362b2daffbeda5d05ce2e939a5823f9f0d7",
+        "resolvedAt": "2026-10-24T09:46:28.770Z"
+      },
+      "chainOutcome": 3
     },
     {
       "id": "W000-D5-4",
@@ -379,7 +403,15 @@
         "minVoidBlocks": 600
       },
       "paramsHash": "9dc5d01653156e2e8359c75b7e04ea1706c30aa8f70f3a26f5dc93ebc6fca643",
-      "chainId": 23
+      "chainId": 23,
+      "result": {
+        "void": false,
+        "option": 0,
+        "value": "815",
+        "dataHash": "720e7addfc0cf091d0472d69046ebf19d0e4b3a85ec0ed3453d3584f0ae7db4a",
+        "resolvedAt": "2026-10-24T05:27:57.170Z"
+      },
+      "chainOutcome": 1
     },
     {
       "id": "W000-D5-5",
@@ -481,7 +513,15 @@
         "minVoidBlocks": 600
       },
       "paramsHash": "4f43e6730036057d1cea0c01a719dc7e22f91f367c7305dc5f9e6ae0836fbd13",
-      "chainId": 24
+      "chainId": 24,
+      "result": {
+        "void": false,
+        "option": 1,
+        "value": "694",
+        "dataHash": "d0ea8f41b6be8ab83b8547467fc1a362b2daffbeda5d05ce2e939a5823f9f0d7",
+        "resolvedAt": "2026-10-24T09:46:28.770Z"
+      },
+      "chainOutcome": 2
     }
   ]
 }
