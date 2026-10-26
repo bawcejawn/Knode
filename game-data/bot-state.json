@@ -3,9 +3,8 @@
   "orphans": [],
   "lastCompound": 40513522,
   "warnings": [],
-  "lastProduced": 40520529,
+  "lastProduced": 40522668,
   "producedByDay": {
-    "1398": 35,
     "1399": 56,
     "1400": 73,
     "1401": 63,
@@ -13,8 +12,9 @@
     "1403": 68,
     "1404": 66,
     "1405": 53,
-    "1406": 51
+    "1406": 51,
+    "1407": 3
   },
-  "producerScannedTo": 40521555,
+  "producerScannedTo": 40523180,
   "notified": []
 }
