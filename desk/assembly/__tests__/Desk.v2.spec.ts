@@ -202,3 +202,57 @@ describe("v2: the daily cap frees up gradually (no burst at a window boundary)",
     swap(d, B, 50 * VHP, 0);                                      // 48.5 KOIN fits
   });
 });
+
+const EXPIRY: u64 = 7 * 86_400_000;
+
+describe("v2: an announced change expires 7 days after its timelock (audit L-5)", () => {
+  it("a fee cut, a treasury change and an owner handover must be carried out in time", () => {
+    const d = setup();
+    as(OWNER);
+    const feeEta = d.set_fee(new desk.set_fee_arguments(100)).eta;
+    d.schedule_treasury(new desk.schedule_treasury_arguments(A));
+    d.propose_owner(new desk.propose_owner_arguments(NEW_OWNER));
+    at(feeEta + EXPIRY);
+    gD = d;
+    MockVM.commitTransaction();
+    expect(() => { gD!.apply_settings(new desk.apply_settings_arguments()); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("this request expired (it must be carried out within 7 days after its timelock): request it again");
+    expect(() => { gD!.apply_treasury(new desk.apply_treasury_arguments()); }).toThrow();
+    as(NEW_OWNER);
+    expect(() => { gD!.accept_owner(new desk.accept_owner_arguments()); }).toThrow();
+    // just inside the window, each one still works
+    const d2 = setup();
+    as(OWNER);
+    const eta2 = d2.set_fee(new desk.set_fee_arguments(100)).eta;
+    d2.schedule_treasury(new desk.schedule_treasury_arguments(A));
+    d2.propose_owner(new desk.propose_owner_arguments(NEW_OWNER));
+    at(eta2 + EXPIRY - 1);
+    d2.apply_settings(new desk.apply_settings_arguments());
+    d2.apply_treasury(new desk.apply_treasury_arguments());
+    as(NEW_OWNER);
+    d2.accept_owner(new desk.accept_owner_arguments());
+    expect(d2.get_state(new desk.get_state_arguments()).config!.fee_bps).toBe(100);
+  });
+
+  it("an announced upgrade can't be uploaded 7 days after its timelock", () => {
+    const d = setup();
+    const code = new Uint8Array(100);
+    code.fill(42);
+    const mh = new Crypto.Multihash();
+    mh.deserialize(System.hash(Crypto.multicodec.sha2_256, code)!);
+    const tx = new protocol.transaction();
+    tx.header = new protocol.transaction_header();
+    const op = new protocol.operation();
+    op.upload_contract = new protocol.upload_contract_operation(CONTRACT, code, "", true, true, true);
+    tx.operations.push(op);
+    MockVM.setTransaction(tx);
+    System.resetCache();
+    const up = new authority.authorize_arguments(authority.authorization_type.contract_upload);
+    as(OWNER);
+    const eta = d.schedule_upgrade(new desk.schedule_upgrade_arguments(mh.digest)).eta;
+    at(eta + EXPIRY - 1);
+    expect(d.authorize(up).value).toBe(true);
+    at(eta + EXPIRY);
+    expect(d.authorize(up).value).toBe(false);
+  });
+});

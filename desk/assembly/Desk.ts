@@ -36,6 +36,7 @@ const S_TREASURY: u32 = 4;
 const S_OWNER_CHANGE: u32 = 5;   // v2
 const S_PENDING: u32 = 6;        // v2
 const DAY_MS: u64 = 86_400_000;
+const ANNOUNCEMENT_EXPIRY: u64 = 7 * DAY_MS;   // v2: an announced change must be carried out within 7 days after its timelock
 
 function u32Key(v: u32): Uint8Array {
   const k = new Uint8Array(4);
@@ -369,6 +370,7 @@ export class Desk {
     const p = this.pending.get()!;
     System.require(p.eta > 0 && (p.has_fee || p.has_cap || (p.public_key != null && p.public_key!.length == 33)), "no settings change waiting");
     System.require(this.now() >= p.eta, "the timelock has not passed yet");
+    System.require(this.now() < p.eta + ANNOUNCEMENT_EXPIRY, "this request expired (it must be carried out within 7 days after its timelock): request it again");
     if (p.has_fee) c.fee_bps = p.fee_bps;
     if (p.has_cap) c.daily_cap = p.daily_cap;
     this.config.put(c);
@@ -405,6 +407,7 @@ export class Desk {
     System.require(isAddress(o.address) && o.eta > 0, "no owner change proposed");
     System.requireAuthority(authority.authorization_type.contract_call, o.address!);
     System.require(this.now() >= o.eta, "the timelock has not passed yet");
+    System.require(this.now() < o.eta + ANNOUNCEMENT_EXPIRY, "this request expired (it must be carried out within 7 days after its timelock): request it again");
     c.owner = o.address;
     this.config.put(c);
     // The new owner starts clean: nothing the previous owner announced carries over.
@@ -442,6 +445,7 @@ export class Desk {
     const s = this.treasuryChange.get()!;
     System.require(isAddress(s.address) && s.eta > 0, "no treasury change announced");
     System.require(this.now() >= s.eta, "the timelock has not passed yet");
+    System.require(this.now() < s.eta + ANNOUNCEMENT_EXPIRY, "this request expired (it must be carried out within 7 days after its timelock): request it again");
     c.treasury = s.address;
     this.config.put(c);
     this.treasuryChange.put(new desk.timelock_object());
@@ -493,6 +497,7 @@ export class Desk {
     const u = this.upgrade.get()!;
     if (u.hash == null || u.hash!.length != 32 || u.eta == 0) return false;
     if (this.now() < u.eta) return false;
+    if (this.now() >= u.eta + ANNOUNCEMENT_EXPIRY) return false;   // expired: announce it again
     // The upload operation carries the whole new bytecode; enlarge the buffer so the check can read it.
     System.setSystemBufferSize(1024 * 1024);
     const ops = txOps();
