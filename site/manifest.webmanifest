@@ -2,7 +2,7 @@
   "name": "Knode: call the next blocks",
   "short_name": "Knode",
   "description": "Knode is a free daily prediction game on the Koinos blockchain: answer 5 questions a day about block producers, climb the weekly leaderboard, win VHP.",
-  "start_url": "./#play",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#F3F1EA",

@@ -169,8 +169,9 @@
   function route() {
     const view = (location.hash || "").slice(1);
     const known = ["play", "leaderboard", "results", "how", "welcome"];
-    // First visit with no particular page asked for: the short welcome first.
-    const v = known.includes(view) ? view : !view && !seenWelcome() ? "welcome" : "play";
+    // Opening the site (or the installed app) with no particular page asked for always starts on the short welcome
+    // ("New here?"): the owner's choice, so nobody lands in the game without knowing what it is. One tap to play.
+    const v = known.includes(view) ? view : "welcome";
     if (v !== "welcome") markWelcomed();
     document.querySelectorAll(".view").forEach((s) => (s.hidden = s.dataset.view !== v));
     document.querySelectorAll(".tabs a, .tabbar a").forEach((a) => { if (a.dataset.view === v) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
