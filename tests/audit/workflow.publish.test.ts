@@ -166,7 +166,11 @@ linuxTest("WF-8 job boundaries in bot.yml (text)", () => {
   assert.doesNotMatch(pub, /\b(npm|npx|yarn|pnpm|tsx)\b/, "the publish job must not run repository code");
   assert.doesNotMatch(pub, /uses:\s*\.\//, "the publish job must not use a local (repository) action");
   assert.doesNotMatch(pub, /actions\/cache/, "the publish job must not restore a cache the tick job can write");
-  assert.equal((pub.match(/github\.token/g) ?? []).length, 1, "the write token must appear once (the push step)");
+  // The write token may appear only in the two push steps: game-data/ to main, and the block snapshot to blocks-data.
+  const steps = pub.split(/\n      - /).slice(1);
+  const withToken = steps.filter((st) => /github\.token/.test(st)).map((st) => (st.match(/name:\s*([^\n]+)/) ?? [])[1]?.trim());
+  assert.deepEqual(withToken, ["Push game-data/ (and nothing else)", "Push the block snapshot to blocks-data"], "the write token appears only in the two push steps");
+  for (const st of steps) assert.ok((st.match(/github\.token/g) ?? []).length <= 1, "once per push step");
   assert.doesNotMatch(pub, /\b(source|bash|sh)\s+[^\n]*(game-data|\$IN)/, "the publish job must not execute artifact contents");
 });
 
