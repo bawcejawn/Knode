@@ -61,7 +61,8 @@ export function rewardOf(g: Group, stake: bigint, potA: bigint, potB: bigint, su
 /** v5: up to 2 VHP of each pot go to the 2 best free players (answered at least 2 counted questions, staked less than
  *  the minimum). Same as Kpred.freePrizeOf, from the finalized week's numbers. */
 export const FREE_PRIZE = 2n * 100_000_000n;
-export function freePrizeOf(wk: { reward_rule?: boolean; pot_free?: string | number; free_best?: number; free_best_n?: number; free_second?: number; free_second_n?: number }, pts: number): bigint {
+export function freePrizeOf(wk: { reward_rule?: boolean; pot_free?: string | number; free_best?: number; free_best_n?: number; free_second?: number; free_second_n?: number }, pts: number, entry?: { voided?: boolean; counted?: number | string }): bigint {
+  if (entry && (entry.voided || Number(entry.counted ?? 0) < 2)) return 0n;
   const pot = BigInt(wk.pot_free ?? 0), best = Number(wk.free_best ?? 0), bn = Number(wk.free_best_n ?? 0), second = Number(wk.free_second ?? 0), sn = Number(wk.free_second_n ?? 0);
   if (!wk.reward_rule || pot === 0n || pts === 0) return 0n;
   if (pts === best) return bn >= 2 ? pot / BigInt(bn) : sn > 0 ? pot / 2n : pot;

@@ -258,7 +258,8 @@
         const [p, wk] = await Promise.all([read("get_player", { player: a, week: String(w) }), read("get_week", { week: String(w) })]);
         const e = p.entry, W = wk.week || {};
         // v5: a free player among the week's 2 best free scores collects the free prize (with their own Mana).
-        if (e && e.settled && !e.eligible && !e.claimed && !W.rolled_over) { const f = freePrize(W, num(e.points)); if (f > 0n) claims.push({ week: w, reward: f, free: true }); return; }
+        // (the same conditions as Kpred.freePrizeOf: not voided, at least 2 counted answers)
+        if (e && e.settled && !e.eligible && !e.claimed && !e.voided && num(e.counted) >= 2 && !W.rolled_over) { const f = freePrize(W, num(e.points)); if (f > 0n) claims.push({ week: w, reward: f, free: true }); return; }
         if (!e || !e.eligible || e.claimed || W.rolled_over || num(e.points) < num(W.cutoff)) return;
         // The exact amount the contract pays, from the week's pots and the player's score group (audit W1-01).
         claims.push({ week: w, reward: exactReward(W, (wk.buckets || [])[num(e.points)], e) });

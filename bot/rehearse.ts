@@ -189,7 +189,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
         for (let w = Math.max(0, fin - 2); w < fin; w++) {
           const r = await sim.read("get_player", { player: A, week: String(w) });
           const fwk = r.entry?.settled && !r.entry.eligible && !r.entry.claimed ? (await sim.read("get_week", { week: String(w) })).week : null;
-          if (fwk && fwk.finalized && !fwk.rolled_over && freePrizeOf(fwk, N(r.entry.points)) > 0n) {   // v5: a free player's prize
+          if (fwk && fwk.finalized && !fwk.rolled_over && freePrizeOf(fwk, N(r.entry.points), r.entry) > 0n) {   // v5: a free player's prize
             const before = await sim.ledgerGet(2, A);
             if (await act(p.key, "claim", { player: A, week: String(w) })) p.claimed += (await sim.ledgerGet(2, A)) - before;
             continue;
@@ -336,7 +336,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     const freeRows = scored.filter((s) => s.stake < VHP);
     const settledFree = freeRows.filter((s) => s.e.settled && !s.e.voided && N(s.e.counted) > 1);
     const ft = freeTop(settledFree.map((s) => s.pts));
-    const freeNeverPaid = freeRows.every((s) => !s.e.eligible) && freeRows.every((s) => !s.e.claimed || (wk.reward_rule && BigInt(s.e.reward) === freePrizeOf(wk, s.pts) && BigInt(s.e.reward) > 0n))
+    const freeNeverPaid = freeRows.every((s) => !s.e.eligible) && freeRows.every((s) => !s.e.claimed || (wk.reward_rule && BigInt(s.e.reward) === freePrizeOf(wk, s.pts, s.e) && BigInt(s.e.reward) > 0n))
       && (!wk.reward_rule || (N(wk.free_best) === ft.best && N(wk.free_best_n) === ft.bn && N(wk.free_second) === ft.second && N(wk.free_second_n) === ft.sn));
     const elig = scored.filter((s) => s.eligible);
     const W8 = winnersOf(elig.map((s) => ({ pts: s.pts, stake: s.stake })));

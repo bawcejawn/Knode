@@ -971,9 +971,17 @@ async function settlePass(ctx: Ctx) {
       }).filter((x) => x.c > 1 && x.p >= 1);
       const scores = [...new Set(scored.map((x) => x.p))].sort((a, b) => b - a).slice(0, 2);
       const line = scores.length ? scores[scores.length - 1] : Infinity;
-      const free = scored.filter((x) => !x.r.entry.settled && x.p >= line).sort((a, b) => b.p - a.p).slice(0, FREE_SETTLE_MAX);
+      // A budget for the whole week, not per run: the free players already counted on chain at the top two scores.
+      const left = Math.max(0, FREE_SETTLE_MAX - num(wk.free_best_n) - num(wk.free_second_n));
+      const want = scored.filter((x) => !x.r.entry.settled && x.p >= line).sort((a, b) => b.p - a.p);
+      const free = want.slice(0, left);
       if (free.length) log(`  settling ${free.length} free player(s) with the best free scores for week ${w}`);
-      for (const x of free) await sendOp(ctx, `settle free player ${x.r.address} (${x.p} pts) for week ${w}`, [{ method: "settle", args: { player: x.r.address, week: String(w) } }]);
+      for (const x of free) {
+        // Never below the Mana the bot needs for posting and resolving questions.
+        if (await ctx.chain.mana(ctx.operator.getAddress()) < BOT_MANA_FLOOR) { log(`  stopped settling free players: the bot's Mana is low`); break; }
+        await sendOp(ctx, `settle free player ${x.r.address} (${x.p} pts) for week ${w}`, [{ method: "settle", args: { player: x.r.address, week: String(w) } }]);
+      }
+      if (want.length > free.length && !ctx.dryRun && h > num(wk.settle_end) - SETTLE_LAST_HOURS_MS) log(`  week ${w}: ${want.length - free.length} more free player(s) tied at the top were not settled by the bot (weekly limit ${FREE_SETTLE_MAX}); they can settle themselves`);
     }
   }
 }
