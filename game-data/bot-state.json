@@ -15,8 +15,8 @@
     "1406": 51,
     "1407": 49
   },
-  "producerScannedTo": 40544105,
+  "producerScannedTo": 40544177,
   "settings": "{\"min_stake\":\"100000000\",\"min_stake_next\":\"0\",\"min_stake_next_week\":\"0\",\"max_sponsor_rc\":\"200000000\",\"min_sponsor_rc\":\"0\",\"paused\":false}",
-  "sealedAt": 40544104,
-  "seal": "b1e9360d9daba88e963dd48cc165e66942e6a683fee381f59d978fe4dadd77b6"
+  "sealedAt": 40544177,
+  "seal": "e1ad3f681ffea488397b882f8be2d339930d9aabda4a8d1ccc6f0ffc99cc7bef"
 }
