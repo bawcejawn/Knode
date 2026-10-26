@@ -9,7 +9,7 @@
 import { Arrays, Base58, MockVM, Protobuf, authority, chain, protocol, system_calls } from "@koinos/sdk-as";
 import {
   Sponsor, APPROVE_ENTRY, dayOf, weekOf,
-  NOT_A_PLAYER,
+  NOT_A_PLAYER, FREE_USED_UP,
   GAME_DEPOSIT_VHP, GAME_DEPOSIT_KOIN, GAME_WITHDRAW, GAME_ANSWER, GAME_SETTLE, GAME_CLAIM, GAME_CLOSE_WEEK, GAME_FINALIZE_WEEK, DESK_SWAP,
 } from "../Sponsor";
 import { sponsor } from "../proto/sponsor";
@@ -118,6 +118,11 @@ function queueReads(): void { MockVM.setCallContractResults(READS); }
 function wouldPay(account: Uint8Array, rc: u64): sponsor.would_pay_result {
   queueReads();
   return new Sponsor().would_pay(new sponsor.would_pay_arguments(account, rc));
+}
+
+function wouldPayAnswer(account: Uint8Array, rc: u64): sponsor.would_pay_result {
+  queueReads();
+  return new Sponsor().would_pay(new sponsor.would_pay_arguments(account, rc, true));
 }
 
 function pays(): bool {
@@ -683,7 +688,7 @@ describe("only real Knode players are sponsored (audit M-1)", () => {
 
   it("refuses an empty wallet with no stake, and counts nothing", () => {
     READS = [vhpBalance(0), gamePlayer(0, 0)];
-    userCall(1, MANA, GAME, GAME_ANSWER);
+    userCall(1, MANA, GAME, GAME_CLAIM);
     expect(() => { pays(); }).toThrow();
     errorIs(NOT_A_PLAYER);
     expect(new Sponsor().get_total_usage(new sponsor.get_total_usage_arguments()).used_day).toBe(0);
@@ -691,7 +696,7 @@ describe("only real Knode players are sponsored (audit M-1)", () => {
 
   it("refuses a wallet holding less than the minimum", () => {
     READS = [vhpBalance(MANA - 1), gamePlayer(0, 0)];
-    userCall(1, MANA, GAME, GAME_ANSWER);
+    userCall(1, MANA, GAME, GAME_SETTLE);
     expect(() => { pays(); }).toThrow();
     errorIs(NOT_A_PLAYER);
   });
@@ -702,24 +707,24 @@ describe("only real Knode players are sponsored (audit M-1)", () => {
     setConfig();
     MockVM.commitTransaction();
     READS = [vhpBalance(10 * MANA), gamePlayer(0, 0)];
-    userCall(1, MANA, GAME, GAME_ANSWER);
+    userCall(1, MANA, GAME, GAME_CLAIM);
     expect(() => { pays(); }).toThrow();
     errorIs(NOT_A_PLAYER);
     READS = [vhpBalance(50 * MANA)];
-    userCall(2, MANA, GAME, GAME_ANSWER);
+    userCall(2, MANA, GAME, GAME_CLAIM);
     expect(pays()).toBe(true);
   });
 
   it("fails closed when the token and the game can't be read", () => {
     READS = [failedRead(), failedRead()];
-    userCall(1, MANA, GAME, GAME_ANSWER);
+    userCall(1, MANA, GAME, GAME_WITHDRAW);
     expect(() => { pays(); }).toThrow();
     errorIs(NOT_A_PLAYER);
   });
 
   it("fails closed when the game answers nothing", () => {
     READS = [vhpBalance(0), new system_calls.exit_arguments(0, new chain.result())];
-    userCall(1, MANA, GAME, GAME_ANSWER);
+    userCall(1, MANA, GAME, GAME_WITHDRAW);
     expect(() => { pays(); }).toThrow();
     errorIs(NOT_A_PLAYER);
   });
@@ -751,5 +756,147 @@ describe("only real Knode players are sponsored (audit M-1)", () => {
     MockVM.setCallContractResults([]);
     apply();
     expect(new Sponsor().authorize(new authority.authorize_arguments(authority.authorization_type.transaction_application)).value).toBe(true);
+  });
+});
+
+/** As goodConfig, with everyone's daily free-player answers capped at `free` Mana; per tx 1, per player 5/day, 30/week. */
+function freeConfig(free: u64): void {
+  CFG = new sponsor.config(true, GAME, DESK, [VHP, KOIN], MANA, 5 * MANA, 30 * MANA, 100 * MANA, VHP, MANA, free);
+  setConfig();
+  MockVM.commitTransaction();
+}
+
+function emptyWallet(): void { READS = [vhpBalance(0), gamePlayer(0, 0)]; }
+
+describe("free answers for any wallet (owner's decision 2026-10-26)", () => {
+  beforeEach(() => { start(); freeConfig(3 * MANA); });
+
+  it("pays an empty wallet's answer and counts it against the free sub-cap too", () => {
+    emptyWallet();
+    userCall(1, MANA, GAME, GAME_ANSWER);
+    expect(pays()).toBe(true);
+    expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day).toBe(MANA);
+    expect(new Sponsor().get_total_usage(new sponsor.get_total_usage_arguments()).used_day).toBe(MANA);
+    expect(new Sponsor().get_usage(new sponsor.get_usage_arguments(USER)).used_day).toBe(MANA);
+  });
+
+  it("pays several answers in one transaction for an empty wallet", () => {
+    emptyWallet();
+    TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
+    OPS = [call(GAME, GAME_ANSWER, new Uint8Array(0)), call(GAME, GAME_ANSWER, new Uint8Array(0))];
+    expect(pays()).toBe(true);
+  });
+
+  it("refuses an empty wallet's 6th answer of the day (per-player day cap)", () => {
+    freeConfig(100 * MANA);
+    for (let i = 1; i <= 5; i++) {
+      emptyWallet();
+      userCall(i <= 3 ? i : i - 3, MANA, GAME, GAME_ANSWER);
+      expect(pays()).toBe(true);
+      MockVM.commitTransaction();
+    }
+    emptyWallet();
+    userCall(1, MANA, GAME, GAME_ANSWER);
+    expect(() => { pays(); }).toThrow();
+    errorIs("SPONSOR: this player's daily sponsored mana is used up");
+  });
+
+  it("refuses free answers once the free sub-cap is used up, while a VHP holder's answer is still paid", () => {
+    for (let i = 1; i <= 3; i++) {
+      emptyWallet();
+      userCall(i, MANA, GAME, GAME_ANSWER);
+      expect(pays()).toBe(true);
+      MockVM.commitTransaction();
+    }
+    // OTHER is another empty wallet: the free sub-cap (3) is used up.
+    emptyWallet();
+    TX = 1; RC = MANA; PAYEE = OTHER; SIGNERS = ["OTHER"]; RAW_SIGS = [];
+    OPS = [call(GAME, GAME_ANSWER, new Uint8Array(0))];
+    expect(() => { pays(); }).toThrow();
+    errorIs(FREE_USED_UP);
+    // OTHER holding VHP is a real player: paid, and not counted as free.
+    READS = [vhpBalance(2 * MANA)];
+    TX = 2; RC = MANA; PAYEE = OTHER; SIGNERS = ["OTHER"]; RAW_SIGS = [];
+    OPS = [call(GAME, GAME_ANSWER, new Uint8Array(0))];
+    expect(pays()).toBe(true);
+    expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day).toBe(3 * MANA);
+    expect(new Sponsor().get_total_usage(new sponsor.get_total_usage_arguments()).used_day).toBe(4 * MANA);
+  });
+
+  it("the free sub-cap starts again the next day", () => {
+    for (let i = 1; i <= 3; i++) { emptyWallet(); userCall(i, MANA, GAME, GAME_ANSWER); expect(pays()).toBe(true); MockVM.commitTransaction(); }
+    setTime(T0 + DAY_MS);
+    MockVM.commitTransaction();
+    expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day).toBe(0);
+    emptyWallet();
+    userCall(1, MANA, GAME, GAME_ANSWER);
+    expect(pays()).toBe(true);
+  });
+
+  it("an answer whose player check can't be read counts as free (never refused for that alone)", () => {
+    READS = [failedRead(), failedRead()];
+    userCall(1, MANA, GAME, GAME_ANSWER);
+    expect(pays()).toBe(true);
+    expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day).toBe(MANA);
+  });
+
+  it("still refuses an empty wallet's approve, deposit and swap", () => {
+    emptyWallet();
+    TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
+    OPS = [approve(VHP, USER, GAME)];
+    expect(() => { pays(); }).toThrow();
+    errorIs(NOT_A_PLAYER);
+    emptyWallet();
+    userCall(2, MANA, GAME, GAME_DEPOSIT_VHP);
+    expect(() => { pays(); }).toThrow();
+    errorIs(NOT_A_PLAYER);
+    emptyWallet();
+    userCall(3, MANA, DESK, DESK_SWAP);
+    expect(() => { pays(); }).toThrow();
+    errorIs(NOT_A_PLAYER);
+    expect(new Sponsor().get_total_usage(new sponsor.get_total_usage_arguments()).used_day).toBe(0);
+  });
+
+  it("refuses an answer bundled with anything else from an empty wallet", () => {
+    emptyWallet();
+    TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
+    OPS = [call(GAME, GAME_ANSWER, new Uint8Array(0)), call(GAME, GAME_CLAIM, new Uint8Array(0))];
+    expect(() => { pays(); }).toThrow();
+    errorIs(NOT_A_PLAYER);
+  });
+
+  it("with a free sub-cap of 0, empty wallets' answers are refused", () => {
+    freeConfig(0);
+    emptyWallet();
+    userCall(1, MANA, GAME, GAME_ANSWER);
+    expect(() => { pays(); }).toThrow();
+    errorIs(FREE_USED_UP);
+  });
+
+  it("would_pay agrees: free answers, the free sub-cap and other actions", () => {
+    emptyWallet();
+    const a = wouldPayAnswer(USER, MANA);
+    expect(a.ok).toBe(true);
+    expect(a.free).toBe(true);
+    expect(a.left_free_today).toBe(3 * MANA);
+    emptyWallet();
+    const b = wouldPay(USER, MANA);
+    expect(b.ok).toBe(false);
+    expect(b.reason).toBe("only players who hold VHP or have a Knode stake are sponsored");
+    for (let i = 1; i <= 3; i++) { emptyWallet(); userCall(i, MANA, GAME, GAME_ANSWER); expect(pays()).toBe(true); MockVM.commitTransaction(); }
+    emptyWallet();
+    const c = wouldPayAnswer(OTHER, MANA);
+    expect(c.ok).toBe(false);
+    expect(c.reason).toBe("today's free-player answers are used up");
+    READS = [vhpBalance(5 * MANA)];
+    const d = wouldPayAnswer(OTHER, MANA);
+    expect(d.ok).toBe(true);
+    expect(d.free).toBe(false);
+  });
+
+  it("refuses a free sub-cap above the daily cap", () => {
+    CFG = new sponsor.config(true, GAME, DESK, [VHP, KOIN], MANA, 5 * MANA, 30 * MANA, 100 * MANA, VHP, MANA, 101 * MANA);
+    expect(() => { setConfig(); }).toThrow();
+    errorIs("SPONSOR: the free-player cap can't be above the daily cap");
   });
 });

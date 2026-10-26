@@ -163,7 +163,7 @@ describe("AB operations: odd shapes", () => {
   });
 });
 
-describe("AB-001 budget exhaustion by fresh wallets (fixed: only real players are sponsored)", () => {
+describe("AB-001 budget exhaustion by fresh wallets (fixed: only real players are sponsored, except answers within the free sub-cap)", () => {
   beforeEach(() => { start(); configure(1 * MANA, 5 * MANA, 20 * MANA, 100 * MANA); });
 
   it("a wallet with no stake, no VHP and no history is not sponsored", () => {
@@ -175,6 +175,25 @@ describe("AB-001 budget exhaustion by fresh wallets (fixed: only real players ar
     expect(() => { pays(); }).toThrow();
     expect(MockVM.getErrorMessage()).toBe(NOT_A_PLAYER);
     MockVM.rollbackTransaction();
+  });
+
+  it("fresh wallets' answers can use at most the free sub-cap, never the whole day", () => {
+    // Free sub-cap 10 of the 100 daily: twenty fresh wallets answering use 10, real players keep the other 90.
+    MockVM.setAuthorities([new MockVM.MockAuthority(authority.authorization_type.contract_call, SELF, true)]);
+    new Sponsor().set_config(new sponsor.set_config_arguments(new sponsor.config(true, GAME, DESK, [VHP, KOIN], MANA, 5 * MANA, 20 * MANA, 100 * MANA, VHP, MANA, 10 * MANA)));
+    MockVM.commitTransaction();
+    let paid: u64 = 0;
+    for (let i = 0; i < 20; i++) {
+      if (i % 2 == 0) asUser(MANA); else asOther(MANA);
+      TXN = 1 + (i % 3);
+      READS = [vhpBalance(0), gamePlayer(0, 0)];
+      if (i < 10) { expect(pays()).toBe(true); MockVM.commitTransaction(); paid += MANA; }
+      else { expect(() => { pays(); }).toThrow(); MockVM.rollbackTransaction(); }
+    }
+    // Two empty wallets, 5 each, reach the free sub-cap of 10; every later free answer is refused.
+    const f = new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments());
+    expect(f.used_day <= 10 * MANA).toBe(true);
+    expect(f.used_day).toBe(paid);
   });
 });
 

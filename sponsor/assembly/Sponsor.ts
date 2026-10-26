@@ -4,7 +4,8 @@ import { sponsor } from "./proto/sponsor";
 /**
  * Knode mana sponsor. See assembly/proto/sponsor.proto for the rules.
  * Ported from the SwarmTales sponsor; adds a per-player weekly cap, a read-only would_pay, refuses any signature
- * other than the player's (the owner's own transactions excepted), and pays only for real Knode players (audit M-1).
+ * other than the player's (the owner's own transactions excepted), and pays only for real Knode players (audit M-1),
+ * except that game answers are paid for anyone within a daily free-player sub-cap (owner's decision 2026-10-26).
  *
  * Uploaded onto a fresh wallet with ONLY the transaction-application override on. Settings and moving KOIN out use
  * the wallet's own key, as for any wallet.
@@ -13,6 +14,7 @@ import { sponsor } from "./proto/sponsor";
 const CONFIG_SPACE = 0;
 const ACCOUNT_USAGE_SPACE = 1;
 const TOTAL_USAGE_SPACE = 2;
+const FREE_USAGE_SPACE = 3;
 
 const ADDRESS_LENGTH = 25;
 const SIGNATURE_LENGTH = 65;
@@ -39,6 +41,7 @@ export const DESK_SWAP: u32 = 0xda47c2f4;
 export const TOKEN_BALANCE_OF: u32 = 0x5c721497;
 export const GAME_GET_PLAYER: u32 = 0x37ce3085;
 export const NOT_A_PLAYER = "SPONSOR: only players who hold VHP or have a Knode stake are sponsored";
+export const FREE_USED_UP = "SPONSOR: today's free-player answers are used up";
 
 /** UTC day number of a time in ms. */
 export function dayOf(ms: u64): u64 {
@@ -76,6 +79,15 @@ export class Sponsor {
     () => new sponsor.usage()
   );
 
+  /** Everyone's Mana today for answers by free (non-player) wallets: day and used_day only. */
+  freeUsage: Storage.Obj<sponsor.usage> = new Storage.Obj(
+    this.contractId,
+    FREE_USAGE_SPACE,
+    sponsor.usage.decode,
+    sponsor.usage.encode,
+    () => new sponsor.usage()
+  );
+
   /**
    * Called by the chain when a transaction names this wallet as payer. Fails with a "SPONSOR: ..." message (so the
    * site can tell, and fall back to the player's own Mana) instead of returning false.
@@ -107,16 +119,16 @@ export class Sponsor {
     const tx = System.getTransaction();
     const ops = tx.operations;
     System.require(ops.length > 0 && ops.length <= MAX_OPERATIONS, "SPONSOR: 1 to 10 operations");
+    let answerOnly = true;
     for (let i = 0; i < ops.length; i++) {
       checkOperation(ops[i], cfg, payee);
+      if (!isAnswer(ops[i], cfg)) answerOnly = false;
     }
-
-    // Last of the checks, so a transaction refused for any other reason costs no reads.
-    System.require(isPlayer(cfg, payee), NOT_A_PLAYER);
 
     const now = System.getHeadInfo().head_block_time;
     const day = dayOf(now), week = weekOf(now);
 
+    // The caps that don't depend on who the player is come first, so a transaction they refuse costs no reads.
     const mine = this.accountUsage.get(payee)!;
     const mineDay: u64 = mine.day == day ? mine.used_day : 0;
     const mineWeek: u64 = mine.week == week ? mine.used_week : 0;
@@ -134,6 +146,22 @@ export class Sponsor {
       allDay <= cfg.max_mana_per_day && rcLimit <= cfg.max_mana_per_day - allDay,
       "SPONSOR: today's sponsored mana is used up"
     );
+
+    // Last, the player rule (the only check that reads other contracts). Anything but answers: real players only,
+    // and a failed read fails closed. Answers: anyone, but a wallet that isn't a real player (or can't be read)
+    // also counts against everyone's free sub-cap.
+    const player = isPlayer(cfg, payee);
+    if (!answerOnly) System.require(player, NOT_A_PLAYER);
+    if (!player) {
+      const fr = this.freeUsage.get()!;
+      const freeDay: u64 = fr.day == day ? fr.used_day : 0;
+      System.require(
+        freeDay <= cfg.max_mana_free_day && rcLimit <= cfg.max_mana_free_day - freeDay,
+        FREE_USED_UP
+      );
+      this.freeUsage.put(new sponsor.usage(day, freeDay + rcLimit, 0, 0));
+    }
+
     this.accountUsage.put(payee, new sponsor.usage(day, mineDay + rcLimit, week, mineWeek + rcLimit));
     this.totalUsage.put(new sponsor.usage(day, allDay + rcLimit, 0, 0));
     return new authority.authorize_result(true);
@@ -158,6 +186,13 @@ export class Sponsor {
     return new sponsor.usage(day, u.day == day ? u.used_day : 0, 0, 0);
   }
 
+  /** Everyone's Mana today for answers by free (non-player) wallets. */
+  get_free_usage(args: sponsor.get_free_usage_arguments): sponsor.usage {
+    const u = this.freeUsage.get()!;
+    const day = dayOf(System.getHeadInfo().head_block_time);
+    return new sponsor.usage(day, u.day == day ? u.used_day : 0, 0, 0);
+  }
+
   /** The caps and the on/off switch only: what the website asks before choosing the sponsor as payer. */
   would_pay(args: sponsor.would_pay_arguments): sponsor.would_pay_result {
     const cfg = this.config.get()!;
@@ -176,8 +211,16 @@ export class Sponsor {
     else if (rc > leftDay) out.reason = "this player's daily sponsored mana is used up";
     else if (rc > leftWeek) out.reason = "this player's weekly sponsored mana is used up";
     else if (rc > leftAll) out.reason = "today's sponsored mana is used up";
-    else if (!isPlayer(cfg, args.account!)) out.reason = "only players who hold VHP or have a Knode stake are sponsored";
-    else out.ok = true;
+    else {
+      const player = isPlayer(cfg, args.account!);
+      out.free = !player;
+      const f = this.get_free_usage(new sponsor.get_free_usage_arguments());
+      out.left_free_today = cfg.max_mana_free_day > f.used_day ? cfg.max_mana_free_day - f.used_day : 0;
+      if (player) out.ok = true;
+      else if (!args.answer_only) out.reason = "only players who hold VHP or have a Knode stake are sponsored";
+      else if (rc > out.left_free_today) out.reason = "today's free-player answers are used up";
+      else out.ok = true;
+    }
     return out;
   }
 
@@ -211,6 +254,7 @@ export class Sponsor {
       "SPONSOR: caps must be per transaction <= per player per day <= per player per week, and per player per day <= per day"
     );
     System.require(cfg.max_mana_per_day <= CAP_LIMIT, "SPONSOR: daily cap above 1,000 mana");
+    System.require(cfg.max_mana_free_day <= cfg.max_mana_per_day, "SPONSOR: the free-player cap can't be above the daily cap");
     System.require(cfg.max_mana_per_account_week <= 7 * CAP_LIMIT, "SPONSOR: weekly cap above 7,000 mana");
     System.require(!cfg.enabled || cfg.max_mana_per_tx > 0, "SPONSOR: switched on with a zero cap");
     System.require(!cfg.enabled || (isAddress(cfg.vhp) && contains(cfg.tokens, cfg.vhp!) && cfg.min_vhp > 0),
@@ -244,6 +288,12 @@ function isPlayer(cfg: sponsor.config, account: Uint8Array): bool {
 function isGameAction(entry: u32): bool {
   return entry == GAME_DEPOSIT_VHP || entry == GAME_DEPOSIT_KOIN || entry == GAME_WITHDRAW || entry == GAME_ANSWER ||
     entry == GAME_SETTLE || entry == GAME_CLAIM || entry == GAME_CLOSE_WEEK || entry == GAME_FINALIZE_WEEK;
+}
+
+/** A call to the game's `answer` (checkOperation has already accepted the operation). */
+function isAnswer(op: protocol.operation, cfg: sponsor.config): bool {
+  const call = op.call_contract;
+  return call != null && call.contract_id != null && Arrays.equal(call.contract_id!, cfg.game!) && call.entry_point == GAME_ANSWER;
 }
 
 /** One operation is sponsored only if it is a player action on the game or Knode Swap, or approves one of them. */

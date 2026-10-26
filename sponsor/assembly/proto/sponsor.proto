@@ -16,8 +16,12 @@ syntax = "proto3";
 //     deposit_koin, withdraw, answer, settle, claim, close_week,
 //     finalize_week) or on Knode Swap (swap), or a VHP/KOIN `approve` with
 //     spender = the game or Knode Swap and owner = the payee;
-//   - the payee is a real Knode player: holds at least min_vhp VHP, or has a
-//     stake in the game (so new empty wallets can't use up the budget);
+//   - for anything but answers, the payee is a real Knode player: holds at
+//     least min_vhp VHP, or has a stake in the game. A transaction made only of
+//     game `answer` calls is paid for ANY player (free play drives activity);
+//     answers from wallets that are not real players also count against a
+//     separate daily sub-cap for everyone (max_mana_free_day), so free answers
+//     can never use up what real players need;
 //   - the transaction's Mana limit is within the per-transaction cap, and
 //     this player's totals today and this week, and everyone's total today,
 //     stay within their caps.
@@ -53,6 +57,9 @@ message config {
   // token, or have a stake (active or pending) in the game. Required, and min_vhp > 0, when switched on.
   bytes vhp = 9 [(koinos.btype) = ADDRESS];
   uint64 min_vhp = 10 [jstype = JS_STRING];
+  // Most Mana per UTC day, for everyone together, that may pay for answers by wallets that are not real players
+  // (no VHP and no stake). At most max_mana_per_day. 0 = free wallets are never sponsored.
+  uint64 max_mana_free_day = 11 [jstype = JS_STRING];
 }
 
 message usage {
@@ -74,6 +81,10 @@ message would_pay_result {
   string reason = 2;
   uint64 left_today = 3 [jstype = JS_STRING];
   uint64 left_this_week = 4 [jstype = JS_STRING];
+  // Mana left today for answers by wallets that are not real players (meaningful when answer_only was asked).
+  uint64 left_free_today = 5 [jstype = JS_STRING];
+  // True when this account would count as a free (non-player) wallet.
+  bool free = 6;
 }
 
 // @description Settings: on/off, the Knode contracts, tokens and caps
@@ -93,12 +104,18 @@ message get_usage_arguments {
 // @result usage
 message get_total_usage_arguments {}
 
-// @description Would the sponsor pay a transaction from this player with this Mana limit (caps and on/off only; the operations are checked when it is sent)
+// @description Mana everyone has used today for answers by free (non-player) wallets
+// @read-only true
+// @result usage
+message get_free_usage_arguments {}
+
+// @description Would the sponsor pay a transaction from this player with this Mana limit (on/off, caps and the player rule; the operations themselves are checked when it is sent). answer_only = the transaction is only game answers.
 // @read-only true
 // @result would_pay_result
 message would_pay_arguments {
   bytes account = 1 [(koinos.btype) = ADDRESS];
   uint64 rc_limit = 2 [jstype = JS_STRING];
+  bool answer_only = 3;
 }
 
 // @description Change the settings. Needs the sponsor wallet's own key.

@@ -28,12 +28,19 @@
       "read_only": true,
       "description": "Mana everyone has used today"
     },
+    "get_free_usage": {
+      "entry_point": 1941312993,
+      "argument": "sponsor.get_free_usage_arguments",
+      "return": "sponsor.usage",
+      "read_only": true,
+      "description": "Mana everyone has used today for answers by free (non-player) wallets"
+    },
     "would_pay": {
       "entry_point": 3659520245,
       "argument": "sponsor.would_pay_arguments",
       "return": "sponsor.would_pay_result",
       "read_only": true,
-      "description": "Would the sponsor pay a transaction from this player with this Mana limit (caps and on/off only; the operations are checked when it is sent)"
+      "description": "Would the sponsor pay a transaction from this player with this Mana limit (on/off, caps and the player rule; the operations themselves are checked when it is sent). answer_only = the transaction is only game answers."
     },
     "set_config": {
       "entry_point": 1269140617,
@@ -116,6 +123,13 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "max_mana_free_day": {
+                "type": "uint64",
+                "id": 11,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
@@ -177,6 +191,17 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "left_free_today": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "free": {
+                "type": "bool",
+                "id": 6
               }
             }
           },
@@ -197,6 +222,9 @@
           "get_total_usage_arguments": {
             "fields": {}
           },
+          "get_free_usage_arguments": {
+            "fields": {}
+          },
           "would_pay_arguments": {
             "fields": {
               "account": {
@@ -212,6 +240,10 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "answer_only": {
+                "type": "bool",
+                "id": 3
               }
             }
           },

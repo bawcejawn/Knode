@@ -11,11 +11,17 @@ From then on, when a transaction names the sponsor as payer, the chain asks this
 - every operation is a player action on the Knode game (`deposit_vhp`, `deposit_koin`, `withdraw`, `answer`,
   `settle`, `claim`, `close_week`, `finalize_week`) or a `swap` on Knode Swap, or a VHP/KOIN `approve` whose spender is
   the game or Knode Swap and whose owner is the payee (owner, operator, seed and upgrade actions are never paid);
-- the payee is a **real Knode player**: holds at least `min_vhp` VHP (default 1 VHP) or has a stake (active or
-  pending) in the game, so new empty wallets can't use up the budget (audit 2026-10-26, M-1). Free players without VHP
-  pay their own Mana. The check reads the VHP token and the game (read-only); a read that fails counts as "no";
+- **answers are free for everyone** (owner's decision 2026-10-26: free play drives chain activity and traffic): a
+  transaction made only of game `answer` calls is paid for any wallet, even an empty one. Answers by wallets that hold
+  no VHP and have no stake also count against a separate daily total for everyone, `max_mana_free_day` (default 500 of
+  the 1,000), so free answers can never use up what real players need;
+- **everything else** (approve, deposit, withdraw, settle, claim, close/finalize, swap) is paid only for a **real
+  Knode player**: holds at least `min_vhp` VHP (default 1 VHP) or has a stake (active or pending) in the game
+  (audit 2026-10-26, M-1). The check reads the VHP token and the game (read-only). For those actions a read that fails
+  counts as "no"; for an answer it only means the wallet counts as free (against the free total), never a refusal;
 - the transaction's Mana limit is within the per-transaction cap, and this player's total today and this week (weeks
-  start Monday 00:00 UTC, the same weeks as the game), and everyone's total today, stay within their caps.
+  start Monday 00:00 UTC, the same weeks as the game), and everyone's total today, stay within their caps. These are
+  checked before the player check, so a transaction they refuse costs no reads.
 
 A transaction signed by the sponsor wallet's own key is always paid: that is the owner changing settings or moving KOIN
 out. Calls and code uploads are **not** overridden, so they stay with the sponsor wallet's key, like any wallet.
@@ -59,7 +65,8 @@ website says: the page then falls back to the player's own Mana.
    other than the audited one, and after uploading it stops with an error if the code or the switches on chain are not
    exactly right (pays for transactions ON, call and upload OFF).
 5. **Set the caps** (dry run first, then `--send`):
-   `npm run sponsor -- config --per-tx 1 --per-player-day 5 --per-player-week 20 --per-day 1000 --min-vhp 1`
+   `npm run sponsor -- config --per-tx 1 --per-player-day 5 --per-player-week 30 --per-day 1000 --free-per-day 500 --min-vhp 1`
+   (`--free-per-day 0` turns free answers off; pass it each time you change the caps, because an unset value means 500)
 6. **Switch it on**: `npm run sponsor -- enable --send`.
 7. **Point the website at it**: `npm run sponsor -- payer sponsor --send`, then
    `git add game-data/deployment.json desk-data/deployment.json sponsor-data/deployment.json`,
@@ -76,9 +83,10 @@ it from the sponsor wallet in Kondor, like any wallet.
 - The caps count each transaction's **Mana limit**, not what it really used. The site asks for `rcLimit` (default
   1 Mana) per transaction. Knode's own transactions use well under that (announcing an upgrade used 0.31 Mana; the game
   pays up to 2 Mana for a sponsored player transaction).
-- Knode's settings: **1** per transaction, **5** per player per day, **20** per player per week, **1,000** for everyone
-  per day (a hard cap: 1,000 is also the contract's own ceiling, `CAP_LIMIT`), and players must hold **1 VHP** or have
-  a stake.
+- Knode's settings: **1** per transaction, **5** per player per day (the day's 5 answers), **30** per player per week
+  (the week's 30 questions), **1,000** for everyone per day (a hard cap: 1,000 is also the contract's own ceiling,
+  `CAP_LIMIT`), of which at most **500** for answers by wallets with no VHP and no stake. Every other action needs
+  **1 VHP** or a stake.
 - Knode's sponsor wallet `1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8` keeps at least **5,000 KOIN**: it refills about a fifth of
   its balance a day, so about 1,000 Mana a day, matching the cap. Keep some headroom above that for transactions waiting
   in a block.
@@ -92,15 +100,18 @@ it from the sponsor wallet in Kondor, like any wallet.
   sponsor refuses is never included and costs nothing. So the caps are exact upper bounds.
 - Near 00:00 UTC a transaction can be accepted with today's counts and then dropped from the block (mempool expiry);
   the page may already say "Sent". The player simply tries again.
-- A spammer now needs real VHP (or a stake) in every wallet they use. With per-player caps of 5 a day, using up
-  1,000 a day takes 200 wallets each holding the VHP minimum. If that ever happens, raise `--min-vhp`. When the daily
-  budget is used up, everyone pays their own Mana until the next UTC day. Nothing else is at risk: the sponsor never signs or moves
+- Free answers: anyone can make new wallets, so empty wallets answering can use up the free total (500 a day: 100
+  wallets × 5 answers). Then free wallets pay their own Mana until the next UTC day, while players with VHP or a stake
+  keep the other 500 (they still count against everyone's 1,000). If spam appears, lower `--free-per-day`.
+- Everything else needs real VHP (or a stake) in every wallet: using up the rest takes many wallets each holding the
+  VHP minimum. If that ever happens, raise `--min-vhp`. When the daily budget is used up, everyone pays their own Mana
+  until the next UTC day. Nothing else is at risk: the sponsor never signs or moves
   anything for players, and it pays only for Knode player actions.
 - `settle`, `close_week` and `finalize_week` can be called by anyone for anyone: a wallet can spend its own sponsored
   caps on them, never more.
 
 ## Build
 
-Release build sha256: `ec398f546ceec2bdd81274e2e7d0b511223b6e2d6d84660a8d06b9ad1b719b22` (26,469 bytes).
-Tests: 79 contract tests (including the auditor's attack and fuzz tests, `Sponsor.audit-attacks.spec.ts`) (`npm test`, real signatures from `scripts/make-test-fixtures.cjs`: test-only keys from public
+Release build sha256: `8cfeff6209b8d5cbc3b3e5fa30751e995767f5904b77693ed8a41e323ea2a8ed` (27,473 bytes).
+Tests: 91 contract tests (including the auditor's attack and fuzz tests, `Sponsor.audit-attacks.spec.ts`) (`npm test`, real signatures from `scripts/make-test-fixtures.cjs`: test-only keys from public
 labels, never fund them), plus `tests/audit/sponsor.wallet.test.mjs` (the website) and `tests/audit/sponsor.tool.test.ts`.

@@ -16,8 +16,10 @@ test("the default caps are in order and convert to chain units", () => {
   assert.deepEqual(c.tokens, [GAME.vhp, GAME.koin]);
   assert.equal(c.max_mana_per_tx, "100000000");
   assert.equal(c.max_mana_per_account_day, "500000000");
-  assert.equal(c.max_mana_per_account_week, "2000000000");
+  assert.equal(c.max_mana_per_account_week, "3000000000");
   assert.equal(c.max_mana_per_day, "100000000000");
+  // Answers for any wallet: those by wallets with no VHP and no stake share 500 of the 1,000 a day.
+  assert.equal(c.max_mana_free_day, "50000000000");
   // Only real players (audit M-1): VHP is the token checked, at least 1 VHP by default.
   assert.equal(c.vhp, GAME.vhp);
   assert.equal(c.min_vhp, "100000000");
@@ -44,6 +46,12 @@ test("caps out of order, too large, or zero while on are refused before anything
   assert.throws(() => buildConfig(GAME, DESK, { perTx: "1", perPlayerDay: "5", perPlayerWeek: "20", perDay: "1001" }, true), /1,000/);
   assert.throws(() => buildConfig(GAME, DESK, { perTx: "0", perPlayerDay: "5", perPlayerWeek: "20", perDay: "50" }, true), /refuse everything/);
   assert.doesNotThrow(() => buildConfig(GAME, DESK, { perTx: "0", perPlayerDay: "0", perPlayerWeek: "0", perDay: "0", minVhp: "1" }, false));
+});
+
+test("the free-answers cap: never above everyone's daily cap; defaults to 500 or the daily cap if lower; 0 = off", () => {
+  assert.throws(() => buildConfig(GAME, DESK, { ...DEFAULT_CAPS, perDay: "100", freePerDay: "101" }, true), /free-player daily cap/);
+  assert.equal(buildConfig(GAME, DESK, { perTx: "1", perPlayerDay: "5", perPlayerWeek: "30", perDay: "100" }, true).max_mana_free_day, "10000000000");
+  assert.equal(buildConfig(GAME, DESK, { ...DEFAULT_CAPS, freePerDay: "0" }, true).max_mana_free_day, "0");
 });
 
 function files(withSponsor: boolean) {

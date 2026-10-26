@@ -212,7 +212,9 @@
   async function sendKondor(label, ops, opts = {}) {
     const sp = !opts.gamePays ? sponsorFor(ops) : null;
     const rcLimit = sp ? String(sp.rcLimit || "100000000") : null;
-    if (sp && await sponsorSaysYes(sp, rcLimit)) {
+    // A transaction made only of game answers is sponsored for any wallet (free play), within the sponsor's caps.
+    const answerOnly = !!sp && ops.every((o) => o.call_contract && o.call_contract.contract_id === sp.covers[0] && Number(o.call_contract.entry_point) === ANSWER);
+    if (sp && await sponsorSaysYes(sp, rcLimit, answerOnly)) {
       try { return await sendKondorWith(label, ops, { ...opts, sponsor: sp.address, rcLimit }); }
       catch (e) {
         if (!/SPONSOR/i.test(String(e && e.message || e))) throw e;
@@ -258,7 +260,8 @@
   // deployment.json "payer": "sponsor" (the sponsor wallet pays the Mana) or "self" (players' own Mana; also the default).
   // "sponsor": { address, covers: [game, desk, vhp, koin], rcLimit }. The sponsor contract decides on chain; the page
   // only picks it when every operation is one it pays for and its caps (would_pay) say yes, else the player's own Mana.
-  const APPROVE = 0x74e21680, WOULD_PAY = 0xda1fd8f5;
+  // Answers are sponsored for any wallet (free play); everything else only for wallets with VHP or a stake.
+  const APPROVE = 0x74e21680, WOULD_PAY = 0xda1fd8f5, ANSWER = 0x0db52f40;
   /** The sponsor this transaction could use, or null. */
   function sponsorFor(ops) {
     const sp = W.sponsor;
@@ -271,13 +274,14 @@
     }
     return sp;
   }
-  /** would_pay(account, rc_limit): true only when the sponsor answers yes (any error: no). */
-  async function sponsorSaysYes(sp, rcLimit) {
+  /** would_pay(account, rc_limit, answer_only): true only when the sponsor answers yes (any error: no). */
+  async function sponsorSaysYes(sp, rcLimit, answerOnly) {
     try {
       const acct = lib.utils.decodeBase58(W.address);
       const bytes = [0x0a, acct.length, ...acct, 0x10];
       let v = BigInt(rcLimit);
       do { let b = Number(v & 0x7fn); v >>= 7n; if (v > 0n) b |= 0x80; bytes.push(b); } while (v > 0n);
+      if (answerOnly) bytes.push(0x18, 0x01);   // field 3 (answer_only) = true
       const r = await withTimeout(W.provider.readContract({ contract_id: sp.address, entry_point: WOULD_PAY, args: lib.utils.encodeBase64url(new Uint8Array(bytes)) }), 6000, "timeout");
       const out = r && r.result ? lib.utils.decodeBase64url(r.result) : new Uint8Array(0);
       return out.length >= 2 && out[0] === 0x08 && out[1] === 0x01;   // field 1 (ok) = true
