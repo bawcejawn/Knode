@@ -1,0 +1,312 @@
+{
+  "methods": {
+    "get_config": {
+      "entry_point": 3159346644,
+      "argument": "sponsor.get_config_arguments",
+      "return": "sponsor.config",
+      "read_only": true,
+      "description": "Settings: on/off, the Knode contracts, tokens and caps"
+    },
+    "authorize": {
+      "entry_point": 1244511632,
+      "argument": "koinos.chain.authorize_arguments",
+      "return": "koinos.chain.authorize_result",
+      "read_only": false,
+      "description": "Check if authorized"
+    },
+    "get_usage": {
+      "entry_point": 1236253562,
+      "argument": "sponsor.get_usage_arguments",
+      "return": "sponsor.usage",
+      "read_only": true,
+      "description": "Mana this player has used today and this week (as of the head block)"
+    },
+    "get_total_usage": {
+      "entry_point": 1238235473,
+      "argument": "sponsor.get_total_usage_arguments",
+      "return": "sponsor.usage",
+      "read_only": true,
+      "description": "Mana everyone has used today"
+    },
+    "would_pay": {
+      "entry_point": 3659520245,
+      "argument": "sponsor.would_pay_arguments",
+      "return": "sponsor.would_pay_result",
+      "read_only": true,
+      "description": "Would the sponsor pay a transaction from this player with this Mana limit (caps and on/off only; the operations are checked when it is sent)"
+    },
+    "set_config": {
+      "entry_point": 1269140617,
+      "argument": "sponsor.set_config_arguments",
+      "return": "sponsor.empty_object",
+      "read_only": false,
+      "description": "Change the settings. Needs the sponsor wallet's own key."
+    }
+  },
+  "koilib_types": {
+    "nested": {
+      "sponsor": {
+        "nested": {
+          "config": {
+            "fields": {
+              "enabled": {
+                "type": "bool",
+                "id": 1
+              },
+              "game": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "desk": {
+                "type": "bytes",
+                "id": 3,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "tokens": {
+                "rule": "repeated",
+                "type": "bytes",
+                "id": 4,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "max_mana_per_tx": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "max_mana_per_account_day": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "max_mana_per_account_week": {
+                "type": "uint64",
+                "id": 7,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "max_mana_per_day": {
+                "type": "uint64",
+                "id": 8,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "usage": {
+            "fields": {
+              "day": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "used_day": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "week": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "used_week": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "empty_object": {
+            "fields": {}
+          },
+          "would_pay_result": {
+            "fields": {
+              "ok": {
+                "type": "bool",
+                "id": 1
+              },
+              "reason": {
+                "type": "string",
+                "id": 2
+              },
+              "left_today": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "left_this_week": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "get_config_arguments": {
+            "fields": {}
+          },
+          "get_usage_arguments": {
+            "fields": {
+              "account": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "get_total_usage_arguments": {
+            "fields": {}
+          },
+          "would_pay_arguments": {
+            "fields": {
+              "account": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "rc_limit": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "set_config_arguments": {
+            "fields": {
+              "config": {
+                "type": "config",
+                "id": 1
+              }
+            }
+          },
+          "config_event": {
+            "fields": {
+              "config": {
+                "type": "config",
+                "id": 1
+              }
+            }
+          },
+          "approve_args": {
+            "fields": {
+              "owner": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "spender": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "value": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          }
+        }
+      },
+      "koinos": {
+        "nested": {
+          "chain": {
+            "options": {
+              "go_package": "github.com/koinos/koinos-proto-golang/koinos/chain"
+            },
+            "nested": {
+              "authorization_type": {
+                "values": {
+                  "contract_call": 0,
+                  "transaction_application": 1,
+                  "contract_upload": 2
+                }
+              },
+              "call_target": {
+                "fields": {
+                  "contract_id": {
+                    "type": "bytes",
+                    "id": 1,
+                    "options": {
+                      "(btype)": "ADDRESS"
+                    }
+                  },
+                  "entry_point": {
+                    "type": "uint32",
+                    "id": 2
+                  }
+                }
+              },
+              "authorize_arguments": {
+                "oneofs": {
+                  "_call": {
+                    "oneof": [
+                      "call"
+                    ]
+                  }
+                },
+                "fields": {
+                  "type": {
+                    "type": "authorization_type",
+                    "id": 1
+                  },
+                  "call": {
+                    "type": "call_target",
+                    "id": 2,
+                    "options": {
+                      "proto3_optional": true
+                    }
+                  }
+                }
+              },
+              "authorize_result": {
+                "fields": {
+                  "value": {
+                    "type": "bool",
+                    "id": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

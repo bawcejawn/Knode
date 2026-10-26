@@ -22,5 +22,6 @@
   "deployedAt": "2026-10-16T02:03:38.621Z",
   "upgradedAt": "2026-10-19T00:39:33.713Z",
   "producerKey": "Ak0vGklNyfkjroA5_nT04sfBy_IkloaNbXYiOClcjMm3",
-  "chainId": "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA=="
+  "chainId": "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==",
+  "payer": "self"
 }

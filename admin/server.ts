@@ -38,7 +38,7 @@ const catalog = JSON.stringify(ACTIONS.map(({ id, group, label, help, params, se
 
 function run(tool: string, argv: string[]): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
-    const script = tool === "desk" ? "bot/desk.ts" : "bot/bot.ts";
+    const script = tool === "desk" ? "bot/desk.ts" : tool === "sponsor" ? "bot/sponsor.ts" : "bot/bot.ts";
     const child = spawn(process.execPath, ["--import", "tsx", script, ...argv], { cwd: ROOT, env: process.env });
     let out = "";
     const add = (b: Buffer) => { out += b.toString(); if (out.length > 400_000) out = out.slice(-400_000); };

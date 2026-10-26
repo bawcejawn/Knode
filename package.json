@@ -14,7 +14,8 @@
     "test:audit": "node --import tsx --test tests/audit/*.test.ts tests/audit/*.test.mjs",
     "desk": "tsx bot/desk.ts",
     "admin": "tsx admin/server.ts",
-    "heal": "node bot/heal.mjs"
+    "heal": "node bot/heal.mjs",
+    "sponsor": "tsx bot/sponsor.ts"
   },
   "dependencies": {
     "koilib": "9.4.1"

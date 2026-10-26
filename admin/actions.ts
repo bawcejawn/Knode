@@ -1,12 +1,12 @@
 /**
- * Everything the admin page can do. Each action runs one of the existing, tested commands (npm run bot / npm run desk)
+ * Everything the admin page can do. Each action runs one of the existing, tested commands (npm run bot / desk / sponsor)
  * with checked arguments: the page adds no new way to sign anything. Actions that send a transaction always run as a
  * dry run first; the page can send only the exact same action and values that were just previewed.
  */
 export type Param = { name: string; label: string; pattern: RegExp; hint: string; choices?: string[] };
 export type Action = {
   id: string; group: string; label: string; help: string;
-  tool: "bot" | "desk";
+  tool: "bot" | "desk" | "sponsor";
   args: string[];          // {name} is replaced by the parameter's value
   params?: Param[];
   sends: boolean;          // false = read-only, never takes --send
@@ -71,6 +71,14 @@ export const ACTIONS: Action[] = [
   // ── desk upgrades ──
   { id: "desk-upgrade-schedule", group: "Desk upgrade", label: "Announce the Desk upgrade", help: "Announces the Desk code built on this PC. 48 hours' notice.", tool: "desk", args: ["upgrade", "schedule"], sends: true },
   { id: "desk-upgrade-apply", group: "Desk upgrade", label: "Upload the announced Desk code", help: "After the 48 hours; the owner signs and pays.", tool: "desk", args: ["upgrade", "apply"], sends: true },
+  // ── Mana sponsor (sponsor/README.md) ──
+  { id: "sponsor-status", group: "Mana sponsor", label: "Sponsor status", help: "On or off, the caps, its KOIN and Mana, today's use, and who the website asks to pay.", tool: "sponsor", args: ["status"], sends: false },
+  { id: "sponsor-payer", group: "Mana sponsor", label: "Mana paid by", help: "Who the website asks to pay players' Mana: the sponsor, or players themselves (self). Staked players' answers stay with the game. Edits game-data and desk-data deployment.json on this PC: then commit and push them (git add game-data/deployment.json desk-data/deployment.json, git commit -m \"payer\", git push).", tool: "sponsor", args: ["payer", "{who}"], params: [{ name: "who", label: "Paid by", pattern: /^(sponsor|self)$/, hint: "sponsor or self", choices: ["sponsor", "self"] }], sends: true },
+  { id: "sponsor-enable", group: "Mana sponsor", label: "Switch the sponsor on", help: "The sponsor pays within its caps. Signed and paid by the sponsor wallet (SPONSOR_WIF).", tool: "sponsor", args: ["enable"], sends: true },
+  { id: "sponsor-disable", group: "Mana sponsor", label: "Switch the sponsor off", help: "Instantly stops it paying; players pay their own Mana. Signed by the sponsor wallet.", tool: "sponsor", args: ["disable"], sends: true },
+  { id: "sponsor-caps", group: "Mana sponsor", label: "Sponsor limits", help: "In Mana (1 = 1 KOIN of Mana): most per transaction, per player per day, per player per week (Monday 00:00 UTC), and for everyone per day. Each must be at most the next.", tool: "sponsor", args: ["config", "--per-tx", "{tx}", "--per-player-day", "{day}", "--per-player-week", "{week}", "--per-day", "{all}"], params: [{ name: "tx", label: "Per transaction", ...AMOUNT }, { name: "day", label: "Per player per day", ...AMOUNT }, { name: "week", label: "Per player per week", ...AMOUNT }, { name: "all", label: "Everyone per day", ...AMOUNT }], sends: true },
+  { id: "sponsor-upload", group: "Mana sponsor", label: "Upload the sponsor contract", help: "Once, onto the new sponsor wallet (SPONSOR_WIF), after sending it KOIN. Uses sponsor/build/release built on this PC.", tool: "sponsor", args: ["upload"], sends: true },
+
   { id: "desk-upgrade-cancel", group: "Desk upgrade", label: "Cancel the Desk announcement", help: "Also run this after a successful upload.", tool: "desk", args: ["upgrade", "cancel"], sends: true },
 ];
 

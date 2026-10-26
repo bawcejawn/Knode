@@ -500,9 +500,11 @@
     return text.slice(0, 160);
   }
 
+  // Staked players' answers are paid by the game contract (Kondor's free Mana option), so they don't use up the Mana
+  // sponsor; everything else can use the sponsor when deployment.json turns it on (site/wallet.js).
   const answer = (q, option) => send(`answer ${String.fromCharCode(65 + option)}`, async () => [
     await opOf(writer(), "answer", { player: S.account, question_id: q.chainId, option }),
-  ]);
+  ], { gamePays: (S.activeStake ?? 0n) >= UNIT });
 
   const claim = (week) => send(`collect week ${week + 1} reward`, async () => [
     await opOf(writer(), "claim", { player: S.account, week: String(week) }),
@@ -1280,7 +1282,7 @@
       armed = 0; window.KWallet.disconnect();
     });
     const initWallet = () => window.KWallet && window.KWallet.init({
-      provider: S.provider, toast, chainId: S.dep && S.dep.chainId,
+      provider: S.provider, toast, chainId: S.dep && S.dep.chainId, payer: S.dep && S.dep.payer, sponsor: S.dep && S.dep.sponsor,
       onChange: (addr) => {
         S.account = addr; S.player = null; S.entry = null; S.activeStake = null; S.balances = null; S.claims = [];
         if (addr) afterConnect(); else { toast("Wallet disconnected"); S.board = {}; renderAll(); }

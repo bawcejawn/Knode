@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+// =====================================================================
+// Knode mana sponsor: interface definition
+//
+// Uploaded onto ONE fresh Koinos wallet (the sponsor address) with only the
+// "transaction application" authority override on. That wallet holds KOIN;
+// its Mana then pays for Knode transactions so players don't need Mana of
+// their own.
+//
+// The website sets payer = sponsor and payee = the player. The chain then asks
+// this contract whether to pay. It says yes only when ALL of these hold:
+//   - the sponsor is switched on;
+//   - the transaction is signed by the payee (the player) and by nobody else;
+//   - every operation is a player action on the Knode game (deposit_vhp,
+//     deposit_koin, withdraw, answer, settle, claim, close_week,
+//     finalize_week) or on Knode Swap (swap), or a VHP/KOIN `approve` with
+//     spender = the game or Knode Swap and owner = the payee;
+//   - the transaction's Mana limit is within the per-transaction cap, and
+//     this player's totals today and this week, and everyone's total today,
+//     stay within their caps.
+// A transaction signed by the sponsor wallet's own key is always paid (that
+// is the owner changing settings or moving KOIN out).
+//
+// Settings change only with the sponsor wallet's own key (its call authority
+// is NOT overridden). The KOIN can always be moved out with that key, like
+// any wallet. Mana amounts use the chain's units: 100000000 = 1.
+// "Day" is the UTC day of the head block; "week" starts Monday 00:00 UTC,
+// the same weeks as the game.
+// =====================================================================
+
+package sponsor;
+
+import "koinos/options.proto";
+
+message config {
+  bool enabled = 1;
+  bytes game = 2 [(koinos.btype) = ADDRESS];
+  bytes desk = 3 [(koinos.btype) = ADDRESS];
+  // Tokens whose approve(spender = game or desk, owner = payee) is paid for: VHP and KOIN. At most 4.
+  repeated bytes tokens = 4 [(koinos.btype) = ADDRESS];
+  // Most Mana one transaction may reserve (its rc_limit).
+  uint64 max_mana_per_tx = 5 [jstype = JS_STRING];
+  // Most Mana one player may reserve per UTC day (sum of rc_limits).
+  uint64 max_mana_per_account_day = 6 [jstype = JS_STRING];
+  // Most Mana one player may reserve per week (Monday 00:00 UTC).
+  uint64 max_mana_per_account_week = 7 [jstype = JS_STRING];
+  // Most Mana everyone together may reserve per UTC day.
+  uint64 max_mana_per_day = 8 [jstype = JS_STRING];
+}
+
+message usage {
+  // UTC day number (head block time / 86400000). 0 = never used.
+  uint64 day = 1 [jstype = JS_STRING];
+  // Mana reserved that day.
+  uint64 used_day = 2 [jstype = JS_STRING];
+  // Week number (Monday-based, see week_of in Sponsor.ts). 0 = never used.
+  uint64 week = 3 [jstype = JS_STRING];
+  // Mana reserved that week.
+  uint64 used_week = 4 [jstype = JS_STRING];
+}
+
+message empty_object {}
+
+// What would_pay answers.
+message would_pay_result {
+  bool ok = 1;
+  string reason = 2;
+  uint64 left_today = 3 [jstype = JS_STRING];
+  uint64 left_this_week = 4 [jstype = JS_STRING];
+}
+
+// @description Settings: on/off, the Knode contracts, tokens and caps
+// @read-only true
+// @result config
+message get_config_arguments {}
+
+// @description Mana this player has used today and this week (as of the head block)
+// @read-only true
+// @result usage
+message get_usage_arguments {
+  bytes account = 1 [(koinos.btype) = ADDRESS];
+}
+
+// @description Mana everyone has used today
+// @read-only true
+// @result usage
+message get_total_usage_arguments {}
+
+// @description Would the sponsor pay a transaction from this player with this Mana limit (caps and on/off only; the operations are checked when it is sent)
+// @read-only true
+// @result would_pay_result
+message would_pay_arguments {
+  bytes account = 1 [(koinos.btype) = ADDRESS];
+  uint64 rc_limit = 2 [jstype = JS_STRING];
+}
+
+// @description Change the settings. Needs the sponsor wallet's own key.
+// @read-only false
+// @result empty_object
+message set_config_arguments {
+  config config = 1;
+}
+
+// Emitted by set_config.
+message config_event {
+  config config = 1;
+}
+
+// The KCS-4 approve arguments, read from a token operation.
+message approve_args {
+  bytes owner = 1 [(koinos.btype) = ADDRESS];
+  bytes spender = 2 [(koinos.btype) = ADDRESS];
+  uint64 value = 3 [jstype = JS_STRING];
+}

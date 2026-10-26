@@ -210,19 +210,35 @@
    *  payer and is signed first. It is broadcast only as signed: if the wallet switched the payer (Kondor's free Mana
    *  option), or did not hand back a signed transaction (so the page can't see who pays), it is not sent. */
   async function sendKondor(label, ops, opts = {}) {
+    const sp = !opts.gamePays ? sponsorFor(ops) : null;
+    const rcLimit = sp ? String(sp.rcLimit || "100000000") : null;
+    if (sp && await sponsorSaysYes(sp, rcLimit)) {
+      try { return await sendKondorWith(label, ops, { ...opts, sponsor: sp.address, rcLimit }); }
+      catch (e) {
+        if (!/SPONSOR/i.test(String(e && e.message || e))) throw e;
+        W.status && W.status("The Mana sponsor couldn't cover this one. Confirm again to use your own Mana.");
+      }
+    }
+    return sendKondorWith(label, ops, opts);
+  }
+
+  async function sendKondorWith(label, ops, opts = {}) {
     const signer = window.kondor.getSigner(W.address);
     try { signer.provider = W.provider; } catch {}
-    const tx = new lib.Transaction({ signer, provider: W.provider, ...(opts.ownMana ? { options: { payer: W.address } } : {}) });
+    const options = opts.sponsor ? { payer: opts.sponsor, payee: W.address, rcLimit: opts.rcLimit } : opts.ownMana ? { payer: W.address } : null;
+    const tx = new lib.Transaction({ signer, provider: W.provider, ...(options ? { options } : {}) });
     for (const op of ops) await tx.pushOperation(op);
     W.status && W.status(`Confirm “${label}” in Kondor…`);
-    if (opts.ownMana) {
+    if (opts.ownMana || opts.sponsor) {
       const signed = await tx.sign();
       if (!signed || !Array.isArray(signed.signatures) || !signed.signatures.length) {
-        throw new Error("Kondor did not hand back a signed transaction, so the page can't check that your own Mana pays for it. Nothing was sent; try again, or claim later.");
+        throw new Error("Kondor did not hand back a signed transaction, so the page can't check who pays the Mana. Nothing was sent; try again, or claim later.");
       }
       tx.transaction = signed;
       const payer = signed.header && signed.header.payer;
-      if (payer !== W.address) throw new Error("This one must use your own Mana. Leave Kondor's free Mana option off and try again.");
+      // ownMana: never the game contract. The sponsor (when chosen) or the player may pay.
+      const okPayers = opts.sponsor ? [opts.sponsor, W.address] : [W.address];
+      if (opts.ownMana && !okPayers.includes(payer)) throw new Error("This one must use your own Mana. Leave Kondor's free Mana option off and try again.");
     }
     const receipt = await tx.send();
     if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "the contract refused it"));
@@ -230,6 +246,36 @@
     W.status && W.status("Sent. Waiting for the next block…");
     if (id) { try { await W.provider.wait(id, "byBlock", 90000); return id; } catch { return null; } }
     return null;
+  }
+
+  // ── Mana sponsor (sponsor/README.md) ──
+  // deployment.json "payer": "sponsor" (the sponsor wallet pays the Mana) or "self" (players' own Mana; also the default).
+  // "sponsor": { address, covers: [game, desk, vhp, koin], rcLimit }. The sponsor contract decides on chain; the page
+  // only picks it when every operation is one it pays for and its caps (would_pay) say yes, else the player's own Mana.
+  const APPROVE = 0x74e21680, WOULD_PAY = 0xda1fd8f5;
+  /** The sponsor this transaction could use, or null. */
+  function sponsorFor(ops) {
+    const sp = W.sponsor;
+    if (!sp || W.payer !== "sponsor" || !sp.address || !Array.isArray(sp.covers) || !ops.length || ops.length > 10) return null;
+    for (const o of ops) {
+      const c = o && o.call_contract;
+      if (!c || !sp.covers.includes(c.contract_id)) return null;
+      // Tokens: only approve (the contract checks spender and owner too).
+      if (sp.tokens && sp.tokens.includes(c.contract_id) && Number(c.entry_point) !== APPROVE) return null;
+    }
+    return sp;
+  }
+  /** would_pay(account, rc_limit): true only when the sponsor answers yes (any error: no). */
+  async function sponsorSaysYes(sp, rcLimit) {
+    try {
+      const acct = lib.utils.decodeBase58(W.address);
+      const bytes = [0x0a, acct.length, ...acct, 0x10];
+      let v = BigInt(rcLimit);
+      do { let b = Number(v & 0x7fn); v >>= 7n; if (v > 0n) b |= 0x80; bytes.push(b); } while (v > 0n);
+      const r = await withTimeout(W.provider.readContract({ contract_id: sp.address, entry_point: WOULD_PAY, args: lib.utils.encodeBase64url(new Uint8Array(bytes)) }), 6000, "timeout");
+      const out = r && r.result ? lib.utils.decodeBase64url(r.result) : new Uint8Array(0);
+      return out.length >= 2 && out[0] === 0x08 && out[1] === 0x01;   // field 1 (ok) = true
+    } catch { return false; }
   }
 
   async function sendVault(label, ops, opts = {}) {
@@ -269,7 +315,9 @@
     } finally { close(); }
   }
 
-  function init({ provider, onChange, toast, status, chainId } = {}) {
+  function init({ provider, onChange, toast, status, chainId, payer, sponsor } = {}) {
+    W.payer = payer === "sponsor" ? "sponsor" : "self";
+    W.sponsor = sponsor && typeof sponsor.address === "string" ? sponsor : null;
     // Koinos mainnet's chain id is the default pin (audit L-3), so every page (burn, producer lookup included) refuses
     // to sign for another chain; a page can pass a different expected id (a testnet deployment.json "chainId").
     W.provider = provider; W.chainId = chainId || MAINNET_CHAIN_ID; W.onChange = onChange || (() => {}); W.toast = toast; W.status = status;
