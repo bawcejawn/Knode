@@ -17,7 +17,7 @@ test("the default caps are in order and convert to chain units", () => {
   assert.equal(c.max_mana_per_tx, "100000000");
   assert.equal(c.max_mana_per_account_day, "500000000");
   assert.equal(c.max_mana_per_account_week, "2000000000");
-  assert.equal(c.max_mana_per_day, "10000000000");
+  assert.equal(c.max_mana_per_day, "100000000000");
 });
 
 test("caps out of order, too large, or zero while on are refused before anything is signed", () => {
