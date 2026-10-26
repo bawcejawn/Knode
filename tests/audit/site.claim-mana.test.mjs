@@ -44,7 +44,8 @@ test("an unknown reward or no state yet counts as short (the player pays)", () =
 });
 
 test("the claim button passes that decision to the wallet", () => {
-  assert.match(app, /\{ ownMana: claimNeedsOwnMana\(S\.claims\.find\(\(c\) => c\.week === week\)\) \}/);
+  // v5: a free player's prize is always claimed with their own Mana; a staker's when claimNeedsOwnMana says so.
+  assert.match(app, /\{ ownMana: \(S\.claims\.find\(\(c\) => c\.week === week\) \|\| \{\}\)\.free \|\| claimNeedsOwnMana\(S\.claims\.find\(\(c\) => c\.week === week\)\) \}/);
   assert.match(app, /window\.KWallet\.send\(label, ops, opts\)/);
 });
 

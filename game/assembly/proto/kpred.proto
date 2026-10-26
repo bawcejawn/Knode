@@ -128,6 +128,11 @@ message week_object {
   uint64 aw_hi = 33 [jstype = JS_STRING];             // v5: sum of rank weight x capped stake over winners (128-bit)
   uint64 aw_lo = 34 [jstype = JS_STRING];
   bool reward_rule = 35;                              // v5: this week is paid by the v5 rule (set when it closes)
+  uint64 pot_free = 36 [jstype = JS_STRING];          // v5: up to 2 VHP for the top 2 free players (no stake), set aside before the baskets
+  uint32 free_best = 37;                              // v5: the best free player's points
+  uint32 free_best_n = 38;                            // v5: free players settled with that score
+  uint32 free_second = 39;                            // v5: the second-best free score
+  uint32 free_second_n = 40;                          // v5: free players settled with that score
 }
 
 message bucket_object {

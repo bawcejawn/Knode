@@ -395,8 +395,10 @@ describe("a full week", () => {
     const wf = k.get_week(new kpred.get_week_arguments(0)).week!;
     expect(wf.house_ppm).toBe(826446);                         // 1000 / 1210, in parts per million
     expect(wf.reward_rule).toBe(true);                         // v5 split
-    expect(wf.pot_a).toBe(38 * VHP);                           // basket A: 40% of the pot
-    expect(wf.pot_b).toBe(57 * VHP);                           // basket B: the other 60%
+    // 2 VHP are set aside for free players first; nobody qualified (D answered once), so they went to basket B.
+    expect(wf.pot_a).toBe(93 * VHP * 4000 / 10000);            // basket A: 40% of the pot after the 2 VHP
+    expect(wf.pot_free).toBe(0);
+    expect(wf.pot_b).toBe(95 * VHP - wf.pot_a);                // basket B: the rest
     // A and E tie for places 1 and 2. Basket A counts stake only up to 10 VHP, so A (100) and E (10) split it evenly;
     // basket B by full stake (A 100, E 10). Spare KOIN → VHP on demand.
     const aBefore = Tokens.testGet(VHP_TAG, A);
@@ -465,12 +467,10 @@ describe("a full week", () => {
     expect(fw.winners).toBe(1);
     as(A);
     const ra = k.claim(new kpred.claim_arguments(A, 0)).reward;
-    expect(95 * VHP - ra < 3).toBe(true);            // the whole pot (no seed here: all of it is basket B)
-    gK = k; gWho = D;
+    expect(94 * VHP - ra < 3).toBe(true);            // the whole pot but the free player's 1 VHP (v5)
+    // D played free and scored best among free players: 1 VHP of the free prize (the other 1 VHP went to basket B).
     as(D);
-    MockVM.commitTransaction();
-    expect(() => { gK!.claim(new kpred.claim_arguments(gWho, 0)); }).toThrow();
-    expect(MockVM.getErrorMessage()).toBe("not eligible that week");
+    expect(k.claim(new kpred.claim_arguments(D, 0)).reward).toBe(1 * VHP);
   });
 
   it("the rank curve: 1st > 2nd > 3rd …; basket A counts stake only up to 10 VHP, basket B the full stake (v5)", () => {
@@ -503,7 +503,7 @@ describe("a full week", () => {
     expect(fw.cutoff).toBe(8);
     const wk = k.get_week(new kpred.get_week_arguments(0)).week!;
     expect(wk.sum_w).toBe(rankWeight(1) + rankWeight(2) + rankWeight(3));
-    expect(wk.pot_a).toBe(wk.pot * 4000 / 10000);
+    expect(wk.pot_a).toBe((wk.pot - 2 * VHP) * 4000 / 10000);
     as(A); const ra = k.claim(new kpred.claim_arguments(A, 0)).reward;
     as(B); const rb = k.claim(new kpred.claim_arguments(B, 0)).reward;
     as(C); const rc = k.claim(new kpred.claim_arguments(C, 0)).reward;
@@ -1472,7 +1472,7 @@ describe("extreme edge cases", () => {
     const pot: u64 = 950_000 * VHP;                 // 95% of the 1,000,000 earned
     // v5: basket A (40%) counts stake up to 10 VHP, so 10 : 1; basket B (60%) by full stake, 1e9 : 1. Rounded down,
     // never more than the pot.
-    const potA: u64 = pot * 4000 / 10000, potB: u64 = pot - potA;
+    const potA: u64 = (pot - 2 * VHP) * 4000 / 10000, potB: u64 = pot - potA;   // 2 VHP set aside for free players, none qualified
     expect(near(rb, potA / 11 + potB / 1_000_000_001)).toBe(true);
     expect(ra + rb <= pot).toBe(true);
     expect(pot - ra - rb < 5).toBe(true);           // each basket rounds down per player: a few units of dust stay
@@ -1514,7 +1514,7 @@ function splitWorld(split: bool): u64 {
 function bpsT(amount: u64, b: u64): u64 { return amount * b / 10000; }
 
 describe("free players", () => {
-  it("score points and appear in entries, are never eligible or paid, and the pool never pays their Mana", () => {
+  it("score points and appear in entries, are never eligible for the baskets (only the small free prize), and the pool never pays their Mana", () => {
     const k = setup();
     deposit(k, A, 10 * VHP);
     deposit(k, B, 10 * VHP);
@@ -1551,11 +1551,11 @@ describe("free players", () => {
     expect(w0.cutoff).toBe(1);
     expect(w0.winners).toBe(1);
     as(A);
-    expect(k.claim(new kpred.claim_arguments(A, 0)).reward).toBe(w0.pot);   // A takes the whole pot
-    gK = k;
+    // A takes the whole pot except the free prize: E, the only free player who scored, gets 1 VHP (v5); the other
+    // 1 VHP of the free prize went to the stakers.
+    const raF = k.claim(new kpred.claim_arguments(A, 0)).reward;
+    expect(w0.pot - 1 * VHP - raF < 3).toBe(true);
     as(E);
-    MockVM.commitTransaction();
-    expect(() => { gK!.claim(new kpred.claim_arguments(E, 0)); }).toThrow();
-    expect(MockVM.getErrorMessage()).toBe("not eligible that week");
+    expect(k.claim(new kpred.claim_arguments(E, 0)).reward).toBe(1 * VHP);
   });
 });

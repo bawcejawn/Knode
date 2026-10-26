@@ -884,6 +884,29 @@
               "reward_rule": {
                 "type": "bool",
                 "id": 35
+              },
+              "pot_free": {
+                "type": "uint64",
+                "id": 36,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "free_best": {
+                "type": "uint32",
+                "id": 37
+              },
+              "free_best_n": {
+                "type": "uint32",
+                "id": 38
+              },
+              "free_second": {
+                "type": "uint32",
+                "id": 39
+              },
+              "free_second_n": {
+                "type": "uint32",
+                "id": 40
               }
             }
           },

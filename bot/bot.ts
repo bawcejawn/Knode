@@ -927,6 +927,8 @@ export async function allPlayers(chain: Chain, week: number) {
   }
 }
 
+const FREE_SETTLE_MAX = 20;
+
 async function settlePass(ctx: Ctx) {
   const st = await state(ctx);
   const h = st.time;
@@ -952,6 +954,26 @@ async function settlePass(ctx: Ctx) {
     if (lastHours && todo.length && !ctx.dryRun) {
       const left = await unsettled();
       if (left.length) ctx.problems.push(`Week ${w}: ${left.length} staked player(s) are still not settled and settlement ends ${utc(num(wk.settle_end))}. Anyone can send their settle; after that time they get no reward for the week.`);
+    }
+    // v5: the 2 best free players share up to 2 VHP. The bot settles (and pays the Mana for) only the free players who
+    // can be among them: the two best free scores, at most FREE_SETTLE_MAX wallets, best first. A crowd of free
+    // wallets can't make the bot spend more than that; anyone can still settle their own entry.
+    if (wk.reward_rule) {
+      const rows = (await allPlayers(ctx.chain, w)).filter((r) => r.entry && !r.entry.voided && big(r.entry.stake) < minStake);
+      const ids = [...new Set(rows.flatMap((r) => (r.entry.answers ?? []).map((a: any) => num(a.question_id))))];
+      const outcome = new Map<number, number>();
+      for (const id of ids) outcome.set(id, num(((await ctx.chain.read("get_question", { id })).question ?? {}).outcome));
+      const scored = rows.map((r) => {
+        if (r.entry.settled) return { r, p: num(r.entry.points), c: num(r.entry.counted) };
+        let p = 0, c = 0;
+        for (const a of r.entry.answers ?? []) { const o = outcome.get(num(a.question_id)) ?? 0; if (!o || o === 1000) continue; c++; if (o === num(a.option) + 1) p++; }
+        return { r, p, c };
+      }).filter((x) => x.c > 1 && x.p >= 1);
+      const scores = [...new Set(scored.map((x) => x.p))].sort((a, b) => b - a).slice(0, 2);
+      const line = scores.length ? scores[scores.length - 1] : Infinity;
+      const free = scored.filter((x) => !x.r.entry.settled && x.p >= line).sort((a, b) => b.p - a.p).slice(0, FREE_SETTLE_MAX);
+      if (free.length) log(`  settling ${free.length} free player(s) with the best free scores for week ${w}`);
+      for (const x of free) await sendOp(ctx, `settle free player ${x.r.address} (${x.p} pts) for week ${w}`, [{ method: "settle", args: { player: x.r.address, week: String(w) } }]);
     }
   }
 }

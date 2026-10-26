@@ -40,6 +40,9 @@ const BASKET_A_BPS: u64 = 6500; // before v5: basket A = 65% of what the house (
 // wallets of up to 10 VHP each does count more there (the cap is per wallet), at the cost of playing every wallet.
 const V5_BASKET_A_BPS: u64 = 4000;
 const V5_CAP_A: u64 = 10 * 100_000_000;
+// v5: each week up to 2 VHP of the pot (after the fee, before the baskets) goes to the 2 best free players (answered at
+// least 2 counted questions, staked less than the minimum): 1 VHP each, ties share. Nobody qualifies: it goes to basket B.
+const FREE_PRIZE: u64 = 2 * 100_000_000;
 const W_SCALE: u64 = 1_000_000_000_000_000_000; // rank weight of place r = sqrt(W_SCALE / r) = 1e9 / √r
 const RESOLVE_MARGIN: u64 = 60; // resolve only after the window's blocks are irreversible (~3 minutes)
 // Weeks and answer deadlines follow the block timestamps (ms, UTC), so they land on exact calendar times. The blocks a
@@ -354,11 +357,24 @@ export class Kpred {
     return "";
   }
 
+  /** v5: what a free player's claim pays for a finalized week (0 = not one of the 2 best free players). The best score
+   *  takes 1 VHP (all of the prize if two or more share it, split evenly); the second score shares the other 1 VHP. */
+  freePrizeOf(wk: kpred.week_object, e: kpred.entry_object): u64 {
+    if (!wk.reward_rule || wk.pot_free == 0 || e.eligible || e.voided || e.counted < 2 || e.points == 0) return 0;
+    if (e.points == wk.free_best) {
+      if (wk.free_best_n >= 2) return wk.pot_free / <u64>wk.free_best_n;
+      return wk.free_second_n > 0 ? wk.pot_free / 2 : wk.pot_free;
+    }
+    if (e.points == wk.free_second && wk.free_best_n == 1 && wk.free_second_n > 0) return (wk.pot_free - wk.pot_free / 2) / <u64>wk.free_second_n;
+    return 0;
+  }
+
   claimCheck(player: Uint8Array, w: u64): string {
     const wk = this.weeks.get(u64Key(w))!;
     if (!wk.finalized) return "week not finalized yet";
     if (wk.rolled_over) return "no winners that week";
     const e = this.entries.get(this.entryKey(player, w));
+    if (e && e.settled && !e.eligible && this.freePrizeOf(wk, e) > 0) return e.claimed ? "already claimed" : "";
     if (!e || !e.settled || !e.eligible) return "not eligible that week";
     if (e.points < wk.cutoff) return "below the winners' cutoff";
     if (e.claimed) return "already claimed";
@@ -612,6 +628,16 @@ export class Kpred {
       wk.eligible_players += 1;
       if (points > wk.max_points) wk.max_points = points;
       this.weeks.put(u64Key(week), wk);
+    } else if (!e.voided && counted > 1 && points >= 1) {
+      // v5: a free player (no or too little stake): keep the two best free scores and how many share each.
+      const wk = this.weeks.get(u64Key(week))!;
+      if (wk.reward_rule) {
+        if (points > wk.free_best) { wk.free_second = wk.free_best; wk.free_second_n = wk.free_best_n; wk.free_best = points; wk.free_best_n = 1; }
+        else if (points == wk.free_best) wk.free_best_n += 1;
+        else if (points > wk.free_second) { wk.free_second = points; wk.free_second_n = 1; }
+        else if (points == wk.free_second) wk.free_second_n += 1;
+        this.weeks.put(u64Key(week), wk);
+      }
     }
     const r = new kpred.settle_result();
     r.points = points;
@@ -655,7 +681,7 @@ export class Kpred {
     const wk = this.weeks.get(wkKey)!;
     const key = this.entryKey(player, args.week);
     const e = this.entries.get(key)!;
-    const reward = this.rewardOf(args.week, wk, e);
+    const reward = e.eligible ? this.rewardOf(args.week, wk, e) : this.freePrizeOf(wk, e);
     e.claimed = true;
     e.reward = reward;
     this.entries.put(key, e);
@@ -723,7 +749,8 @@ export class Kpred {
     const houseNet = u128.muldiv(u128.fromU64(net), u128.fromU64(housePpm), u128.fromU64(1_000_000)).toU64() + carried;
     const pot = gain - fee;
     const v5 = this.rewardRule(c, week);
-    const potA = v5 ? bps(pot, V5_BASKET_A_BPS) : bps(houseNet, BASKET_A_BPS);
+    const potFree: u64 = v5 ? (pot < FREE_PRIZE ? pot : FREE_PRIZE) : 0;
+    const potA = v5 ? bps(pot - potFree, V5_BASKET_A_BPS) : bps(houseNet, BASKET_A_BPS);
     const retained: u64 = 0;                          // the owner share is retired
     t.acc_player_lo = 0; t.acc_player_hi = 0; t.acc_house_lo = 0; t.acc_house_hi = 0;
     t.rolled_over = 0;
@@ -738,7 +765,8 @@ export class Kpred {
     wk.retained = retained;
     wk.pot = pot;
     wk.pot_a = potA;
-    wk.pot_b = pot - potA;
+    wk.pot_free = potFree;
+    wk.pot_b = pot - potA - potFree;
     wk.house_ppm = housePpm;
     wk.reward_rule = v5;
     wk.settle_start = h;
@@ -827,6 +855,15 @@ export class Kpred {
     const done = cutoff < 1 || wk.fin_points < cutoff;
     if (done) {
       wk.finalized = true;
+      // v5: the free players' prize. Nobody qualified: it all goes to basket B. Only one free player scored: they get
+      // 1 VHP (half), the other half goes to basket B. Otherwise it is paid out by freePrizeOf.
+      if (wk.pot_free > 0) {
+        let back: u64 = 0;
+        if (wk.free_best_n == 0) back = wk.pot_free;
+        else if (wk.free_best_n == 1 && wk.free_second_n == 0) back = wk.pot_free - wk.pot_free / 2;
+        wk.pot_free -= back;
+        wk.pot_b += back;
+      }
       const tf = this.totals.get()!;
       tf.weeks_finalized += 1;
       this.totals.put(tf);
@@ -1274,6 +1311,9 @@ export class Kpred {
       if (!isAddress(a.player)) return false;
       // Only a claim that is valid right now: the week is finalized and the player is a winner who has not claimed.
       if (this.claimCheck(a.player!, a.week).length > 0) return false;
+      // Free players' prizes (v5) are claimed with their own Mana, like all free play.
+      const ce = this.entries.get(this.entryKey(a.player!, a.week));
+      if (!ce || !ce.eligible) return false;
       // ...and one the pool can pay out now: VHP on hand plus what compound can burn back (spare KOIN, limited by the
       // Mana left after this transaction's own rc_limit), as claim's ensureVhp does.
       const wk = this.weeks.get(u64Key(a.week))!;

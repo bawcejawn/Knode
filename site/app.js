@@ -257,12 +257,24 @@
       await Promise.all(weeks.slice(i, i + 6).map(async (w) => {
         const [p, wk] = await Promise.all([read("get_player", { player: a, week: String(w) }), read("get_week", { week: String(w) })]);
         const e = p.entry, W = wk.week || {};
+        // v5: a free player among the week's 2 best free scores collects the free prize (with their own Mana).
+        if (e && e.settled && !e.eligible && !e.claimed && !W.rolled_over) { const f = freePrize(W, num(e.points)); if (f > 0n) claims.push({ week: w, reward: f, free: true }); return; }
         if (!e || !e.eligible || e.claimed || W.rolled_over || num(e.points) < num(W.cutoff)) return;
         // The exact amount the contract pays, from the week's pots and the player's score group (audit W1-01).
         claims.push({ week: w, reward: exactReward(W, (wk.buckets || [])[num(e.points)], e) });
       }));
     }
     S.claims = claims.sort((x, y) => x.week - y.week);
+  }
+
+  /** v5: a free player's prize (Kpred.freePrizeOf): the best free score gets 1 VHP (all 2 if two or more share it), the
+   *  second free score shares the other 1 VHP; nothing for anyone else. */
+  function freePrize(W, pts) {
+    const pot = big(W.pot_free), best = num(W.free_best), bn = num(W.free_best_n), second = num(W.free_second), sn = num(W.free_second_n);
+    if (!W.reward_rule || pot === 0n || pts === 0) return 0n;
+    if (pts === best) return bn >= 2 ? pot / BigInt(bn) : sn > 0 ? pot / 2n : pot;
+    if (pts === second && bn === 1 && sn > 0) return (pot - pot / 2n) / BigInt(sn);
+    return 0n;
   }
 
   /** The reward the contract's claim pays (Kpred.rewardOf), each step rounded down exactly as the contract's 128-bit
@@ -452,7 +464,7 @@
 
   const claim = (week) => send(`collect week ${week + 1} reward`, async () => [
     await opOf(writer(), "claim", { player: S.account, week: String(week) }),
-  ], { ownMana: claimNeedsOwnMana(S.claims.find((c) => c.week === week)) });
+  ], { ownMana: (S.claims.find((c) => c.week === week) || {}).free || claimNeedsOwnMana(S.claims.find((c) => c.week === week)) });
 
   // claim-mana:start
   /** Should this claim be paid with the player's own Mana instead of the contract's? The contract agrees to pay for a
@@ -862,7 +874,7 @@
     const cp = $("#panel-claim");
     cp.hidden = !S.claims.length;
     $("#claim-body").replaceChildren(...S.claims.map((c) => el("div", { class: "claim-row" },
-      el("span", {}, el("b", {}, `${amount(c.reward)} VHP`), el("br"), el("span", { class: "muted" }, `Week ${c.week + 1}`)),
+      el("span", {}, el("b", {}, `${amount(c.reward)} VHP`), el("br"), el("span", { class: "muted" }, c.free ? `Week ${c.week + 1}: top free player prize. Stake it to share the full pool next week!` : `Week ${c.week + 1}`)),
       el("button", { class: "btn btn-sun", type: "button", onclick: () => claim(c.week) }, "Collect"))));
     // pool
     $("#pool-facts").replaceChildren(

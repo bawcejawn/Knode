@@ -19,7 +19,7 @@ import { Signer } from "koilib";
 import { SimChain, showKoin } from "./chain.ts";
 import { tick, paths, generatorRunner, allPlayers, DAY, DAY_MS, HOUR_MS, utc, type Ctx } from "./bot.ts";
 import { readCompact, writeCsv } from "../common.ts";
-import { winnersOf, rewardOf } from "./payout.ts";
+import { winnersOf, rewardOf, freePrizeOf, freeTop, FREE_PRIZE } from "./payout.ts";
 
 const SIM_WASM = "game/build/sim/contract.wasm";
 const VHP = 100_000_000n;
@@ -188,6 +188,12 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
       if (p.habit !== "ghost" && fin > claimChecked) {
         for (let w = Math.max(0, fin - 2); w < fin; w++) {
           const r = await sim.read("get_player", { player: A, week: String(w) });
+          const fwk = r.entry?.settled && !r.entry.eligible && !r.entry.claimed ? (await sim.read("get_week", { week: String(w) })).week : null;
+          if (fwk && fwk.finalized && !fwk.rolled_over && freePrizeOf(fwk, N(r.entry.points)) > 0n) {   // v5: a free player's prize
+            const before = await sim.ledgerGet(2, A);
+            if (await act(p.key, "claim", { player: A, week: String(w) })) p.claimed += (await sim.ledgerGet(2, A)) - before;
+            continue;
+          }
           if (r.entry?.eligible && !r.entry.claimed) {
             const wk = (await sim.read("get_week", { week: String(w) })).week;
             if (wk.rolled_over || N(r.entry.points) < N(wk.cutoff)) continue;
@@ -325,20 +331,29 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     const staked = entries.filter((r) => BigInt(r.entry.stake ?? 0) >= VHP);
     const allSettled = staked.every((r) => r.entry.settled);
     const pointsMatch = scored.filter((s) => s.e.settled).every((s) => s.pts === N(s.e.points) && s.eligible === !!s.e.eligible);
-    const freeNeverPaid = scored.filter((s) => s.stake < VHP).every((s) => !s.e.eligible && !s.e.claimed);
+    // Free players are never eligible for the baskets. From v5 the 2 best free scores share the free prize: recount
+    // them independently (among settled free players) and check every free claim to the unit.
+    const freeRows = scored.filter((s) => s.stake < VHP);
+    const settledFree = freeRows.filter((s) => s.e.settled && !s.e.voided && N(s.e.counted) > 1);
+    const ft = freeTop(settledFree.map((s) => s.pts));
+    const freeNeverPaid = freeRows.every((s) => !s.e.eligible) && freeRows.every((s) => !s.e.claimed || (wk.reward_rule && BigInt(s.e.reward) === freePrizeOf(wk, s.pts) && BigInt(s.e.reward) > 0n))
+      && (!wk.reward_rule || (N(wk.free_best) === ft.best && N(wk.free_best_n) === ft.bn && N(wk.free_second) === ft.second && N(wk.free_second_n) === ft.sn));
     const elig = scored.filter((s) => s.eligible);
     const W8 = winnersOf(elig.map((s) => ({ pts: s.pts, stake: s.stake })));
     const winners = W8.cutoff >= 1 ? elig.filter((s) => s.pts >= W8.cutoff) : [];
     const onBw = (BigInt(wk.bw_hi ?? 0) << 64n) + BigInt(wk.bw_lo ?? 0);
     check(allSettled, `week ${w}: all ${staked.length} staked entries settled (players who never came back were settled by the bot)`);
-    check(freeNeverPaid, `week ${w}: ${entries.length - staked.length} free player(s) played without stake and were never eligible or paid`);
+    check(freeNeverPaid, wk.reward_rule
+      ? `week ${w}: ${entries.length - staked.length} free player(s): never in the baskets; best free scores ${ft.best} (×${ft.bn}) and ${ft.second} (×${ft.sn}) match the contract, and their prizes (${showKoin(wk.pot_free)} VHP) were paid exactly`
+      : `week ${w}: ${entries.length - staked.length} free player(s) played without stake and were never eligible or paid`);
     check(pointsMatch, `week ${w}: every player's points and eligibility match an independent recount`);
     const onAw = (BigInt(wk.aw_hi ?? 0) << 64n) + BigInt(wk.aw_lo ?? 0);
     check(N(wk.cutoff) === W8.cutoff && N(wk.winners) === winners.length && BigInt(wk.sum_w ?? 0) === W8.sumW && onBw === W8.bw && (!wk.reward_rule || onAw === W8.aw),
       `week ${w}: winners match the independent recount — cutoff ${W8.cutoff} pts, ${winners.length} winner(s) = top 30% of ${elig.length} staked players (ties included)`);
-    check(BigInt(wk.pot_a ?? 0) + BigInt(wk.pot_b ?? 0) === BigInt(wk.pot ?? 0) && (!wk.reward_rule || BigInt(wk.pot_a ?? 0) === BigInt(wk.pot ?? 0) * 4000n / 10000n),
+    const potIn = BigInt(wk.pot ?? 0), freeIn = potIn < FREE_PRIZE ? potIn : FREE_PRIZE;
+    check(BigInt(wk.pot_a ?? 0) + BigInt(wk.pot_b ?? 0) + BigInt(wk.pot_free ?? 0) === potIn && (!wk.reward_rule || BigInt(wk.pot_a ?? 0) === (potIn - freeIn) * 4000n / 10000n),
       wk.reward_rule
-        ? `week ${w}: the pot splits exactly into basket A ${showKoin(wk.pot_a)} (40%, by rank × stake up to 10 VHP) + basket B ${showKoin(wk.pot_b)} (60%, by rank × stake)`
+        ? `week ${w}: the pot splits exactly into the free prize ${showKoin(wk.pot_free)} + basket A ${showKoin(wk.pot_a)} (40% of the rest, by rank × stake up to 10 VHP) + basket B ${showKoin(wk.pot_b)} (by rank × stake)`
         : `week ${w}: the pot splits exactly into basket A ${showKoin(wk.pot_a)} (by rank) + basket B ${showKoin(wk.pot_b)} (by rank × stake); the house produced ${(N(wk.house_ppm) / 10000).toFixed(1)}%`);
     let payOk = true;
     for (const s of winners) {

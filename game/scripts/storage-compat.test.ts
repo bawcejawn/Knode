@@ -40,7 +40,8 @@ const addr = (s: Signer) => s.getAddress();
 const NEW_FIELDS = new Set(["min_stake_next", "min_stake_next_week", "pending_owner_height", "min_sponsor_rc", "scorer_rule_week_plus_one",
   "last_resolved_time", "fin_started", "fin_points", "fin_index", "fin_rank", "fin_gw", "done",
   // v5
-  "pending_seed_owner", "pending_seed_owner_height", "reward_rule_week_plus_one", "aw_hi", "aw_lo", "reward_rule", "capped"]);
+  "pending_seed_owner", "pending_seed_owner_height", "reward_rule_week_plus_one", "aw_hi", "aw_lo", "reward_rule", "capped",
+  "pot_free", "free_best", "free_best_n", "free_second", "free_second_n"]);
 const isDefault = (v: any) => v === undefined || v === null || v === false || v === 0 || v === "0" || v === "";
 
 /** Every value in `before` must be in `after` unchanged; anything only in `after` must be a new field at its default

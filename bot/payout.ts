@@ -57,3 +57,24 @@ export function rewardOf(g: Group, stake: bigint, potA: bigint, potB: bigint, su
   if (bw > 0n) r += (potB * ((g.sumW * stake) / n)) / bw;
   return r;
 }
+
+/** v5: up to 2 VHP of each pot go to the 2 best free players (answered at least 2 counted questions, staked less than
+ *  the minimum). Same as Kpred.freePrizeOf, from the finalized week's numbers. */
+export const FREE_PRIZE = 2n * 100_000_000n;
+export function freePrizeOf(wk: { reward_rule?: boolean; pot_free?: string | number; free_best?: number; free_best_n?: number; free_second?: number; free_second_n?: number }, pts: number): bigint {
+  const pot = BigInt(wk.pot_free ?? 0), best = Number(wk.free_best ?? 0), bn = Number(wk.free_best_n ?? 0), second = Number(wk.free_second ?? 0), sn = Number(wk.free_second_n ?? 0);
+  if (!wk.reward_rule || pot === 0n || pts === 0) return 0n;
+  if (pts === best) return bn >= 2 ? pot / BigInt(bn) : sn > 0 ? pot / 2n : pot;
+  if (pts === second && bn === 1 && sn > 0) return (pot - pot / 2n) / BigInt(sn);
+  return 0n;
+}
+/** v5: the two best free scores and how many players share each (the contract keeps the same from settles). */
+export function freeTop(free: number[]) {
+  let best = 0, bn = 0, second = 0, sn = 0;
+  for (const p of free) {
+    if (p < 1) continue;
+    if (p > best) { second = best; sn = bn; best = p; bn = 1; } else if (p === best) bn++;
+    else if (p > second) { second = p; sn = 1; } else if (p === second) sn++;
+  }
+  return { best, bn, second, sn };
+}

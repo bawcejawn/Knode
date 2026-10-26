@@ -161,16 +161,19 @@ describe("v5: the 40/60 reward split starts with the week after the upgrade", ()
     playWeek(k, 1, who, [true, true], [true, true]);
     const w1 = k.get_week(new kpred.get_week_arguments(1)).week!;
     expect(w1.reward_rule).toBe(true);
-    expect(w1.pot_a).toBe(w1.pot * 4000 / 10000);
+    expect(w1.pot_a).toBe((w1.pot - w1.pot_free) * 4000 / 10000);
     nobody();
     for (let i = 0; i < who.length; i++) k.settle(new kpred.settle_arguments(who[i], 1));
     at(3200);
     for (let w: u64 = 0; w < 2; w++) if (!k.get_week(new kpred.get_week_arguments(w)).week!.finalized) k.finalize_week(new kpred.finalize_week_arguments(w));
     // week 1: both tied (2 points); A has 100 VHP (counts 10 in basket A), B 5. A gets 10/15 of A, 100/105 of B.
+    const f1 = k.get_week(new kpred.get_week_arguments(1)).week!;   // after finalizing: the unused free prize is in basket B
+    expect(f1.pot_free).toBe(0);
+    expect(f1.pot_a + f1.pot_b).toBe(f1.pot);
     as(A); const ra = k.claim(new kpred.claim_arguments(A, 1)).reward;
     as(B); const rb = k.claim(new kpred.claim_arguments(B, 1)).reward;
-    expect(near(ra, w1.pot_a * 10 / 15 + w1.pot_b * 100 / 105)).toBe(true);
-    expect(near(rb, w1.pot_a * 5 / 15 + w1.pot_b * 5 / 105)).toBe(true);
+    expect(near(ra, f1.pot_a * 10 / 15 + f1.pot_b * 100 / 105)).toBe(true);
+    expect(near(rb, f1.pot_a * 5 / 15 + f1.pot_b * 5 / 105)).toBe(true);
   });
 });
 
@@ -281,5 +284,81 @@ describe("v5 review fixes", () => {
     as(SEED);
     MockVM.commitTransaction();
     expect(() => { gK!.propose_seed_owner(new kpred.propose_seed_owner_arguments(CONTRACT)); }).toThrow();
+  });
+});
+
+/** A v5 week with stakers A, B and free players C, D, E (answers: true = right). Returns the week after finalizing. */
+function freeWeek(k: Kpred, right: bool[][]): kpred.week_object {
+  deposit(k, A, 10 * VHP);
+  deposit(k, B, 10 * VHP);
+  const who: Uint8Array[] = [A, B, C, D, E];
+  give(KOIN_TAG, CONTRACT, 100 * VHP); give(MANA_TAG, CONTRACT, 1000 * VHP);
+  at(GENESIS + 100);
+  const qs: u32[] = [];
+  for (let i = 0; i < 3; i++) qs.push(post(k, 2, GENESIS + 300, GENESIS + 301, GENESIS + 400));
+  at(GENESIS + 200);
+  for (let p = 0; p < who.length; p++) for (let i = 0; i < 3; i++) answer(k, who[p], qs[i], right[p][i] ? 1 : 0);
+  at(GENESIS + 500);
+  for (let i = 0; i < 3; i++) resolve(k, qs[i], 1);
+  at(GENESIS + WEEK + 10);
+  nobody();
+  k.close_week(new kpred.close_week_arguments(0));
+  for (let p = 0; p < who.length; p++) k.settle(new kpred.settle_arguments(who[p], 0));
+  at(GENESIS + WEEK + 200);
+  k.finalize_week(new kpred.finalize_week_arguments(0));
+  return k.get_week(new kpred.get_week_arguments(0)).week!;
+}
+
+describe("v5: the 2 best free players share up to 2 VHP of the pot", () => {
+  it("2 VHP come off the pot before the 40/60 split; best and second free players get 1 VHP each", () => {
+    const k = setup();
+    const wk = freeWeek(k, [[true, true, true], [true, false, false], [true, true, true], [true, true, false], [true, false, false]]);
+    expect(wk.pot_free).toBe(2 * VHP);
+    expect(wk.pot_a).toBe((wk.pot - 2 * VHP) * 4000 / 10000);
+    expect(wk.pot_a + wk.pot_b + wk.pot_free).toBe(wk.pot);
+    as(C); expect(k.claim(new kpred.claim_arguments(C, 0)).reward).toBe(1 * VHP);   // free, 3 points: best
+    as(D); expect(k.claim(new kpred.claim_arguments(D, 0)).reward).toBe(1 * VHP);   // free, 2 points: second
+    gK = k; gWho = E;
+    as(E);
+    MockVM.commitTransaction();
+    expect(() => { gK!.claim(new kpred.claim_arguments(gWho, 0)); }).toThrow();      // free, 1 point: third
+    expect(MockVM.getErrorMessage()).toBe("not eligible that week");
+    gWho = C;
+    as(C);
+    MockVM.commitTransaction();
+    expect(() => { gK!.claim(new kpred.claim_arguments(gWho, 0)); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe("already claimed");
+  });
+
+  it("ties share: three free players tied on top split the 2 VHP", () => {
+    const k = setup();
+    const wk = freeWeek(k, [[true, true, true], [true, false, false], [true, true, false], [true, true, false], [true, true, false]]);
+    expect(wk.free_best).toBe(2);
+    expect(wk.free_best_n).toBe(3);
+    as(C); expect(k.claim(new kpred.claim_arguments(C, 0)).reward).toBe(2 * VHP / 3);
+    as(D); expect(k.claim(new kpred.claim_arguments(D, 0)).reward).toBe(2 * VHP / 3);
+    as(E); expect(k.claim(new kpred.claim_arguments(E, 0)).reward).toBe(2 * VHP / 3);
+  });
+
+  it("one free player scored: they get 1 VHP, the other goes to the stakers; none scored: all 2 VHP do", () => {
+    const k = setup();
+    const wk = freeWeek(k, [[true, true, true], [true, false, false], [true, false, true], [false, false, false], [false, false, false]]);
+    expect(wk.pot_free).toBe(1 * VHP);
+    as(C); expect(k.claim(new kpred.claim_arguments(C, 0)).reward).toBe(1 * VHP);
+    const k2 = setup();
+    const wk2 = freeWeek(k2, [[true, true, true], [true, false, false], [false, false, false], [false, false, false], [false, false, false]]);
+    expect(wk2.pot_free).toBe(0);
+    expect(wk2.pot_a + wk2.pot_b).toBe(wk2.pot);
+    // the stakers' claims plus free prizes never exceed the pot
+    as(A); const ra = k2.claim(new kpred.claim_arguments(A, 0)).reward;
+    expect(ra <= wk2.pot).toBe(true);
+  });
+
+  it("the pool never pays the Mana for a free player's prize claim", () => {
+    const k = setup();
+    freeWeek(k, [[true, true, true], [true, false, false], [true, true, true], [true, true, false], [true, false, false]]);
+    as(C);
+    setTx(0xdd1b3c31, Protobuf.encode(new kpred.claim_arguments(C, 0), kpred.claim_arguments.encode), VHP, 1);
+    expect(sponsor(k)).toBe(false);
   });
 });
