@@ -2,7 +2,7 @@
 (() => {
   "use strict";
   const lib = window.koilib || window.koinos || window;
-  const RPC = "https://koinos.armana.io";
+  const RPC = "https://api.koinos.io";
   const KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK";
   const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq";
   const EXPLORER = "https://koinosscan.com/address/";

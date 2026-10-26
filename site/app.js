@@ -7,7 +7,7 @@
   const DAY = 28800;              // blocks per day
   const UNIT = 100000000n;        // 1 KOIN / 1 VHP = 10^8 units
   const FREE_PRIZE = 2n * UNIT;   // v5: the 2 best free players' prize, taken from each pot first (Kpred FREE_PRIZE)
-  const RPC = "https://koinos.armana.io";
+  const RPC = "https://api.koinos.io";
   // Block explorer links (change here if the explorer's address format differs).
   const EXPLORER_ADDRESS = "https://koinosscan.com/address/";
   const EXPLORER_PRODUCERS = "https://koinosscan.com/producers";

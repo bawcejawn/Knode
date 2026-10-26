@@ -4,7 +4,7 @@
   "use strict";
 
   const UNIT = 100000000n;
-  const RPC = "https://koinos.armana.io";
+  const RPC = "https://api.koinos.io";
   const SCAN = "https://koinosscan.com/address/";
   const BASE = location.pathname.includes("/site/") ? "../" : "./";
   const lib = window.koilib || window.koinos || window;
