@@ -475,7 +475,7 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .rweeks:empty { display: none; }
 .rweeks button { font: 700 .85rem/1 var(--body); min-height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid #44527A; background: transparent; color: var(--navy-muted); cursor: pointer; }
 .rweeks button[aria-pressed="true"] { background: var(--navy-ink); color: var(--navy); border-color: var(--navy-ink); }
-.rdays { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; background: rgba(255, 248, 241, .08); border-radius: 14px; padding: 4px; }
+.rdays { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); grid-auto-flow: column; gap: 4px; background: rgba(255, 248, 241, .08); border-radius: 14px; padding: 4px; }
 .rdays button { font: 700 .92rem/1 var(--body); min-height: 40px; border: 0; border-radius: 10px; background: transparent; color: var(--navy-muted); cursor: pointer; }
 .rdays button[aria-pressed="true"] { background: var(--tang); color: var(--tang-ink); }
 .rdays button:disabled { opacity: .35; cursor: default; }
@@ -561,3 +561,21 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .band-actions .btn { white-space: nowrap; }
 @media (max-width: 760px) { .pot:not(.pot-last) b { font-size: 1.2rem; } .band-actions .btn { padding: 0 14px; } }
 .brand + .btn-wallet { margin-left: auto; }
+
+/* play: numbering, answered state, waiting list */
+.q h3 .qno { font-size: .78rem; padding: 4px 8px; vertical-align: 3px; margin-right: 2px; }
+.q-where { font-weight: 700; color: var(--ink); }
+.q-done { color: var(--mint); font-weight: 800; }
+.q-answered { border-color: color-mix(in srgb, var(--mint) 45%, var(--line)); }
+.q-answered .opt:not(.picked) { opacity: .55; }
+#today-note { font-weight: 700; color: var(--ink); }
+.opt { min-height: 64px; }
+.opt:not(:disabled):hover { border-color: var(--violet); }
+.waiting { margin-top: 28px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); padding: 0 18px; }
+.waiting > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; min-height: 56px; font: 700 1.1rem/1.2 var(--display); }
+.waiting > summary::-webkit-details-marker { display: none; }
+.waiting > summary::after { content: "Show"; margin-left: auto; font: 700 .86rem/1 var(--body); color: var(--violet); }
+.waiting[open] > summary::after { content: "Hide"; }
+.waiting-count { color: var(--muted); font-weight: 600; }
+.waiting[open] { padding-bottom: 18px; }
+.waiting > p { margin: 0 0 12px; }

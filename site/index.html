@@ -105,11 +105,11 @@
           <p class="schedule" id="schedule"></p>
           <div id="open-questions" class="qlist"></div>
 
-          <div class="section-head">
-            <h2>Waiting for the blocks</h2>
-            <p class="muted">Answers are locked. Results appear when the window's blocks are final.</p>
-          </div>
-          <div id="locked-questions" class="qlist"></div>
+          <details class="waiting" id="waiting">
+            <summary><span class="waiting-title">Waiting for results</span> <span class="waiting-count" id="waiting-count"></span></summary>
+            <p class="muted">This week's questions whose answers are locked. Each result appears when its blocks are final.</p>
+            <div id="locked-questions" class="qlist"></div>
+          </details>
         </div>
 
         <aside class="col-side">
