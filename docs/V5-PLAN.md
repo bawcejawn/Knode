@@ -25,7 +25,7 @@ Pre-upgrade audit 2026-10-26 (commit 2ea29e8): 0 Critical, 0 High; fixed below. 
 | M-7 (D1-03) | Fee cuts, cap raises and node keys wait 48 h; a daily payout cap that frees up gradually. | Done (set the cap after the upgrade) |
 
 Each change needs: tests next to the existing ones (including a split-stake test for M-2), the storage-compatibility
-test (`game/scripts/storage-compat.test.ts`) passing from v4, and the runbook steps in `docs/UPGRADE-2026-10.md`.
+test (`game/scripts/storage-compat.test.ts`) passing from v4, and the runbook steps in `docs/history/UPGRADE-2026-10.md`.
 
 ## Pre-upgrade audit, 2026-10-26
 

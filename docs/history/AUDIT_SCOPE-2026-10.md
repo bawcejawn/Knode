@@ -1,3 +1,5 @@
+> Historical: the scope written for the first independent audit (branch `audit-fixes-1`, October 2026). Kept as a record; the current game is described in the top-level README.md.
+
 # Audit scope
 
 For an independent audit of the whole repository at the commit that adds this file (branch `audit-fixes-1`). This

@@ -1,5 +1,8 @@
 # Knode — launch guide
 
+> **Historical:** the guide used for the first launch (October 2026). Most of it still works, but for the game as it is
+> now read the top-level `README.md`; for the v5 upgrade read `docs/UPGRADE-V5.md`; for wallets read `docs/WALLETS.md`.
+
 Follow the steps in order. Every command goes into **PowerShell**. Any command that sends something is a dry run
 unless you add `--send`, so you can always check first.
 
@@ -194,7 +197,7 @@ Moving KOIN needs Mana at least equal to the amount, so let the admin wallet's M
 
 ## Security in one page
 
-See `docs/security-audit.md` for the full audit. The short version:
+See `docs/history/security-audit.md` for the full audit. The short version:
 - **Players' stakes can only go back to the player who deposited them.** No one else can sign a withdrawal for them, and
   withdrawals can never be paused.
 - **Nobody, not even the admin, can move the contract's tokens directly.** The contract refuses every outside request.

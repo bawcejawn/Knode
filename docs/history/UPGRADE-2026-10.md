@@ -1,6 +1,6 @@
 # Kpred upgrade v4 (2026-10): runbook
 
-> **Superseded by [`UPGRADE-V5.md`](UPGRADE-V5.md).** The game goes straight from v3 to v5, which contains every
+> **Superseded by [`UPGRADE-V5.md`](../UPGRADE-V5.md).** The game goes straight from v3 to v5, which contains every
 > change below; this file stays as the record of the audited v4 changes.
 
 Nothing in this file has been run. Every command below that changes something is a dry run until you add `--send`.

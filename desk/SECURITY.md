@@ -1,5 +1,8 @@
 # Swap desk — security review (2026-10-16)
 
+> v1 review (the live Desk until the October 2026 update). The v2 changes (owner handover, 48-hour waits for loosening
+> settings, daily payout limit, 7-day announcement expiry) and their tests (34) are listed in `docs/UPGRADE-V5.md`.
+
 This file is for you and for outside auditors. It lists what could go wrong, what stops it, and which test proves it. All tests run on GitHub on every push ("Desk contract tests").
 
 Latest results: **25/25 tests passed**, **34/34 offline checks passed**. Release build: 29.6 KB, sha256 `05039d74…`.
