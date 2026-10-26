@@ -8,7 +8,7 @@ secret). Keys live only in `.env` on your PC.
 | Wallet | Address | Role | Change it? |
 |---|---|---|---|
 | Owner | `1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717` | Game owner, game seed owner, Desk owner **and** Desk treasury | Yes: split into a new owner and a cold treasury |
-| Operator (bot) | `1JSTwoKYNAUq2gmmTg4r1kdYCERR2kUrZ` | Posts and resolves questions; the only key on GitHub | Yes, now (audit C1-3) |
+| Operator (bot) | `1HsM33pF8DbXPr8Vsd4vD7hQgvZ1SHY3Vv` (rotated 2026-10-26 from 1JSTwo…ZrZ) | Posts and resolves questions; the only key on GitHub | Yes, now (audit C1-3) |
 | Game contract | `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr` | The game's own account | No (its address is the game). Its key can't act while the switches are on: move `CONTRACT_WIF` from `.env` to an offline backup |
 | Desk contract | `1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR` | The Desk's own account | No. Same: move `DESK_CONTRACT_WIF` offline |
 | Your personal producer | yours | Your own node's rewards | Not part of the platform |

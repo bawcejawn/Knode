@@ -122,7 +122,7 @@ Everything else is in `game-data/deployment.json` and `desk-data/deployment.json
 |---|---|---|---|
 | Game owner | `1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717` | correct a result before its week closes (and void an open question), set the operator, pause new deposits, register the node key, claim the producer fee, change the minimum stake (from the next week), set the sponsored-Mana limits, propose a new owner (accepted only a day later), schedule an upgrade (48 h timelock) | Offline / the owner's PC only; never on GitHub or the bot machine |
 | Seed owner | same wallet | add seed VHP/KOIN; withdraw it only after an announced 48 h timelock | same |
-| Operator (bot) | `1JSTwoKYNAUq2gmmTg4r1kdYCERR2kUrZ` | post and resolve questions; the bot also pays Mana for some settles; cannot move funds | Only the GitHub environment `bot`, limited to `main` (also the owner's local `.env` for manual runs) |
+| Operator (bot) | `1HsM33pF8DbXPr8Vsd4vD7hQgvZ1SHY3Vv` (rotated 2026-10-26 from 1JSTwo…ZrZ) | post and resolve questions; the bot also pays Mana for some settles; cannot move funds | Only the GitHub environment `bot`, limited to `main` (also the owner's local `.env` for manual runs) |
 | Desk owner | same wallet as the game owner | fee (at most 10%), swap limits, pause, node key, withdraw to the treasury, schedule a treasury change or an upgrade (48 h timelock) | Offline / the owner's PC only |
 | Desk treasury | same wallet as the game owner | receives every Desk withdrawal | Planned: a cold wallet |
 
