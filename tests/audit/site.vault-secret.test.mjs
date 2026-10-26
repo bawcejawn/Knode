@@ -65,6 +65,8 @@ test("KOIN Vault secret travels in a URL only for the two status calls, as GET",
   }
 });
 
+const MAINNET_ID = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";   // the default pin in wallet.js (audit L-3)
+
 test("a whole session (connect, send, disconnect): bodies everywhere else, and the secret never reaches storage", async () => {
   const fetched = [], ses = new Map(), loc = new Map();
   const st = (m) => ({ getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) });
@@ -89,7 +91,7 @@ test("a whole session (connect, send, disconnect): bodies everywhere else, and t
   vm.createContext(win);
   vm.runInContext(src, win);
   const W = win.KWallet;
-  W.init({ provider: {}, onChange() {} });
+  W.init({ provider: { getChainId: async () => MAINNET_ID }, onChange() {} });
   const p = W.connect();
   els.filter((e) => e.attrs.class === "kw-opt")[1].on.click();
   assert.equal(await p, "1Victim");

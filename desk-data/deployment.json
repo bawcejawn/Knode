@@ -11,5 +11,6 @@
   "uploaded": true,
   "deployedAt": "2026-10-16T23:20:00.000Z",
   "feeBps": 300,
-  "timelockLength": "172800000"
+  "timelockLength": "172800000",
+  "chainId": "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA=="
 }

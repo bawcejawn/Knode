@@ -6,6 +6,7 @@
 
   const DAY = 28800;              // blocks per day
   const UNIT = 100000000n;        // 1 KOIN / 1 VHP = 10^8 units
+  const FREE_PRIZE = 2n * UNIT;   // v5: the 2 best free players' prize, taken from each pot first (Kpred FREE_PRIZE)
   const RPC = "https://api.koinos.io";
   // Block explorer links (change here if the explorer's address format differs).
   const EXPLORER_ADDRESS = "https://koinosscan.com/address/";
@@ -281,8 +282,9 @@
         const h = { week: w, pts: num(e.points), counted: num(e.counted), staked: !!e.eligible, voided: !!e.voided, claimed: !!e.claimed, cutoff: num(W.cutoff), reward: 0n, free: false };
         history.push(h);
         // v5: a free player among the week's 2 best free scores collects the free prize (with their own Mana).
-        // (the same conditions as Kpred.freePrizeOf: not voided, at least 2 counted answers)
-        if (e.settled && !e.eligible && !e.voided && num(e.counted) >= 2 && !W.rolled_over) {
+        // (the same conditions as Kpred.freePrizeOf: settled as a free player, not voided, at least 2 counted answers;
+        // paid even in a week whose other pots rolled over)
+        if (e.settled && !e.eligible && e.free_player && !e.voided && num(e.counted) >= 2) {
           const f = freePrize(W, num(e.points)); h.reward = f; h.free = f > 0n;
           if (f > 0n && !e.claimed) claims.push({ week: w, reward: f, free: true });
           return;
@@ -391,8 +393,9 @@
     }
   }
 
-  /** This week's pots if it closed now: 5% fee off new earnings; v5: 40% / 60%; before: 65% of the house's part by
-   *  rank, the rest by rank × stake. An estimate (gains can still change before the week closes). */
+  /** This week's pots if it closed now: 5% fee off new earnings; v5: up to 2 VHP for the 2 best free players first,
+   *  then 40% / 60%; before: 65% of the house's part by rank, the rest by rank × stake. An estimate (gains can still
+   *  change before the week closes). */
   function livePots() {
     // Until last week closes, everything earned so far is still last week's: this week has nothing yet.
     if (S.prev && !S.prev.closed) return { potA: 0n, potB: 0n };
@@ -404,7 +407,13 @@
     const fresh = gain - carried, net = fresh - (fresh * 500n) / 10000n;
     const house = big(t.seed_vhp) + big(t.pots_outstanding) + big(t.rolled_over), all = house + big(t.total_stake);
     const houseNet = (all > 0n ? (net * house) / all : net) + carried;
-    const potA = rewardRule(S.week) ? ((net + carried) * 4000n) / 10000n : (houseNet * 6500n) / 10000n;
+    if (rewardRule(S.week)) {
+      // Kpred.closeInternal: the free players' prize (up to 2 VHP) comes off first.
+      const pot = net + carried, free = pot < FREE_PRIZE ? pot : FREE_PRIZE;
+      const potA = ((pot - free) * 4000n) / 10000n;
+      return { potA, potB: pot - free - potA };
+    }
+    const potA = (houseNet * 6500n) / 10000n;
     return { potA, potB: net + carried - potA };
   }
 
@@ -612,6 +621,13 @@
     const isDeposit = d.dataset.mode === "deposit";
     if (isDeposit && !/^[1-9]\d*$/.test(raw)) return toast("Stakes are whole numbers only, for example 1 or 25.");
     const units = toUnits(raw);
+    // Never more than a 64-bit amount (the wallet's encoder would wrap it) or than the wallet holds (audit I-5).
+    if (units && big(units) > 18446744073709551615n) return toast("That amount is too large.");
+    if (isDeposit && units && S.balances) {
+      const tokNow = document.querySelector('input[name="tok"]:checked').value;
+      const have = tokNow === "VHP" ? big(S.balances.vhp) : big(S.balances.koin);
+      if (big(units) > have) return toast(`That is more than your wallet holds (${amount(have)} ${tokNow}).`);
+    }
     if (!isDeposit) {
       if (!units || big(units) <= 0n) return toast("Enter an amount, for example 2.5 (up to 8 decimals).");
       if (big(units) > big(S.player?.stake) + big(S.player?.pending)) return toast("That is more than you have staked.");
@@ -894,9 +910,11 @@
     const holdings = big(st.vhp_balance) + big(st.koin_balance);
     const owed = ["total_stake", "seed_vhp", "seed_koin", "owner_share", "creator_fee", "pots_outstanding"].reduce((s, k) => s + big(t[k]), 0n);
     const earned = holdings > owed ? holdings - owed : 0n;
-    // 95% of new earnings go to the winners; a pot carried over from a week with no winners is added in full.
+    // 95% of new earnings go to the players; a pot carried over from a week with no winners is added in full. v5: up to
+    // 2 VHP of it is the 2 best free players' prize, the rest goes to the staked winners.
     const carried = big(t.rolled_over) < earned ? big(t.rolled_over) : earned;
-    const forWinners = carried + ((earned - carried) * 95n) / 100n;
+    const forAll = carried + ((earned - carried) * 95n) / 100n;
+    const forWinners = rewardRule(S.week) ? (forAll > FREE_PRIZE ? forAll - FREE_PRIZE : 0n) : forAll;
     $("#stat-ends").textContent = duration((now < S.genesis ? S.genesis : S.weekEnd) - now);
     $("#stat-ends").nextElementSibling.textContent = now < S.genesis ? "until the first week starts" : "until the week ends";
     // Last week and this week, kept apart. Until last week closes, everything earned still belongs to it.
@@ -906,14 +924,14 @@
     if (P) {
       const settle = num(P.W.settle_end), closeAt = S.genesis + S.week * (num(st.config?.week_length) || 604800000) + (S.closeDelay || 43200000);
       $("#pot-last-k").textContent = `Week ${P.week + 1} · ${!P.closed ? "closing" : !P.finalized ? "closed" : "final"}`;
-      $("#pot-last-v").textContent = `${amount(P.closed ? P.W.pot : forWinners)} VHP`;
+      $("#pot-last-v").textContent = `${amount(P.closed ? P.W.pot : forAll)} VHP`;
       $("#pot-last-note").textContent = !P.closed
         ? `still counting until it closes, ${now < closeAt ? `about ${dayTime(closeAt)}` : "at the next bot run"}`
         : !P.finalized ? `winners final ${settle ? dayTime(settle) : "Tuesday"}` : "ready to collect";
     }
     $("#stat-pot-k").textContent = now < S.genesis ? "Pool so far" : `Week ${S.week + 1} so far`;
     $("#stat-pot").textContent = `${amount(prevOpen ? 0n : forWinners)} VHP`;
-    $("#stat-pot-note").textContent = prevOpen ? `starts counting when week ${P.week + 1} closes` : "for the winners, after the 5% fee";
+    $("#stat-pot-note").textContent = prevOpen ? `starts counting when week ${P.week + 1} closes` : rewardRule(S.week) ? "for the staked winners, after the 5% fee and up to 2 VHP for the top free players" : "for the winners, after the 5% fee";
     $("#stat-players").textContent = S.boardWeek === S.week && S.board[S.week] ? String(S.board[S.week].scored.length) : "…";
     renderBand(now);
 
@@ -964,7 +982,7 @@
       el("dt", {}, "Players' stake"), el("dd", {}, `${amount(t.total_stake, 0)} VHP`),
       el("dt", {}, "Seed VHP (never plays)"), el("dd", {}, `${amount(t.seed_vhp, 0)} VHP`),
       el("dt", {}, prevOpen ? `Earned (week ${P.week + 1}, closing)` : "Earned this week"), el("dd", {}, `${amount(earned)} VHP`),
-      el("dt", {}, "Winners get"), el("dd", {}, "95%"),
+      el("dt", {}, "Winners get"), el("dd", {}, rewardRule(S.week) ? "95%, minus up to 2 VHP for the top free players" : "95%"),
       el("dt", {}, "Waiting to be collected"), el("dd", {}, `${amount(t.pots_outstanding)} VHP`));
     const btn = $("#connect");
     btn.textContent = S.account ? short(S.account) : "Connect wallet";

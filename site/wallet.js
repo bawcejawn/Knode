@@ -191,6 +191,8 @@
     if (W.kind === "vault") dropVault(); else setAddress(null, null);
   }
 
+  const MAINNET_CHAIN_ID = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";
+
   /** Sign and send. Returns the transaction id once the network has it in a block (or null when it isn't seen yet).
    *  Throws on rejection or failure, with a readable message. */
   async function send(label, ops, opts = {}) {
@@ -268,7 +270,9 @@
   }
 
   function init({ provider, onChange, toast, status, chainId } = {}) {
-    W.provider = provider; W.chainId = chainId || null; W.onChange = onChange || (() => {}); W.toast = toast; W.status = status;
+    // Koinos mainnet's chain id is the default pin (audit L-3), so every page (burn, producer lookup included) refuses
+    // to sign for another chain; a page can pass a different expected id (a testnet deployment.json "chainId").
+    W.provider = provider; W.chainId = chainId || MAINNET_CHAIN_ID; W.onChange = onChange || (() => {}); W.toast = toast; W.status = status;
     // An earlier version of this page kept the KOIN Vault session in sessionStorage. Delete any such entry and never
     // use it: another page of this origin could have written it, and the user has not chosen it on this page.
     store.set(sessionStorage, "kw-vault", null);
