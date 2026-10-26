@@ -57,8 +57,13 @@ export function parseMetadata(resultB64: string | undefined): ContractMeta {
   };
 }
 export async function contractMetadata(provider: Provider, contract: string): Promise<ContractMeta> {
-  const res: any = await provider.call("chain.invoke_system_call", { id: 303, args: metadataArgs(contract) });
-  return parseMetadata(res?.value);
+  // The public nodes refuse a raw chain.invoke_system_call ("parameters could not be parsed"); koilib's
+  // get_contract_metadata system call works on them (checked against api.koinos.io and api.koinosblocks.com).
+  const res: any = await (provider as any).invokeGetContractMetadata(contract);
+  const v = res?.value;
+  if (!v) return { exists: false, hash: "", system: false, call: false, tx: false, upload: false };
+  const hash = typeof v.hash === "string" ? (v.hash.startsWith("0x") ? v.hash.toLowerCase() : "0x" + Buffer.from(v.hash, "base64url").toString("hex")) : "";
+  return { exists: true, hash, system: !!v.system, call: !!v.authorizes_call_contract, tx: !!v.authorizes_transaction_application, upload: !!v.authorizes_upload_contract };
 }
 /** The chain stores the code fingerprint as a multihash: 0x1220 + sha256. */
 export const sha256OfMeta = (m: ContractMeta) => (m.hash.startsWith("0x1220") ? m.hash.slice(6) : "");
