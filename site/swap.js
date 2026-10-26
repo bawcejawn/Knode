@@ -5,7 +5,7 @@
   "use strict";
 
   const UNIT = 100000000n;            // 1 KOIN / 1 VHP = 10^8 units
-  const RPC = "https://api.koinos.io";
+  const RPC = "https://koinos.armana.io";
   const EXPLORER_ADDRESS = "https://koinosscan.com/address/";
   const BASE = location.pathname.includes("/site/") ? "../" : "./";
   const DEPLOYMENT = BASE + "desk-data/deployment.json";

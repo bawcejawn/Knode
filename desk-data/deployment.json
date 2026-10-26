@@ -1,6 +1,6 @@
 {
   "network": "mainnet",
-  "rpc": "https://api.koinos.io",
+  "rpc": "https://koinos.armana.io",
   "contract": "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR",
   "owner": "1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717",
   "treasury": "1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717",

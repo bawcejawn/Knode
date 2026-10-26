@@ -16,7 +16,7 @@
 #   Settings → Environments → New environment "bot" → Deployment branches and tags: "Selected", add the rule "main".
 #     Environment secrets: OPERATOR_WIF   the bot's key (it can only post and resolve questions — never move funds)
 #     (Delete any repository-level OPERATOR_WIF secret, so only the environment holds it.)
-#   Settings → Secrets and variables → Actions → Variables: BOT_ENABLED = true   (RPC is optional; defaults to https://api.koinos.io)
+#   Settings → Secrets and variables → Actions → Variables: BOT_ENABLED = true   (RPC is optional; defaults to https://koinos.armana.io)
 name: Kpred bot
 
 on:
@@ -132,7 +132,7 @@ jobs:
         run: npm run bot -- tick
         env:
           OPERATOR_WIF: ${{ secrets.OPERATOR_WIF }}
-          RPC: ${{ vars.RPC || 'https://api.koinos.io' }}
+          RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
           # A second, independent node: results are posted only when both agree on the window's blocks (audit M-9).
           RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}   # a second, independent node (audit M-4); set the variable to "off" to turn it off
           GEN_DIR: game-data
