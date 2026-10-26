@@ -579,3 +579,17 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .waiting-count { color: var(--muted); font-weight: 600; }
 .waiting[open] { padding-bottom: 18px; }
 .waiting > p { margin: 0 0 12px; }
+
+/* ad slots: an unsold slot is hidden and takes no space; it shows only when ads.json fills it. */
+.ad[data-ad-slot]:not(.ad-filled) { display: none !important; }
+.ad-box { min-height: 0; }
+.ad-inline { min-height: 0; margin-top: 24px; }
+.ad-desktop { margin-top: 0; }
+@media (max-width: 760px) { .ad-desktop { display: none !important; } }
+@media (min-width: 761px) { .ad-phone { display: none !important; } }
+/* footer links */
+.foot-links { line-height: 2.2; }
+.foot-links a { display: inline-block; padding: 2px 2px; }
+.welcome-app { margin: 16px 0 0; color: var(--muted); font-size: .95rem; }
+.noscript { max-width: 680px; margin: 20px auto; padding: 14px 16px; border-radius: 12px; background: var(--sun-soft); }
+@media (max-width: 760px) { .pot b { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; font-size: 1.15rem; } }

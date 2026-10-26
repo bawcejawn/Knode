@@ -588,9 +588,12 @@
   function shuffle(list) { const a = list.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
   let houseQueue = [];
   function nextHouse() { if (!houseQueue.length) houseQueue = shuffle((ADS.ecosystem || []).filter((h) => h && h.name && h.link)); return houseQueue.shift(); }
+  // An unsold slot stays empty and takes no space (CSS hides it); it appears only when ads.json has an entry for it.
+  // Set "emptySlots": "ecosystem" in ads.json to show a Koinos project in unsold slots instead.
   function fillSlot(slot) {
     fillAd(slot);
-    if (!slot.classList.contains("ad-filled")) { const h = nextHouse(); if (h) houseAd(slot, h); }
+    if (slot.classList.contains("ad-filled")) return;
+    if (ADS.emptySlots === "ecosystem") { const h = nextHouse(); if (h) houseAd(slot, h); }
   }
   async function loadAds() {
     try { const r = await fetch("ads.json", { cache: "no-cache" }); if (r.ok) ADS = await r.json(); } catch { ADS = {}; }
@@ -603,7 +606,7 @@
       kit.hidden = false;
     }
     // footer: every project
-    const eco = (ADS.ecosystem || []).concat(f ? [f] : []).filter((h) => h && h.name && httpsUrl(h.link));
+    const eco = (ADS.ecosystem || []).filter((h) => h && h.name && httpsUrl(h.link));
     if (eco.length) {
       $("#eco-grid").replaceChildren(...eco.map((h) => el("a", { href: httpsUrl(h.link), target: "_blank", rel: "noopener", class: "eco-item" }, el("b", {}, h.name), el("span", {}, h.tagline))));
       document.querySelector(".eco").hidden = false;
@@ -1012,8 +1015,8 @@
     if (wc) wc.textContent = `(${locked.length})`;
     const wt = $("#waiting");
     if (wt) wt.hidden = !locked.length;
-    // (In-page ad slots are switched off for now. To bring one back, add an element with data-ad-slot="…" to the page;
-    // loadAds() fills it from site/ads.json. A network (iframe) ad also needs its origin in index.html's CSP frame-src.)
+    // (Ad slots are the elements with data-ad-slot="…"; loadAds() fills them from site/ads.json. A network (iframe) ad
+    // also needs its origin in index.html's CSP frame-src.)
     $("#locked-questions").replaceChildren(...locked.map((q) => questionCard(q, "locked")));
 
     // you
