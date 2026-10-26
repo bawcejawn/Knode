@@ -58,11 +58,14 @@ export function rewardOf(g: Group, stake: bigint, potA: bigint, potB: bigint, su
   return r;
 }
 
-/** v5: up to 2 VHP of each pot go to the 2 best free players (answered at least 2 counted questions, staked less than
- *  the minimum). Same as Kpred.freePrizeOf, from the finalized week's numbers. */
+/** v5: up to 2 VHP of each pot go to the 2 best free players (answered at least 2 counted questions, never held the
+ *  minimum stake that week). Paid even in a week whose other pots rolled over. Same as Kpred.freePrizeOf, from the
+ *  finalized week's numbers. */
 export const FREE_PRIZE = 2n * 100_000_000n;
-export function freePrizeOf(wk: { reward_rule?: boolean; pot_free?: string | number; free_best?: number; free_best_n?: number; free_second?: number; free_second_n?: number }, pts: number, entry?: { voided?: boolean; counted?: number | string }): bigint {
+export function freePrizeOf(wk: { reward_rule?: boolean; pot_free?: string | number; free_best?: number; free_best_n?: number; free_second?: number; free_second_n?: number }, pts: number, entry?: { voided?: boolean; counted?: number | string; free_player?: boolean; settled?: boolean }): bigint {
   if (entry && (entry.voided || Number(entry.counted ?? 0) < 2)) return 0n;
+  // Only an entry that settled as a free player (never held the minimum stake that week: audit L-4).
+  if (entry && entry.settled && !entry.free_player) return 0n;
   const pot = BigInt(wk.pot_free ?? 0), best = Number(wk.free_best ?? 0), bn = Number(wk.free_best_n ?? 0), second = Number(wk.free_second ?? 0), sn = Number(wk.free_second_n ?? 0);
   if (!wk.reward_rule || pot === 0n || pts === 0) return 0n;
   if (pts === best) return bn >= 2 ? pot / BigInt(bn) : sn > 0 ? pot / 2n : pot;

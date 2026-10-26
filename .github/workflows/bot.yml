@@ -134,7 +134,7 @@ jobs:
           OPERATOR_WIF: ${{ secrets.OPERATOR_WIF }}
           RPC: ${{ vars.RPC || 'https://api.koinos.io' }}
           # A second, independent node: results are posted only when both agree on the window's blocks (audit M-9).
-          RPC_CHECK: ${{ vars.RPC_CHECK }}
+          RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}   # a second, independent node (audit M-4); set the variable to "off" to turn it off
           GEN_DIR: game-data
           BOT_GIT_PUSH: "1"
           # The producer lookup's block snapshot (display only); the publish job puts it on the blocks-data branch.

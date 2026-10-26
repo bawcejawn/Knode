@@ -39,7 +39,7 @@ import { KoinosChain, Call, showKoin, toSat } from "./chain.ts";
 import { tokenAbi } from "./token-abi.ts";
 import { pobAbi } from "./token-abi.ts";
 import { contractMetadata, checkMeta, sha256OfMeta } from "./chaincheck.ts";
-import { units, normalizeKey, nodePublicKey, isMainnet, utc, HOUR_MS } from "./bot.ts";
+import { units, normalizeKey, nodePublicKey, isMainnet, utc, HOUR_MS, pinDeployment } from "./bot.ts";
 
 const E = process.env;
 const log = (...a: any[]) => console.log(...a);
@@ -72,6 +72,7 @@ function deployed() {
   const dep = readJson(DEPLOYMENT);
   if (!dep?.contract) throw new Error(`${DEPLOYMENT} not found — deploy the desk first (npm run desk -- deploy).`);
   const rpc = E.RPC ?? dep.rpc;
+  pinDeployment("desk", dep, rpc, DEPLOYMENT);   // audit M-5: only the pinned desk and token contracts on mainnet
   return { dep, rpc, chain: new KoinosChain(rpc, dep.contract), abi: loadAbi() };
 }
 
@@ -219,7 +220,7 @@ async function asOwner(what: string, calls: (owner: string, dep: any, abi: any) 
   const owner = Signer.fromWif(need(wifVar));
   owner.provider = chain.provider;
   const list = calls(owner.getAddress(), dep, abi);
-  log(`${what}\nAs ${owner.getAddress()} on ${rpc}:`);
+  log(`${what}\nAs ${owner.getAddress()} on ${rpc}, to the desk contract ${dep.contract}:`);
   for (const c of list) log(`  ${c.contract === dep.contract ? "desk" : c.contract === dep.koin ? "KOIN" : c.contract === dep.vhp ? "VHP" : c.contract}.${c.method} ${JSON.stringify(c.args)}`);
   if (!send) { log("\nDry run only — nothing was sent. Add --send to send it."); return; }
   const r = await chain.send(list, [owner], { rcLimitKoin: 5 });

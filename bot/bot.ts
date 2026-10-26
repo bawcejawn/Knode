@@ -303,9 +303,11 @@ export async function tick(ctx: Ctx) {
   await step("resolving questions", () => resolvePass(ctx, bs));
   await step("posting questions", () => postPass(ctx, bs));
   await step("closing / finalizing", () => closeFinalizePass(ctx));
+  // The alerts run before the settle pass (audit L-6): a week with a great many entries to settle must never delay an
+  // alert about an announced upgrade or owner change. The settle pass also has its own time budget.
+  await step("health check", () => healthPass(ctx, bs));
   await step("settling players", () => settlePass(ctx));
   await step("compounding", () => compoundPass(ctx, bs));
-  await step("health check", () => healthPass(ctx, bs));
   if (!ctx.dryRun) writeIndex(P);
   ctx.checkpoint("bot: tick");
 }
@@ -407,8 +409,11 @@ async function healthPass(ctx: Ctx, bs: BotState) {
   if (num(up.eta) > 0) ownerAlert(`upgrade:${up.hash}:${up.eta}`, `A code upgrade is scheduled (possible from ${utc(num(up.eta))}). If you did not do this, your admin key may be compromised.`);
   if (num(wd.eta) > 0) ownerAlert(`seed:${wd.vhp}:${wd.koin}:${wd.eta}`, `A seed withdrawal is scheduled (possible from ${utc(num(wd.eta))}). If you did not do this, your admin key may be compromised.`);
   if (st.c.pending_owner) ownerAlert(`owner:${st.c.pending_owner}:${st.c.pending_owner_height ?? ""}`, `An ownership transfer to ${st.c.pending_owner} is pending (it can be accepted a day after it was proposed). If you did not do this, your admin key may be compromised: propose your own address again right away.`);
+  if (st.c.pending_seed_owner) ownerAlert(`seed-owner:${st.c.pending_seed_owner}:${st.c.pending_seed_owner_height ?? ""}`, `A seed handover to ${st.c.pending_seed_owner} is pending (it can be accepted a day after it was proposed). If you did not do this, your seed key may be compromised: propose your own seed address again right away (npm run bot -- admin propose_seed_owner new_seed_owner=<your seed address> --as seed --send).`);
   // The roles and the producer key must be the ones recorded at deployment (game-data/deployment.json).
   const dep = readJson(ctx.P.deployment, null);
+  if (dep?.seedOwner && st.c.seed_owner && st.c.seed_owner !== dep.seedOwner)
+    ownerAlert(`seed-owner-changed:${st.c.seed_owner}`, `The game's seed owner is ${st.c.seed_owner}, not ${dep.seedOwner} as in deployment.json. If you did not hand it over, your seed key is compromised (if you did, update deployment.json).`);
   if (dep?.owner && st.c.owner && st.c.owner !== dep.owner)
     ownerAlert(`owner-changed:${st.c.owner}`, `The game's owner is ${st.c.owner}, not ${dep.owner} as in deployment.json. If you did not hand it over, your admin key is compromised.`);
   if (dep?.operator && st.c.operator && st.c.operator !== dep.operator)
@@ -928,10 +933,14 @@ export async function allPlayers(chain: Chain, week: number) {
 }
 
 const FREE_SETTLE_MAX = 20;
+/** The settle pass stops after this long (audit L-6): the hourly run has to finish, and the next run continues. */
+const SETTLE_BUDGET_MS = 40 * 60_000;
 
 async function settlePass(ctx: Ctx) {
   const st = await state(ctx);
   const h = st.time;
+  const started = Date.now();
+  const outOfTime = () => Date.now() - started > SETTLE_BUDGET_MS;
   for (let w = st.weeksFinalized; w < st.weeksClosed; w++) {
     const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
     if (h < num(wk.settle_start) || h > num(wk.settle_end)) continue;
@@ -947,6 +956,7 @@ async function settlePass(ctx: Ctx) {
     ctx.botPaidUncapped = lastHours;
     try {
       for (const r of todo) {
+        if (outOfTime()) { log(`  stopped settling for this run (time budget); the next run continues`); break; }
         if (await sendOp(ctx, `settle ${r.address} for week ${w}`, [{ method: "settle", args: { player: r.address, week: String(w) } }], { sponsored: true })) n++;
       }
     } finally { ctx.botPaidUncapped = false; }
@@ -959,7 +969,9 @@ async function settlePass(ctx: Ctx) {
     // can be among them: the two best free scores, at most FREE_SETTLE_MAX wallets, best first. A crowd of free
     // wallets can't make the bot spend more than that; anyone can still settle their own entry.
     if (wk.reward_rule) {
-      const rows = (await allPlayers(ctx.chain, w)).filter((r) => r.entry && !r.entry.voided && big(r.entry.stake) < minStake);
+      // A free player never held the minimum stake this week (a staked player who withdrew below it is not one: audit L-4).
+      const peakOf = (e: any) => { const a = big(e.stake), b = big(e.peak_stake); return a > b ? a : b; };
+      const rows = (await allPlayers(ctx.chain, w)).filter((r) => r.entry && !r.entry.voided && peakOf(r.entry) < minStake && (!r.entry.settled || r.entry.free_player));
       const ids = [...new Set(rows.flatMap((r) => (r.entry.answers ?? []).map((a: any) => num(a.question_id))))];
       const outcome = new Map<number, number>();
       for (const id of ids) outcome.set(id, num(((await ctx.chain.read("get_question", { id })).question ?? {}).outcome));
@@ -971,12 +983,16 @@ async function settlePass(ctx: Ctx) {
       }).filter((x) => x.c > 1 && x.p >= 1);
       const scores = [...new Set(scored.map((x) => x.p))].sort((a, b) => b - a).slice(0, 2);
       const line = scores.length ? scores[scores.length - 1] : Infinity;
-      // A budget for the whole week, not per run: the free players already counted on chain at the top two scores.
-      const left = Math.max(0, FREE_SETTLE_MAX - num(wk.free_best_n) - num(wk.free_second_n));
+      // A budget for the whole week, not per run. Only settled free entries at or above the projected line count against
+      // it (audit M-1): low-score wallets settled early by someone else can't use it up. The two best projected scorers
+      // are always settled first, whatever the budget.
+      const spent = scored.filter((x) => x.r.entry.settled && x.p >= line).length;
+      const left = Math.max(0, FREE_SETTLE_MAX - spent);
       const want = scored.filter((x) => !x.r.entry.settled && x.p >= line).sort((a, b) => b.p - a.p);
-      const free = want.slice(0, left);
+      const free = want.slice(0, Math.max(left, 2));
       if (free.length) log(`  settling ${free.length} free player(s) with the best free scores for week ${w}`);
       for (const x of free) {
+        if (outOfTime()) { log(`  stopped settling free players for this run (time budget)`); break; }
         // Never below the Mana the bot needs for posting and resolving questions.
         if (await ctx.chain.mana(ctx.operator.getAddress()) < BOT_MANA_FLOOR) { log(`  stopped settling free players: the bot's Mana is low`); break; }
         await sendOp(ctx, `settle free player ${x.r.address} (${x.p} pts) for week ${w}`, [{ method: "settle", args: { player: x.r.address, week: String(w) } }]);
@@ -1225,6 +1241,7 @@ async function upgrade(sub: string | undefined, send: boolean, botPays = false) 
   if (!dep?.contract) throw new Error(`${P.deployment} not found — deploy first.`);
   const rpc = E.RPC ?? dep.rpc;
   const mainnet = isMainnet(rpc);
+  pinDeployment("game", dep, rpc, P.deployment);
   if (send && mainnet && E.CONFIRM_MAINNET !== "yes") throw new Error("MAINNET: add CONFIRM_MAINNET=yes to .env first.");
   if (!fs.existsSync(WASM)) throw new Error(`${WASM} not found — in the game folder run: npm test && npm run check`);
   const wasm = fs.readFileSync(WASM);
@@ -1346,6 +1363,7 @@ async function verifyResults(days: number, rpcArg?: string) {
   const P = paths(E.GEN_DIR ?? "game-data");
   const dep = readJson(P.deployment, null);
   if (!dep?.contract) throw new Error(`${P.deployment} not found.`);
+  pinDeployment("game", dep, dep.rpc ?? "https://api.koinos.io", P.deployment);
   // Which chain is mainnet: deployment.json's pinned id, else the public node's (one read), else the known value.
   let expect: string | null = dep.chainId ?? null;
   if (!expect) { try { expect = await withTimeout(new Provider([dep.rpc ?? "https://api.koinos.io"]).getChainId(), 5000); } catch { expect = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA=="; } }
@@ -1375,9 +1393,19 @@ async function verifyResults(days: number, rpcArg?: string) {
     const oc = (await local.read("get_question", { id: q.chainId })).question ?? {};
     const outcome = num(oc.outcome);
     if (outcome === 0) { pending++; continue; }
+    // The question on chain must be this file's question (audit L-8): the same parameters hash.
+    {
+      const onChain = String(oc.params_hash ?? "").replace(/^0x/, "").toLowerCase();
+      if (onChain !== paramsHashOf(q)) {
+        bad++;
+        lines.push(`VERIFY-ALERT ✖ ${q.id} (#${q.chainId}): the question on chain (params hash ${onChain.slice(0, 12)}…) is not this file's question.`);
+        continue;
+      }
+    }
     const blocks = await fetchRange(provider, node.headId, q.windowStart, q.windowEnd);
     const sc = scoreQuestion(q, blocks, { vhpReadings: q.vhpReadings ?? [] });
-    if (!sc.ok) { lines.push(`?  ${q.id} (#${q.chainId}): could not recount (${sc.reason})`); continue; }
+    // A result that can't be recounted is not a pass (audit L-8).
+    if (!sc.ok) { bad++; lines.push(`VERIFY-ALERT ?  ${q.id} (#${q.chainId}): could not recount (${sc.reason})`); continue; }
     checked++;
     const mine = storedOutcome(sc.result), hashOk = String(oc.data_hash ?? "").replace(/^0x/, "").toLowerCase() === sc.result.dataHash;
     const show = (o: number) => (o === 1000 ? "void" : `option ${String.fromCharCode(64 + o)}`);
@@ -1402,6 +1430,8 @@ async function chainCheck() {
   const dep = readJson(P.deployment, null), deskDep = readJson(path.join("desk-data", "deployment.json"), null);
   if (!dep?.contract) throw new Error(`${P.deployment} not found.`);
   const rpc = E.RPC ?? dep.rpc ?? "https://api.koinos.io";
+  pinDeployment("game", dep, rpc, P.deployment);
+  if (deskDep?.contract) pinDeployment("desk", deskDep, rpc, path.join("desk-data", "deployment.json"));
   const provider = new Provider([rpc]);
   const checks: Check[] = [];
   const say = (ok: boolean, text: string) => checks.push({ ok, text });
@@ -1486,6 +1516,7 @@ async function act(role: string, method: string, args: any, send: boolean): Prom
   const dep = readJson(P.deployment, null);
   if (!dep?.contract) throw new Error(`${P.deployment} not found — deploy first.`);
   const rpc = E.RPC ?? dep.rpc;
+  pinDeployment("game", dep, rpc, P.deployment);
   if (send && isMainnet(rpc) && E.CONFIRM_MAINNET !== "yes") throw new Error("MAINNET: add CONFIRM_MAINNET=yes to .env first.");
   const r0 = ROLES[role];
   if (!r0) throw new Error(`--as must be one of ${Object.keys(ROLES).join(", ")}`);
@@ -1501,7 +1532,7 @@ async function act(role: string, method: string, args: any, send: boolean): Prom
   const pull: Record<string, [string, string]> = { seed_deposit_vhp: [dep.vhp, "VHP"], seed_deposit_koin: [dep.koin, "KOIN"], deposit_vhp: [dep.vhp, "VHP"], deposit_koin: [dep.koin, "KOIN"] };
   if (pull[method]) calls.push({ contract: pull[method][0], abi: tokenAbi, method: "approve", args: { owner: signer.getAddress(), spender: dep.contract, value: String(args.amount) } });
   calls.push({ method, args });
-  log(`As ${role} (${signer.getAddress()}) on ${rpc}:`);
+  log(`As ${role} (${signer.getAddress()}) on ${rpc}, to the game contract ${dep.contract}:`);
   for (const c of calls) log(`  ${c.contract ? `${pull[method][1]}.` : ""}${c.method} ${JSON.stringify(c.args)}`);
   if (method === "seed_deposit_koin" || method === "deposit_koin") log(`  note: moving KOIN needs this wallet's Mana ≥ the amount (${showKoin(args.amount)}); the Mana moves with it.`);
   if (!send) { log("\nDry run only — nothing was sent. Add --send to send it."); return false; }
@@ -1557,6 +1588,7 @@ async function friendly(cmd: string, a: string[], send: boolean): Promise<boolea
       if (amt.toLowerCase() === "all") {
         const dep = readJson(paths(E.GEN_DIR ?? "game-data").deployment, null);
         if (!dep?.contract) throw new Error("game-data/deployment.json not found — deploy first.");
+        pinDeployment("game", dep, E.RPC ?? dep.rpc, paths(E.GEN_DIR ?? "game-data").deployment);
         const pl = (await new KoinosChain(E.RPC ?? dep.rpc, dep.contract).read("get_player", { player: me("player"), week: "0" })).player ?? {};
         amount = (BigInt(pl.stake ?? 0) + BigInt(pl.pending ?? 0)).toString();
         if (amount === "0") throw new Error("This wallet has nothing staked in the game.");
@@ -1722,7 +1754,29 @@ function gitCheckpoint(dir: string) {
 
 /** The mainnet contracts, pinned in code: an edit to the (unsealed) deployment.json cannot point the bot at another
  *  contract (audit F-03, Info). A deliberate change sets CONTRACT_ADDRESS / DESK_CONTRACT_ADDRESS. */
-export const PINNED_MAINNET = { game: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", desk: "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR" };
+export const PINNED_MAINNET = {
+  game: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", desk: "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR",
+  koin: "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK", vhp: "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", pob: "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv",
+};
+
+/** Audit M-5: on mainnet, every command that signs or reads with a key uses only the pinned contract and token
+ *  addresses, whatever deployment.json says (a changed deployment.json could otherwise point a signed owner or seed
+ *  transaction at a look-alike contract). A deliberate move to a new contract sets CONTRACT_ADDRESS /
+ *  DESK_CONTRACT_ADDRESS and updates PINNED_MAINNET. Fills in missing token addresses; throws on any mismatch. */
+export function pinDeployment(which: "game" | "desk", dep: any, rpc: string, file: string) {
+  if (!isMainnet(rpc)) return dep;
+  const want = (which === "game" ? E.CONTRACT_ADDRESS : E.DESK_CONTRACT_ADDRESS) ?? PINNED_MAINNET[which];
+  if (dep.contract !== want) throw new Error(`${file} names the ${which} contract ${dep.contract}, not ${want}. If that change is intended, set ${which === "game" ? "CONTRACT_ADDRESS" : "DESK_CONTRACT_ADDRESS"} (and update PINNED_MAINNET in bot/bot.ts).`);
+  for (const k of ["koin", "vhp", "pob"] as const) {
+    if (dep[k] !== undefined && dep[k] !== PINNED_MAINNET[k]) throw new Error(`${file} names the ${k.toUpperCase()} token ${dep[k]}, not the Koinos system contract ${PINNED_MAINNET[k]}. Refusing to sign anything.`);
+    dep[k] = PINNED_MAINNET[k];
+  }
+  return dep;
+}
+
+/** How far the two nodes' VHP values may differ (basis points) for a reading to be kept: block rewards move balances a
+ *  little between the two reads; a VHP-swing void needs a far larger move. */
+const VHP_AGREE_BPS = 50;
 
 function liveCtx(dryRun: boolean): Ctx {
   const P = paths(E.GEN_DIR ?? "game-data");
@@ -1732,6 +1786,9 @@ function liveCtx(dryRun: boolean): Ctx {
   const rpc = E.RPC ?? dep?.rpc ?? "https://api.koinos.io";
   if (isMainnet(rpc) && !E.CONTRACT_ADDRESS && contract !== PINNED_MAINNET.game)
     throw new Error(`${P.deployment} names the game contract ${contract}, not ${PINNED_MAINNET.game}. If that change is intended, set CONTRACT_ADDRESS (and update PINNED_MAINNET in bot/bot.ts).`);
+  if (dep) pinDeployment("game", { ...dep, contract }, rpc, P.deployment);
+  // A second, independent node for cross-checks (audit M-4). The workflow sets one by default; "off" turns it off.
+  const rpcCheck = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== rpc ? E.RPC_CHECK : "";
   const chain = new KoinosChain(rpc, contract);
   const operator = E.OPERATOR_WIF ? Signer.fromWif(E.OPERATOR_WIF) : Signer.fromSeed("read-only placeholder");
   operator.provider = chain.provider;
@@ -1750,14 +1807,29 @@ function liveCtx(dryRun: boolean): Ctx {
       const last = Math.min(to, Number(head.last_irreversible_block));
       return last < from ? [] : fetchRange(chain.provider, head.head_topology.id, from, last);
     },
-    ...(E.RPC_CHECK ? { crossCheckBlocks: async (from: number, to: number) => {
-      const second = new Provider([E.RPC_CHECK!]);
+    ...(rpcCheck ? { crossCheckBlocks: async (from: number, to: number) => {
+      const second = new Provider([rpcCheck]);
       const head: any = await second.getHeadInfo();
       const last = Math.min(to, Number(head.last_irreversible_block));
       return last < from ? [] : fetchRange(second, head.head_topology.id, from, last);
     } } : {}),
     metadata: (c) => contractMetadata(chain.provider, c),
-    vhp: (who) => readVhp(chain.provider, dep?.vhp ?? MAINNET_VHP, who),
+    // VHP readings decide VHP-swing voids, so they are read from both nodes too (audit M-4): a reading is kept only if
+    // the second node agrees (same values within VHP_AGREE_BPS, heads within a minute). Otherwise this hour's reading is
+    // skipped and reported; the next run reads again.
+    vhp: async (who) => {
+      const vhpAddr = isMainnet(rpc) ? MAINNET_VHP : (dep?.vhp ?? MAINNET_VHP);
+      const a = await readVhp(chain.provider, vhpAddr, who);
+      if (!rpcCheck) return a;
+      const b = await readVhp(new Provider([rpcCheck]), vhpAddr, who);
+      if (Math.abs(a.height - b.height) > 20) throw new Error(`the two nodes are ${Math.abs(a.height - b.height)} blocks apart (RPC ${a.height}, RPC_CHECK ${b.height}); VHP reading skipped this run`);
+      for (const w of Object.keys(a.values)) {
+        const x = BigInt(a.values[w]), y = BigInt(b.values[w] ?? "-1");
+        const diff = x > y ? x - y : y - x, base = x > y ? x : y;
+        if (y < 0n || diff * 10_000n > base * BigInt(VHP_AGREE_BPS)) throw new Error(`the two nodes disagree about the VHP of ${w} (RPC ${a.values[w]}, RPC_CHECK ${b.values[w] ?? "none"}); VHP reading skipped this run. One node is wrong or lying: check both.`);
+      }
+      return a;
+    },
     producerKey: async (producer) => String(((await (pob.functions as any).get_public_key({ producer })).result ?? {}).value ?? ""),
     desk: deskContract ? { deployment: deskDep, read: async (method, args = {}) => ((await (deskContract.functions as any)[method](args)).result ?? {}) } : undefined,
     // The same block history the question generator uses (game-data/blocks.csv), topped up to the newest final block.

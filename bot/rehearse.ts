@@ -189,7 +189,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
         for (let w = Math.max(0, fin - 2); w < fin; w++) {
           const r = await sim.read("get_player", { player: A, week: String(w) });
           const fwk = r.entry?.settled && !r.entry.eligible && !r.entry.claimed ? (await sim.read("get_week", { week: String(w) })).week : null;
-          if (fwk && fwk.finalized && !fwk.rolled_over && freePrizeOf(fwk, N(r.entry.points), r.entry) > 0n) {   // v5: a free player's prize
+          if (fwk && fwk.finalized && freePrizeOf(fwk, N(r.entry.points), r.entry) > 0n) {   // v5: a free player's prize
             const before = await sim.ledgerGet(2, A);
             if (await act(p.key, "claim", { player: A, week: String(w) })) p.claimed += (await sim.ledgerGet(2, A)) - before;
             continue;
@@ -333,8 +333,10 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
     const pointsMatch = scored.filter((s) => s.e.settled).every((s) => s.pts === N(s.e.points) && s.eligible === !!s.e.eligible);
     // Free players are never eligible for the baskets. From v5 the 2 best free scores share the free prize: recount
     // them independently (among settled free players) and check every free claim to the unit.
-    const freeRows = scored.filter((s) => s.stake < VHP);
-    const settledFree = freeRows.filter((s) => s.e.settled && !s.e.voided && N(s.e.counted) > 1);
+    // A free player never held the minimum stake that week (audit L-4: peak_stake, not only the stake left).
+    const peakOf = (e: any) => { const a = BigInt(e.stake ?? 0), b = BigInt(e.peak_stake ?? 0); return a > b ? a : b; };
+    const freeRows = scored.filter((s) => peakOf(s.e) < VHP);
+    const settledFree = freeRows.filter((s) => s.e.settled && !s.e.voided && N(s.e.counted) > 1 && (!wk.reward_rule || s.e.free_player));
     const ft = freeTop(settledFree.map((s) => s.pts));
     const freeNeverPaid = freeRows.every((s) => !s.e.eligible) && freeRows.every((s) => !s.e.claimed || (wk.reward_rule && BigInt(s.e.reward) === freePrizeOf(wk, s.pts, s.e) && BigInt(s.e.reward) > 0n))
       && (!wk.reward_rule || (N(wk.free_best) === ft.best && N(wk.free_best_n) === ft.bn && N(wk.free_second) === ft.second && N(wk.free_second_n) === ft.sn));
@@ -385,7 +387,7 @@ export async function rehearse(opts: { weeks: number; verbose: boolean }) {
   for (let w = 0; w < N(T.weeks_closed); w++) {
     const wk = (await sim.read("get_week", { week: String(w) })).week;
     gains += BigInt(wk.gain);
-    if (wk.rolled_over) rolled += BigInt(wk.pot);
+    if (wk.rolled_over) rolled += BigInt(wk.pot) - BigInt(wk.pot_free ?? 0);   // v5: the free prize is still paid (audit M-2)
     claimedOnChain += BigInt(wk.claimed);
   }
   check(holdings >= owed, `the contract holds at least everything it owes (${showKoin(holdings)} ≥ ${showKoin(owed)})`);
