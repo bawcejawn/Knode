@@ -182,6 +182,30 @@
   window.addEventListener("hashchange", route);
 
   // ═══════════════ reading the game ═══════════════
+  /** The public node refuses bursts (a refused request comes back without CORS headers, so the browser reports a
+   *  CORS error). Every chain read goes through one small queue: at most 4 at a time, and a refused one is retried a
+   *  few times with a growing pause. */
+  function gentle(provider) {
+    const call = provider.call.bind(provider);
+    let running = 0; const waiting = [];
+    const next = () => { if (running < 4 && waiting.length) { running++; waiting.shift()(); } };
+    provider.call = async (method, params) => {
+      await new Promise((go) => { waiting.push(go); next(); });
+      try {
+        for (let attempt = 0; ; attempt++) {
+          try { return await call(method, params); }
+          catch (e) {
+            const netFail = e instanceof TypeError || /fetch|network|load failed/i.test(String(e?.message ?? e));
+            // never resend a transaction (a lost reply may hide one that went through)
+            if (!netFail || attempt >= 4 || /submit|send/i.test(String(method))) throw e;
+            await new Promise((r) => setTimeout(r, 700 * (attempt + 1) + Math.random() * 300));
+          }
+        }
+      } finally { running--; next(); }
+    };
+    return provider;
+  }
+
   async function read(method, args = {}) {
     const { result } = await S.game.functions[method](args);
     return result || {};
@@ -1325,7 +1349,7 @@
     } else {
       S.dep = dep;
       S.abi = await fetchJson(ABI_URL);
-      S.provider = new lib.Provider([dep.rpc || RPC]);
+      S.provider = gentle(new lib.Provider([dep.rpc || RPC]));
       initWallet();
       S.game = new lib.Contract({ id: dep.contract, abi: S.abi, provider: S.provider });
       try { await loadLive(); } catch (e) { toast(`Couldn't reach the Koinos network: ${e.message}`, 8000); }
