@@ -75,6 +75,8 @@ message entry_object {
   bool eligible = 7;
   bool claimed = 8;
   uint64 reward = 9 [jstype = JS_STRING];
+  uint64 peak_stake = 10 [jstype = JS_STRING];       // v5: highest stake this week (a partial withdrawal never lowers it)
+  bool free_player = 11;                             // v5: set at settle: never staked the minimum this week (free prize)
 }
 
 message question_object {

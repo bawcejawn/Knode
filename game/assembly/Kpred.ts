@@ -360,7 +360,7 @@ export class Kpred {
   /** v5: what a free player's claim pays for a finalized week (0 = not one of the 2 best free players). The best score
    *  takes 1 VHP (all of the prize if two or more share it, split evenly); the second score shares the other 1 VHP. */
   freePrizeOf(wk: kpred.week_object, e: kpred.entry_object): u64 {
-    if (!wk.reward_rule || wk.pot_free == 0 || e.eligible || e.voided || e.counted < 2 || e.points == 0) return 0;
+    if (!wk.reward_rule || wk.pot_free == 0 || !e.free_player || e.eligible || e.voided || e.counted < 2 || e.points == 0) return 0;
     if (e.points == wk.free_best) {
       if (wk.free_best_n >= 2) return wk.pot_free / <u64>wk.free_best_n;
       return wk.free_second_n > 0 ? wk.pot_free / 2 : wk.pot_free;
@@ -372,9 +372,10 @@ export class Kpred {
   claimCheck(player: Uint8Array, w: u64): string {
     const wk = this.weeks.get(u64Key(w))!;
     if (!wk.finalized) return "week not finalized yet";
-    if (wk.rolled_over) return "no winners that week";
     const e = this.entries.get(this.entryKey(player, w));
+    // v5: the free players' prize is paid even in a week with no staked winner (only the rest of that pot rolls over).
     if (e && e.settled && !e.eligible && this.freePrizeOf(wk, e) > 0) return e.claimed ? "already claimed" : "";
+    if (wk.rolled_over) return "no winners that week";
     if (!e || !e.settled || !e.eligible) return "not eligible that week";
     if (e.points < wk.cutoff) return "below the winners' cutoff";
     if (e.claimed) return "already claimed";
@@ -578,6 +579,7 @@ export class Kpred {
     if (!e) {
       e = new kpred.entry_object();
       e.stake = this.activeStake(p, q.week);        // stake at the start of the week
+      e.peak_stake = e.stake;                        // v5: a later partial withdrawal never lowers this
       p.last_week_plus_one = q.week + 1;
       this.players.put(player, p);
     }
@@ -628,10 +630,13 @@ export class Kpred {
       wk.eligible_players += 1;
       if (points > wk.max_points) wk.max_points = points;
       this.weeks.put(u64Key(week), wk);
-    } else if (!e.voided && counted > 1 && points >= 1) {
-      // v5: a free player (no or too little stake): keep the two best free scores and how many share each.
+    } else if (!e.voided && counted > 1 && points >= 1 && (e.peak_stake > e.stake ? e.peak_stake : e.stake) < this.minStakeFor(c, week)) {
+      // v5: a free player (never staked the minimum this week; a staked player who withdrew down below it is not one):
+      // keep the two best free scores and how many share each.
       const wk = this.weeks.get(u64Key(week))!;
       if (wk.reward_rule) {
+        e.free_player = true;
+        this.entries.put(key, e);
         if (points > wk.free_best) { wk.free_second = wk.free_best; wk.free_second_n = wk.free_best_n; wk.free_best = points; wk.free_best_n = 1; }
         else if (points == wk.free_best) wk.free_best_n += 1;
         else if (points > wk.free_second) { wk.free_second = points; wk.free_second_n = 1; }
@@ -871,11 +876,13 @@ export class Kpred {
       if (wk.reward_rule && wk.winners > 0 && aw.isZero()) { wk.pot_b += wk.pot_a; wk.pot_a = 0; }   // likewise (not possible: winners hold >= 1 VHP)
       if (wk.winners == 0) {
         // Nobody scored: the pot goes back into the pool and is paid out with the next week's (without a second fee).
+        // v5: the free players' prize that is owed (pot_free, after the fallbacks above) stays to be claimed.
         wk.rolled_over = true;
+        const moved = wk.pot - wk.pot_free;
         const t = this.totals.get()!;
         this.accrue(t);
-        t.pots_outstanding -= wk.pot;
-        t.rolled_over += wk.pot;
+        t.pots_outstanding -= moved;
+        t.rolled_over += moved;
         this.totals.put(t);
       }
     }

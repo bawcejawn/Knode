@@ -606,6 +606,17 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "peak_stake": {
+                "type": "uint64",
+                "id": 10,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "free_player": {
+                "type": "bool",
+                "id": 11
               }
             }
           },

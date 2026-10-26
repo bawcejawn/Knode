@@ -41,7 +41,9 @@ const NEW_FIELDS = new Set(["min_stake_next", "min_stake_next_week", "pending_ow
   "last_resolved_time", "fin_started", "fin_points", "fin_index", "fin_rank", "fin_gw", "done",
   // v5
   "pending_seed_owner", "pending_seed_owner_height", "reward_rule_week_plus_one", "aw_hi", "aw_lo", "reward_rule", "capped",
-  "pot_free", "free_best", "free_best_n", "free_second", "free_second_n"]);
+  "pot_free", "free_best", "free_best_n", "free_second", "free_second_n",
+  // v5, after the 2026-10-26 audit: an entry's highest stake this week, and whether it settled as a free player
+  "peak_stake", "free_player"]);
 const isDefault = (v: any) => v === undefined || v === null || v === false || v === 0 || v === "0" || v === "";
 
 /** Every value in `before` must be in `after` unchanged; anything only in `after` must be a new field at its default
@@ -160,6 +162,8 @@ test("the new contract reads the live contract's stored data unchanged and keeps
   assert.equal(w1.finalized, true);
   for (const p of [A, B, D]) {
     const e = (await sim.read("get_player", { player: addr(p), week: "1" })).entry;
+    // Entries the live code wrote have no peak stake and never count as free players (week 1 keeps the old rules).
+    assert.ok(!e?.free_player, `week 1 entry of ${addr(p)} must not be a free player`);
     if (e?.eligible && Number(e.points ?? 0) >= Number(w1.cutoff ?? 0)) await ok([["claim", { player: addr(p), week: "1" }]], [p]);
   }
   // The seed withdrawal announced under the old code (eta + 48 h) still works within its 7 days.
