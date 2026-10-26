@@ -723,10 +723,10 @@
   const displayQuestionNumber = (q) => QNO.get(Number(q.chainId))?.n ?? Number(q.chainId) + 1;
   const qTag = (q) => `Q${displayQuestionNumber(q)}`;
   /** "Week 2 · Monday · Q1" */
-  const qWhere = (q) => {
+  const qWhere = (q, withQ = true) => {
     const w = QNO.get(Number(q.chainId))?.week ?? num(q.week);
     const d = num(q.day);
-    return `Week ${w + 1}${d >= 1 && d <= 6 ? ` · ${DAY_NAMES[d]}` : ""} · ${qTag(q)}`;
+    return `Week ${w + 1}${d >= 1 && d <= 6 ? ` · ${DAY_NAMES[d]}` : ""}${withQ ? ` · ${qTag(q)}` : ""}`;
   };
 
   // ═══════════════ live race: count blocks for questions whose answers are closed ═══════════════
@@ -919,7 +919,7 @@
     }));
     const act = oc && oc !== 1000 && (S.demo || q.result?.option + 1 === oc) ? actualText(q) : null;   // only once decided on chain
     const foot = el("div", { class: "q-foot" },
-      el("span", { class: "q-where" }, qWhere(q)),
+      el("span", { class: "q-where" }, qWhere(q, false)),
       mine !== null ? el("span", { class: "q-done" }, `✓ Answered: ${String.fromCharCode(65 + mine)}`) : mode === "open" ? el("span", { class: "q-cta" }, S.account ? "Tap an answer" : "Connect a wallet to answer") : null);
     return el("article", { class: `q q-${(q.tier || "Medium")}${mine !== null ? " q-answered" : ""}` }, top,
       el("h3", { title: q.text }, el("span", { class: "qno" }, qTag(q)), " ", ...headline(q)), groupView(q),
