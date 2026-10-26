@@ -46,6 +46,8 @@ test("the server: this computer only, the session key, the page's own origin, pr
     assert.equal((await request(port, "/api/actions", { host: "evil.example" })).status, 403, "DNS rebinding: wrong Host");
     assert.equal((await request(port, "/api/actions", {})).status, 401, "no key");
     assert.equal((await request(port, "/api/actions", { key: "0".repeat(48) })).status, 401, "wrong key");
+    assert.equal((await request(port, "/api/actions", { key: "\u00e9".repeat(48) })).status, 401, "a non-ASCII key is refused (audit L-10)");
+    assert.equal((await request(port, "/api/actions", { key })).status, 200, "and the server is still up");
     assert.equal((await request(port, "/api/actions", { key, origin: "https://evil.example" })).status, 403, "another website");
     const list = await request(port, "/api/actions", { key });
     assert.equal(list.status, 200);

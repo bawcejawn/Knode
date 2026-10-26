@@ -6,15 +6,8 @@ import fs from "node:fs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-const WORKFLOWS = [
-  ".github/workflows/bot.yml",
-  ".github/workflows/test.yml",
-  ".github/workflows/desk-test.yml",
-  ".github/workflows/watch.yml",
-  ".github/workflows/workflow-guard.yml",
-  ".github/workflows/resolver-test.yml",
-  ".github/workflows/status-test.yml",
-];
+// Every workflow file, not a fixed list (audit L-9): a new file is checked the moment it is added.
+const WORKFLOWS = fs.readdirSync(".github/workflows").filter((f) => /\.ya?ml$/.test(f)).sort().map((f) => `.github/workflows/${f}`);
 
 /** The jobs of a workflow file, by name (the text of each job, from its name to the next job). */
 function jobsOf(y: string): Record<string, string> {
@@ -37,7 +30,6 @@ test("every third-party action is pinned to a full commit, with a version commen
     const text = fs.readFileSync(file, "utf8");
     assert.doesNotMatch(text, /actions:\s*write/, `${file} must not grant actions: write`);
     const lines = useLines(file);
-    assert.ok(lines.length > 0, file);
     for (const line of lines) {
       assert.match(line, /@[0-9a-f]{40}/, `${file}: ${line}`);
       assert.match(line, /# v\d+\.\d+\.\d+/, `${file}: ${line}`);
@@ -127,5 +119,44 @@ test("every workflow installs packages with install scripts off (audit H-1, C-1)
     for (const line of fs.readFileSync(file, "utf8").split("\n").filter((l) => /\bnpm (ci|install|i)\b/.test(l) && !l.trim().startsWith("#"))) {
       assert.match(line, /npm ci [^\n]*--ignore-scripts/, `${file}: ${line.trim()}`);
     }
+  }
+});
+
+/** The text of every `run:` step (single line or block), with the line it starts on. */
+function runBodies(y: string): Array<{ line: number; body: string }> {
+  const lines = y.split("\n"), out: Array<{ line: number; body: string }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s*)(?:- )?run:\s*(.*)$/);
+    if (!m) continue;
+    const indent = m[1].length + (lines[i].trimStart().startsWith("- ") ? 2 : 0);
+    let body = m[2];
+    if (/^[|>][-+]?\s*$/.test(m[2])) {
+      body = "";
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j].trim() === "") { body += "\n"; continue; }
+        if (lines[j].search(/\S/) <= indent) break;
+        body += lines[j] + "\n";
+      }
+    }
+    out.push({ line: i + 1, body });
+  }
+  return out;
+}
+
+test("every workflow: no risky triggers, its own top-level permissions, no ${{ }} inside a run: script (audit L-9)", () => {
+  assert.ok(WORKFLOWS.length >= 7, "the workflow folder was not found");
+  // The parser itself: it finds block and one-line scripts, and an expression inside one.
+  const sample = runBodies("      - run: |\n          echo ${{ github.ref }}\n      - name: x\n        run: echo ok\n");
+  assert.equal(sample.length, 2);
+  assert.match(sample[0].body, /\$\{\{/);
+  assert.ok(WORKFLOWS.reduce((n, f) => n + runBodies(fs.readFileSync(f, "utf8")).length, 0) > 10, "found too few run: steps");
+  for (const file of WORKFLOWS) {
+    const y = fs.readFileSync(file, "utf8").replace(/\r/g, "");
+    // pull_request_target and workflow_run run with the base repository's token and secrets on code from elsewhere.
+    assert.doesNotMatch(y, /pull_request_target/, `${file}: pull_request_target is not allowed`);
+    assert.doesNotMatch(y, /^\s*workflow_run\s*:/m, `${file}: workflow_run is not allowed`);
+    assert.match(y, /^permissions:/m, `${file}: needs top-level permissions (least privilege)`);
+    // Expressions inside a script are pasted in as code before the shell runs: pass them through env: instead.
+    for (const r of runBodies(y)) assert.doesNotMatch(r.body, /\$\{\{/, `${file}:${r.line}: \${{ }} inside a run: script (use env:)`);
   }
 });

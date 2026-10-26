@@ -1,3 +1,10 @@
-# Generated files are written with LF line endings on every OS, so a rebuild on Windows does not show them as changed.
-game/abi/*.json text eol=lf
-game-data/*.json text eol=lf
+# Every text file is checked out with LF line endings on every OS (audit I-6): the tests parse workflow files, scripts
+# and generated JSON, and Windows' CRLF would make them fail on a PC. Binary files are detected and left alone.
+* text=auto eol=lf
+# Windows batch files need CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# Never touched.
+*.wasm binary
+*.png binary
+*.ico binary

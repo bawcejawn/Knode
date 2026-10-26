@@ -65,8 +65,9 @@ const server = http.createServer((req, res) => {
   if (!url.pathname.startsWith("/api/")) return send(res, 404, '{"error":"not found"}');
   const origin = req.headers.origin;
   if (origin !== undefined && !HOSTS.has(String(origin).replace(/^http:\/\//, ""))) return send(res, 403, '{"error":"wrong origin"}');
-  const given = String(req.headers["x-admin-key"] ?? "");
-  if (given.length !== KEY.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(KEY))) return send(res, 401, '{"error":"wrong or missing key: open the link printed in the terminal"}');
+  // Compared as bytes (audit L-10): a header with non-ASCII characters has more bytes than characters.
+  const given = Buffer.from(String(req.headers["x-admin-key"] ?? ""), "utf8"), want = Buffer.from(KEY, "utf8");
+  if (given.length !== want.length || !crypto.timingSafeEqual(given, want)) return send(res, 401, '{"error":"wrong or missing key: open the link printed in the terminal"}');
   if (req.method === "GET" && url.pathname === "/api/actions") return send(res, 200, catalog);
   if (req.method !== "POST" || url.pathname !== "/api/run") return send(res, 404, '{"error":"not found"}');
   let body = "";
