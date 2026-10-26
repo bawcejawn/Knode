@@ -2,7 +2,7 @@
 
 Decided 2026-10-23: skip v4 and upgrade straight to v5 (= v4 + the items below), with Desk v2 at the same time.
 Built and tested; independently reviewed (no Critical/High; Medium/Low fixed). Runbook: `UPGRADE-V5.md`.
-Game v5 `fa44cfad…`, Desk v2 `b8f1269f…`.
+Game v5 `28d7f5f4…`, Desk v2 `b8f1269f…`.
 
 | Audit item | Change | Status |
 |---|---|---|

@@ -7,7 +7,7 @@ Nothing in this file has been run. Every command that changes something is a dry
 |---|---|---|
 | Contract | `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr` | `1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR` |
 | Live code | `917708a7c567d9642a7a2f121c34fbc70200909787208705fc3aa5a2b1e6433a` (v3) | `05039d743d383538d0078a89e3bfde56e052c0eb478cf14dad63afd366b761e4` (v1) |
-| **New code** | `fa44cfad0f04ab693ec1a2b981386281ff73aa04fc8f4659cc9c6b66173da526` (56,479 bytes) | `b8f1269f61b575a2862efb8eeefd1f1d0d3e9e0ac201f2d06c9fd803a113259d` (34,080 bytes) |
+| **New code** | `28d7f5f4c5ae1eeab3ba65c723e8f569687af2c941c182b9570525381f87d6a0` (57,484 bytes) | `b8f1269f61b575a2862efb8eeefd1f1d0d3e9e0ac201f2d06c9fd803a113259d` (34,080 bytes) |
 | Timelock | 48 h after `schedule`, then 7 days to upload (the live v3 has no expiry) | 48 h after `schedule` |
 | Upload paid by | the owner wallet (~60 KOIN of Mana) | the owner wallet (~25 KOIN of Mana) |
 
@@ -22,6 +22,9 @@ findings are fixed and tested).
   point (as v4). The pot (after the 5% fee) is split 40% / 60%: basket A by place weight × stake counted up to 10 VHP
   per wallet, basket B by place weight × full stake. Weeks before keep the old split.
 - At most 30 questions a week, so at most 30 points.
+- Free-player prize (same start week as the split): 2 VHP of each pot, taken after the 5% fee and before the baskets,
+  goes to the 2 best free (unstaked) players, 1 VHP each, ties share. Unused prize goes to basket B. Free players
+  claim with their own Mana (never sponsored).
 - The seed can be handed over in two steps (`propose_seed_owner`, then `accept_seed_owner` a day later), never to the
   game contract itself.
 - A minimum-stake change needs 48 h of notice (else it applies a week later), and one already promised for the coming
@@ -55,7 +58,7 @@ and `desk/scripts/storage-compat.test.ts` (live v1 → v2, rollback).
    certutil -hashfile game\build\release\contract.wasm SHA256
    certutil -hashfile desk\build\release\contract.wasm SHA256
    ```
-   They must print `fa44cfad…26` and `b8f1269f…79` (full values in the table). If not, stop.
+   They must print `28d7f5f4…a0` and `b8f1269f…9d` (full values in the table). If not, stop.
 3. `npm run bot -- chain-check`: every line ✔. Copy the chain id it prints into `"chainId"` of both
    `game-data/deployment.json` and `desk-data/deployment.json` (commit). Nothing may already be announced.
 4. `npm run bot -- status > before-upgrade.txt` and `npm run desk -- status >> before-upgrade.txt`.
@@ -90,7 +93,7 @@ npm run desk -- upgrade cancel --send
 
 ## 4. Verify
 
-1. `npm run bot -- chain-check`: every line ✔, fingerprints `fa44cfad…` and `b8f1269f…`.
+1. `npm run bot -- chain-check`: every line ✔, fingerprints `28d7f5f4…` and `b8f1269f…`.
 2. `npm run bot -- status` and `npm run desk -- status`: compare with `before-upgrade.txt` (same stakes, seed, pots,
    Desk KOIN/VHP apart from new block rewards and swaps).
 3. GitHub → Actions → Kpred bot → Run workflow: green.
