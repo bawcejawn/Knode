@@ -63,6 +63,7 @@ function sponsorKey(provider: Provider) {
   const taken: Record<string, string> = { [game.contract]: "the game contract", [desk.contract]: "Knode Swap", [game.owner]: "the owner wallet", [game.operator]: "the bot wallet", [PINNED_MAINNET.koin]: "KOIN", [PINNED_MAINNET.vhp]: "VHP" };
   if (taken[a]) throw new Error(`SPONSOR_WIF is ${taken[a]}'s key. The sponsor needs a brand-new wallet of its own.`);
   if (E.OWNER_WIF && Signer.fromWif(E.OWNER_WIF).getAddress() === a) throw new Error("SPONSOR_WIF is the owner's key. Use a new wallet.");
+  if (isMainnet(knode().rpc) && a !== PINNED_MAINNET.sponsor) throw new Error(`SPONSOR_WIF belongs to ${a}, not the Knode sponsor wallet ${PINNED_MAINNET.sponsor}. Check the SPONSOR_WIF line in .env.`);
   return s;
 }
 

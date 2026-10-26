@@ -76,6 +76,9 @@ it from the sponsor wallet in Kondor, like any wallet.
 - To sustain 50 Mana a day the wallet needs about **250 KOIN** (it refills a fifth of its balance per day), plus room
   for transactions waiting in a block: start with about 300.
 - Raise the caps as play grows, and top the wallet up.
+- Knode's sponsor wallet (`1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8`) holds 1,000 KOIN: at most 1,000 Mana at once, refilling
+  about 200 a day. A daily cap of 200 never runs it dry; a cap of 1,000 can be spent in one day but then needs about
+  5 days to refill (or about 5,000 KOIN in the wallet to refill 1,000 every day).
 
 ## Limits to know
 

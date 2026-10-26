@@ -1757,6 +1757,8 @@ function gitCheckpoint(dir: string) {
 export const PINNED_MAINNET = {
   game: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", desk: "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR",
   koin: "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK", vhp: "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", pob: "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv",
+  // The Mana sponsor wallet (created by the owner 2026-10-26). npm run sponsor refuses any other key on mainnet.
+  sponsor: "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8",
 };
 
 /** Audit M-5: on mainnet, every command that signs or reads with a key uses only the pinned contract and token
