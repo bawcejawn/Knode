@@ -655,7 +655,27 @@
   /** The outcome stored on chain (the demo has no chain: it uses its sample results). */
   const outcomeOf = (q) => (S.demo ? (q.chainOutcome !== undefined ? q.chainOutcome : q.result ? (q.result.void ? 1000 : q.result.option + 1) : 0) : num(q.chainSays));
   /** Questions released before their wording was hashed (hashRule 2): the page can't confirm their options. */
-  const wordingHashed = (q) => Number(q.hashRule ?? 0) >= 2;
+  const wordingHashedRule = (q) => Number(q.hashRule ?? 0) >= 2;
+  /** Older questions (before hashRule 2): their thresholds, unit and template ARE in the on-chain hash, only the label
+   *  text is not. For whole-number questions the labels follow from the thresholds exactly, so the page rebuilds them
+   *  and accepts the question only when every label and range is exactly what the thresholds give. */
+  function legacyLabelsOk(q) {
+    const t = q.thresholds, o = q.options;
+    if (q.unit !== "count" || !Array.isArray(t) || !Array.isArray(o) || o.length !== t.length + 1) return false;
+    if (!t.every((x) => Number.isInteger(x))) return false;
+    const f = (v) => v.toLocaleString("en-US", { maximumFractionDigits: 0 });
+    const yesNo = t.length === 1 && /^No — /.test(String(o[0]?.label)) && /^Yes — /.test(String(o[1]?.label));
+    const want = [];
+    for (let j = 0; j <= t.length; j++) {
+      const lo = j === 0 ? null : t[j - 1] + 1, hi = j === t.length ? null : t[j];
+      const labels = yesNo
+        ? (j === 0 ? [`No — ${f(hi)} or fewer`, `No — ${f(hi)} or less`] : [`Yes — ${f(lo)} or more`])
+        : [lo === null ? `${f(hi)} or fewer` : hi === null ? `${f(lo)} or more` : lo === hi ? f(lo) : `${f(lo)} to ${f(hi)}`];
+      want.push({ lo, hi, labels });
+    }
+    return o.every((x, j) => x && x.index === j && (x.min ?? null) === want[j].lo && (x.max ?? null) === want[j].hi && want[j].labels.includes(x.label));
+  }
+  const wordingHashed = (q) => wordingHashedRule(q) || legacyLabelsOk(q);
 
   /** On-chain question ids start at 0. The card shows that id plus one. Submits still send q.chainId. */
   const displayQuestionNumber = (q) => Number(q.chainId) + 1;
