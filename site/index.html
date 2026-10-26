@@ -4,12 +4,13 @@
   <meta charset="utf-8">
   <!-- Only these sources may run scripts, load data or be framed. 'unsafe-eval' is needed by koilib (its protobuf
        encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://api.koinos.io https://koinvault.app; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://api.koinos.io https://koinvault.app; manifest-src 'self'; worker-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Knode</title>
   <link rel="icon" href="media/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="media/icon-180.png">
-  <meta name="theme-color" content="#5a43e6">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#14213D">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Knode">
   <meta property="og:title" content="Knode: call the next blocks">
@@ -26,7 +27,7 @@
   <meta name="description" content="Call the next blocks on Koinos. Answer a few questions a day, climb the weekly board, win VHP.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Archivo:wdth,wght@62..125,600;62..125,800;62..125,900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -42,10 +43,10 @@
         <a href="#play" data-view="play">Play</a>
         <a href="#leaderboard" data-view="leaderboard">Leaderboard</a>
         <a href="#results" data-view="results">Results</a>
-        <a href="#how" data-view="how">How it works</a>
+        <a href="#how" data-view="how">Rules</a>
         <a href="get.html">Get VHP</a>
         <a href="swap.html">Swap</a>
-        <a href="start.html" class="tab-start">Learn</a>
+        <a href="#welcome" data-view="welcome" class="tab-start">New here?</a>
       </nav>
       <button class="btn btn-wallet" id="connect" type="button">Connect wallet</button>
     </div>
@@ -60,33 +61,48 @@
 
   <main id="main" class="wrap">
 
+    <!-- ───────────── WELCOME (first visit, and "New here?") ───────────── -->
+    <section class="view welcome" id="view-welcome" data-view="welcome" hidden>
+      <div class="welcome-card">
+        <p class="welcome-kicker">Welcome to Knode</p>
+        <h1>Guess what the blockchain does next. Win a share of the pool.</h1>
+        <p class="welcome-lede">A daily guessing game on Koinos. Five quick questions a day, a fresh leaderboard every week. Playing is free.</p>
+        <div class="welcome-why">
+          <h2>What's going on</h2>
+          <p>Koinos adds a new block every few seconds. Each block is made by a <b>producer</b>, a computer that earns a small reward for it. We ask things like <i>"How many blocks will this producer make in the next 4 hours?"</i></p>
+          <p>The VHP players stake helps Knode's own producer make blocks. Those block rewards fill the weekly prize pool, so the more people stake, the bigger the pool.</p>
+        </div>
+        <ol class="welcome-steps">
+          <li><span>1</span><div><b>Connect a wallet</b><p>KOIN Vault on your phone, or Kondor on a computer. <a href="get.html">No wallet or VHP yet?</a></p></div></li>
+          <li><span>2</span><div><b>Stake 1 VHP or more, or play free</b><p>Your stake is never spent: take it back any time. Free players climb the board too.</p></div></li>
+          <li><span>3</span><div><b>Answer 5 questions a day</b><p>New ones Monday to Saturday. Each right answer is a point.</p></div></li>
+          <li class="last"><span>4</span><div><b>Top 30% split the pool</b><p>Each week the staked players with the most points share what the pool earned (95% of it). The 2 best free players get 1 VHP each.</p></div></li>
+        </ol>
+        <div class="welcome-actions">
+          <a class="btn btn-primary btn-big" href="#play" id="welcome-go">Start playing</a>
+          <a class="btn btn-ghost btn-big" href="#how">The full rules</a>
+        </div>
+      </div>
+    </section>
+
     <!-- ───────────── PLAY ───────────── -->
     <section class="view" id="view-play" data-view="play">
-      <div class="hero">
-        <div class="hero-copy">
-          <p class="week-pill" id="week-pill">Week …</p>
-          <h1>Call the next blocks.</h1>
-          <p class="lede">Guess how Koinos block producers will do. New questions drop Monday to Saturday, and every right answer is a point. Stake VHP to play for real: each week, the top scorers split the blocks our pool earns. Or just play for free.</p>
-          <p class="schedule" id="schedule"></p>
-          <div class="hero-stats">
-            <div><b id="stat-ends">…</b><span>until the week ends</span></div>
-            <div><b id="stat-pot">…</b><span>earned for this week so far</span></div>
-            <div><b id="stat-players">…</b><span>players this week</span></div>
-          </div>
-        </div>
-        <div class="ticker" aria-label="Latest Koinos blocks">
-          <div class="ticker-head"><span class="live-dot" aria-hidden="true"></span>Live blocks</div>
-          <ol class="ticker-list" id="ticker"></ol>
-          <p class="ticker-foot" id="ticker-foot">Blocks signed by the game's pool are highlighted. <a id="producers-link" target="_blank" rel="noopener">See all producers</a></p>
-        </div>
+      <section class="band" id="band" aria-label="Your week"></section>
+
+      <div class="pots" aria-label="The prize pool">
+        <div class="pot pot-last" id="pot-last" hidden><span class="pot-k" id="pot-last-k">Last week</span><b id="pot-last-v">…</b><span id="pot-last-note"></span></div>
+        <div class="pot"><span class="pot-k" id="stat-pot-k">This week so far</span><b id="stat-pot">…</b><span id="stat-pot-note">for the winners, after the 5% fee</span></div>
+        <div class="pot"><span class="pot-k">Time left</span><b id="stat-ends">…</b><span>until the week ends</span></div>
+        <div class="pot"><span class="pot-k">Players</span><b id="stat-players">…</b><span>this week</span></div>
       </div>
 
       <div class="layout">
         <div class="col-main">
           <div class="section-head">
-            <h2>Today's questions</h2>
+            <h2 id="today-title">Today's questions</h2>
             <p class="muted" id="today-note">Answers close when the timer hits zero.</p>
           </div>
+          <p class="schedule" id="schedule"></p>
           <div id="open-questions" class="qlist"></div>
 
           <div class="section-head">
@@ -97,19 +113,24 @@
         </div>
 
         <aside class="col-side">
-          <section class="panel" id="panel-you">
-            <h2>Your game</h2>
-            <div id="you-body"><p class="muted">Connect a wallet to stake and answer: Kondor on a computer, or KOIN Vault on your phone. No KOIN or VHP yet? <a href="get.html">Here's how to get some</a>.</p></div>
-          </section>
           <section class="panel" id="panel-claim" hidden>
             <h2>Rewards to collect</h2>
             <div id="claim-body"></div>
           </section>
-          <a class="panel kit-card" id="kit-card" target="_blank" rel="noopener" hidden></a>
+          <section class="panel" id="panel-you">
+            <h2>Your game</h2>
+            <div id="you-body"><p class="muted">Connect a wallet to stake and answer: Kondor on a computer, or KOIN Vault on your phone. No KOIN or VHP yet? <a href="get.html">Here's how to get some</a>.</p></div>
+          </section>
+          <div class="ticker" aria-label="Latest Koinos blocks">
+            <div class="ticker-head"><span class="live-dot" aria-hidden="true"></span>Live blocks</div>
+            <ol class="ticker-list" id="ticker"></ol>
+            <p class="ticker-foot" id="ticker-foot">Blocks signed by the game's pool are highlighted. <a id="producers-link" target="_blank" rel="noopener">See all producers</a></p>
+          </div>
           <section class="panel">
-            <h2>This week's pool</h2>
+            <h2>The pool</h2>
             <dl class="facts" id="pool-facts"></dl>
           </section>
+          <a class="panel kit-card" id="kit-card" target="_blank" rel="noopener" hidden></a>
         </aside>
       </div>
     </section>
@@ -131,17 +152,30 @@
 
     <!-- ───────────── RESULTS ───────────── -->
     <section class="view" id="view-results" data-view="results" hidden>
-      <div class="section-head big">
-        <h1>Results</h1>
-        <p class="muted">Every answer comes straight from the blocks. Each result has a fingerprint (hash) of the blocks used, so anyone can check it.</p>
+      <div class="rband">
+        <div class="rband-top">
+          <h1>Results</h1>
+          <p class="rband-score" id="res-score"></p>
+        </div>
+        <div class="rweeks" id="res-weeks" role="group" aria-label="Week"></div>
+        <div class="rdays" id="res-days" role="group" aria-label="Day"></div>
+      </div>
+      <div class="rtools">
+        <label class="rsearch"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><input type="search" id="res-search" aria-label="Find a question" placeholder="Find a producer or answer" autocomplete="off"></label>
+        <button type="button" class="rmine" id="res-mine" aria-pressed="false" hidden>Only mine</button>
       </div>
       <div id="results-list" class="results"></div>
+      <section class="history" id="history" hidden>
+        <h2>Your past weeks</h2>
+        <div class="table-wrap"><table class="board"><thead><tr><th scope="col">Week</th><th scope="col" class="num">Points</th><th scope="col">Result</th></tr></thead><tbody id="history-body"></tbody></table></div>
+      </section>
+      <p class="muted res-foot">Every answer comes straight from the blocks. Each result carries a fingerprint (hash) of the blocks it used, so anyone can check it.</p>
     </section>
 
     <!-- ───────────── HOW IT WORKS ───────────── -->
     <section class="view" id="view-how" data-view="how" hidden>
       <div class="section-head big">
-        <h1>How it works</h1>
+        <h1>The rules</h1>
         <p class="muted">A weekly game about the Koinos chain. Your stake keeps producing blocks for the pool the whole time.</p>
       </div>
       <ol class="steps">
@@ -167,6 +201,14 @@
     </section>
   </main>
 
+  <nav class="tabbar" aria-label="Main">
+    <a href="#play" data-view="play"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.6 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg>Play</a>
+    <a href="#leaderboard" data-view="leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg>Leaders</a>
+    <a href="#results" data-view="results"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg>Results</a>
+    <a href="get.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8M8 12h8"></path></svg>Get VHP</a>
+    <a href="#welcome" data-view="welcome"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg>Help</a>
+  </nav>
+
   <footer class="foot">
     <div class="wrap">
       <section class="eco" aria-labelledby="eco-title" hidden>
@@ -174,7 +216,7 @@
         <div class="eco-grid" id="eco-grid"></div>
       </section>
       <div class="foot-row">
-        <span>Knode runs fully on Koinos. Open source. · <a href="node.html">Producer lookup</a> · <a href="burn.html">Burn KOIN</a> · <a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a></span>
+        <span>Knode runs fully on Koinos. Open source. · <a href="get.html">Get VHP</a> · <a href="swap.html">Swap</a> · <a href="start.html">New to Koinos</a> · <a href="node.html">Producer lookup</a> · <a href="burn.html">Burn KOIN</a> · <a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a></span>
         <span id="foot-contract"></span>
       </div>
     </div>

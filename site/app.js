@@ -147,6 +147,9 @@
 
   /** A UTC hour of the day shown in the viewer's own time zone, e.g. "8:00 AM". */
   const localHour = (utcHour) => { const d = new Date(); d.setUTCHours(utcHour, 0, 0, 0); return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); };
+  /** A moment in the viewer's own time zone, short: "Mon 5:00 AM". */
+  const dayTime = (ms) => new Date(ms).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const hue = (addr) => { let h = 0; for (const c of addr || "") h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
   let toastTimer = 0;
   const toast = (msg, ms = 4200) => {
@@ -159,12 +162,18 @@
   const fetchJson = async (url) => { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); };
 
   // ═══════════════ routing ═══════════════
+  const SEEN_KEY = "kn-welcomed-v1";
+  const seenWelcome = () => { try { return localStorage.getItem(SEEN_KEY) === "1"; } catch { return true; } };
+  const markWelcomed = () => { try { localStorage.setItem(SEEN_KEY, "1"); } catch { /* private window: shown again next time */ } };
   function route() {
-    const view = (location.hash || "#play").slice(1);
-    const known = ["play", "leaderboard", "results", "how"];
-    const v = known.includes(view) ? view : "play";
+    const view = (location.hash || "").slice(1);
+    const known = ["play", "leaderboard", "results", "how", "welcome"];
+    // First visit with no particular page asked for: the short welcome first.
+    const v = known.includes(view) ? view : !view && !seenWelcome() ? "welcome" : "play";
+    if (v !== "welcome") markWelcomed();
     document.querySelectorAll(".view").forEach((s) => (s.hidden = s.dataset.view !== v));
-    document.querySelectorAll(".tabs a").forEach((a) => { if (a.dataset.view === v) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
+    document.querySelectorAll(".tabs a, .tabbar a").forEach((a) => { if (a.dataset.view === v) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
+    document.body && document.body.setAttribute && document.body.setAttribute("data-view", v);
     if (v === "leaderboard") renderBoard();
     if (v === "results") renderResults();
     window.scrollTo({ top: 0 });
@@ -235,6 +244,16 @@
     S.week = S.chainTime <= g ? 0 : Math.floor((S.chainTime - g) / wl);
     S.weekEnd = g + (S.week + 1) * wl;
     S.genesis = g;
+    S.closeDelay = num(c.close_delay) || 43200000;
+    // Last week, until this week's pot starts on its own: its earnings keep counting until it closes (a bot run after
+    // close_delay), then it holds a fixed pot until it is final (settle_end) and players collect.
+    S.prev = null;
+    if (S.week > 0 && S.chainTime > g) {
+      const pw = S.week - 1, t = st.totals || {};
+      const closed = num(t.weeks_closed) > pw, finalized = num(t.weeks_finalized) > pw;
+      const W = closed ? ((await read("get_week", { week: String(pw) }).catch(() => ({}))).week || {}) : {};
+      S.prev = { week: pw, closed, finalized, W };
+    }
     await loadQuestions();
     if (S.account) await loadPlayer();
   }
@@ -251,20 +270,31 @@
     // rewards waiting in finished weeks
     // Every finished week (audit W1-02: not only the last six), a few at a time, newest first.
     const fin = num(S.st.totals?.weeks_finalized);
-    const claims = [];
+    const claims = [], history = [];
     const weeks = []; for (let w = fin - 1; w >= 0 && weeks.length < 104; w--) weeks.push(w);
     for (let i = 0; i < weeks.length; i += 6) {
       await Promise.all(weeks.slice(i, i + 6).map(async (w) => {
         const [p, wk] = await Promise.all([read("get_player", { player: a, week: String(w) }), read("get_week", { week: String(w) })]);
         const e = p.entry, W = wk.week || {};
+        if (!e) return;
+        // For "Your past weeks" on the Results page: what the contract recorded for this wallet.
+        const h = { week: w, pts: num(e.points), counted: num(e.counted), staked: !!e.eligible, voided: !!e.voided, claimed: !!e.claimed, cutoff: num(W.cutoff), reward: 0n, free: false };
+        history.push(h);
         // v5: a free player among the week's 2 best free scores collects the free prize (with their own Mana).
         // (the same conditions as Kpred.freePrizeOf: not voided, at least 2 counted answers)
-        if (e && e.settled && !e.eligible && !e.claimed && !e.voided && num(e.counted) >= 2 && !W.rolled_over) { const f = freePrize(W, num(e.points)); if (f > 0n) claims.push({ week: w, reward: f, free: true }); return; }
-        if (!e || !e.eligible || e.claimed || W.rolled_over || num(e.points) < num(W.cutoff)) return;
+        if (e.settled && !e.eligible && !e.voided && num(e.counted) >= 2 && !W.rolled_over) {
+          const f = freePrize(W, num(e.points)); h.reward = f; h.free = f > 0n;
+          if (f > 0n && !e.claimed) claims.push({ week: w, reward: f, free: true });
+          return;
+        }
+        if (!e.eligible || W.rolled_over || num(e.points) < num(W.cutoff)) return;
         // The exact amount the contract pays, from the week's pots and the player's score group (audit W1-01).
-        claims.push({ week: w, reward: exactReward(W, (wk.buckets || [])[num(e.points)], e) });
+        const r = exactReward(W, (wk.buckets || [])[num(e.points)], e);
+        h.reward = r;
+        if (!e.claimed) claims.push({ week: w, reward: r });
       }));
     }
+    S.history = history.sort((x, y) => y.week - x.week);
     S.claims = claims.sort((x, y) => x.week - y.week);
   }
 
@@ -364,6 +394,8 @@
   /** This week's pots if it closed now: 5% fee off new earnings; v5: 40% / 60%; before: 65% of the house's part by
    *  rank, the rest by rank × stake. An estimate (gains can still change before the week closes). */
   function livePots() {
+    // Until last week closes, everything earned so far is still last week's: this week has nothing yet.
+    if (S.prev && !S.prev.closed) return { potA: 0n, potB: 0n };
     const t = S.st?.totals || {};
     const holdings = big(S.st?.vhp_balance) + big(S.st?.koin_balance);
     const owed = ["total_stake", "seed_vhp", "seed_koin", "owner_share", "creator_fee", "pots_outstanding"].reduce((a, k) => a + big(t[k]), 0n);
@@ -820,20 +852,70 @@
         : "This question could not be checked against the chain yet. Reload the page to try again.");
   }
 
+  /** The scoreboard band at the top of Play: your place, points and stake, with Stake / Withdraw right there. */
+  function renderBand(now) {
+    const band = $("#band");
+    if (!band) return;
+    const kicker = el("p", { class: "band-kicker" }, now < S.genesis ? "The first week starts Monday" : `Week ${S.week + 1} · ${DAY_NAMES[new Date(now).getDay()]}`);
+    const stat = (k, v, sub) => el("div", { class: "band-stat" }, el("span", { class: "band-k" }, k), el("b", { class: "band-v" }, ...[].concat(v)), sub ? el("span", { class: "band-sub" }, sub) : null);
+    if (!S.account) {
+      band.replaceChildren(
+        el("div", { class: "band-main" }, kicker,
+          el("h1", { class: "band-title" }, "Call the next blocks."),
+          el("p", { class: "band-text" }, "Answer each day's questions about Koinos block producers. Play free, or stake 1 VHP or more to share the weekly pool.")),
+        el("div", { class: "band-actions" },
+          el("button", { class: "btn btn-tang", type: "button", onclick: connect }, "Connect wallet"),
+          el("a", { class: "btn btn-onnavy", href: "#welcome" }, "How it works")));
+      return;
+    }
+    const p = S.player || {};
+    const active = S.activeStake ?? big(p.stake), total = big(p.stake) + big(p.pending);
+    const joining = total > active ? total - active : 0n;
+    const B = S.board[S.week], me = B?.scored.find((x) => x.address === S.account);
+    const elig = B ? B.scored.filter((x) => x.eligible) : [];
+    const place = me && me.eligible && me.counted > 0 ? [`#${elig.indexOf(me) + 1}`, el("small", {}, ` of ${elig.length}`)] : [active >= UNIT ? "–" : "Free"];
+    const owed = S.claims.reduce((a, c) => a + big(c.reward), 0n);
+    band.replaceChildren(
+      el("div", { class: "band-main" }, kicker,
+        el("div", { class: "band-stats" },
+          stat("Your place", place, me && !me.eligible && me.counted > 0 ? "free play" : me?.winner ? "in the top 30%" : null),
+          stat("Points", String(me ? me.pts : 0), "this week"),
+          stat("Staked", [amount(active), el("small", {}, " VHP")], joining > 0n ? `+${amount(joining)} next week` : active < UNIT ? "stake 1+ to win" : null))),
+      el("div", { class: "band-actions" },
+        el("button", { class: "btn btn-tang", type: "button", onclick: () => openStake("deposit") }, "Stake"),
+        el("button", { class: "btn btn-onnavy", type: "button", onclick: () => openStake("withdraw") }, "Withdraw"),
+        owed > 0n ? el("button", { class: "btn btn-sun band-collect", type: "button", onclick: () => { const c = $("#panel-claim"); if (c && c.scrollIntoView) c.scrollIntoView({ behavior: "smooth", block: "center" }); } }, `${amount(owed)} VHP to collect`) : null));
+  }
+
   function renderPlay() {
     const st = S.st || {};
     const t = st.totals || {};
     const now = nowMs();
-    $("#week-pill").textContent = now < S.genesis ? "The game starts Monday" : `Week ${S.week + 1}`;
-    $("#stat-ends").textContent = duration((now < S.genesis ? S.genesis : S.weekEnd) - now);
-    $("#stat-ends").nextElementSibling.textContent = now < S.genesis ? "until the first week starts" : "until the week ends";
     const holdings = big(st.vhp_balance) + big(st.koin_balance);
     const owed = ["total_stake", "seed_vhp", "seed_koin", "owner_share", "creator_fee", "pots_outstanding"].reduce((s, k) => s + big(t[k]), 0n);
     const earned = holdings > owed ? holdings - owed : 0n;
     // 95% of new earnings go to the winners; a pot carried over from a week with no winners is added in full.
     const carried = big(t.rolled_over) < earned ? big(t.rolled_over) : earned;
-    $("#stat-pot").textContent = `${amount(carried + ((earned - carried) * 95n) / 100n)} VHP`;
+    const forWinners = carried + ((earned - carried) * 95n) / 100n;
+    $("#stat-ends").textContent = duration((now < S.genesis ? S.genesis : S.weekEnd) - now);
+    $("#stat-ends").nextElementSibling.textContent = now < S.genesis ? "until the first week starts" : "until the week ends";
+    // Last week and this week, kept apart. Until last week closes, everything earned still belongs to it.
+    const P = S.prev, lastBox = $("#pot-last");
+    const prevOpen = !!(P && !P.closed);
+    lastBox.hidden = !P || (P.finalized && !S.claims.some((c) => c.week === P.week) && now > num(P.W.settle_end) + 86400000);
+    if (P) {
+      const settle = num(P.W.settle_end), closeAt = S.genesis + S.week * (num(st.config?.week_length) || 604800000) + (S.closeDelay || 43200000);
+      $("#pot-last-k").textContent = `Week ${P.week + 1} · ${!P.closed ? "closing" : !P.finalized ? "closed" : "final"}`;
+      $("#pot-last-v").textContent = `${amount(P.closed ? P.W.pot : forWinners)} VHP`;
+      $("#pot-last-note").textContent = !P.closed
+        ? `still counting until it closes, ${now < closeAt ? `about ${dayTime(closeAt)}` : "at the next bot run"}`
+        : !P.finalized ? `winners final ${settle ? dayTime(settle) : "Tuesday"}` : "ready to collect";
+    }
+    $("#stat-pot-k").textContent = now < S.genesis ? "Pool so far" : `Week ${S.week + 1} so far`;
+    $("#stat-pot").textContent = `${amount(prevOpen ? 0n : forWinners)} VHP`;
+    $("#stat-pot-note").textContent = prevOpen ? `starts counting when week ${P.week + 1} closes` : "for the winners, after the 5% fee";
     $("#stat-players").textContent = S.boardWeek === S.week && S.board[S.week] ? String(S.board[S.week].scored.length) : "…";
+    renderBand(now);
 
     const open = S.questions.filter((q) => now < q.lockTime).sort((a, b) => a.lockTime - b.lockTime);
     const locked = S.questions.filter((q) => now >= q.lockTime && !outcomeOf(q)).sort((a, b) => a.windowEnd - b.windowEnd);
@@ -863,7 +945,7 @@
           ...(nowMs() >= S.genesis && pts && pts.counted > 0 ? [
             el("dt", {}, "Live place"), el("dd", {}, pts.eligible ? `#${S.board[S.week].scored.filter((x) => x.eligible).indexOf(pts) + 1} of ${S.board[S.week].scored.filter((x) => x.eligible).length}` : "free play (no place)"),
             el("dt", { title: "An estimate from what the pool has earned so far this week; the final split is set when the week closes." }, "If the week ended now"),
-            el("dd", {}, pts.winner && pts.reward !== undefined ? `~${amount(pts.reward)} VHP` : !pts.eligible ? "needs 1 VHP + 2 answers" : "not in the top 30% yet")] : []),
+            el("dd", {}, prevOpen ? `counts after week ${P.week + 1} closes` : pts.winner && pts.reward !== undefined ? `~${amount(pts.reward)} VHP` : !pts.eligible ? "needs 1 VHP + 2 answers" : "not in the top 30% yet")] : []),
           el("dt", {}, "Answers given"), el("dd", {}, String((S.entry?.answers || []).length)),
           el("dt", {}, "Wallet"), el("dd", { class: "addr" }, short(S.account))),
         S.entry?.voided ? el("p", { class: "warn" }, "You withdrew this week, so this week's answers don't count.") : null,
@@ -881,7 +963,7 @@
     $("#pool-facts").replaceChildren(
       el("dt", {}, "Players' stake"), el("dd", {}, `${amount(t.total_stake, 0)} VHP`),
       el("dt", {}, "Seed VHP (never plays)"), el("dd", {}, `${amount(t.seed_vhp, 0)} VHP`),
-      el("dt", {}, "Earned this week"), el("dd", {}, `${amount(earned)} VHP`),
+      el("dt", {}, prevOpen ? `Earned (week ${P.week + 1}, closing)` : "Earned this week"), el("dd", {}, `${amount(earned)} VHP`),
       el("dt", {}, "Winners get"), el("dd", {}, "95%"),
       el("dt", {}, "Waiting to be collected"), el("dd", {}, `${amount(t.pots_outstanding)} VHP`));
     const btn = $("#connect");
@@ -917,56 +999,121 @@
       el("td", {}, el("span", { class: "addr" }, s.address === S.account ? "You" : short(s.address)), i === lastWinnerIdx ? el("span", { class: "cut-label" }, "winners' line") : null),
       el("td", { class: "num" }, String(s.pts)),
       el("td", { class: "num" }, s.stake < UNIT ? el("span", { class: "badge badge-free" }, "Free play") : `${amount(s.stake, 0)} VHP`),
-      el("td", { class: "num" }, s.winner && s.reward !== undefined ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : "–"))));
+      el("td", { class: "num" }, s.winner && s.reward !== undefined && !(b.estimate && s.reward === 0n) ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : "–"))));
     $("#lb-note").textContent = week === S.week
       ? "Live standings: points count as soon as each question's blocks are final. The top 30% of staked players win (ties too). Rewards shown with ~ are estimates if the week ended now."
       : b.final ? `Final: ${num(b.final.winners)} winner(s) at ${num(b.final.cutoff)}+ points shared ${amount(b.final.pot)} VHP.` : "Final standings.";
     if (week === S.week) $("#stat-players").textContent = String(b.scored.length);
   }
 
+  /** Results: one week at a time, a day at a time, one row per question. Search looks through the whole week. */
+  const RV = { week: null, day: null, q: "", mine: false };
+  const SHORT_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  /** The answer this wallet gave to q (this week from the wallet's entry; earlier weeks from that week's board). */
+  function pickOf(q) {
+    if (!S.account) return null;
+    if (num(q.week) === S.week || S.demo) return myAnswer(q);
+    const me = S.board[num(q.week)]?.scored.find((x) => x.address === S.account);
+    const a = me && (me.answers || []).find((x) => num(x.question_id) === Number(q.chainId));
+    return a ? num(a.option) : null;
+  }
+  const searchText = (q) => [q.text, ...(q.subjects || []), ...(q.group || []), ...(q.options || []).map((o) => o.label), `#${displayQuestionNumber(q)}`].join(" ").toLowerCase();
   function renderResults() {
-    const groups = S.files.slice().reverse().map(({ f, d }) => {
-      const qs = (d.questions || []).filter((q) => q.chainId !== undefined);
-      const final = (q) => !!outcomeOf(q) && S.height > q.windowEnd;
-      return { f, d, done: qs.filter(final), waiting: qs.filter((q) => !final(q)) };
-    }).filter((g) => g.done.length || g.waiting.length);
+    const files = S.files.filter(({ d }) => (d.questions || []).some((q) => q.chainId !== undefined));
     const list = $("#results-list");
-    if (!groups.length) { list.replaceChildren(el("div", { class: "empty" }, "No results yet. The first ones arrive a few hours after the first questions close.")); return; }
-    const card = (g, q) => {
+    if (!files.length) { list.replaceChildren(el("div", { class: "empty" }, "No results yet. The first ones arrive a few hours after the first questions close.")); return; }
+    const final = (q) => !!outcomeOf(q) && S.height > q.windowEnd;
+    const weeks = [...new Set(files.map(({ d }) => num(d.week)))].sort((x, y) => y - x);
+    if (RV.week === null || !weeks.includes(RV.week)) { RV.week = weeks[0]; RV.day = null; }
+    const inWeek = files.filter(({ d }) => num(d.week) === RV.week);
+    const days = [...new Set(inWeek.map(({ d }) => num(d.day)))].sort((x, y) => x - y);
+    if (RV.day === null || !days.includes(RV.day)) {
+      const withFinal = days.filter((dd) => inWeek.some(({ d }) => num(d.day) === dd && (d.questions || []).some((q) => q.chainId !== undefined && final(q))));
+      RV.day = (withFinal.length ? withFinal : days)[(withFinal.length ? withFinal : days).length - 1];
+    }
+    // week and day pickers
+    const wk = $("#res-weeks");
+    if (wk) wk.replaceChildren(...(weeks.length > 1 ? weeks.map((w) => el("button", { type: "button", "aria-pressed": String(w === RV.week), onclick: () => { RV.week = w; RV.day = null; renderResults(); } }, w === S.week ? `This week (${w + 1})` : `Week ${w + 1}`)) : []));
+    const dk = $("#res-days");
+    if (dk) dk.replaceChildren(...[1, 2, 3, 4, 5, 6].map((dd) => el("button", { type: "button", disabled: !days.includes(dd), "aria-pressed": String(!RV.q && dd === RV.day), onclick: () => { RV.day = dd; RV.q = ""; const i = $("#res-search"); if (i) i.value = ""; renderResults(); } }, SHORT_DAYS[dd - 1])));
+    const mineBtn = $("#res-mine");
+    if (mineBtn) { mineBtn.hidden = !S.account; mineBtn.setAttribute("aria-pressed", String(!!(S.account && RV.mine))); }
+    if (S.account && !S.demo && RV.week !== S.week && !S.board[RV.week]) loadBoard(RV.week).then((b) => { S.board[RV.week] = b; renderResults(); }).catch(() => {});
+
+    const needle = RV.q.trim().toLowerCase();
+    let qs = inWeek.filter(({ d }) => needle || num(d.day) === RV.day).flatMap(({ f, d }) => (d.questions || []).filter((q) => q.chainId !== undefined).map((q) => ({ q, f, day: num(d.day) })));
+    if (needle) qs = qs.filter(({ q }) => searchText(q).includes(needle));
+    if (S.account && RV.mine) qs = qs.filter(({ q }) => pickOf(q) !== null);
+    qs.sort((x, y) => x.day - y.day || Number(x.q.chainId) - Number(y.q.chainId));
+
+    // the score in the band: right answers among this week's final, answered questions
+    const sc = $("#res-score");
+    if (sc) {
+      const all = inWeek.flatMap(({ d }) => (d.questions || []).filter((q) => q.chainId !== undefined && final(q) && outcomeOf(q) !== 1000));
+      const mine = all.filter((q) => pickOf(q) !== null), right = mine.filter((q) => pickOf(q) + 1 === outcomeOf(q));
+      sc.replaceChildren(...(S.account && mine.length ? [el("b", {}, String(right.length)), ` / ${mine.length} right`] : [`Week ${RV.week + 1} · ${all.length} decided`]));
+    }
+
+    const row = ({ q, f }) => {
+      const done = final(q), oc = done ? outcomeOf(q) : 0, isVoid = oc === 1000, opt = oc && !isVoid ? q.options?.[oc - 1] : null;
+      const mine = pickOf(q);
       // The outcome recorded on chain (after any owner correction) decides what is shown; the file's own result only
       // explains it, and only when it says the same.
-      const oc = outcomeOf(q), isVoid = oc === 1000, opt = isVoid ? null : q.options?.[oc - 1];
       const r = q.result && typeof q.result === "object" ? q.result : null;
       const fileOc = r ? (r.void ? 1000 : Number.isInteger(r.option) ? r.option + 1 : null) : null;
-      const agrees = fileOc === oc;
+      const agrees = done && fileOc === oc;
       const name = (o) => (o === 1000 ? "void" : `option ${String.fromCharCode(64 + o)}`);
-      return el("article", { class: `res${isVoid ? " res-void" : ""}` },
-        el("div", { class: "q-top" },
-          el("div", { class: "q-tags" }, el("span", { class: "qno" }, `Q${displayQuestionNumber(q)}`), el("span", { class: "kind" }, KIND_LABEL[qKind(q)])),
-          isVoid ? el("span", { class: "badge badge-void" }, "Voided") : el("span", { class: "badge badge-ok" }, "Final")),
-        el("h3", { title: q.text }, ...headline(q)), groupView(q),
-        isVoid ? el("p", { class: "res-answer void" }, `Voided${agrees && r.reason ? `: ${r.reason}` : ""}. Nobody gains or loses a point.`)
-          : el("div", { class: "res-answer" }, el("span", { class: "res-letter" }, String.fromCharCode(64 + oc)), el("span", { class: "opt-text" }, ...(opt ? optLabel(opt.label) : [`Option ${String.fromCharCode(64 + oc)}`]))),
-        agrees && actualText(q) ? el("p", { class: "q-actual" }, ...actualText(q)) : null,
-        agrees && r.vhpCheck?.skipped ? el("p", { class: "meta" }, `The VHP-swing rule was not applied: ${r.vhpCheck.skipped}.`) : null,
-        !agrees && !S.demo ? el("p", { class: "q-warn" }, fileOc === null
+      const status = !done ? "wait" : isVoid ? "void" : mine === null ? "none" : mine + 1 === oc ? "right" : "wrong";
+      const ICON = { right: ["M5 12.5l4.5 4.5L19 7", "Right"], wrong: ["M6 6l12 12M18 6L6 18", "Missed"], none: ["M6 12h12", "Not answered"], void: ["M5 19L19 5", "Voided"], wait: ["M12 7v5l3 2", "Waiting"] }[status];
+      const icon = el("span", { class: `res-icon res-icon-${status}`, role: "img", "aria-label": ICON[1], title: ICON[1] });
+      const svg = document.createElementNS ? document.createElementNS("http://www.w3.org/2000/svg", "svg") : null;
+      if (svg && svg.setAttribute) {
+        svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("aria-hidden", "true");
+        if (status === "wait") { const c = document.createElementNS("http://www.w3.org/2000/svg", "circle"); c.setAttribute("cx", "12"); c.setAttribute("cy", "12"); c.setAttribute("r", "8"); svg.append(c); }
+        const pth = document.createElementNS("http://www.w3.org/2000/svg", "path"); pth.setAttribute("d", ICON[0]); svg.append(pth); icon.append(svg);
+      }
+      const answerLine = !done
+        ? el("p", { class: "res-line" }, el("span", { class: "badge badge-wait" }, S.height > q.windowEnd ? "Result being posted" : `Result in ~${duration((q.windowEnd + 60 - S.height) * BLOCK_MS)}`),
+          mine !== null ? el("span", { class: "res-you" }, `You: ${String.fromCharCode(65 + mine)}`) : null)
+        : isVoid ? el("p", { class: "res-line" }, el("span", { class: "res-void-note" }, `Voided${agrees && r.reason ? `: ${r.reason}` : ""}. Nobody gains or loses a point.`))
+          : el("p", { class: "res-line" }, el("span", { class: "res-k" }, "Answer"), el("span", { class: "res-letter" }, String.fromCharCode(64 + oc)), el("span", { class: "opt-text" }, ...(opt ? optLabel(opt.label) : [`Option ${String.fromCharCode(64 + oc)}`])),
+            mine !== null ? el("span", { class: `res-you${mine + 1 === oc ? " ok" : ""}` }, `You: ${String.fromCharCode(65 + mine)}`) : null);
+      const warns = [
+        done && !agrees && !S.demo ? el("p", { class: "q-warn" }, fileOc === null
           ? "The question file has no result yet; the result shown is the one recorded on chain."
           : `The question file says ${name(fileOc)}, but the chain records ${name(oc)} (an owner correction, or an edited file). The chain's result is the one that counts.`) : null,
-        q.hashOk === false ? el("p", { class: "q-warn" }, "This question's published file does not match what was posted on chain.") : null,
-        // Audit W1-03: before hashRule 2 the on-chain fingerprint did not cover the wording, so the option text shown
-        // (not the letter, which comes from the chain) cannot be confirmed.
-        !S.demo && q.hashOk !== false && !wordingHashed(q) ? el("p", { class: "meta" }, "Released before the wording was covered by the on-chain fingerprint: the winning letter comes from the chain, but the option text shown can't be confirmed against it.") : null,
-        el("p", { class: "meta" }, `Blocks ${fmtN(q.windowStart)} → ${fmtN(q.windowEnd)}${r ? ` · fingerprint ${String(r.dataHash || "").slice(0, 12)}…` : ""} `,
-          S.demo ? null : el("a", { href: DATA + g.f }, "full data")));
+        q.hashOk === false ? el("p", { class: "q-warn" }, "This question's published file does not match what was posted on chain.") : null];
+      // Audit W1-03: before hashRule 2 the on-chain fingerprint did not cover the wording, so the option text shown
+      // (not the letter, which comes from the chain) cannot be confirmed.
+      const how = done ? el("details", { class: "res-how" }, el("summary", {}, "How it was decided"),
+        agrees && actualText(q) ? el("p", { class: "q-actual" }, ...actualText(q)) : null,
+        el("p", { class: "meta" }, `Counted blocks ${fmtN(q.windowStart)} to ${fmtN(q.windowEnd)}${r && r.dataHash ? ` · fingerprint of those blocks ${String(r.dataHash).slice(0, 12)}…` : ""}. `,
+          S.demo ? null : el("a", { href: DATA + f }, "See the data")),
+        el("p", { class: "meta" }, "All answers: ", (q.options || []).map((o) => `${String.fromCharCode(65 + o.index)} ${o.label}`).join(" · ")),
+        agrees && r.vhpCheck?.skipped ? el("p", { class: "meta" }, `The VHP-swing rule was not applied: ${r.vhpCheck.skipped}.`) : null,
+        !S.demo && q.hashOk !== false && !wordingHashed(q) ? el("p", { class: "meta" }, "Released before the wording was covered by the on-chain fingerprint: the winning letter comes from the chain, but the option text shown can't be confirmed against it.") : null)
+        : nowMs() >= q.lockTime ? raceView(q, true) : null;
+      return el("article", { class: `res res-st-${status}` },
+        icon,
+        el("div", { class: "res-body" },
+          el("h3", { title: q.text }, el("span", { class: "qno" }, `#${displayQuestionNumber(q)}`), " ", ...headline(q)),
+          answerLine, ...warns, how));
     };
-    const wait = (q) => el("div", { class: "res-wait" },
-      el("span", { class: "qno" }, `Q${displayQuestionNumber(q)}`), el("span", { class: "res-wait-text" }, ...headline(q)),
-      el("span", { class: "badge badge-wait" }, S.height > q.windowEnd ? "Result being posted" : `Result in ~${duration((q.windowEnd + 60 - S.height) * BLOCK_MS)}`),
-      nowMs() >= q.lockTime ? el("div", { class: "res-wait-race" }, raceView(q, true)) : null);
-    list.replaceChildren(...groups.map((g) => el("section", { class: "day-group" },
-      el("h2", {}, `Week ${num(g.d.week) + 1}, day ${g.d.day}`, el("span", { class: "day-count" }, `${g.done.length} of ${g.done.length + g.waiting.length} final`)),
-      ...g.done.map((q) => card(g, q)),
-      g.waiting.length ? el("div", { class: "res-waiting" }, el("p", { class: "res-waiting-h" }, "Still counting (these watch a longer stretch of blocks)"), ...g.waiting.map(wait)) : null)));
+    list.replaceChildren(...(qs.length ? qs.map(row) : [el("div", { class: "empty" }, needle ? "Nothing matches that this week." : RV.mine ? "You didn't answer any questions that day." : "No questions that day.")]));
+
+    // Your past weeks
+    const hist = $("#history");
+    if (hist) {
+      const H = S.account ? (S.history || []) : [];
+      hist.hidden = !H.length;
+      const hb = $("#history-body");
+      if (hb && H.length) hb.replaceChildren(...H.map((h) => el("tr", {},
+        el("td", {}, `Week ${h.week + 1}`),
+        el("td", { class: "num" }, String(h.pts)),
+        el("td", {}, h.voided ? "withdrew (answers didn't count)"
+          : h.reward > 0n ? `${h.free ? "Top free player: " : "Won "}${amount(h.reward)} VHP${h.claimed ? " · collected" : " · to collect"}`
+          : h.staked ? (h.pts >= h.cutoff && h.cutoff > 0 ? "in the top 30%" : `missed the line${h.cutoff ? ` (${h.cutoff} pts)` : ""}`) : "free play"))));
+    }
   }
 
   function renderAll() {
@@ -1031,6 +1178,8 @@
     S.st = { totals: { total_stake: String(48250n * UNIT), seed_vhp: String(170000n * UNIT), seed_koin: String(20000n * UNIT), pots_outstanding: String(1203n * UNIT), owner_share: "0", creator_fee: "0" },
       vhp_balance: String(218250n * UNIT + 1203n * UNIT), koin_balance: String(20000n * UNIT + 412n * UNIT) };
     S.claims = [];
+    S.st.totals.weeks_closed = "2"; S.st.totals.weeks_finalized = "1";
+    S.prev = { week: 1, closed: true, finalized: false, W: { pot: String(1203n * UNIT), settle_end: String(S.chainTime + 40 * 3600000) } };
     // the live race for questions still counting: simulated blocks that drift toward each question's real result
     const run = S.questions.filter((q) => q.lockHeight < S.height && !q.result);
     if (run.length) {
@@ -1065,6 +1214,8 @@
     S.activeStake = 250n * UNIT;
     S.balances = { vhp: 120n * UNIT, koin: 40n * UNIT };
     S.claims = [{ week: 1, reward: 18_37000000n }];
+    S.history = [{ week: 1, pts: 17, counted: 28, staked: true, voided: false, claimed: false, cutoff: 15, reward: 18_37000000n, free: false },
+      { week: 0, pts: 9, counted: 25, staked: true, voided: false, claimed: false, cutoff: 12, reward: 0n, free: false }];
     S.board = {};
   }
   function demoBoard() {
@@ -1079,6 +1230,12 @@
   // ═══════════════ start ═══════════════
   async function start() {
     let armed = 0;
+    const rs = $("#res-search");
+    if (rs) rs.addEventListener("input", () => { RV.q = rs.value || ""; renderResults(); });
+    const rm = $("#res-mine");
+    if (rm) rm.addEventListener("click", () => { RV.mine = !RV.mine; renderResults(); });
+    // Installable app: the service worker keeps only the page shell for offline start-up (never game data or chain reads).
+    if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
     $("#connect").addEventListener("click", () => {
       if (!S.account) return connect();
       if (S.demo || Date.now() - armed > 5000) { armed = Date.now(); return toast(`Connected with ${S.demo ? "the demo wallet" : window.KWallet.label()}: ${S.account}. Tap again to disconnect.`, 5000); }
