@@ -88,6 +88,7 @@
           <a class="btn btn-ghost btn-big" href="#how">The full rules</a>
         </div>
         <p class="welcome-app"><a href="install.html">Get the Knode app on your phone</a>: no app store, three taps.</p>
+        <div class="welcome-remind-box"><h2>Never miss a day</h2><div id="welcome-remind"></div></div>
       </div>
     </section>
 
@@ -107,12 +108,13 @@
           <div class="section-head">
             <h2 id="today-title">Today's questions</h2>
             <p class="muted" id="today-note">Answers close when the timer hits zero.</p>
+            <p class="yesterday" id="yesterday" hidden></p>
           </div>
           <p class="schedule" id="schedule"></p>
           <div id="open-questions" class="qlist"></div>
 
           <details class="waiting" id="waiting">
-            <summary><span class="waiting-title">Waiting for results</span> <span class="waiting-count" id="waiting-count"></span></summary>
+            <summary><span class="waiting-title" id="waiting-title">Waiting for results</span> <span class="waiting-count" id="waiting-count"></span></summary>
             <p class="muted">This week's questions whose answers are locked. Each result appears when its blocks are final.</p>
             <div id="locked-questions" class="qlist"></div>
           </details>
@@ -123,6 +125,10 @@
           <section class="panel" id="panel-claim" hidden>
             <h2>Rewards to collect</h2>
             <div id="claim-body"></div>
+          </section>
+          <section class="panel" id="panel-remind">
+            <h2>Reminders</h2>
+            <div id="remind-body"></div>
           </section>
           <section class="panel" id="panel-you">
             <h2>Your game</h2>
@@ -156,6 +162,7 @@
           <tbody></tbody>
         </table>
       </div>
+      <div class="board-cards" id="board-cards"></div>
     </section>
 
     <!-- ───────────── RESULTS ───────────── -->
@@ -171,6 +178,7 @@
       <div class="rtools">
         <label class="rsearch"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><input type="search" id="res-search" aria-label="Find a question" placeholder="Find a producer or answer" autocomplete="off"></label>
         <button type="button" class="rmine" id="res-mine" aria-pressed="false" hidden>Only mine</button>
+        <button type="button" class="rmine rshare" id="res-share" hidden>Share this week</button>
       </div>
       <div id="results-list" class="results"></div>
       <section class="history" id="history" hidden>
@@ -234,6 +242,20 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
+  <dialog id="share-dialog" aria-labelledby="share-title">
+    <div class="share-box">
+      <h2 id="share-title">Share your week</h2>
+      <canvas id="share-canvas" class="share-canvas" width="1200" height="630" role="img" aria-label="Your week on Knode"></canvas>
+      <label class="share-addr"><input type="checkbox" id="share-addr"> Show my wallet address on the picture</label>
+      <p class="muted fine-print">The picture is made on your device. Nothing is uploaded.</p>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" id="share-close" type="button">Close</button>
+        <button class="btn btn-ghost" id="share-save" type="button">Save picture</button>
+        <button class="btn btn-primary" id="share-go" type="button">Share</button>
+      </div>
+    </div>
+  </dialog>
+
   <dialog id="stake-dialog">
     <form method="dialog" id="stake-form">
       <h2 id="stake-title">Stake</h2>
@@ -255,6 +277,7 @@
   <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js" integrity="sha384-IAL9o3r4bQJvWhvszkorFINY2ct4LBA/LvyXE9NSOPCyYB25BsFV12JITA7Gxbk6" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js" integrity="sha384-WOeNFfSdOron0s4x9jdzLtA7Ic7RSqZCXZAaeQd6HRL6WezQp0KAtIF2XSa+11TL" crossorigin="anonymous"></script>
   <script src="demo-data.js"></script>
+  <script src="extras.js"></script>
   <script src="wallet.js"></script>
   <script src="app.js"></script>
 </body>
