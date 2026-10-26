@@ -7,13 +7,14 @@ Nothing in this file has been run. Every command that changes something is a dry
 |---|---|---|
 | Contract | `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr` | `1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR` |
 | Live code | `917708a7c567d9642a7a2f121c34fbc70200909787208705fc3aa5a2b1e6433a` (v3) | `05039d743d383538d0078a89e3bfde56e052c0eb478cf14dad63afd366b761e4` (v1) |
-| **New code** | `28d7f5f4c5ae1eeab3ba65c723e8f569687af2c941c182b9570525381f87d6a0` (57,484 bytes) | `b8f1269f61b575a2862efb8eeefd1f1d0d3e9e0ac201f2d06c9fd803a113259d` (34,080 bytes) |
-| Timelock | 48 h after `schedule`, then 7 days to upload (the live v3 has no expiry) | 48 h after `schedule` |
+| **New code** | `c17066ae988d204fd43d43f662ad87fcdc38170419943c20b5164a5bd34dd784` (57,699 bytes) | `309506ccfaadd3427e937aa88cd34c9ea2a9e6088e49e51f014d546489dd5f35` (34,396 bytes) |
+| Timelock | 48 h after `schedule`, then 7 days to upload (the live v3 has no expiry) | 48 h after `schedule` (the live v1 has no expiry; v2 announcements expire 7 days after their timelock) |
 | Upload paid by | the owner wallet (~60 KOIN of Mana) | the owner wallet (~25 KOIN of Mana) |
 
 Game v5 = the audited v4 (`docs/UPGRADE-2026-10.md` lists its changes) plus the v5 items below. Desk v2 is new.
 Both were checked by an independent review of the code changes (no Critical or High findings; its Medium and Low
-findings are fixed and tested).
+findings are fixed and tested), then by a full pre-upgrade audit on 2026-10-26 (commit 2ea29e8: 0 Critical, 0 High,
+5 Medium, 11 Low). Its findings are fixed in this build except M-3, which is accepted for now (see `docs/WALLETS.md`).
 
 ## What changes
 
@@ -23,8 +24,10 @@ findings are fixed and tested).
   per wallet, basket B by place weight × full stake. Weeks before keep the old split.
 - At most 30 questions a week, so at most 30 points.
 - Free-player prize (same start week as the split): 2 VHP of each pot, taken after the 5% fee and before the baskets,
-  goes to the 2 best free (unstaked) players, 1 VHP each, ties share. Unused prize goes to basket B. Free players
-  claim with their own Mana (never sponsored).
+  goes to the 2 best free players, 1 VHP each, ties share. A free player never held the minimum stake that week (a
+  staked player who withdraws below it late in the week is not one: each entry keeps its highest stake of the week).
+  It is paid even in a week with no staked winner (only the rest of that pot rolls over). Unused prize goes to basket
+  B. Free players claim with their own Mana (never sponsored).
 - The seed can be handed over in two steps (`propose_seed_owner`, then `accept_seed_owner` a day later), never to the
   game contract itself.
 - A minimum-stake change needs 48 h of notice (else it applies a week later), and one already promised for the coming
@@ -40,12 +43,26 @@ findings are fixed and tested).
 - A daily payout cap: swaps pay out at most the cap at once, and room frees up at the cap per 24 h. **It starts with no
   cap**: set one right after the upgrade (step 6 below).
 - The node key must be a valid compressed public key.
+- Every announcement (upgrade, settings, treasury, owner change) must be carried out within 7 days after its
+  timelock, like the game's; after that it has to be announced again.
+
+**Bot and site** (with this upgrade):
+- Results and VHP readings are checked against a second, independent node (`RPC_CHECK`, by default
+  `https://api.koinosblocks.com`; set the repository variable `RPC_CHECK` to another node, or to `off`). When the two
+  disagree, or the second node can't be reached, nothing is resolved or recorded that run and you get an email; the
+  next run tries again. If the second node stays down, point `RPC_CHECK` at another node.
+- Owner, seed and Desk commands sign only for the pinned contract and token addresses on mainnet, and print the target
+  contract before any `--send`.
+- Alerts run before the settle pass; new alerts for a seed handover.
+- The website pins Koinos mainnet's chain id on every page that signs.
 
 ## Storage
 
 Both upgrades keep every stored value. New fields read as their defaults. Tested: `game/scripts/storage-compat.test.ts`
 (live v3 → v5 at every risky moment of a week, through the live code's own upload check, claims left open, rollback)
-and `desk/scripts/storage-compat.test.ts` (live v1 → v2, rollback).
+and `desk/scripts/storage-compat.test.ts` (live v1 → v2, rollback). The game's two newest entry fields
+(`peak_stake`, `free_player`) read as 0 / false on every entry the live code wrote; they only matter for v5-rule weeks,
+whose entries are all written by v5 code.
 
 ## Before you start
 
@@ -55,12 +72,21 @@ and `desk/scripts/storage-compat.test.ts` (live v1 → v2, rollback).
    git pull
    cd game && npm ci && npm test && npm run check && cd ..
    cd desk && npm ci && npm test && npm run check && cd ..
+   cd desk && npm run build:sim && cd ..
+   node --import tsx --test game/scripts/storage-compat.test.ts desk/scripts/storage-compat.test.ts
    certutil -hashfile game\build\release\contract.wasm SHA256
    certutil -hashfile desk\build\release\contract.wasm SHA256
    ```
-   They must print `28d7f5f4…a0` and `b8f1269f…9d` (full values in the table). If not, stop.
-3. `npm run bot -- chain-check`: every line ✔. Copy the chain id it prints into `"chainId"` of both
-   `game-data/deployment.json` and `desk-data/deployment.json` (commit). Nothing may already be announced.
+   (`build:sim` ends with a normal release build, so run the two hash checks after it.)
+   They must print `c17066ae…d784` and `309506cc…5f35` (full values in the table). If not, stop.
+   On Windows, a few of the repo's script-parsing tests (`bot/workflow.test.ts`, some `tests/audit`) can fail only
+   because older files in your folder still have Windows line endings. That doesn't affect the contracts or their
+   fingerprints. The repo now checks every file out with LF; to refresh your folder once (it rewrites tracked files
+   only; `.env` and other untracked files are kept, and your only local edits are line endings):
+   `git rm -r -q --cached .` then `git reset -q --hard`.
+3. `npm run bot -- chain-check`: every line ✔, including the chain id (both `deployment.json` files now pin Koinos
+   mainnet's `EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==`; if chain-check shows ✖ on it, stop and tell us).
+   Nothing may already be announced.
 4. `npm run bot -- status > before-upgrade.txt` and `npm run desk -- status >> before-upgrade.txt`.
 5. The owner wallet needs ~85 KOIN of Mana for both uploads.
 6. Pick a Tuesday or Wednesday so the uploads land mid-week (safe at any time; this only keeps it simple).
@@ -93,7 +119,7 @@ npm run desk -- upgrade cancel --send
 
 ## 4. Verify
 
-1. `npm run bot -- chain-check`: every line ✔, fingerprints `28d7f5f4…` and `b8f1269f…`.
+1. `npm run bot -- chain-check`: every line ✔, fingerprints `c17066ae…` and `309506cc…`.
 2. `npm run bot -- status` and `npm run desk -- status`: compare with `before-upgrade.txt` (same stakes, seed, pots,
    Desk KOIN/VHP apart from new block rewards and swaps).
 3. GitHub → Actions → Kpred bot → Run workflow: green.
@@ -118,8 +144,10 @@ key and the treasury can change any time.
 There is no instant rollback: going back is another upgrade with the same 48 h notice (schedule the live code's
 hash). Players can withdraw at any time. A rollback loses what the old code doesn't know: on the game, a pending owner
 transfer becomes acceptable at once (cancel it first), a minimum-stake change and the new reward split are dropped; on
-the Desk, the daily cap and any waiting settings or owner change are ignored. Both rollbacks are rehearsed in the
-storage tests.
+the Desk, the daily cap and any waiting settings or owner change are ignored, and old announcements stop expiring.
+Both rollbacks are rehearsed in the storage tests. On the game, a v5 week's free prize that was not yet claimed can no
+longer be claimed after a rollback (the old code doesn't know it; at most 2 VHP per week stays owed): finalize and let
+the free players claim every v5 week before rolling back, if you can.
 
 A question still unresolved 6 hours after its window: the bot emails you. If its result can't be trusted in time,
 pause deposits (`npm run bot -- pause on --send`) or void it (`npm run bot -- void <#> --send`).

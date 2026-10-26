@@ -73,3 +73,19 @@ So you create **3 new wallets**.
    words until everything checks out, then retire it.
 
 The bot emails you about every proposed handover: that is expected (and it's how you'd learn of one you didn't make).
+
+## GitHub: what protects `main` (audit 2026-10-26, M-3: accepted for now)
+
+The hourly bot saves each day's questions and results by pushing `game-data/` to `main` with the workflow's own token.
+So `main` can't require pull requests: that rule would block the bot. Its ruleset blocks deleting `main` and force
+pushes only. Accepted for now because anyone able to push any branch of the repository could already push `main`
+directly; what matters is who can push at all:
+
+- Only you have write access. Add nobody else as a collaborator.
+- Any personal access token on your PC (for example `GITHUB_ALERT_TOKEN`, used by the node self-heal alerts) must be a
+  fine-grained token for this repository with **Actions: read and write** only: never **Contents: write**, which can push
+  code.
+- In Settings → Rules, consider making the "Workflow guard" check required once a pull-request flow is used.
+
+A later change can move the bot's output to its own branch (as the block snapshot already is), after which `main` can
+require reviewed pull requests.

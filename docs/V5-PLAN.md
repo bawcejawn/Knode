@@ -2,7 +2,7 @@
 
 Decided 2026-10-23: skip v4 and upgrade straight to v5 (= v4 + the items below), with Desk v2 at the same time.
 Built and tested; independently reviewed (no Critical/High; Medium/Low fixed). Runbook: `UPGRADE-V5.md`.
-Game v5 `28d7f5f4…`, Desk v2 `b8f1269f…`.
+Pre-upgrade audit 2026-10-26 (commit 2ea29e8): 0 Critical, 0 High; fixed below. Game v5 `c17066ae…`, Desk v2 `309506cc…`.
 
 | Audit item | Change | Status |
 |---|---|---|
@@ -26,6 +26,28 @@ Game v5 `28d7f5f4…`, Desk v2 `b8f1269f…`.
 
 Each change needs: tests next to the existing ones (including a split-stake test for M-2), the storage-compatibility
 test (`game/scripts/storage-compat.test.ts`) passing from v4, and the runbook steps in `docs/UPGRADE-2026-10.md`.
+
+## Pre-upgrade audit, 2026-10-26
+
+| Finding | Change | Status |
+|---|---|---|
+| M-1 | The bot's free-settle budget counts only settled free entries at or above the projected line, and always settles the two best projected free scorers first. | Done (test) |
+| M-2 | The free prize is paid even in a week with no staked winner; only the rest of the pot rolls over. | Done (owner rule: the 2 VHP never shrinks; test) |
+| M-3 | The publish job pushes game-data to `main` with the workflow token, so `main` can't require pull requests. | Accepted for now (`WALLETS.md`) |
+| M-4 | A second node (`RPC_CHECK`, default `api.koinosblocks.com`) must agree on results and on VHP readings. | Done |
+| M-5 | Owner, seed and Desk commands use only the pinned contract and token addresses on mainnet. | Done (test) |
+| L-1, L-2 | Site text and the live pot estimate show the v5 split and the free prize. | Done |
+| L-3 | The wallet code pins mainnet's chain id on every page; both deployment files record it. | Done (test) |
+| L-4 | A player who held the minimum stake during the week is never a free player (entry `peak_stake`, `free_player`). | Done (test) |
+| L-5 | Desk announcements expire 7 days after their timelock. | Done (tests) |
+| L-6 | Alerts run before the settle pass; the settle pass has a 40-minute budget per run. | Done |
+| L-7 | Alerts for a pending seed handover and a seed owner other than deployment.json's. | Done |
+| L-8 | `verify-results` checks the params hash and counts a result it can't recount as a failure. | Done |
+| L-9 | The workflow guard checks every workflow file: no `pull_request_target` / `workflow_run`, top-level permissions, no `${{ }}` inside scripts. | Done (CODEOWNERS / required check: GitHub settings) |
+| L-10 | The admin key is compared as bytes. | Done (test) |
+| L-11 | Runbook lists the free prize a rollback strands; Desk compat test needs `build:sim`. | Done |
+| I-5 | Stake inputs are capped at the wallet's balance and at 2^64 − 1. | Done |
+| I-6 | `.gitattributes`: every text file LF. | Done |
 
 ## Known and accepted (website, display only)
 
