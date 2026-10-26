@@ -69,6 +69,7 @@ jobs:
     if: ${{ always() && vars.BOT_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    environment: bot          # holds OPERATOR_WIF; its deployment-branch rule allows main only
     permissions:
       contents: write         # commit and push game-data/ (questions, results, bot state)
     steps:
