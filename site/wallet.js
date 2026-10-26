@@ -239,6 +239,12 @@
       // ownMana: never the game contract. The sponsor (when chosen) or the player may pay.
       const okPayers = opts.sponsor ? [opts.sponsor, W.address] : [W.address];
       if (opts.ownMana && !okPayers.includes(payer)) throw new Error("This one must use your own Mana. Leave Kondor's free Mana option off and try again.");
+      // Sponsor audit (Info): send only what was shown: the sponsor (or you) pays, and you are the payee.
+      if (opts.sponsor) {
+        const payee = signed.header && signed.header.payee;
+        if (!okPayers.includes(payer)) throw new Error("Kondor changed who pays the Mana for this one, so it was not sent. Leave Kondor's free Mana option off and try again.");
+        if (payer === opts.sponsor && payee !== W.address) throw new Error("The signed transaction doesn't name your wallet as the one the sponsor pays for, so it was not sent.");
+      }
     }
     const receipt = await tx.send();
     if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "the contract refused it"));

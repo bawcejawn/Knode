@@ -102,6 +102,20 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "vhp": {
+                "type": "bytes",
+                "id": 9,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "min_vhp": {
+                "type": "uint64",
+                "id": 10,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
@@ -213,6 +227,72 @@
             "fields": {
               "config": {
                 "type": "config",
+                "id": 1
+              }
+            }
+          },
+          "balance_of_args": {
+            "fields": {
+              "owner": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "balance_of_result": {
+            "fields": {
+              "value": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "game_get_player_args": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "week": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "game_player": {
+            "fields": {
+              "stake": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pending": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "game_get_player_result": {
+            "fields": {
+              "player": {
+                "type": "game_player",
                 "id": 1
               }
             }

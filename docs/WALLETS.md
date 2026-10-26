@@ -11,7 +11,7 @@ secret). Keys live only in `.env` on your PC.
 | Operator (bot) | `1HsM33pF8DbXPr8Vsd4vD7hQgvZ1SHY3Vv` (rotated 2026-10-26 from 1JSTwo…ZrZ) | Posts and resolves questions; the only key on GitHub | Yes, now (audit C1-3) |
 | Game contract | `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr` | The game's own account | No (its address is the game). Its key can't act while the switches are on: move `CONTRACT_WIF` from `.env` to an offline backup |
 | Desk contract | `1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR` | The Desk's own account | No. Same: move `DESK_CONTRACT_WIF` offline |
-| Mana sponsor | `1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8` (created 2026-10-26, 1,000 KOIN) | Pays players' Mana for Knode actions within its caps (`sponsor/README.md`) | Create it when you turn the sponsor on. Its key goes in `.env` as `SPONSOR_WIF` only; it holds the KOIN that becomes its Mana |
+| Mana sponsor | `1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8` (created 2026-10-26; keep ≥5,000 KOIN) | Pays real players' Mana for Knode actions within its caps (`sponsor/README.md`) | Its key goes in `.env` as `SPONSOR_WIF` only; it holds the KOIN that becomes its Mana. SwarmTales has its own, separate sponsor wallet |
 | Your personal producer | yours | Your own node's rewards | Not part of the platform |
 | Node signing keys | (not wallets) | Sign blocks for the game and Desk nodes | Only if that computer is ever compromised |
 
@@ -22,7 +22,7 @@ secret). Keys live only in `.env` on your PC.
 | **New owner** | Game owner, seed owner, Desk owner | `.env` on your PC as `OWNER_WIF` (and `SEED_WIF`), plus your paper backup. Never connected to websites |
 | **New operator** | The bot | GitHub secret `OPERATOR_WIF` (environment `bot`) and `.env` |
 | **Cold treasury** | Where the Desk's funds can be withdrawn to | Paper only. It only receives |
-| **Mana sponsor** (optional) | Pays players' Mana (`sponsor/README.md`) | `.env` as `SPONSOR_WIF`, plus your paper backup. Never put it on GitHub |
+| **Mana sponsor** | Pays players' Mana (`sponsor/README.md`) | `.env` as `SPONSOR_WIF`, plus your paper backup. Never put it on GitHub. Its KOIN is only as safe as this key: anyone with it can move the KOIN out. Turning the sponsor off (`disable`) is paid with the sponsor's own Mana, so keep a little KOIN in it at all times |
 
 So you create **3 new wallets**.
 

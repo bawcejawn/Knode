@@ -1,10 +1,10 @@
-import { System, Storage, Protobuf, Crypto, Arrays, authority, value, protocol } from "@koinos/sdk-as";
+import { System, Storage, Protobuf, Crypto, Arrays, authority, value, protocol, error } from "@koinos/sdk-as";
 import { sponsor } from "./proto/sponsor";
 
 /**
  * Knode mana sponsor. See assembly/proto/sponsor.proto for the rules.
- * Ported from the SwarmTales sponsor; adds a per-player weekly cap, a read-only would_pay, and refuses any signature
- * other than the player's (the owner's own transactions excepted).
+ * Ported from the SwarmTales sponsor; adds a per-player weekly cap, a read-only would_pay, refuses any signature
+ * other than the player's (the owner's own transactions excepted), and pays only for real Knode players (audit M-1).
  *
  * Uploaded onto a fresh wallet with ONLY the transaction-application override on. Settings and moving KOIN out use
  * the wallet's own key, as for any wallet.
@@ -35,6 +35,10 @@ export const GAME_CLAIM: u32 = 0xdd1b3c31;
 export const GAME_CLOSE_WEEK: u32 = 0x250d08be;
 export const GAME_FINALIZE_WEEK: u32 = 0x8c516995;
 export const DESK_SWAP: u32 = 0xda47c2f4;
+/** Read-only entry points used by the player check. */
+export const TOKEN_BALANCE_OF: u32 = 0x5c721497;
+export const GAME_GET_PLAYER: u32 = 0x37ce3085;
+export const NOT_A_PLAYER = "SPONSOR: only players who hold VHP or have a Knode stake are sponsored";
 
 /** UTC day number of a time in ms. */
 export function dayOf(ms: u64): u64 {
@@ -107,6 +111,9 @@ export class Sponsor {
       checkOperation(ops[i], cfg, payee);
     }
 
+    // Last of the checks, so a transaction refused for any other reason costs no reads.
+    System.require(isPlayer(cfg, payee), NOT_A_PLAYER);
+
     const now = System.getHeadInfo().head_block_time;
     const day = dayOf(now), week = weekOf(now);
 
@@ -169,6 +176,7 @@ export class Sponsor {
     else if (rc > leftDay) out.reason = "this player's daily sponsored mana is used up";
     else if (rc > leftWeek) out.reason = "this player's weekly sponsored mana is used up";
     else if (rc > leftAll) out.reason = "today's sponsored mana is used up";
+    else if (!isPlayer(cfg, args.account!)) out.reason = "only players who hold VHP or have a Knode stake are sponsored";
     else out.ok = true;
     return out;
   }
@@ -205,11 +213,32 @@ export class Sponsor {
     System.require(cfg.max_mana_per_day <= CAP_LIMIT, "SPONSOR: daily cap above 1,000 mana");
     System.require(cfg.max_mana_per_account_week <= 7 * CAP_LIMIT, "SPONSOR: weekly cap above 7,000 mana");
     System.require(!cfg.enabled || cfg.max_mana_per_tx > 0, "SPONSOR: switched on with a zero cap");
+    System.require(!cfg.enabled || (isAddress(cfg.vhp) && contains(cfg.tokens, cfg.vhp!) && cfg.min_vhp > 0),
+      "SPONSOR: switched on without the VHP token (one of the tokens) and a minimum above 0");
     this.config.put(cfg);
     const ev = new sponsor.config_event(cfg);
     System.event("sponsor.config_event", Protobuf.encode(ev, sponsor.config_event.encode), [this.contractId]);
     return new sponsor.empty_object();
   }
+}
+
+/**
+ * A real Knode player (audit M-1): holds at least min_vhp VHP, or has a stake (active or pending) in the game.
+ * Read-only calls to the configured VHP token and game. Any failed or unreadable read counts as "no" (fails closed).
+ */
+function isPlayer(cfg: sponsor.config, account: Uint8Array): bool {
+  if (cfg.vhp == null || cfg.game == null || cfg.min_vhp == 0) return false;
+  const b = System.call(cfg.vhp!, TOKEN_BALANCE_OF,
+    Protobuf.encode(new sponsor.balance_of_args(account), sponsor.balance_of_args.encode));
+  if (b.code == error.error_code.success && b.res.object != null) {
+    const r = Protobuf.decode<sponsor.balance_of_result>(b.res.object!, sponsor.balance_of_result.decode);
+    if (r.value >= cfg.min_vhp) return true;
+  }
+  const g = System.call(cfg.game!, GAME_GET_PLAYER,
+    Protobuf.encode(new sponsor.game_get_player_args(account, 0), sponsor.game_get_player_args.encode));
+  if (g.code != error.error_code.success || g.res.object == null) return false;
+  const p = Protobuf.decode<sponsor.game_get_player_result>(g.res.object!, sponsor.game_get_player_result.decode);
+  return p.player != null && (p.player!.stake > 0 || p.player!.pending > 0);
 }
 
 function isGameAction(entry: u32): bool {

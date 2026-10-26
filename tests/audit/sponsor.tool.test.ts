@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildConfig, setPayer, DEFAULT_CAPS } from "../../bot/sponsor.ts";
+import { buildConfig, setPayer, DEFAULT_CAPS, SPONSOR_SHA256 } from "../../bot/sponsor.ts";
 
 const GAME = { contract: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", vhp: "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", koin: "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK" };
 const DESK = { contract: "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR", vhp: GAME.vhp, koin: GAME.koin };
@@ -18,6 +18,23 @@ test("the default caps are in order and convert to chain units", () => {
   assert.equal(c.max_mana_per_account_day, "500000000");
   assert.equal(c.max_mana_per_account_week, "2000000000");
   assert.equal(c.max_mana_per_day, "100000000000");
+  // Only real players (audit M-1): VHP is the token checked, at least 1 VHP by default.
+  assert.equal(c.vhp, GAME.vhp);
+  assert.equal(c.min_vhp, "100000000");
+});
+
+test("a VHP minimum of 0 is refused (empty wallets would be sponsored)", () => {
+  assert.throws(() => buildConfig(GAME, DESK, { ...DEFAULT_CAPS, minVhp: "0" }, true), /VHP minimum/);
+  assert.equal(buildConfig(GAME, DESK, { ...DEFAULT_CAPS, minVhp: "25" }, true).min_vhp, "2500000000");
+});
+
+test("upload only accepts the audited build, and that is the build in the repo's README", () => {
+  assert.match(SPONSOR_SHA256, /^[0-9a-f]{64}$/);
+  assert.ok(fs.readFileSync("sponsor/README.md", "utf8").includes(SPONSOR_SHA256), "README Build line = the pinned build");
+  const src = fs.readFileSync("bot/sponsor.ts", "utf8");
+  assert.match(src, /sha256hex\(wasm\) !== SPONSOR_SHA256/);
+  assert.match(src, /call override is ON/);
+  assert.match(src, /upload override is ON/);
 });
 
 test("caps out of order, too large, or zero while on are refused before anything is signed", () => {
@@ -26,7 +43,7 @@ test("caps out of order, too large, or zero while on are refused before anything
   assert.throws(() => buildConfig(GAME, DESK, { perTx: "1", perPlayerDay: "60", perPlayerWeek: "100", perDay: "50" }, true), /Caps must be/);
   assert.throws(() => buildConfig(GAME, DESK, { perTx: "1", perPlayerDay: "5", perPlayerWeek: "20", perDay: "1001" }, true), /1,000/);
   assert.throws(() => buildConfig(GAME, DESK, { perTx: "0", perPlayerDay: "5", perPlayerWeek: "20", perDay: "50" }, true), /refuse everything/);
-  assert.doesNotThrow(() => buildConfig(GAME, DESK, { perTx: "0", perPlayerDay: "0", perPlayerWeek: "0", perDay: "0" }, false));
+  assert.doesNotThrow(() => buildConfig(GAME, DESK, { perTx: "0", perPlayerDay: "0", perPlayerWeek: "0", perDay: "0", minVhp: "1" }, false));
 });
 
 function files(withSponsor: boolean) {

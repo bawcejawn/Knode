@@ -16,6 +16,8 @@ syntax = "proto3";
 //     deposit_koin, withdraw, answer, settle, claim, close_week,
 //     finalize_week) or on Knode Swap (swap), or a VHP/KOIN `approve` with
 //     spender = the game or Knode Swap and owner = the payee;
+//   - the payee is a real Knode player: holds at least min_vhp VHP, or has a
+//     stake in the game (so new empty wallets can't use up the budget);
 //   - the transaction's Mana limit is within the per-transaction cap, and
 //     this player's totals today and this week, and everyone's total today,
 //     stay within their caps.
@@ -47,6 +49,10 @@ message config {
   uint64 max_mana_per_account_week = 7 [jstype = JS_STRING];
   // Most Mana everyone together may reserve per UTC day.
   uint64 max_mana_per_day = 8 [jstype = JS_STRING];
+  // Only real Knode players are sponsored (audit 2026-10-26 M-1): the payee must hold at least min_vhp of this VHP
+  // token, or have a stake (active or pending) in the game. Required, and min_vhp > 0, when switched on.
+  bytes vhp = 9 [(koinos.btype) = ADDRESS];
+  uint64 min_vhp = 10 [jstype = JS_STRING];
 }
 
 message usage {
@@ -105,6 +111,25 @@ message set_config_arguments {
 // Emitted by set_config.
 message config_event {
   config config = 1;
+}
+
+// Cross-contract reads for the player check (only the fields used are listed; the others are skipped when decoding).
+message balance_of_args {
+  bytes owner = 1 [(koinos.btype) = ADDRESS];
+}
+message balance_of_result {
+  uint64 value = 1 [jstype = JS_STRING];
+}
+message game_get_player_args {
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  uint64 week = 2 [jstype = JS_STRING];
+}
+message game_player {
+  uint64 stake = 1 [jstype = JS_STRING];
+  uint64 pending = 2 [jstype = JS_STRING];
+}
+message game_get_player_result {
+  game_player player = 1;
 }
 
 // The KCS-4 approve arguments, read from a token operation.

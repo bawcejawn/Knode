@@ -34,7 +34,9 @@ const STATE = path.join("sponsor-data", "deployment.json");
 const GAME_DEP = path.join("game-data", "deployment.json");
 const DESK_DEP = path.join("desk-data", "deployment.json");
 /** Suggested caps (Mana): per transaction, per player per day, per player per week, everyone per day. */
-export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "5", perPlayerWeek: "20", perDay: "1000" };
+export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "5", perPlayerWeek: "20", perDay: "1000", minVhp: "1" };
+/** The audited sponsor build (sponsor/README.md "Build"). upload refuses any other wasm. */
+export const SPONSOR_SHA256 = "ec398f546ceec2bdd81274e2e7d0b511223b6e2d6d84660a8d06b9ad1b719b22";
 
 const sha256hex = (b: Uint8Array) => crypto.createHash("sha256").update(b).digest("hex");
 const readJson = (f: string, d: any = null) => (fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : d);
@@ -93,6 +95,7 @@ async function status() {
   log(`  Switched       ${cfg.enabled ? "ON" : "off"}`);
   log(`  Pays for       game ${cfg.game === game.contract ? "✔" : `✖ (${cfg.game ?? "not set"})`}, Knode Swap ${cfg.desk === desk.contract ? "✔" : `✖ (${cfg.desk ?? "not set"})`}, approves on ${(cfg.tokens ?? []).length} token(s)`);
   log(`  Caps           ${mana(cfg.max_mana_per_tx)} per transaction, ${mana(cfg.max_mana_per_account_day)} per player per day, ${mana(cfg.max_mana_per_account_week)} per player per week, ${mana(cfg.max_mana_per_day)} for everyone per day`);
+  log(`  Players        only wallets holding at least ${mana(cfg.min_vhp)} VHP, or with a stake in the game`);
   const t = await readSponsor(provider, address, "get_total_usage");
   log(`  Used today     ${mana(t.used_day)} of ${mana(cfg.max_mana_per_day)}`);
   const site = (d: any) => (d?.payer === "sponsor" && d?.sponsor?.address === address ? "the sponsor" : "players' own Mana");
@@ -109,6 +112,8 @@ async function upload(send: boolean) {
   const A = s.getAddress();
   if (!fs.existsSync(WASM)) throw new Error(`${WASM} not found: in the sponsor folder run npm test && npm run check`);
   const wasm = fs.readFileSync(WASM);
+  // Audit L-1: only the audited build goes on chain.
+  if (sha256hex(wasm) !== SPONSOR_SHA256) throw new Error(`${WASM} is not the audited sponsor build (sha256 ${sha256hex(wasm)}, expected ${SPONSOR_SHA256}). Rebuild: cd sponsor, npm ci, npm test, npm run check.`);
   const abi = loadAbi();
   const m = await contractMetadata(provider, A);
   const have = BigInt(await provider.getAccountRc(A));
@@ -128,6 +133,13 @@ async function upload(send: boolean) {
   if (receipt?.reverted) throw new Error(`upload reverted: ${JSON.stringify(receipt.logs)}`);
   await tx.wait("byBlock", 300_000).catch(() => { throw new Error("Sent but not confirmed within 5 minutes. Check status in a few minutes."); });
   const after = await contractMetadata(provider, A);
+  // Audit L-1: the chain must now hold exactly this code, with only "pays for transactions" switched on.
+  const bad: string[] = [];
+  if (after.hash.replace(/^0x1220/, "") !== SPONSOR_SHA256) bad.push(`code on chain is ${after.hash}`);
+  if (!after.tx) bad.push("pays for transactions is OFF");
+  if (after.call) bad.push("call override is ON (must be off)");
+  if (after.upload) bad.push("upload override is ON (must be off)");
+  if (bad.length) throw new Error(`Uploaded, but the sponsor wallet is not as expected: ${bad.join("; ")}. Do not switch it on; check npm run sponsor -- status.`);
   writeJson(STATE, { network: mainnet ? "mainnet" : "testnet", rpc, address: A, wasmSha256: sha256hex(wasm), uploadTx: tx.transaction?.id, uploadedAt: new Date().toISOString() });
   log(`✔ uploaded (Mana used ${showKoin(receipt?.rc_used)}). On chain: ${after.hash}; pays for transactions: ${after.tx}`);
   log(`Saved ${STATE} (public; commit it). Next: npm run sponsor -- config --send, then enable --send.`);
@@ -137,12 +149,16 @@ async function upload(send: boolean) {
 function flag(a: string[], name: string, d: string) { const i = a.indexOf(name); return i >= 0 && a[i + 1] && !a[i + 1].startsWith("--") ? a[i + 1] : d; }
 
 /** Builds the config: the pinned game, Desk, VHP and KOIN, and the caps. Exported for the tests. */
-export function buildConfig(game: any, desk: any, caps: { perTx: string; perPlayerDay: string; perPlayerWeek: string; perDay: string }, enabled: boolean) {
+export function buildConfig(game: any, desk: any, caps: { perTx: string; perPlayerDay: string; perPlayerWeek: string; perDay: string; minVhp?: string }, enabled: boolean) {
+  const vhp = game.vhp ?? PINNED_MAINNET.vhp;
   const c = {
-    enabled, game: game.contract, desk: desk.contract, tokens: [game.vhp ?? PINNED_MAINNET.vhp, game.koin ?? PINNED_MAINNET.koin],
+    enabled, game: game.contract, desk: desk.contract, tokens: [vhp, game.koin ?? PINNED_MAINNET.koin],
     max_mana_per_tx: units(caps.perTx), max_mana_per_account_day: units(caps.perPlayerDay),
     max_mana_per_account_week: units(caps.perPlayerWeek), max_mana_per_day: units(caps.perDay),
+    // Only real players are sponsored (audit M-1): at least this much VHP in the wallet, or a stake in the game.
+    vhp, min_vhp: units(caps.minVhp ?? DEFAULT_CAPS.minVhp),
   };
+  if (BigInt(c.min_vhp) === 0n) throw new Error("The VHP minimum must be above 0 (empty wallets would be sponsored).");
   const n = (x: string) => BigInt(x);
   if (!(n(c.max_mana_per_tx) <= n(c.max_mana_per_account_day) && n(c.max_mana_per_account_day) <= n(c.max_mana_per_account_week) && n(c.max_mana_per_account_day) <= n(c.max_mana_per_day)))
     throw new Error("Caps must be per transaction ≤ per player per day ≤ per player per week, and per player per day ≤ everyone per day.");
@@ -164,12 +180,14 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
     perPlayerDay: flag(a, "--per-player-day", fromSat(cur.max_mana_per_account_day, DEFAULT_CAPS.perPlayerDay)),
     perPlayerWeek: flag(a, "--per-player-week", fromSat(cur.max_mana_per_account_week, DEFAULT_CAPS.perPlayerWeek)),
     perDay: flag(a, "--per-day", fromSat(cur.max_mana_per_day, DEFAULT_CAPS.perDay)),
+    minVhp: flag(a, "--min-vhp", fromSat(cur.min_vhp, DEFAULT_CAPS.minVhp)),
   };
   const enabled = enabledArg ?? !!cur.enabled;
   const config = buildConfig(game, desk, caps, enabled);
   log(`To the sponsor contract ${A} on ${rpc}${isMainnet(rpc) ? "   ⚠ MAINNET" : ""}, signed and paid by the sponsor wallet:`);
   log(`  set_config: ${enabled ? "ON" : "off"}; pays for the game ${config.game} and Knode Swap ${config.desk}; approves on VHP and KOIN`);
   log(`  caps: ${caps.perTx} Mana per transaction, ${caps.perPlayerDay} per player per day, ${caps.perPlayerWeek} per player per week, ${caps.perDay} for everyone per day`);
+  log(`  players: only wallets holding at least ${caps.minVhp} VHP, or with a stake in the game`);
   if (!send) { log("\nDry run only. Nothing was sent. Add --send to send it."); return; }
   const chain = new KoinosChain(rpc, A);
   const r = await chain.send([{ contract: A, abi: loadAbi(), method: "set_config", args: { config } }], [s], { payer: A, rcLimitKoin: 2 });

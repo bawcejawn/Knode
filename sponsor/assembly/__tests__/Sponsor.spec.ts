@@ -6,9 +6,10 @@
 // Ported from the SwarmTales sponsor tests, extended for the weekly cap, would_pay and the one-signer rule.
 // =====================================================================
 
-import { Arrays, Base58, MockVM, Protobuf, authority, chain, protocol } from "@koinos/sdk-as";
+import { Arrays, Base58, MockVM, Protobuf, authority, chain, protocol, system_calls } from "@koinos/sdk-as";
 import {
   Sponsor, APPROVE_ENTRY, dayOf, weekOf,
+  NOT_A_PLAYER,
   GAME_DEPOSIT_VHP, GAME_DEPOSIT_KOIN, GAME_WITHDRAW, GAME_ANSWER, GAME_SETTLE, GAME_CLAIM, GAME_CLOSE_WEEK, GAME_FINALIZE_WEEK, DESK_SWAP,
 } from "../Sponsor";
 import { sponsor } from "../proto/sponsor";
@@ -95,8 +96,33 @@ function apply(): void {
   MockVM.setTransaction(t);
 }
 
+// ── the player check (audit M-1): what the VHP token and the game answer, in call order ──
+/** A VHP balance_of answer. */
+export function vhpBalance(v: u64): system_calls.exit_arguments {
+  return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.balance_of_result(v), sponsor.balance_of_result.encode)));
+}
+/** A game get_player answer. */
+export function gamePlayer(stake: u64, pending: u64): system_calls.exit_arguments {
+  const r = new sponsor.game_get_player_result(new sponsor.game_player(stake, pending));
+  return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(r, sponsor.game_get_player_result.encode)));
+}
+/** A failed read (the called contract reverted). */
+export function failedRead(): system_calls.exit_arguments {
+  return new system_calls.exit_arguments(1, new chain.result(new Uint8Array(0), new chain.error_data("reverted")));
+}
+/** By default the payee holds 10 VHP. Tests change READS before calling pays() / wouldPay(). */
+let READS: system_calls.exit_arguments[] = [];
+function holder(): void { READS = [vhpBalance(10 * MANA)]; }
+function queueReads(): void { MockVM.setCallContractResults(READS); }
+
+function wouldPay(account: Uint8Array, rc: u64): sponsor.would_pay_result {
+  queueReads();
+  return new Sponsor().would_pay(new sponsor.would_pay_arguments(account, rc));
+}
+
 function pays(): bool {
   apply();
+  queueReads();
   return new Sponsor().authorize(new authority.authorize_arguments(authority.authorization_type.transaction_application)).value;
 }
 
@@ -134,7 +160,7 @@ function asOwner(): void {
 
 /** per tx 10, per player per day 30, per player per week 50, everyone per day 100 (Mana). */
 function goodConfig(): sponsor.config {
-  return new sponsor.config(true, GAME, DESK, [VHP, KOIN], 10 * MANA, 30 * MANA, 50 * MANA, 100 * MANA);
+  return new sponsor.config(true, GAME, DESK, [VHP, KOIN], 10 * MANA, 30 * MANA, 50 * MANA, 100 * MANA, VHP, MANA);
 }
 
 let CFG: sponsor.config = new sponsor.config();
@@ -156,6 +182,7 @@ function start(): void {
   setTime(T0);
   MockVM.commitTransaction();
   RAW_SIGS = [];
+  holder();
 }
 
 describe("day and week numbers", () => {
@@ -593,14 +620,14 @@ describe("would_pay", () => {
   beforeEach(() => { start(); });
 
   it("says no while switched off", () => {
-    const r = new Sponsor().would_pay(new sponsor.would_pay_arguments(USER, MANA));
+    const r = wouldPay(USER, MANA);
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("switched off");
   });
 
   it("says yes within the caps, and how much is left", () => {
     configure();
-    const r = new Sponsor().would_pay(new sponsor.would_pay_arguments(USER, MANA));
+    const r = wouldPay(USER, MANA);
     expect(r.ok).toBe(true);
     expect(r.left_today).toBe(30 * MANA);
     expect(r.left_this_week).toBe(50 * MANA);
@@ -608,9 +635,9 @@ describe("would_pay", () => {
 
   it("names the cap that would refuse", () => {
     configure();
-    expect(new Sponsor().would_pay(new sponsor.would_pay_arguments(USER, 11 * MANA)).reason).toBe("mana limit above the per-transaction cap");
+    expect(wouldPay(USER, 11 * MANA).reason).toBe("mana limit above the per-transaction cap");
     for (let i = 1; i <= 3; i++) { userStake(i, 10 * MANA); expect(pays()).toBe(true); MockVM.commitTransaction(); }
-    const r = new Sponsor().would_pay(new sponsor.would_pay_arguments(USER, MANA));
+    const r = wouldPay(USER, MANA);
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("this player's daily sponsored mana is used up");
     expect(r.left_today).toBe(0);
@@ -618,7 +645,7 @@ describe("would_pay", () => {
     setTime(T0 + DAY_MS);
     MockVM.commitTransaction();
     for (let i = 1; i <= 2; i++) { userStake(i, 10 * MANA); expect(pays()).toBe(true); MockVM.commitTransaction(); }
-    expect(new Sponsor().would_pay(new sponsor.would_pay_arguments(USER, MANA)).reason).toBe("this player's weekly sponsored mana is used up");
+    expect(wouldPay(USER, MANA).reason).toBe("this player's weekly sponsored mana is used up");
   });
 
   it("names everyone's daily cap", () => {
@@ -627,8 +654,102 @@ describe("would_pay", () => {
     setConfig();
     MockVM.commitTransaction();
     for (let i = 1; i <= 3; i++) { userStake(i, 10 * MANA); expect(pays()).toBe(true); MockVM.commitTransaction(); }
-    const r = new Sponsor().would_pay(new sponsor.would_pay_arguments(OTHER, MANA));
+    const r = wouldPay(OTHER, MANA);
     expect(r.reason).toBe("today's sponsored mana is used up");
     expect(r.left_today).toBe(0);
+  });
+});
+
+describe("only real Knode players are sponsored (audit M-1)", () => {
+  beforeEach(() => { start(); configure(); });
+
+  it("pays for a player who holds enough VHP (one read)", () => {
+    READS = [vhpBalance(MANA)];
+    userStake(1, MANA);
+    expect(pays()).toBe(true);
+  });
+
+  it("pays for a staked player with no VHP in the wallet (withdrawing everything)", () => {
+    READS = [vhpBalance(0), gamePlayer(25 * MANA, 0)];
+    userCall(1, MANA, GAME, GAME_WITHDRAW);
+    expect(pays()).toBe(true);
+  });
+
+  it("pays for a player whose stake is still pending (deposited this week)", () => {
+    READS = [vhpBalance(0), gamePlayer(0, 5 * MANA)];
+    userCall(1, MANA, GAME, GAME_ANSWER);
+    expect(pays()).toBe(true);
+  });
+
+  it("refuses an empty wallet with no stake, and counts nothing", () => {
+    READS = [vhpBalance(0), gamePlayer(0, 0)];
+    userCall(1, MANA, GAME, GAME_ANSWER);
+    expect(() => { pays(); }).toThrow();
+    errorIs(NOT_A_PLAYER);
+    expect(new Sponsor().get_total_usage(new sponsor.get_total_usage_arguments()).used_day).toBe(0);
+  });
+
+  it("refuses a wallet holding less than the minimum", () => {
+    READS = [vhpBalance(MANA - 1), gamePlayer(0, 0)];
+    userCall(1, MANA, GAME, GAME_ANSWER);
+    expect(() => { pays(); }).toThrow();
+    errorIs(NOT_A_PLAYER);
+  });
+
+  it("follows the minimum set in the config", () => {
+    CFG = goodConfig();
+    CFG.min_vhp = 50 * MANA;
+    setConfig();
+    MockVM.commitTransaction();
+    READS = [vhpBalance(10 * MANA), gamePlayer(0, 0)];
+    userCall(1, MANA, GAME, GAME_ANSWER);
+    expect(() => { pays(); }).toThrow();
+    errorIs(NOT_A_PLAYER);
+    READS = [vhpBalance(50 * MANA)];
+    userCall(2, MANA, GAME, GAME_ANSWER);
+    expect(pays()).toBe(true);
+  });
+
+  it("fails closed when the token and the game can't be read", () => {
+    READS = [failedRead(), failedRead()];
+    userCall(1, MANA, GAME, GAME_ANSWER);
+    expect(() => { pays(); }).toThrow();
+    errorIs(NOT_A_PLAYER);
+  });
+
+  it("fails closed when the game answers nothing", () => {
+    READS = [vhpBalance(0), new system_calls.exit_arguments(0, new chain.result())];
+    userCall(1, MANA, GAME, GAME_ANSWER);
+    expect(() => { pays(); }).toThrow();
+    errorIs(NOT_A_PLAYER);
+  });
+
+  it("would_pay applies the same rule", () => {
+    READS = [vhpBalance(0), gamePlayer(0, 0)];
+    const no = wouldPay(USER, MANA);
+    expect(no.ok).toBe(false);
+    expect(no.reason).toBe("only players who hold VHP or have a Knode stake are sponsored");
+    READS = [vhpBalance(0), gamePlayer(3 * MANA, 0)];
+    expect(wouldPay(USER, MANA).ok).toBe(true);
+  });
+
+  it("can't be switched on without the VHP token or with a zero minimum", () => {
+    CFG = goodConfig();
+    CFG.min_vhp = 0;
+    expect(() => { setConfig(); }).toThrow();
+    errorIs("SPONSOR: switched on without the VHP token (one of the tokens) and a minimum above 0");
+    CFG = goodConfig();
+    CFG.vhp = STRANGER_CONTRACT;
+    expect(() => { setConfig(); }).toThrow();
+    errorIs("SPONSOR: switched on without the VHP token (one of the tokens) and a minimum above 0");
+  });
+
+  it("owner transactions need no player check", () => {
+    READS = [];
+    TX = 1; RC = MANA; PAYEE = SELF; SIGNERS = ["SELF"]; RAW_SIGS = [];
+    OPS = [call(KOIN, TRANSFER_ENTRY, new Uint8Array(0))];
+    MockVM.setCallContractResults([]);
+    apply();
+    expect(new Sponsor().authorize(new authority.authorize_arguments(authority.authorization_type.transaction_application)).value).toBe(true);
   });
 });
