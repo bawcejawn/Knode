@@ -182,6 +182,30 @@
   window.addEventListener("hashchange", route);
 
   // ═══════════════ reading the game ═══════════════
+  /** The public node refuses bursts (a refused request comes back without CORS headers, so the browser reports a
+   *  CORS error). Every chain read goes through one small queue: at most 4 at a time, and a refused one is retried a
+   *  few times with a growing pause. */
+  function gentle(provider) {
+    const call = provider.call.bind(provider);
+    let running = 0; const waiting = [];
+    const next = () => { if (running < 4 && waiting.length) { running++; waiting.shift()(); } };
+    provider.call = async (method, params) => {
+      await new Promise((go) => { waiting.push(go); next(); });
+      try {
+        for (let attempt = 0; ; attempt++) {
+          try { return await call(method, params); }
+          catch (e) {
+            const netFail = e instanceof TypeError || /fetch|network|load failed/i.test(String(e?.message ?? e));
+            // never resend a transaction (a lost reply may hide one that went through)
+            if (!netFail || attempt >= 4 || /submit|send/i.test(String(method))) throw e;
+            await new Promise((r) => setTimeout(r, 700 * (attempt + 1) + Math.random() * 300));
+          }
+        }
+      } finally { running--; next(); }
+    };
+    return provider;
+  }
+
   async function read(method, args = {}) {
     const { result } = await S.game.functions[method](args);
     return result || {};
@@ -194,6 +218,7 @@
     const files = await Promise.all(days.slice(-21).map((f) => fetchJson(DATA + f).then((d) => ({ f, d })).catch(() => null)));
     S.files = files.filter(Boolean);
     await checkFiles(S.files);
+    numberQuestions(S.files);
     S.questions = S.files.flatMap(({ f, d }) => (d.questions || []).filter((q) => q.chainId !== undefined).map((q) => ({ ...q, chainId: Number(q.chainId), file: f })));
   }
 
@@ -679,8 +704,28 @@
   }
   const wordingHashed = (q) => wordingHashedRule(q) || legacyLabelsOk(q);
 
-  /** On-chain question ids start at 0. The card shows that id plus one. Submits still send q.chainId. */
-  const displayQuestionNumber = (q) => Number(q.chainId) + 1;
+  /** Questions are numbered within their week: Q1 is the week's first question (lowest on-chain id), up to Q30.
+   *  Submits still send q.chainId; the raw on-chain id is only shown in "How it was decided". */
+  const QNO = new Map();
+  function numberQuestions(files) {
+    const byWeek = new Map();
+    for (const { d } of files) for (const q of d.questions || []) {
+      if (q.chainId === undefined) continue;
+      const w = num(q.week ?? d.week);
+      if (!byWeek.has(w)) byWeek.set(w, new Set());
+      byWeek.get(w).add(Number(q.chainId));
+    }
+    QNO.clear();
+    for (const [w, ids] of byWeek) [...ids].sort((a, b) => a - b).forEach((id, i) => QNO.set(id, { week: w, n: i + 1 }));
+  }
+  const displayQuestionNumber = (q) => QNO.get(Number(q.chainId))?.n ?? Number(q.chainId) + 1;
+  const qTag = (q) => `Q${displayQuestionNumber(q)}`;
+  /** "Week 2 · Monday · Q1" */
+  const qWhere = (q) => {
+    const w = QNO.get(Number(q.chainId))?.week ?? num(q.week);
+    const d = num(q.day);
+    return `Week ${w + 1}${d >= 1 && d <= 6 ? ` · ${DAY_NAMES[d]}` : ""} · ${qTag(q)}`;
+  };
 
   // ═══════════════ live race: count blocks for questions whose answers are closed ═══════════════
   // The page reads the window's blocks itself (who signed each, its time and transaction count), keeps them in this
@@ -872,10 +917,10 @@
     }));
     const act = oc && oc !== 1000 && (S.demo || q.result?.option + 1 === oc) ? actualText(q) : null;   // only once decided on chain
     const foot = el("div", { class: "q-foot" },
-      el("span", {}, `Question #${displayQuestionNumber(q)}`),
-      mine !== null ? el("span", {}, `Your answer: ${String.fromCharCode(65 + mine)}`) : mode === "open" ? el("span", { class: "q-cta" }, S.account ? "Pick an answer" : "Connect a wallet to answer") : null);
-    return el("article", { class: `q q-${(q.tier || "Medium")}` }, top,
-      el("h3", { title: q.text }, ...headline(q)), groupView(q),
+      el("span", { class: "q-where" }, qWhere(q)),
+      mine !== null ? el("span", { class: "q-done" }, `✓ Answered: ${String.fromCharCode(65 + mine)}`) : mode === "open" ? el("span", { class: "q-cta" }, S.account ? "Tap an answer" : "Connect a wallet to answer") : null);
+    return el("article", { class: `q q-${(q.tier || "Medium")}${mine !== null ? " q-answered" : ""}` }, top,
+      el("h3", { title: q.text }, el("span", { class: "qno" }, qTag(q)), " ", ...headline(q)), groupView(q),
       el("div", { class: "q-facts" }, ...windowFacts(q), mode === "open" ? el("span", { class: "fact" }, "Counting starts when answers close") : null),
       mode === "locked" && !oc ? raceView(q) : null,
       opts, act ? el("p", { class: "q-actual" }, ...act) : null, hashNote(q), foot);
@@ -957,13 +1002,21 @@
     $("#stat-players").textContent = S.boardWeek === S.week && S.board[S.week] ? String(S.board[S.week].scored.length) : "…";
     renderBand(now);
 
-    const open = S.questions.filter((q) => now < q.lockTime).sort((a, b) => a.lockTime - b.lockTime);
-    const locked = S.questions.filter((q) => now >= q.lockTime && !outcomeOf(q)).sort((a, b) => a.windowEnd - b.windowEnd);
+    const thisWeek = (q) => (QNO.get(q.chainId)?.week ?? num(q.week)) === S.week;
+    const open = S.questions.filter((q) => now < q.lockTime).sort((a, b) => a.chainId - b.chainId);
+    const locked = S.questions.filter((q) => thisWeek(q) && now >= q.lockTime && !outcomeOf(q)).sort((a, b) => a.chainId - b.chainId);
     const oq = $("#open-questions");
     oq.replaceChildren(...(open.length ? open.map((q) => questionCard(q, "open")) : [el("div", { class: "empty" }, `No open questions right now. New questions arrive Monday to Saturday at ${localHour(12)} your time.`)]));
+    const answeredToday = open.filter((q) => myAnswer(q) !== null).length;
+    const tn = $("#today-note");
+    if (tn) tn.textContent = !open.length ? "" : S.account ? `${answeredToday} of ${open.length} answered${open.length && open[0] ? ` · answers close in ${duration(open[0].lockTime - now)}` : ""}` : `${open.length} to answer · answers close in ${duration(open[0].lockTime - now)}`;
+    const wc = $("#waiting-count");
+    if (wc) wc.textContent = `(${locked.length})`;
+    const wt = $("#waiting");
+    if (wt) wt.hidden = !locked.length;
     // (In-page ad slots are switched off for now. To bring one back, add an element with data-ad-slot="…" to the page;
     // loadAds() fills it from site/ads.json. A network (iframe) ad also needs its origin in index.html's CSP frame-src.)
-    $("#locked-questions").replaceChildren(...(locked.length ? locked.map((q) => questionCard(q, "locked")) : [el("div", { class: "empty" }, "Nothing waiting. Answered questions show up here until their result is in.")]));
+    $("#locked-questions").replaceChildren(...locked.map((q) => questionCard(q, "locked")));
 
     // you
     const you = $("#you-body");
@@ -1057,7 +1110,7 @@
     const a = me && (me.answers || []).find((x) => num(x.question_id) === Number(q.chainId));
     return a ? num(a.option) : null;
   }
-  const searchText = (q) => [q.text, ...(q.subjects || []), ...(q.group || []), ...(q.options || []).map((o) => o.label), `#${displayQuestionNumber(q)}`].join(" ").toLowerCase();
+  const searchText = (q) => [q.text, ...(q.subjects || []), ...(q.group || []), ...(q.options || []).map((o) => o.label), qTag(q), `#${q.chainId}`].join(" ").toLowerCase();
   function renderResults() {
     const files = S.files.filter(({ d }) => (d.questions || []).some((q) => q.chainId !== undefined));
     const list = $("#results-list");
@@ -1073,9 +1126,9 @@
     }
     // week and day pickers
     const wk = $("#res-weeks");
-    if (wk) wk.replaceChildren(...(weeks.length > 1 ? weeks.map((w) => el("button", { type: "button", "aria-pressed": String(w === RV.week), onclick: () => { RV.week = w; RV.day = null; renderResults(); } }, w === S.week ? `This week (${w + 1})` : `Week ${w + 1}`)) : []));
+    if (wk) wk.replaceChildren(...(weeks.length >= 1 ? weeks.map((w) => el("button", { type: "button", "aria-pressed": String(w === RV.week), onclick: () => { RV.week = w; RV.day = null; renderResults(); } }, w === S.week ? `This week (Week ${w + 1})` : w === S.week - 1 ? `Last week (Week ${w + 1})` : `Week ${w + 1}`)) : []));
     const dk = $("#res-days");
-    if (dk) dk.replaceChildren(...[1, 2, 3, 4, 5, 6].map((dd) => el("button", { type: "button", disabled: !days.includes(dd), "aria-pressed": String(!RV.q && dd === RV.day), onclick: () => { RV.day = dd; RV.q = ""; const i = $("#res-search"); if (i) i.value = ""; renderResults(); } }, SHORT_DAYS[dd - 1])));
+    if (dk) dk.replaceChildren(...days.filter((dd) => dd >= 1 && dd <= 6).map((dd) => el("button", { type: "button", "aria-pressed": String(!RV.q && dd === RV.day), onclick: () => { RV.day = dd; RV.q = ""; const i = $("#res-search"); if (i) i.value = ""; renderResults(); } }, SHORT_DAYS[dd - 1])));
     const mineBtn = $("#res-mine");
     if (mineBtn) { mineBtn.hidden = !S.account; mineBtn.setAttribute("aria-pressed", String(!!(S.account && RV.mine))); }
     if (S.account && !S.demo && RV.week !== S.week && !S.board[RV.week]) loadBoard(RV.week).then((b) => { S.board[RV.week] = b; renderResults(); }).catch(() => {});
@@ -1127,7 +1180,7 @@
       // (not the letter, which comes from the chain) cannot be confirmed.
       const how = done ? el("details", { class: "res-how" }, el("summary", {}, "How it was decided"),
         agrees && actualText(q) ? el("p", { class: "q-actual" }, ...actualText(q)) : null,
-        el("p", { class: "meta" }, `Counted blocks ${fmtN(q.windowStart)} to ${fmtN(q.windowEnd)}${r && r.dataHash ? ` · fingerprint of those blocks ${String(r.dataHash).slice(0, 12)}…` : ""}. `,
+        el("p", { class: "meta" }, `${qWhere(q)} · on-chain #${q.chainId}. Counted blocks ${fmtN(q.windowStart)} to ${fmtN(q.windowEnd)}${r && r.dataHash ? ` · fingerprint of those blocks ${String(r.dataHash).slice(0, 12)}…` : ""}. `,
           S.demo ? null : el("a", { href: DATA + f }, "See the data")),
         el("p", { class: "meta" }, "All answers: ", (q.options || []).map((o) => `${String.fromCharCode(65 + o.index)} ${o.label}`).join(" · ")),
         agrees && r.vhpCheck?.skipped ? el("p", { class: "meta" }, `The VHP-swing rule was not applied: ${r.vhpCheck.skipped}.`) : null,
@@ -1136,7 +1189,7 @@
       return el("article", { class: `res res-st-${status}` },
         icon,
         el("div", { class: "res-body" },
-          el("h3", { title: q.text }, el("span", { class: "qno" }, `#${displayQuestionNumber(q)}`), " ", ...headline(q)),
+          el("h3", { title: q.text }, el("span", { class: "qno" }, qTag(q)), " ", ...headline(q)),
           answerLine, ...warns, how));
     };
     list.replaceChildren(...(qs.length ? qs.map(row) : [el("div", { class: "empty" }, needle ? "Nothing matches that this week." : RV.mine ? "You didn't answer any questions that day." : "No questions that day.")]));
@@ -1215,6 +1268,7 @@
     S.dep = { contract: DEMO_PRODUCERS[4] };
     S.questions = qs.map((q) => ({ ...q, lockTime: lockOf(q), chainOutcome: q.result && q.windowEnd + 60 < S.height ? (q.result.void ? 1000 : q.result.option + 1) : undefined, result: q.windowEnd + 60 < S.height ? q.result : null }));
     S.files = [...new Set(qs.map((q) => q.day))].map((d) => ({ f: `W002-D${d}.json`, d: { week: 2, day: d, questions: S.questions.filter((q) => q.day === d) } }));
+    numberQuestions(S.files);
     S.st = { totals: { total_stake: String(48250n * UNIT), seed_vhp: String(170000n * UNIT), seed_koin: String(20000n * UNIT), pots_outstanding: String(1203n * UNIT), owner_share: "0", creator_fee: "0" },
       vhp_balance: String(218250n * UNIT + 1203n * UNIT), koin_balance: String(20000n * UNIT + 412n * UNIT) };
     S.claims = [];
@@ -1297,7 +1351,7 @@
     } else {
       S.dep = dep;
       S.abi = await fetchJson(ABI_URL);
-      S.provider = new lib.Provider([dep.rpc || RPC]);
+      S.provider = gentle(new lib.Provider([dep.rpc || RPC]));
       initWallet();
       S.game = new lib.Contract({ id: dep.contract, abi: S.abi, provider: S.provider });
       try { await loadLive(); } catch (e) { toast(`Couldn't reach the Koinos network: ${e.message}`, 8000); }
