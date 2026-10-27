@@ -36,6 +36,7 @@
       "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq",
       "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK"
     ],
-    "rcLimit": "100000000"
+    "rcLimit": "100000000",
+    "rcLimitOther": "300000000"
   }
 }

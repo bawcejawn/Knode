@@ -219,6 +219,8 @@ export function setPayer(choice: "sponsor" | "self", rcLimitMana = "1", files = 
     covers: [game.contract, desk.contract, game.vhp ?? PINNED_MAINNET.vhp, game.koin ?? PINNED_MAINNET.koin],
     tokens: [game.vhp ?? PINNED_MAINNET.vhp, game.koin ?? PINNED_MAINNET.koin],
     rcLimit: units(rcLimitMana),
+    // Staking, withdrawing, swapping and claiming do far more than an answer (approve, transfer, Proof-of-Burn, stake).
+    rcLimitOther: units("3"),
   } : undefined;
   for (const [f, d] of [[files.game, game], [files.desk, desk]] as const) {
     d.payer = choice;
@@ -247,7 +249,7 @@ async function main() {
       }
       const b = setPayer(choice, flag(a, "--rc-limit", "1"));
       log(choice === "sponsor"
-        ? `The website will ask the sponsor ${b!.address} to pay players' Mana (up to ${Number(b!.rcLimit) / 1e8} Mana per transaction; staked players' answers stay with the game).`
+        ? `The website will ask the sponsor ${b!.address} to pay players' Mana (up to ${Number(b!.rcLimit) / 1e8} Mana per answer and ${Number(b!.rcLimitOther) / 1e8} for other actions; staked players' answers stay with the game).`
         : "The website will let players pay their own Mana (the sponsor is not asked).");
       log(`Edited ${GAME_DEP} and ${DESK_DEP}. Commit and push them (git add game-data/deployment.json desk-data/deployment.json, git commit, git push): the site follows within a few minutes.`);
       return;

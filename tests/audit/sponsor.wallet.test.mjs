@@ -52,7 +52,7 @@ test("the sponsor pays a game action when it is on and would_pay says yes", asyn
   assert.equal(w.log.asked.length, 1);
   assert.equal(w.log.asked[0].contract_id, SPONSOR);
   assert.equal(w.log.asked[0].entry_point, 0xda1fd8f5);
-  assert.deepEqual(w.log.built[0], { payer: SPONSOR, payee: PLAYER, rcLimit: "100000000" });
+  assert.deepEqual(w.log.built[0], { payer: SPONSOR, payee: PLAYER, rcLimit: "300000000" });
   assert.deepEqual(w.log.sent, [SPONSOR]);
 });
 
