@@ -21,6 +21,8 @@ export const PAGES = [
     desc: "From dollars in the bank to playing Knode: get a wallet, get KOIN, cross the Vortex bridge, and explore apps built on Koinos.", image: "og-knode.png", priority: "0.7" },
   { file: "node.html", path: "node.html", title: "Koinos producer lookup · Knode", short: "Koinos producer lookup",
     desc: "Look up any Koinos block producer: blocks signed over the last two days, share of the network, and recent activity.", image: "og-knode.png", priority: "0.6" },
+  { file: "mana.html", path: "mana.html", title: "Mana levels · Check any Koinos wallet's Mana", short: "Koinos Mana levels",
+    desc: "Enter any Koinos wallet address to see its Mana tank: how much is left, when it's full again, and how much comes back every hour and day.", image: "og-knode.png", priority: "0.6" },
   { file: "burn.html", path: "burn.html", title: "Burn KOIN into VHP · Knode", short: "Burn KOIN into VHP",
     desc: "Turn KOIN into VHP, 1 for 1, with your own wallet, so you can stake it in Knode or produce blocks.", image: "og-knode.png", priority: "0.5" },
   { file: "trust.html", path: "trust.html", title: "Trust and safety · Knode", short: "Trust and safety",
