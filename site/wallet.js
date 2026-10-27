@@ -1,5 +1,7 @@
 /* Knode wallet layer: one way to connect and sign, two wallets.
  *   - Kondor: the browser extension (desktop).
+ *   - Guest: a play-only key kept in this browser (site/guest.js). It signs only game answers, paid by the Knode Mana
+ *     sponsor, so anyone can play the daily questions for free with no extension, app or KOIN.
  *   - KOIN Vault: passkey smart accounts on the phone (https://koinvault.app), via its website connection API
  *     (docs/website-integration.md in therexdev/koin-vault). The user approves every transaction in KOIN Vault;
  *     this page never sees a key or a passkey. The session secret lives only in page memory (never in storage); it goes
@@ -41,7 +43,14 @@
   .kw-qr{display:flex;justify-content:center;margin:14px 0 4px}.kw-qr svg,.kw-qr img{width:200px;height:200px;background:#fff;padding:8px;border-radius:12px}
   .kw-status{margin-top:12px;font-size:14px;color:var(--ink,#181b34);min-height:1.3em}
   .kw-x{float:right;font:inherit;font-size:22px;line-height:1;border:0;background:none;color:var(--muted,#5d6283);cursor:pointer;padding:0 0 0 10px}
-  .kw-link{font:inherit;background:none;border:0;color:var(--violet,#5a43e6);text-decoration:underline;cursor:pointer;padding:0;font-size:14px}`;
+  .kw-link{font:inherit;background:none;border:0;color:var(--violet,#5a43e6);text-decoration:underline;cursor:pointer;padding:0;font-size:14px}
+  .kw-opt[disabled]{opacity:.55;cursor:not-allowed}
+  .kw-warn{background:var(--sun-soft,#fff4dc);color:var(--ink,#181b34)!important;border-radius:10px;padding:10px 12px}
+  .kw-key{font-family:ui-monospace,Consolas,monospace;font-size:13px;word-break:break-all;background:var(--paper,#f4f5fb);border:1px solid var(--line,#e2e4ef);border-radius:10px;padding:10px;margin:8px 0}
+  .kw-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .kw-btn{font:inherit;font-weight:700;font-size:14px;padding:10px 14px;min-height:44px;border-radius:99px;border:1px solid var(--line,#e2e4ef);background:var(--surface,#fff);color:var(--ink,#181b34);cursor:pointer}
+  .kw-btn.kw-danger{color:var(--rose,#d93f4c)}
+  .kw-in{width:100%;box-sizing:border-box;font:inherit;font-size:14px;padding:10px;border-radius:10px;border:1px solid var(--line,#e2e4ef);margin-top:8px}`;
   function ensureCss() { if (!document.getElementById("kw-css")) { const s = document.createElement("style"); s.id = "kw-css"; s.textContent = css; document.head.append(s); } }
   function h(tag, attrs = {}, ...kids) {
     const e = document.createElement(tag);
@@ -181,9 +190,140 @@
         h("div", {}, h("b", {}, "Kondor", !phone && window.kondor ? h("span", { class: "kw-tag" }, "found") : null), h("span", {}, "Browser extension, on a computer")));
       const vault = h("button", { class: "kw-opt", type: "button", onclick: pick(connectVault) }, h("span", { class: "kw-ic", "aria-hidden": "true" }, "📱"),
         h("div", {}, h("b", {}, "KOIN Vault", phone ? h("span", { class: "kw-tag" }, "for phones") : null), h("span", {}, "Fingerprint or face, no extension. Works on any phone")));
-      open(h("h3", {}, "Connect a wallet"), h("p", {}, "Your wallet signs everything. Knode never sees a key."), ...(phone ? [vault, kondor] : [kondor, vault]));
+      const guest = guestOption(pick);
+      open(h("h3", {}, "Connect a wallet"), h("p", {}, "Your wallet signs everything. Knode never sees a key."), ...(phone ? [vault, kondor] : [kondor, vault]), guest);
       onClose = () => resolve(null);
     });
+  }
+
+  // ── Guest (site/guest.js) ──
+  const GUEST_WARN = "Play-only wallet stored in this browser. Never send KOIN or VHP to it.";
+  const guestReady = () => !!(window.KGuest && W.payer === "sponsor" && W.sponsor && W.sponsor.address);
+  function guestOption(pick) {
+    if (!window.KGuest) return null;   // pages without guest play (swap, burn): no option
+    const ready = guestReady();
+    const btn = h("button", { class: "kw-opt", type: "button", ...(ready ? {} : { disabled: "", "aria-disabled": "true" }), onclick: ready ? pick(connectGuest) : () => {} },
+      h("span", { class: "kw-ic", "aria-hidden": "true" }, "🎟️"),
+      h("div", {}, h("b", {}, "Play as a guest", h("span", { class: "kw-tag" }, "free")),
+        h("span", {}, ready ? "No wallet, no KOIN. Answer the daily questions for free on this device." : "Guest play turns on when the Mana sponsor is live.")));
+    if (!ready) return btn;
+    return h("div", {}, btn, h("p", {}, "Moving from another phone? ", h("button", { class: "kw-link", type: "button", onclick: pick(restoreGuest) }, "Restore a guest key")));
+  }
+  async function connectGuest() {
+    close();
+    let g = await window.KGuest.load();
+    const isNew = !g;
+    if (!g) g = await window.KGuest.create();
+    setAddress("guest", g.address);
+    if (isNew) guestWelcome(g.address);
+    return g.address;
+  }
+  function guestWelcome(address) {
+    open(h("h3", {}, "You're playing as a guest"),
+      h("p", {}, "Your guest wallet is ", h("b", {}, address.slice(0, 6) + "…" + address.slice(-4)), ". Answering is free: the Knode Mana sponsor pays."),
+      h("p", { class: "kw-warn" }, GUEST_WARN),
+      h("p", {}, "It lives only in this browser. Back it up if you want to keep your points when you change phone or clear your browser."),
+      h("div", { class: "kw-row" }, h("button", { class: "kw-btn", type: "button", onclick: () => backupGuest() }, "Back up guest key"), h("button", { class: "kw-btn", type: "button", onclick: () => close() }, "Start playing")));
+  }
+  async function backupGuest() {
+    const wif = await window.KGuest.backupWif();
+    if (!wif) { close(); W.toast && W.toast("No guest key on this device.", 6000); return; }
+    const key = h("div", { class: "kw-key", hidden: "" }, wif);
+    const reveal = h("button", { class: "kw-btn", type: "button", onclick: () => { key.hidden = false; reveal.hidden = true; copy.hidden = false; } }, "Tap to reveal");
+    const copy = h("button", { class: "kw-btn", type: "button", hidden: "", onclick: async () => { try { await navigator.clipboard.writeText(wif); copy.textContent = "Copied"; } catch { copy.textContent = "Select and copy it"; } } }, "Copy");
+    open(h("h3", {}, "Back up your guest key"),
+      h("p", { class: "kw-warn" }, "Anyone with this key controls this guest wallet. Keep it private: never paste it into a website or message."),
+      h("p", {}, GUEST_WARN),
+      reveal, key, h("div", { class: "kw-row" }, copy),
+      h("p", {}, "To restore it on another phone: Connect wallet → Play as a guest → Restore a guest key. To collect a prize, import it into Kondor (Import account → private key)."));
+  }
+  async function restoreGuest() {
+    const input = h("input", { class: "kw-in", type: "password", autocomplete: "off", autocapitalize: "off", spellcheck: "false", placeholder: "Paste your guest key (starts with K or L)" });
+    const status = h("div", { class: "kw-status", role: "status" });
+    return new Promise((resolve) => {
+      const go = h("button", { class: "kw-btn", type: "button", onclick: async () => {
+        try {
+          if (await window.KGuest.load() && !window.confirm("This replaces the guest already on this device. Make sure it's backed up. Continue?")) return;
+          const g = await window.KGuest.restore(input.value);
+          input.value = "";
+          setAddress("guest", g.address); close(); resolve(g.address);
+        } catch (e) { status.textContent = String(e.message || e); }
+      } }, "Restore");
+      open(h("h3", {}, "Restore a guest key"), h("p", {}, "Paste the guest key you backed up. It stays in this browser."), input, h("div", { class: "kw-row" }, go), status, h("p", { class: "kw-warn" }, GUEST_WARN));
+      onClose = () => resolve(null);
+    });
+  }
+  /** The menu behind the wallet button for a guest: back up, restore, disconnect, forget. */
+  function manageGuest() {
+    open(h("h3", {}, "Guest wallet"),
+      h("p", {}, W.address ? W.address : ""),
+      h("p", { class: "kw-warn" }, GUEST_WARN),
+      h("div", { class: "kw-row" },
+        h("button", { class: "kw-btn", type: "button", onclick: () => backupGuest() }, "Back up guest key"),
+        h("button", { class: "kw-btn", type: "button", onclick: () => restoreGuest() }, "Restore a guest key"),
+        h("button", { class: "kw-btn", type: "button", onclick: () => { close(); setAddress(null, null); } }, "Disconnect"),
+        h("button", { class: "kw-btn kw-danger", type: "button", onclick: async () => {
+          if (!window.confirm("Forget this guest? Without a backup its points and any prize are gone for good.")) return;
+          await window.KGuest.forget(); close(); setAddress(null, null); W.toast && W.toast("Guest forgotten on this device.", 6000);
+        } }, "Forget this guest")),
+      h("p", {}, "Want to stake and share the weekly pool? ", h("a", { href: "get.html" }, "Get a wallet and VHP"), "."));
+  }
+  /** Explain why a guest can't do something, instead of failing silently. */
+  function guestCant(ops) {
+    const sp = W.sponsor || {};
+    const game = Array.isArray(sp.covers) ? sp.covers[0] : null;
+    const isClaim = ops.some((o) => o && o.call_contract && o.call_contract.contract_id === game && Number(o.call_contract.entry_point) === CLAIM);
+    if (isClaim) {
+      open(h("h3", {}, "Collect your prize"),
+        h("p", {}, "Congratulations! A guest wallet has no Mana of its own to collect with, so collect it from Kondor:"),
+        h("p", {}, "1. Back up this guest key. 2. In Kondor, choose Import account → private key and paste it. 3. Open Knode in that browser, connect Kondor and tap Collect."),
+        h("div", { class: "kw-row" }, h("button", { class: "kw-btn", type: "button", onclick: () => backupGuest() }, "Back up guest key")),
+        h("p", { class: "kw-warn" }, GUEST_WARN));
+      return new Error("A guest can't collect here: see the steps shown.");
+    }
+    open(h("h3", {}, "Connect KOIN Vault or Kondor to stake"),
+      h("p", {}, "A guest wallet is for answering the daily questions only. To stake, withdraw or swap, connect a real wallet that holds your VHP."),
+      h("div", { class: "kw-row" }, h("a", { class: "kw-btn", href: "get.html" }, "How to get a wallet and VHP")),
+      h("p", { class: "kw-warn" }, GUEST_WARN));
+    return new Error("Guests can only answer questions. Connect KOIN Vault or Kondor to stake.");
+  }
+  /** Sign a guest's answers with the local key, paid by the sponsor, after checking exactly what will be sent. */
+  async function sendGuest(label, ops) {
+    const sp = sponsorFor(ops);
+    const game = sp && Array.isArray(sp.covers) ? sp.covers[0] : null;
+    const answerOnly = !!game && ops.length > 0 && ops.every((o) => o && o.call_contract && o.call_contract.contract_id === game && Number(o.call_contract.entry_point) === ANSWER);
+    if (!answerOnly) throw guestCant(ops);
+    const rcLimit = String(sp.rcLimit || "100000000");
+    if (!(await sponsorSaysYes(sp, rcLimit, true))) throw new Error("Free answers are used up for today. Try again after 00:00 UTC, or connect a wallet.");
+    const signer = await window.KGuest.signer();
+    if (signer.getAddress() !== W.address) throw new Error("The guest key on this device changed. Reconnect as a guest.");
+    signer.provider = W.provider;
+    const tx = new lib.Transaction({ signer, provider: W.provider, options: { payer: sp.address, payee: W.address, rcLimit, chainId: W.chainId } });
+    for (const op of ops) await tx.pushOperation(op);
+    const prepared = await tx.prepare({ payer: sp.address, payee: W.address, rcLimit, chainId: W.chainId });
+    checkGuestTx(prepared, { sponsor: sp.address, payee: W.address, chainId: W.chainId, game, rcLimit });
+    W.status && W.status(`Sending “${label}” (free: the Mana sponsor pays)…`);
+    tx.transaction = await tx.sign();
+    checkGuestTx(tx.transaction, { sponsor: sp.address, payee: W.address, chainId: W.chainId, game, rcLimit });
+    const receipt = await tx.send();
+    if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "the contract refused it"));
+    const id = tx.transaction && tx.transaction.id;
+    W.status && W.status("Sent. Waiting for the next block…");
+    if (id) { try { await W.provider.wait(id, "byBlock", 90000); return id; } catch { return null; } }
+    return null;
+  }
+  /** Throws unless the transaction is exactly: the sponsor pays, this guest is the payee, Koinos mainnet (or the pinned
+   *  chain), within the asked Mana limit, and every operation is a game answer. */
+  function checkGuestTx(tx, want) {
+    const hd = tx && tx.header;
+    if (!hd) throw new Error("Couldn't build the transaction. Nothing was sent.");
+    if (hd.payer !== want.sponsor) throw new Error("The transaction doesn't name the Mana sponsor as payer. Nothing was sent.");
+    if (hd.payee !== want.payee) throw new Error("The transaction doesn't name this guest as payee. Nothing was sent.");
+    if (want.chainId && hd.chain_id !== want.chainId) throw new Error("The transaction is for another chain. Nothing was sent.");
+    if (BigInt(hd.rc_limit || 0) > BigInt(want.rcLimit)) throw new Error("The transaction asks for more Mana than expected. Nothing was sent.");
+    const ops = tx.operations || [];
+    if (!ops.length || !ops.every((o) => o.call_contract && o.call_contract.contract_id === want.game && Number(o.call_contract.entry_point) === ANSWER))
+      throw new Error("A guest signs only game answers. Nothing was sent.");
   }
 
   function disconnect() {
@@ -203,6 +343,7 @@
       const id = await W.provider.getChainId().catch(() => null);
       if (id !== W.chainId) throw new Error("The network node reports a different chain than Knode runs on. Nothing was signed.");
     }
+    if (W.kind === "guest") return sendGuest(label, ops, opts);
     return W.kind === "vault" ? sendVault(label, ops, opts) : sendKondor(label, ops, opts);
   }
 
@@ -268,7 +409,7 @@
   // "sponsor": { address, covers: [game, desk, vhp, koin], rcLimit (answers), rcLimitOther (everything else) }. The sponsor contract decides on chain; the page
   // only picks it when every operation is one it pays for and its caps (would_pay) say yes, else the player's own Mana.
   // Answers are sponsored for any wallet (free play); everything else only for wallets with VHP or a stake.
-  const APPROVE = 0x74e21680, WOULD_PAY = 0xda1fd8f5, ANSWER = 0x0db52f40;
+  const APPROVE = 0x74e21680, WOULD_PAY = 0xda1fd8f5, ANSWER = 0x0db52f40, CLAIM = 0xdd1b3c31;
   /** The sponsor this transaction could use, or null. */
   function sponsorFor(ops) {
     const sp = W.sponsor;
@@ -341,11 +482,15 @@
     // An earlier version of this page kept the KOIN Vault session in sessionStorage. Delete any such entry and never
     // use it: another page of this origin could have written it, and the user has not chosen it on this page.
     store.set(sessionStorage, "kw-vault", null);
+    // A guest chosen on this device comes back by itself (its key never left the browser).
+    if (store.get(localStorage, "kw-kind") === "guest" && guestReady()) {
+      window.KGuest.load().then((g) => { if (g && !W.address) setAddress("guest", g.address); }).catch(() => {});
+    }
   }
 
   window.KWallet = {
-    init, connect, disconnect, send, isPhone,
+    init, connect, disconnect, send, isPhone, manageGuest, guestInfo: () => { guestCant([]); },
     get address() { return W.address; }, get kind() { return W.kind; },
-    label: () => (W.kind === "vault" ? "KOIN Vault" : W.kind === "kondor" ? "Kondor" : "your wallet"),
+    label: () => (W.kind === "vault" ? "KOIN Vault" : W.kind === "kondor" ? "Kondor" : W.kind === "guest" ? "your guest wallet" : "your wallet"),
   };
 })();
