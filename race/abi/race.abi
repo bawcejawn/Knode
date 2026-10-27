@@ -1,0 +1,47 @@
+{
+    "methods": {
+        "pick": {
+            "argument": "race.pick_arguments",
+            "return": "race.empty_object",
+            "description": "Pick a horse for a race (or change your pick). Needs the player's signature. Refused once the race has started, for races more than 24 hours ahead, and after today's picks are used up.",
+            "entry-point": "0x8ce33c6c",
+            "read-only": false
+        },
+        "get_pick": {
+            "argument": "race.get_pick_arguments",
+            "return": "race.get_pick_result",
+            "description": "One wallet's pick for one race (empty if none).",
+            "entry-point": "0xf360e6e3",
+            "read-only": true
+        },
+        "list_picks": {
+            "argument": "race.list_picks_arguments",
+            "return": "race.list_picks_result",
+            "description": "Every pick for a race, in address order, up to limit (at most 100) at a time. Pass the last address you got as start_after for the next page.",
+            "entry-point": "0x7e3e9f30",
+            "read-only": true
+        },
+        "get_usage": {
+            "argument": "race.get_usage_arguments",
+            "return": "race.get_usage_result",
+            "description": "Picks a wallet has made today (UTC) and the daily limit.",
+            "entry-point": "0x49afbb7a",
+            "read-only": true
+        },
+        "get_config": {
+            "argument": "race.get_config_arguments",
+            "return": "race.config",
+            "description": "The settings.",
+            "entry-point": "0xbc4fcdd4",
+            "read-only": true
+        },
+        "set_config": {
+            "argument": "race.set_config_arguments",
+            "return": "race.empty_object",
+            "description": "Change the settings. Needs the owner's key (the first time: this contract's own key).",
+            "entry-point": "0x4ba58c89",
+            "read-only": false
+        }
+    },
+    "types": "CvEJChlhc3NlbWJseS9wcm90by9yYWNlLnByb3RvEgRyYWNlGhRrb2lub3Mvb3B0aW9ucy5wcm90byJpCgZjb25maWcSGgoFb3duZXIYASABKAxCBIC1GAZSBW93bmVyEhgKB2VuYWJsZWQYAiABKAhSB2VuYWJsZWQSKQoRbWF4X3BpY2tzX3Blcl9kYXkYAyABKA1SDm1heFBpY2tzUGVyRGF5IlcKC3BpY2tfb2JqZWN0EhoKBWhvcnNlGAEgASgMQgSAtRgGUgVob3JzZRISCgJhdBgCIAEoBEICMAFSAmF0EhgKB2NoYW5nZXMYAyABKA1SB2NoYW5nZXMiNwoJZGF5X2NvdW50EhQKA2RheRgBIAEoBEICMAFSA2RheRIUCgVjb3VudBgCIAEoDVIFY291bnQiDgoMZW1wdHlfb2JqZWN0ImIKDnBpY2tfYXJndW1lbnRzEhwKBnBsYXllchgBIAEoDEIEgLUYBlIGcGxheWVyEhYKBHJhY2UYAiABKARCAjABUgRyYWNlEhoKBWhvcnNlGAMgASgMQgSAtRgGUgVob3JzZSKKAQoKcGlja19ldmVudBIcCgZwbGF5ZXIYASABKAxCBIC1GAZSBnBsYXllchIWCgRyYWNlGAIgASgEQgIwAVIEcmFjZRIaCgVob3JzZRgDIAEoDEIEgLUYBlIFaG9yc2USEgoCYXQYBCABKARCAjABUgJhdBIWCgZjaGFuZ2UYBSABKAhSBmNoYW5nZSJKChJnZXRfcGlja19hcmd1bWVudHMSHAoGcGxheWVyGAEgASgMQgSAtRgGUgZwbGF5ZXISFgoEcmFjZRgCIAEoBEICMAFSBHJhY2UiOAoPZ2V0X3BpY2tfcmVzdWx0EiUKBHBpY2sYASABKAsyES5yYWNlLnBpY2tfb2JqZWN0UgRwaWNrImsKFGxpc3RfcGlja3NfYXJndW1lbnRzEhYKBHJhY2UYASABKARCAjABUgRyYWNlEiUKC3N0YXJ0X2FmdGVyGAIgASgMQgSAtRgGUgpzdGFydEFmdGVyEhQKBWxpbWl0GAMgASgNUgVsaW1pdCJPCghwaWNrX3JvdxIcCgZwbGF5ZXIYASABKAxCBIC1GAZSBnBsYXllchIlCgRwaWNrGAIgASgLMhEucmFjZS5waWNrX29iamVjdFIEcGljayI3ChFsaXN0X3BpY2tzX3Jlc3VsdBIiCgRyb3dzGAEgAygLMg4ucmFjZS5waWNrX3Jvd1IEcm93cyIzChNnZXRfdXNhZ2VfYXJndW1lbnRzEhwKBnBsYXllchgBIAEoDEIEgLUYBlIGcGxheWVyInQKEGdldF91c2FnZV9yZXN1bHQSFAoDZGF5GAEgASgEQgIwAVIDZGF5Eh8KC3BpY2tzX3RvZGF5GAIgASgNUgpwaWNrc1RvZGF5EikKEW1heF9waWNrc19wZXJfZGF5GAMgASgNUg5tYXhQaWNrc1BlckRheSIWChRnZXRfY29uZmlnX2FyZ3VtZW50cyI8ChRzZXRfY29uZmlnX2FyZ3VtZW50cxIkCgZjb25maWcYASABKAsyDC5yYWNlLmNvbmZpZ1IGY29uZmlnIjQKDGNvbmZpZ19ldmVudBIkCgZjb25maWcYASABKAsyDC5yYWNlLmNvbmZpZ1IGY29uZmlnYgZwcm90bzM="
+}
