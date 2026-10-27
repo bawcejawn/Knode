@@ -5,6 +5,7 @@
       powershell -ExecutionPolicy Bypass -File node\install-heal.ps1
 
   What it runs: node bot\heal.mjs (see that file). Its log is node\heal.log.
+  It may run up to 2 hours: when a node's block store keeps crashing it repairs it from a healthy node (auto-repair).
   Check the task:    Get-ScheduledTask -TaskName "Knode self-heal" | Get-ScheduledTaskInfo
   Remove it again:   Unregister-ScheduledTask -TaskName "Knode self-heal" -Confirm:$false
 #>
@@ -20,8 +21,11 @@ $node = $nodeCmd.Source
 $arg = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "& ''{0}'' ''{1}''"' -f $node, $script
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg -WorkingDirectory $root
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 20) -RepetitionDuration (New-TimeSpan -Days 3650)
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 15) -MultipleInstances IgnoreNew
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 2) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName "Knode self-heal" -Action $action -Trigger $trigger -Settings $settings -Description "Every 20 minutes: restart any Koinos node that has frozen, and email through GitHub. See C:\kprediction\bot\heal.mjs" -Force | Out-Null
+
+# Tell bot\heal.mjs the task may run long enough for an automatic repair (it won't start one under the old 15 minutes).
+Set-Content -Path (Join-Path $root "node\heal-task.json") -Value '{ "version": 2, "limitMinutes": 120 }' -Encoding ascii
 
 Write-Host ""
 Write-Host "OK  'Knode self-heal' is set up: it runs every 20 minutes, starting in 1 minute." -ForegroundColor Green

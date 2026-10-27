@@ -18,6 +18,7 @@
     5. starts the source node again (always, even if something fails), then the repaired node
 
   It never touches block_producer (the node keys), p2p, config.yml or your .env files.
+  It asks nothing, so the self-heal (bot\heal.mjs) can run it unattended; it exits 0 when repaired, 1 when not.
 #>
 param(
   [Parameter(Mandatory = $true)][ValidateSet("game", "desk", "personal")][string]$Broken,
@@ -118,3 +119,6 @@ if ($copied) {
 } else {
   Write-Host "The repair did not finish (see above). Both nodes were started again with their old data. Tell Claude." -ForegroundColor Yellow
 }
+
+# Exit code for the self-heal (bot\heal.mjs runs this unattended): 0 = repaired, 1 = not repaired.
+if ($copied) { exit 0 } else { exit 1 }

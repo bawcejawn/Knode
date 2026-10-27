@@ -11,3 +11,7 @@ verify-results.log
 node/heal.log
 node/heal-state.json
 .claude/
+# self-heal on the owner's PC: task info, repair lock and repair logs
+node/heal-task.json
+node/repair.lock
+node/repair-*.log

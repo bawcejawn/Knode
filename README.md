@@ -206,6 +206,31 @@ npm run bot -- chain-check
 The upgrade runbook and the audit results: [`docs/UPGRADE-V5.md`](docs/UPGRADE-V5.md). The trust page on the site
 shows the same numbers live.
 
+## The nodes on the owner's PC: self-heal and auto-repair
+
+Three Koinos nodes run on the owner's PC in Docker: the **desk** node (`C:\kpred-desk-node`, Knode Swap), the
+**game** node (`C:\kpred-node`, the game pool) and the **personal** node (`C:\koinos-personal`). Every 20 minutes the
+Windows task "Knode self-heal" runs `node bot\heal.mjs` (log: `node\heal.log`), and emails through GitHub when it acts.
+
+- **Frozen node** (far behind and not moving): restarted (`docker compose down`, then `up -d`), at most 3 times in 6
+  hours, 50 minutes apart.
+- **Block store crash loop** (it starts 3+ times in 20 minutes; a restart doesn't cure it): the nodes help each other.
+  The broken node's block data is copied from a healthy one with `node\repair-node-data.ps1` (both pause about 5-20
+  minutes; the old data is kept as `...-broken-<date>` for 7 days, then deleted). Safety rules:
+  - the source is OK (at most 5 blocks behind) at this check and the one before, wasn't restarted in the last
+    50 minutes, and wasn't repaired or used as a source in the last 6 hours; order: desk, game, personal;
+  - one repair at a time (`node\repair.lock`, stale after 90 minutes); no check restarts the two nodes meanwhile;
+  - at most one automatic repair per node per 24 hours; then, or with no healthy source or too little free disk, it
+    only emails;
+  - an email before it starts and when it ends; the script's output is kept in `node\repair-<node>-<time>.log`.
+- **Turn auto-repair off**: add `HEAL_AUTO_REPAIR=off` to `C:\kprediction\.env` (it then only emails, as before).
+- **Set up / update the task** (needed once for auto-repair: the task may now run up to 2 hours):
+  `powershell -ExecutionPolicy Bypass -File node\install-heal.ps1`
+- **See what it would do**: `node bot\heal.mjs --dry-run`
+- **Repair by hand**, e.g. the game node from the desk node:
+  `powershell -ExecutionPolicy Bypass -File node\repair-node-data.ps1 -Broken game -From desk`
+  (`-Broken` / `-From`: `game`, `desk` or `personal`).
+
 ## Repository layout
 
 | Folder / file | What it is |
