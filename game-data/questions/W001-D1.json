@@ -64,7 +64,9 @@
         "value": "566",
         "dataHash": "1d3d4424a3b823a56aed66710387f3989cdd45b1ff104269482bc7964eb4fd14",
         "resolvedAt": "2026-10-27T09:29:48.990Z"
-      }
+      },
+      "chainOutcome": 2,
+      "chainDataHash": "0x1d3d4424a3b823a56aed66710387f3989cdd45b1ff104269482bc7964eb4fd14"
     },
     {
       "id": "W001-D1-2",
@@ -124,7 +126,9 @@
         "value": "80",
         "dataHash": "1d3d4424a3b823a56aed66710387f3989cdd45b1ff104269482bc7964eb4fd14",
         "resolvedAt": "2026-10-27T09:29:48.990Z"
-      }
+      },
+      "chainOutcome": 1,
+      "chainDataHash": "0x1d3d4424a3b823a56aed66710387f3989cdd45b1ff104269482bc7964eb4fd14"
     },
     {
       "id": "W001-D1-3",
@@ -239,7 +243,9 @@
         "value": "737",
         "dataHash": "1d3d4424a3b823a56aed66710387f3989cdd45b1ff104269482bc7964eb4fd14",
         "resolvedAt": "2026-10-27T09:29:48.990Z"
-      }
+      },
+      "chainOutcome": 1,
+      "chainDataHash": "0x1d3d4424a3b823a56aed66710387f3989cdd45b1ff104269482bc7964eb4fd14"
     },
     {
       "id": "W001-D1-5",
@@ -299,7 +305,9 @@
         "value": "574",
         "dataHash": "1d3d4424a3b823a56aed66710387f3989cdd45b1ff104269482bc7964eb4fd14",
         "resolvedAt": "2026-10-27T09:29:48.990Z"
-      }
+      },
+      "chainOutcome": 2,
+      "chainDataHash": "0x1d3d4424a3b823a56aed66710387f3989cdd45b1ff104269482bc7964eb4fd14"
     }
   ]
 }
