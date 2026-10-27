@@ -76,7 +76,7 @@ function withShows(result: any): any {
 
 // ── chain reads ──
 type Blocks = { hs: number[]; ts: number[]; sig: number[]; signers: string[] };
-async function readBlocks(p: any, headId: string, from: number, to: number): Promise<Blocks> {
+export async function readBlocks(p: any, headId: string, from: number, to: number): Promise<Blocks> {
   const n = to - from + 1, signer: string[] = new Array(n), ts: number[] = new Array(n);
   const queue: [number, number][] = [];
   for (let s = from; s <= to; s += 200) queue.push([s, Math.min(to, s + 199)]);
@@ -101,14 +101,14 @@ async function readBlocks(p: any, headId: string, from: number, to: number): Pro
   for (const a of signer) { let i = idx.get(a); if (i === undefined) { i = signers.length; signers.push(a); idx.set(a, i); } sig.push(i); }
   return { hs: Array.from({ length: n }, (_, i) => from + i), ts, sig, signers };
 }
-async function blockTime(p: any, headId: string, h: number): Promise<number> {
+export async function blockTime(p: any, headId: string, h: number): Promise<number> {
   const res: any = await withRetry(`block ${h}`, () => p.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(h), num_blocks: 1, return_block: true, return_receipt: false }));
   const it = res?.block_items?.[0];
   if (!it || Number(it.block_height) !== h) throw new Error(`block ${h} not returned`);
   return Number(it.block.header.timestamp);
 }
 /** The first height whose block time is at or after t (binary search between lo and hi). */
-async function heightAt(p: any, headId: string, t: number, lo: number, hi: number): Promise<number> {
+export async function heightAt(p: any, headId: string, t: number, lo: number, hi: number): Promise<number> {
   while (lo < hi) { const m = Math.floor((lo + hi) / 2); if ((await blockTime(p, headId, m)) < t) lo = m + 1; else hi = m; }
   return lo;
 }

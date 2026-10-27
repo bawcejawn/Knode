@@ -1,0 +1,191 @@
+// Fantasy Producers shared math (site/fantasy-math.js): the day index, price sheet, team rules (pool, budget, one
+// change a day, captain), scoring with the daily cap, vault points, and Weekly Rival matches and records.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import path from "node:path";
+
+const APP = process.env.APP || ".";
+await import(path.resolve(APP, "site/race-math.js"));
+await import(path.resolve(APP, "site/fantasy-math.js"));
+const R = globalThis.KRaceMath, F = globalThis.KFantasyMath;
+
+const A = "1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", B = "1BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", C = "1CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+  D = "1DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD", E = "1EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE", G = "1GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+  X = "1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", Y = "1YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY";
+const W = 2, DAYS = F.weekDays(W);
+
+test("time: a week has 7 UTC days from Monday; the sheet is Sunday 12:00 before it; form = the 7 days before that Sunday", () => {
+  assert.equal(new Date(F.dayStart(DAYS[0])).toISOString(), "2026-11-02T00:00:00.000Z");
+  assert.equal(new Date(F.dayStart(DAYS[6])).toISOString(), "2026-11-08T00:00:00.000Z");
+  assert.equal(new Date(F.sheetTime(W)).toISOString(), "2026-11-01T12:00:00.000Z");
+  const fd = F.formDays(W);
+  assert.equal(fd.length, 7);
+  assert.equal(new Date(F.dayStart(fd[0])).toISOString(), "2026-10-25T00:00:00.000Z");
+  assert.equal(new Date(F.dayStart(fd[6])).toISOString(), "2026-10-31T00:00:00.000Z", "Saturday: the last full day before the sheet");
+});
+
+// One card for every hour: A 50%, B 30%, C 20% of VHP (C in the paddock still counts for shares).
+const card = { field: [{ a: A, vhp: 500 }, { a: B, vhp: 300 }], paddock: [{ a: C, vhp: 200 }] };
+const races = {};
+for (let t = F.dayStart(DAYS[0]) - R.DAY; t < F.dayStart(DAYS[6]) + 2 * R.DAY; t += R.RACE) races[R.raceAt(t).id] = [card, null, null, null, null, null];
+
+test("day index: signed ÷ expected from each hour's blocks and the card's VHP shares, field and paddock", () => {
+  // 100 blocks an hour for the day: A signs 60 (expected 50), B 30 (30), C 10 (20).
+  const ts = [], sig = [], t0 = F.dayStart(DAYS[0]);
+  for (let h = 0; h < 24; h++) for (let i = 0; i < 100; i++) { ts.push(t0 + h * R.HOUR + i * 36000); sig.push(i < 60 ? 0 : i < 90 ? 1 : 2); }
+  const d = F.dayIndex({ ts, sig, signers: [A, B, C] }, races, DAYS[0]);
+  assert.equal(d.blocks, 2400);
+  assert.deepEqual(d.producers[A], [1440, 1200, 120]);
+  assert.deepEqual(d.producers[B], [720, 720, 100]);
+  assert.deepEqual(d.producers[C], [240, 480, 50]);
+});
+
+test("day index: blocks outside the day are not counted; a producer never expected has index null", () => {
+  const t0 = F.dayStart(DAYS[0]);
+  const ts = [t0 - 1000, t0, t0 + R.DAY - 1, t0 + R.DAY], sig = [0, 0, 1, 3];
+  const d = F.dayIndex({ ts, sig, signers: [A, B, C, X] }, races, DAYS[0]);
+  assert.equal(d.blocks, 2);
+  assert.equal(d.producers[X], undefined, "X's block is the next day");
+  const d2 = F.dayIndex({ ts: [t0 + 5], sig: [0], signers: [X] }, races, DAYS[0]);
+  assert.deepEqual(d2.producers[X], [1, 0, null]);
+});
+
+test("cards: a missed race uses the latest card up to 24 h before; none at all = no expected blocks", () => {
+  const t = F.dayStart(DAYS[2]), only = { [R.raceAt(t - R.RACE).id]: [null, null, card, null, null, null] };
+  assert.equal(F.cardAt(only, t + 3 * R.HOUR), card, "the earlier race's last card carries on");
+  assert.equal(F.cardAt({}, t), null);
+});
+
+test("price: 20 + 1.5 × (form − median form), rounded, clamped 8..40; no form = 20", () => {
+  assert.equal(F.priceOf(100, 100), 20, "the median producer costs 20");
+  assert.equal(F.priceOf(110, 100), 35);
+  assert.equal(F.priceOf(95, 100), 13, "12.5 rounds up");
+  assert.equal(F.priceOf(70, 100), 8, "floor");
+  assert.equal(F.priceOf(130, 100), 40, "ceiling");
+  assert.equal(F.priceOf(null, 100), 20);
+  assert.equal(F.priceOf(NaN, 100), 20);
+  assert.equal(F.medianOf([3, null, 1, 2]), 2);
+  assert.equal(F.medianOf([4, 1, 3, 2]), 2, "even count: the lower middle");
+  assert.equal(F.medianOf([null]), null);
+});
+
+test("sheet: pool = the card's field only (paddock can't be drafted), form over the form days, priced on the median", () => {
+  const formWindow = [{ producers: { [A]: [110, 100, 110], [B]: [90, 100, 90] } }, { producers: { [A]: [100, 100, 100] } }];
+  const s = F.makeSheet(W, card, formWindow);
+  assert.deepEqual(s.pool.map((p) => p.a), [A, B]);
+  assert.equal(s.median, 90);
+  assert.deepEqual(s.pool[0], { a: A, form: 105, price: 40 });
+  assert.deepEqual(s.pool[1], { a: B, form: 90, price: 20 });
+  assert.equal(s.budget, 100);
+  assert.equal(F.sheetText(s), JSON.stringify({ week: W, at: F.sheetTime(W), budget: 100, median: 90, pool: [[A, 105, 40], [B, 90, 20]] }));
+});
+
+test("sheet: a team always fits the budget; with 9+ producers the budget stays 100, whatever the forms", () => {
+  const R0 = R.rng(5);
+  for (let trial = 0; trial < 200; trial++) {
+    const n = 5 + Math.floor(R0.next() * 15), field = [], prod = {};
+    for (let i = 0; i < n; i++) { const a = "1" + String(i).padStart(2, "0").replace(/0/g, "z") + "Q".repeat(31); field.push({ a, vhp: 1 }); prod[a] = [Math.round(60 + R0.next() * 60), 100, 0]; }
+    const s = F.makeSheet(W, { field }, [{ producers: prod }]);
+    const cheapest = s.pool.map((p) => p.price).sort((x, y) => x - y).slice(0, 5).reduce((a, b) => a + b, 0);
+    assert.ok(cheapest <= s.budget, `trial ${trial}: 5 cheapest cost ${cheapest}, budget ${s.budget}`);
+    if (n >= 9) assert.equal(s.budget, 100, `trial ${trial}: ${n} producers`);
+  }
+  const small = F.makeSheet(W, { field: [A, B, C, D, E].map((a) => ({ a, vhp: 1 })) }, [{ producers: { [A]: [130, 100, 0], [B]: [125, 100, 0], [C]: [120, 100, 0], [D]: [118, 100, 0], [E]: [115, 100, 0] } }]);
+  assert.deepEqual(small.pool.map((p) => p.price), [35, 28, 20, 17, 13]);
+  assert.equal(small.budget, 113, "5 in the pool costing 113: the budget is raised to 113");
+});
+
+const sheet = { week: W, at: 0, budget: 100, pool: [A, B, C, D, E, G, X].map((a, i) => ({ a, form: 95, price: [30, 25, 20, 15, 10, 10, 40][i] })) };
+
+test("team: exactly 5 different producers from the pool, within the budget", () => {
+  assert.equal(F.checkTeam(sheet, [A, B, C, D, E]).ok, true, "30+25+20+15+10 = 100 is allowed");
+  assert.match(F.checkTeam(sheet, [A, B, C, D, X]).why, /over the budget/);
+  assert.match(F.checkTeam(sheet, [A, B, C, D]).why, /5 producers/);
+  assert.match(F.checkTeam(sheet, [A, A, C, D, E]).why, /twice/);
+  assert.match(F.checkTeam(sheet, [A, B, C, D, Y]).why, /not in this week's pool/);
+  assert.equal(F.checkTeam(sheet, null).ok, false);
+});
+
+test("one change a day: a swap, or moving the captain; a new producer taking the swapped captain's place is one change", () => {
+  const t = [A, B, C, D, E];
+  assert.equal(F.changes(t, [A, B, C, D, G]), 1, "swap E for G");
+  assert.equal(F.changes(t, [B, A, C, D, E]), 1, "captain moves A → B");
+  assert.equal(F.changes(t, [G, B, C, D, E]), 1, "captain A swapped out, G in as captain");
+  assert.equal(F.changes(t, [B, A, C, D, G]), 2, "a swap and a captain move");
+  assert.equal(F.changes(t, [A, C, B, E, D]), 0, "order of the 4 others doesn't matter");
+  assert.equal(F.changes(t, [A, B, G, X, E]), 2);
+});
+
+test("week teams: first valid team starts; invalid or 2-change picks are ignored and yesterday's team stays", () => {
+  const picks = {
+    [DAYS[1]]: [A, B, C, D, E],                 // starts Tuesday (Monday empty)
+    [DAYS[2]]: [A, B, C, D, X],                 // over budget → ignored
+    [DAYS[3]]: [B, A, C, D, G],                 // two changes → ignored
+    [DAYS[4]]: [B, A, C, D, E],                 // captain move → ok
+    // Saturday no pick → Friday's team
+    [DAYS[6]]: [B, A, C, D, G],                 // swap E → G → ok
+  };
+  const t = F.teamsForWeek(sheet, DAYS, picks);
+  assert.equal(t[0].team, null);
+  assert.deepEqual(t[1].team, [A, B, C, D, E]);
+  assert.deepEqual(t[2].team, [A, B, C, D, E]); assert.match(t[2].note, /over the budget/);
+  assert.deepEqual(t[3].team, [A, B, C, D, E]); assert.match(t[3].note, /more than one change/);
+  assert.deepEqual(t[4].team, [B, A, C, D, E]);
+  assert.deepEqual(t[5].team, [B, A, C, D, E]);
+  assert.deepEqual(t[6].team, [B, A, C, D, G]);
+});
+
+test("week teams: a team carried in from last week counts as yesterday's for Monday", () => {
+  const t = F.teamsForWeek(sheet, DAYS, { [DAYS[0]]: [A, B, C, D, G] }, [A, B, C, D, E]);
+  assert.deepEqual(t[0].team, [A, B, C, D, G]);
+  const t2 = F.teamsForWeek(sheet, DAYS, { [DAYS[0]]: [G, X, C, D, E] }, [A, B, C, D, E]);
+  assert.deepEqual(t2[0].team, [A, B, C, D, E], "two changes from the carried team: ignored");
+  const t3 = F.teamsForWeek({ ...sheet, pool: sheet.pool.filter((p) => p.a !== E) }, DAYS, {}, [A, B, C, D, E]);
+  assert.equal(t3[0].team, null, "a carried team that no longer fits this week's sheet doesn't carry");
+});
+
+test("day score: index capped at 130 per producer, captain double, unknown or null index scores 0", () => {
+  const day = { producers: { [A]: [0, 0, 150], [B]: [0, 0, 100], [C]: [0, 0, 80.5], [D]: [0, 0, null] } };
+  assert.equal(F.dayScore([A, B, C, D, E], day), 130 * 2 + 100 + 80.5);
+  assert.equal(F.dayScore([B, A, C, D, E], day), 100 * 2 + 130 + 80.5);
+  assert.equal(F.dayScore(null, day), 0);
+});
+
+test("score week: sum of days, full only with a team on all 7 days; vault points round(÷25), at least 1, at most 255", () => {
+  const recs = DAYS.map((d) => ({ day: d, producers: Object.fromEntries([A, B, C, D, E].map((a) => [a, [0, 0, 100]])) }));
+  const full = F.scoreWeek(sheet, recs, { [DAYS[0]]: [A, B, C, D, E] });
+  assert.equal(full.points, 7 * 600); assert.equal(full.full, true);
+  const late = F.scoreWeek(sheet, recs, { [DAYS[3]]: [A, B, C, D, E] });
+  assert.equal(late.points, 4 * 600); assert.equal(late.full, false, "late joiner: days before score 0, not full");
+  assert.equal(F.vaultPoints(4200), 168);
+  assert.equal(F.vaultPoints(3), 1);
+  assert.equal(F.vaultPoints(0), 0);
+  assert.equal(F.vaultPoints(7 * 6 * 130), 218, "the most a week can score fits under 255");
+  assert.equal(F.vaultPoints(1e9), 255);
+});
+
+test("rank: more points first; equal points share a place", () => {
+  const r = F.rank([{ a: A, points: 5 }, { a: B, points: 9 }, { a: C, points: 5 }, { a: D, points: 1 }]);
+  assert.deepEqual(r.map((x) => [x.a, x.place]), [[B, 1], [A, 2], [C, 2], [D, 4]]);
+});
+
+test("rival: counts only when both had a full week; self, bad address and repeats ignored; mutual = one match", () => {
+  const players = { [A]: { points: 10, full: true }, [B]: { points: 8, full: true }, [C]: { points: 10, full: true }, [D]: { points: 99, full: false } };
+  const ms = F.matches([[A, B], [B, A], [C, A], [A, D], [D, A], [A, A], ["bad", B], [E, A]], players);
+  assert.deepEqual(ms, [
+    { a: A, b: B, mutual: true, result: "a" },
+    { a: C, b: A, mutual: false, result: "draw" },
+  ]);
+});
+
+test("rival records: made and received kept apart; mutual counts as made for both; win share counts draws half", () => {
+  const ms = [{ a: A, b: B, mutual: false, result: "a" }, { a: C, b: A, mutual: false, result: "b" }, { a: A, b: C, mutual: true, result: "draw" }];
+  const r = F.addRecords({}, ms);
+  assert.deepEqual(r[A], { made: [1, 0, 1], received: [1, 0, 0] });
+  assert.deepEqual(r[B], { made: [0, 0, 0], received: [0, 1, 0] });
+  assert.deepEqual(r[C], { made: [0, 1, 1], received: [0, 0, 0] });
+  assert.deepEqual(F.recordLine(r[A]), { w: 2, l: 0, d: 1, n: 3, pct: 0.8333 });
+  const again = F.addRecords(r, [{ a: B, b: A, mutual: false, result: "a" }]);
+  assert.deepEqual(again[A].received, [1, 1, 0], "records add up week after week");
+  assert.deepEqual(r[A].received, [1, 0, 0], "the old object is not changed");
+});
