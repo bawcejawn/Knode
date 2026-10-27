@@ -175,3 +175,36 @@ the configuration.
   agrees. Confirm on testnet with an 8-pick transaction.
 - **`bot/games/blockx.ts` recording and the prize payout:** out of scope apart from the eligibility rule used in S3-4.
 - **Mainnet upload and config steps:** not run, by the rules of this audit.
+
+## Re-check: d2a8f2e (/home/claude/knode, branch `picks`)
+
+**Verdict: ready for testnet, and from the code, for mainnet.** Tests pass **147 / 147**. `npm run check` passes and
+now requires the Picks ABI and checks that `pick_arguments` has no nested messages. Release sha256
+**`15ffd998ee6bb28734ee3a209cd06fa6da5667ce28b1d867ad604f6be94849f7`**, as expected.
+
+| ID | Status |
+|---|---|
+| S3-1 | **Fixed.** `setSystemBufferSize(16 KB)` is the first thing `authorize` does for transaction_application. The kept test pays 7 and 10 Block X picks in one transaction. The largest legitimate transaction (10 operations × 400 argument bytes plus header and signature) is about 4.6 KB, well under 16 KB. |
+| S3-2 | **Mitigated as documented.** `sponsor.proto` says that allowlisted rows must not take nested messages, and `npm run check` asserts it for the Picks row. The contract itself still cannot enforce it, so any future row must be checked the same way before it goes into `set_config`. Accepted. |
+| S3-7 | **Fixed** (the Picks ABI is now a required check). |
+| S3-3, S3-4, S3-5, S3-6 | Unchanged (Info/Low, owner decisions or testnet measurements). |
+
+**Does the 16 KB buffer have any downside?**
+
+- **Mana for the sponsor:** none. If `authorize` refuses, the transaction is not included and nobody is charged. If it
+  pays, the chain charges at most `rc_limit` (at most 1 Mana), which is what the caps count. A bigger transaction
+  costs more compute inside that same limit. The sponsor can't be made to pay more than it counted.
+- **Making authorize read huge transactions:** the buffer is the ceiling. A transaction serialized above 16 KB fails
+  the `get_transaction` read and is refused, failing closed as before, only at a higher size. Below 16 KB, the
+  `MAX_OPERATIONS`, operation-type and 400-byte argument checks still refuse anything that isn't a small player
+  action. The owner's own large transactions (for example re-uploading the sponsor code) don't depend on it: the
+  owner path reads only the `signatures` and `id` fields, before the whole transaction is read.
+- **Memory:** one extra 16 KB allocation per `authorize` call, which is negligible.
+- **One side effect (Info, S3-8):** `signatureAddresses()` now runs with the 16 KB buffer, so a transaction could
+  carry about 240 signatures (before: about 15) and `authorize` would recover every public key before the "only the
+  payee may sign" check refuses it. The sponsor pays nothing, because the transaction is refused before inclusion. It
+  is only extra node CPU for a transaction that can't succeed, and the chain's own compute limit for `authorize`
+  bounds it. Optional fix: read the signature list and refuse when it has more than one entry before recovering any
+  keys, or set the 16 KB buffer only just before `getTransaction()`.
+
+No new findings above Info.

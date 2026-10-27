@@ -146,7 +146,10 @@ arguments must have no nested messages: documented, and `npm run check` confirms
 ABI checks are required). Accepted by the owner: S3-4 (guests can win Block X prizes; the free daily total bounds the
 cost, to be monitored).
 
-Release candidate sha256 (v3): `15ffd998ee6bb28734ee3a209cd06fa6da5667ce28b1d867ad604f6be94849f7` (31,808 bytes).
+Re-check of those fixes: "ready for testnet, and from the code, ready for mainnet"; its Info finding S3-8 is fixed too
+(a transaction with more than 4 signatures is refused without recovering the rest).
+
+Release candidate sha256 (v3): `b192e6f4df622b1d8fbee36b7911d2b156d2826fd5028b60f6af08a80af9f3f3` (31,829 bytes).
 The upload tool still pins v2 until v3 has passed a short fix-check and the Harbinger trial.
 
 When v3 is live (audit S3-5, S3-6): measure `rc_used` for 1, 3 and 7 picks and set the site's `rcLimit` to about twice
