@@ -1,0 +1,148 @@
+# KnodeGames recorders: every hour, records each game's results from the chain (irreversible blocks only, two nodes
+# must agree). Today: Who Signs Block X (bot/games/blockx.ts). Each game has its own folder on the games-data branch.
+#
+# Two jobs, like the race and the main bot, so repository code never runs next to a write token:
+#   record   runs the recorders with a read-only token and no secrets (they only read the chain), and hands the files on.
+#   publish  runs no repository code: it checks the files' shape and pushes them to the games-data branch.
+# It never touches main, holds no key, and does not run on pull requests.
+#
+# Turn it on: Settings → Secrets and variables → Actions → Variables: GAMES_ENABLED = true
+name: KnodeGames recorders
+
+on:
+  schedule:
+    - cron: "47 * * * *"     # every hour at minute 47 (after the race recorder at :37 has taken the hour's card)
+  workflow_dispatch: {}
+
+concurrency:
+  group: knode-games
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    if: ${{ vars.GAMES_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      # The files the last run published, and the race recorder's cards (public branches; read without a token).
+      # Only plain JSON files with the expected names are taken.
+      - name: Take the last run's files and the race cards
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/prev/blockx" "$RUNNER_TEMP/race"
+          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" games-data 2>/dev/null; then
+            for f in $(git ls-tree --name-only FETCH_HEAD:blockx 2>/dev/null); do
+              if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:blockx/$f" > "$RUNNER_TEMP/prev/blockx/$f"; fi
+            done
+          else echo "No games-data branch yet."; fi
+          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
+            for f in $(git ls-tree --name-only FETCH_HEAD); do
+              if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/race/$f"; fi
+            done
+          else echo "No race-data branch yet: targets wait for cards."; fi
+      - name: Record Who Signs Block X
+        run: npm run blockx
+        env:
+          RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
+          RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
+          BLOCKX_PREV: ${{ runner.temp }}/prev/blockx
+          BLOCKX_OUT: ${{ runner.temp }}/games-data/blockx
+          RACE_DATA: ${{ runner.temp }}/race
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: games-data
+          path: ${{ runner.temp }}/games-data/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  publish:
+    needs: record
+    if: ${{ vars.GAMES_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write         # push the games-data branch (never main)
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: games-data
+          path: ${{ runner.temp }}/incoming
+      - name: Push games-data (and nothing else)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IN: ${{ runner.temp }}/incoming
+        run: |
+          set -euo pipefail
+          if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
+          if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
+          big=$(find "$IN" -type f -size +2048k -print)
+          if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
+          # The content must be the recorder's own shape, not only parse as JSON.
+          /usr/bin/python3 - "$IN/blockx" <<'PY'
+          import json, os, re, sys
+          d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
+          nat = lambda x: type(x) is int and 0 <= x < 10**16
+          def target_ok(t):
+              if type(t) is not dict or not set(t) <= {"round", "height", "final", "checked", "signer", "time", "lockTime", "card", "void", "picks"}: return False
+              if not (nat(t.get("round")) and t.get("height") == t["round"] * 2400 and t.get("final") is True and t.get("checked") in (1, 2)): return False
+              if not (t.get("signer") is None or addr.fullmatch(str(t["signer"]))) or not nat(t.get("time")) or not nat(t.get("lockTime")): return False
+              c = t.get("card")
+              if c is not None and (type(c) is not dict or set(c) != {"at", "top", "signerVhp"} or not num(c["at"]) or not num(c["top"]) or not (c["signerVhp"] is None or num(c["signerVhp"]))): return False
+              if "void" in t and (type(t["void"]) is not str or len(t["void"]) > 200): return False
+              pk = t.get("picks")
+              return type(pk) is list and len(pk) <= 100000 and all(type(x) is list and len(x) == 5 and addr.fullmatch(str(x[0])) and addr.fullmatch(str(x[1]))
+                  and nat(x[2]) and type(x[3]) is int and 0 <= x[3] <= 300 and x[4] in (0, 1) for x in pk)
+          def rows_ok(b, extra=()):
+              if type(b) is not dict or type(b.get("rows")) is not list or len(b["rows"]) > 100000: return False
+              return all(type(x) is dict and set(x) == {"a", "place", "pts", "correct", "picks", "days", "lastCorrect", "ranked"} and addr.fullmatch(str(x["a"]))
+                  and all(nat(x[k]) for k in ("place", "pts", "correct", "picks", "days", "lastCorrect")) and type(x["ranked"]) is bool for x in b["rows"])
+          for f in os.listdir(d):
+              j = json.load(open(os.path.join(d, f), encoding="utf-8"))
+              if f == "board.json":
+                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1, f
+                  assert all(rows_ok(j[k]) for k in ("today", "week", "allTime")), f
+                  lw = j["lastWeek"]
+                  assert lw is None or (rows_ok(lw) and type(lw.get("final")) is bool and type(lw.get("prizes")) is list and len(lw["prizes"]) <= 50
+                      and all(type(p) is dict and set(p) == {"player", "place", "vhp"} and addr.fullmatch(str(p["player"])) and nat(p["place"]) and num(p["vhp"]) and 0 < p["vhp"] <= 2 for p in lw["prizes"])), f
+                  continue
+              if f == "index.json":
+                  assert set(j) == {"v", "updated", "weeks", "contract"} and j["v"] == 1 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
+                  assert j["contract"] is None or addr.fullmatch(str(j["contract"])), f
+                  continue
+              assert set(j) == {"v", "week", "start", "end", "targets"} and j["v"] == 1 and f == "W%03d.json" % j["week"], f
+              assert type(j["targets"]) is list and len(j["targets"]) <= 100 and all(target_ok(t) for t in j["targets"]), f
+          print("games files ok")
+          PY
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git init -q work && cd work
+          parent=""
+          if git fetch -q --depth 1 "$remote" games-data 2>/dev/null; then
+            parent=$(git rev-parse FETCH_HEAD)
+            git read-tree FETCH_HEAD
+          else git read-tree --empty; fi
+          for f in "$IN"/blockx/*.json; do
+            blob=$(git hash-object -w "$f")
+            git update-index --add --cacheinfo 100644 "$blob" "blockx/$(basename "$f")"
+          done
+          tree=$(git write-tree)
+          if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi
+          export GIT_AUTHOR_NAME=kpred-bot GIT_AUTHOR_EMAIL=kpred-bot@users.noreply.github.com GIT_COMMITTER_NAME=kpred-bot GIT_COMMITTER_EMAIL=kpred-bot@users.noreply.github.com
+          commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "games: record")
+          git push -q "$remote" "$commit:refs/heads/games-data"
+          echo "Games files published."
