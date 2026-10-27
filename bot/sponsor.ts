@@ -95,7 +95,7 @@ async function status() {
   log(`  Switched       ${cfg.enabled ? "ON" : "off"}`);
   log(`  Pays for       game ${cfg.game === game.contract ? "✔" : `✖ (${cfg.game ?? "not set"})`}, Knode Swap ${cfg.desk === desk.contract ? "✔" : `✖ (${cfg.desk ?? "not set"})`}, approves on ${(cfg.tokens ?? []).length} token(s)`);
   log(`  Caps           ${mana(cfg.max_mana_per_tx)} per transaction, ${mana(cfg.max_mana_per_account_day)} per player per day, ${mana(cfg.max_mana_per_account_week)} per player per week, ${mana(cfg.max_mana_per_day)} for everyone per day`);
-  log(`  Players        answers: any wallet; everything else: wallets holding at least ${mana(cfg.min_vhp)} VHP, or with a stake in the game`);
+  log(`  Players        answers: any wallet; everything else: wallets holding at least ${showKoin(cfg.min_vhp ?? "0")} VHP, or with a stake in the game`);
   const t = await readSponsor(provider, address, "get_total_usage");
   log(`  Used today     ${mana(t.used_day)} of ${mana(cfg.max_mana_per_day)}`);
   const fu = await readSponsor(provider, address, "get_free_usage").catch(() => ({} as any));
