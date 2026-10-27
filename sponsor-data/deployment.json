@@ -2,7 +2,7 @@
   "network": "mainnet",
   "rpc": "https://api.koinos.io",
   "address": "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8",
-  "wasmSha256": "8cfeff6209b8d5cbc3b3e5fa30751e995767f5904b77693ed8a41e323ea2a8ed",
-  "uploadTx": "0x122017fd99bdba798f5f9f2cc2112c6a38af684add9b9fb87d21cc600b5768431063",
-  "uploadedAt": "2026-10-27T03:44:11.359Z"
+  "wasmSha256": "fa4659e65c6156da3dde34238e0545a489a8b7f00cdf51df9bf79517a0019f33",
+  "uploadTx": "0x122018609d1637d59f2c1832c736d53dc8c33b3d1f046d91f38f640d21a269a28ead",
+  "uploadedAt": "2026-10-27T15:11:05.299Z"
 }
