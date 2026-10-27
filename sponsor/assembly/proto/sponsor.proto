@@ -142,8 +142,12 @@ message balance_of_args {
 message balance_of_result {
   uint64 value = 1 [jstype = JS_STRING];
 }
+// The race contract's pick arguments, field for field as race/assembly/proto/race.proto (audit S-1: the sponsor must
+// read a pick exactly as the race contract does; npm run check compares the two).
 message race_pick_args {
   bytes player = 1 [(koinos.btype) = ADDRESS];
+  uint64 race = 2 [jstype = JS_STRING];
+  bytes horse = 3 [(koinos.btype) = ADDRESS];
 }
 message game_get_player_args {
   bytes player = 1 [(koinos.btype) = ADDRESS];

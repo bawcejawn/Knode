@@ -23,6 +23,8 @@ const T: u64 = R * RACE_MS;
 const HOUR: u64 = 3600000;
 
 function setTime(ms: u64): void { MockVM.setHeadInfo(new chain.head_info(null, ms, 0)); }
+/** A call straight from a transaction: the chain reports an empty caller. */
+function direct(): void { MockVM.setCaller(new chain.caller_data(new Uint8Array(0), chain.privilege.user_mode)); }
 function signedBy(a: Uint8Array): void { MockVM.setAuthorities([new MockVM.MockAuthority(authority.authorization_type.contract_call, a, true)]); }
 function errorIs(message: string): void { expect(MockVM.getErrorMessage()).toBe(message); MockVM.rollbackTransaction(); }
 
@@ -50,6 +52,7 @@ function setConfig(): void { new Race().set_config(new race.set_config_arguments
 function start(): void {
   MockVM.reset();
   MockVM.setContractId(SELF);
+  direct();
   setTime(T + HOUR);                         // 07:00 UTC, during race R
   MockVM.commitTransaction();
   signedBy(SELF);                            // the first setup: the contract's own key
@@ -59,7 +62,7 @@ function start(): void {
 }
 
 describe("settings", () => {
-  beforeEach(() => { MockVM.reset(); MockVM.setContractId(SELF); setTime(T); MockVM.commitTransaction(); });
+  beforeEach(() => { MockVM.reset(); MockVM.setContractId(SELF); direct(); setTime(T); MockVM.commitTransaction(); });
 
   it("the first setup needs the contract's own key; after that only the owner's", () => {
     CFG = new race.config(OWNER, true, 5);

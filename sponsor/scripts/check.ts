@@ -43,6 +43,14 @@ for (const [k, [a, name]] of Object.entries(pinned)) {
   ok(!!m && Number(m[1]) === a.methods[name]?.entry_point, `${k} = ${name} (${a.methods[name]?.entry_point?.toString(16)})`);
 }
 
+// Audit S-1: the sponsor reads a pick's arguments exactly as the race contract does (same fields, numbers and types).
+const fieldsOf = (a: any, pkg: string, msg: string) => JSON.stringify(a.koilib_types?.nested?.[pkg]?.nested?.[msg]?.fields ?? null);
+ok(fieldsOf(abi, "sponsor", "race_pick_args") === fieldsOf(raceAbi, "race", "pick_arguments") && fieldsOf(abi, "sponsor", "race_pick_args") !== "null",
+  "race_pick_args = the race contract's pick_arguments, field for field");
+const testCopy = "assembly/__tests__/race_proto.ts", generated = "../race/assembly/proto/race.ts";
+const body = (f: string) => fs.readFileSync(f, "utf8").replace(/^\/\/ A copy of[^\n]*\n/, "");
+if (fs.existsSync(generated)) ok(body(testCopy) === body(generated), "the tests' copy of the race decoder is current");
+
 const s = Signer.fromSeed("sponsor-offline-check");
 const k = new Contract({ id: s.getAddress(), abi, provider: new Provider(["http://127.0.0.1:1"]), signer: s });
 const ser = new Serializer(abi.koilib_types);

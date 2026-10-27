@@ -300,6 +300,20 @@
                 "options": {
                   "(koinos.btype)": "ADDRESS"
                 }
+              },
+              "race": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "horse": {
+                "type": "bytes",
+                "id": 3,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
               }
             }
           },

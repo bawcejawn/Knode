@@ -888,7 +888,7 @@ describe("free answers for any wallet (owner's decision 2026-10-26)", () => {
     emptyWallet();
     const c = wouldPayAnswer(OTHER, MANA);
     expect(c.ok).toBe(false);
-    expect(c.reason).toBe("today's free-player answers are used up");
+    expect(c.reason).toBe("today's free-player answers and picks are used up");
     READS = [vhpBalance(5 * MANA)];
     const d = wouldPayAnswer(OTHER, MANA);
     expect(d.ok).toBe(true);

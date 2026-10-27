@@ -41,6 +41,10 @@ export class Race {
     System.require(isAddress(args.horse), "RACE: invalid horse");
     const player = args.player!;
     System.require(System.checkAuthority(authority.authorization_type.contract_call, player), NOT_SIGNED);
+    // Audit R-3: only the player's own transaction (or the player's own contract), never another contract the player
+    // happened to sign a transaction for.
+    const caller = System.getCaller().caller;
+    System.require(caller == null || caller!.length == 0 || Arrays.equal(caller!, player), NOT_SIGNED);
 
     const now = System.getHeadInfo().head_block_time;
     const current = now / RACE_MS;                  // the race running now; it started at current * RACE_MS <= now
@@ -78,8 +82,11 @@ export class Race {
     const limit: u32 = args.limit == 0 || args.limit > MAX_LIST ? MAX_LIST : args.limit;
     const prefix = raceBytes(args.race);
     // Start just before the first wallet (an all-zero address, which can't be a real one), or after start_after.
-    // Every key has the same length, so the order is the same on the chain and in the test VM.
-    const after = args.start_after != null && args.start_after!.length == ADDRESS_LENGTH ? args.start_after! : new Uint8Array(ADDRESS_LENGTH);
+    // Every key has the same length (33 bytes), so they sort by race, then by player, byte by byte on the chain.
+    // Audit R-1: a cursor that isn't empty and isn't 25 bytes is an error, never a silent restart.
+    const given = args.start_after != null && args.start_after!.length > 0;
+    System.require(!given || args.start_after!.length == ADDRESS_LENGTH, "RACE: bad start_after");
+    const after = given ? args.start_after! : new Uint8Array(ADDRESS_LENGTH);
     let key = concat(prefix, after);
     while (<u32>out.rows.length < limit) {
       const obj = this.picks.getNext(key);

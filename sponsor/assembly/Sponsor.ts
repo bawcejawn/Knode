@@ -44,7 +44,7 @@ export const RACE_PICK: u32 = 0x8ce33c6c;
 export const TOKEN_BALANCE_OF: u32 = 0x5c721497;
 export const GAME_GET_PLAYER: u32 = 0x37ce3085;
 export const NOT_A_PLAYER = "SPONSOR: only players who hold VHP or have a Knode stake are sponsored";
-export const FREE_USED_UP = "SPONSOR: today's free-player answers are used up";
+export const FREE_USED_UP = "SPONSOR: today's free-player answers and picks are used up";
 
 /** UTC day number of a time in ms. */
 export function dayOf(ms: u64): u64 {
@@ -221,7 +221,7 @@ export class Sponsor {
       out.left_free_today = cfg.max_mana_free_day > f.used_day ? cfg.max_mana_free_day - f.used_day : 0;
       if (player) out.ok = true;
       else if (!args.answer_only) out.reason = "only players who hold VHP or have a Knode stake are sponsored";
-      else if (rc > out.left_free_today) out.reason = "today's free-player answers are used up";
+      else if (rc > out.left_free_today) out.reason = "today's free-player answers and picks are used up";
       else out.ok = true;
     }
     return out;
@@ -333,8 +333,12 @@ function checkOperation(op: protocol.operation, cfg: sponsor.config, payee: Uint
   }
   if (hasRace(cfg) && Arrays.equal(target, cfg.race!)) {
     System.require(call.entry_point == RACE_PICK, "SPONSOR: only picks on the Producer Race are sponsored");
-    // Only the payee's own pick (the race contract also requires the player's signature).
-    const p = Protobuf.decode<sponsor.race_pick_args>(call.args ? call.args! : new Uint8Array(0), sponsor.race_pick_args.decode);
+    // Only the payee's own pick (the race contract also requires the player's signature). Audit S-1: the arguments must
+    // be the canonical encoding of what they decode to, so the sponsor and the race contract can't read different
+    // players from the same bytes (a skipped field with an unexpected wire type would otherwise shift the reading).
+    const raw = call.args ? call.args! : new Uint8Array(0);
+    const p = Protobuf.decode<sponsor.race_pick_args>(raw, sponsor.race_pick_args.decode);
+    System.require(Arrays.equal(Protobuf.encode(p, sponsor.race_pick_args.encode), raw), "SPONSOR: a pick's arguments must be canonical");
     System.require(p.player != null && Arrays.equal(p.player!, payee), "SPONSOR: a pick must be the payee's own");
     return;
   }
