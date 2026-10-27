@@ -15,7 +15,7 @@
   const DATA = "https://raw.githubusercontent.com/bawcejawn/Knode/race-data/";
   const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq";
   const EXPLORER = "https://koinosscan.com/address/";
-  const NAMES = { "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "Knode pool", "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR": "Knode Swap" };
+  const NAMES = { "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "KnodeGames pool", "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR": "KnodeGames Swap" };
   const COLORS = ["#2F6B4F", "#F2B33D", "#B4432F", "#3E6FB0", "#8A4FB0", "#23845E", "#FF8A4C", "#5E6B63", "#C2547F", "#2D8C9E", "#9C7A2B", "#4B5BD6", "#7A9A3A", "#D9693F", "#6C4A3B", "#1F7A7A", "#A23B72", "#557C00", "#CC5500", "#456990"];
   try { localStorage.removeItem("pr-guesses-v1"); } catch { /* the old rolling race's guesses are retired */ }
 
@@ -30,6 +30,9 @@
   const el = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k === "text") e.textContent = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v); } for (const c of kids) if (c != null) e.append(c); return e; };
   const say = (t) => { $("status").textContent = t; };
   const nameOf = (a) => NAMES[a] || a.slice(0, 5) + "…" + a.slice(-4);
+  /** A pick scored a show (its horse finished 2nd or 3rd): the recorder's 6th field, or for races recorded before
+   *  Show existed, worked out from the race's stored standings with the same rule (race-math.js). */
+  const isShow = (result, p) => !p[3] && (p.length > 5 ? p[5] === 1 : !!result && Array.isArray(result.standings) && M.shows(result.standings).includes(p[1]));
   const fmt = (n, d = 0) => Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
   const clock = (t) => new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   const dayTime = (t) => new Date(t).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
@@ -230,7 +233,7 @@
         el("td", { class: "mono" }, w ? el("a", { href: EXPLORER + w.a, target: "_blank", rel: "noopener noreferrer", text: `${live ? "leading: " : ""}${nameOf(w.a)}` }) : "–"),
         el("td", { class: "num hide-sm", text: w ? fmt(w.steps, 1) : "–" }),
         el("td", { class: "num hide-sm", text: margin != null ? fmt(margin, 1) : "–" }),
-        el("td", { class: "num hide-sm", text: status === "final" && Array.isArray(r.result.picks) ? `${r.result.picks.filter((x) => x[3]).length} of ${r.result.picks.length}` : "–" }),
+        el("td", { class: "num hide-sm", text: status === "final" && Array.isArray(r.result.picks) ? `${r.result.picks.filter((x) => x[3]).length} · ${r.result.picks.filter((x) => isShow(r.result, x)).length} of ${r.result.picks.length}` : "–" }),
         el("td", {}, (ended || live) && status !== "missed" ? el("button", { type: "button", onclick: () => { view = live ? null : i; render(); window.scrollTo({ top: 0, behavior: "smooth" }); } }, live ? "Watch" : "View") : null)));
     }
     $("hist-rows").replaceChildren(...rows);
@@ -238,7 +241,7 @@
   // ── picks (once the race picks contract is live: race-data/deployment.json on the site) ──
   const ROOT = new URL("../", location.href);
   const W = window.KWallet;
-  let raceContract = null, myPicks = new Map(), usage = null, sending = false, board = null, boardMode = "week";
+  let raceContract = null, myPicks = new Map(), usage = null, sending = false, board = null;
   // The pick panel is redrawn only when something in it changed (the race redraws every few seconds), and a horse you
   // chose but haven't sent yet is kept across redraws.
   let picksKey = "";
@@ -326,7 +329,7 @@
       rows.push(el("div", { class: "pk-row done" },
         el("div", { class: "pk-when" }, el("b", { text: dayTime(r.start) }), el("span", { text: "final" })),
         el("div", { class: "pk-now", text: `You picked ${nameOf(p[1])}; ${nameOf(r.result.winner || "")} won` }),
-        el("span", { class: p[3] ? "pk-ok" : "pk-no", text: p[3] ? "✓ Right" : "✗" })));
+        el("span", { class: p[3] || isShow(r.result, p) ? "pk-ok" : "pk-no", text: p[3] ? `✓ Win +${M.POINTS.win}` : isShow(r.result, p) ? `✓ Show +${M.POINTS.show}` : "✗" })));
     }
     list.replaceChildren(...rows);
   }
@@ -357,7 +360,7 @@
     if (Date.now() >= M.raceStart(index)) return pickModal("bad", "That race has started", ["Picks lock when a race starts."], [okBtn("OK")]);
     sending = true; renderPicks(true);
     const wallet = W.kind === "guest" ? "your guest wallet" : W.label ? W.label() : "your wallet";
-    pickModal("busy", W.kind === "guest" ? "Sending your pick…" : `Confirm in ${wallet}`, [`${nameOf(horse)} for the race at ${when}.`, W.kind === "guest" ? "Free: the Knode Mana sponsor pays." : "Free: the Knode Mana sponsor pays the Mana. Approve it in your wallet."]);
+    pickModal("busy", W.kind === "guest" ? "Sending your pick…" : `Confirm in ${wallet}`, [`${nameOf(horse)} for the race at ${when}.`, W.kind === "guest" ? "Free: the KnodeGames Mana sponsor pays." : "Free: the KnodeGames Mana sponsor pays the Mana. Approve it in your wallet."]);
     try {
       const { operation } = await raceContract.functions.pick({ player: who, race: String(index), horse }, { onlyOperation: true });
       const id = await W.send(`pick ${nameOf(horse)} for the race at ${dayTime(M.raceStart(index))}`, [operation]);
@@ -390,30 +393,20 @@
     } finally { sending = false; await loadMine(); renderPicks(true); }
   }
 
-  // ── leaderboard (the recorder's board.json) ──
+  // ── leaderboard (the recorder's board.json, shown by the shared KnodeGames board in board.js) ──
+  const lb = window.KBoard ? window.KBoard.create($("race-board"), {
+    label: "Race leaderboard",
+    columns: [{ key: "pts", label: "Points" }, { key: "correct", label: "Wins" }, { key: "shows", label: "Shows" }, { key: "picks", label: "Picks", wide: true }, { key: "answers", label: "Question answers", wide: true }],
+    scored: (r) => (r.pts ?? r.correct) > 0,
+    summary: (r) => `${fmt(r.pts ?? 0)} pts · ${fmt(r.correct)} W ${fmt(r.shows ?? 0)} S`,
+    name: nameOf, link: (a) => EXPLORER + a,
+    me: (r, place) => `${place ? `You: #${place} with` : "Your score (only you see this):"} ${fmt(r.pts ?? 0)} points (${fmt(r.correct)} wins, ${fmt(r.shows ?? 0)} shows) from ${fmt(r.picks)} picks.`,
+    unranked: "To be ranked, hold at least 1 VHP or stake in KnodeGames.",
+  }) : null;
   async function loadBoard() {
-    try { const b = await fetchJson(DATA + "board.json"); if (b && b.v === 1) { board = b; $("board-box").hidden = false; renderBoard(); } } catch { /* none yet */ }
+    try { const b = await fetchJson(DATA + "board.json"); if (b && b.v === 1 && lb) { board = b; $("board-box").hidden = false; renderBoard(); } } catch { /* none yet */ }
   }
-  function renderBoard() {
-    if (!board) return;
-    const part = boardMode === "today" ? board.today : boardMode === "all" ? board.allTime : board.week;
-    const rows = (part && part.rows) || [], ranked = rows.filter((r) => r.ranked), who = me();
-    $("board-sub").textContent = boardMode === "week" && board.week ? `week ${board.week.week + 1}, from ${dayTime(board.week.start)}` : boardMode === "today" ? `${board.today.day} (UTC)` : "";
-    const medal = ["🥇", "🥈", "🥉"];
-    $("champs").replaceChildren(...(boardMode === "week" ? ranked.slice(0, 3).filter((r) => r.correct > 0).map((r, i) => el("div", { class: "champ" }, el("b", { text: `${medal[i]} ${i + 1}${["st", "nd", "rd"][i]}` }), el("span", { class: "mono", text: nameOf(r.a) }), el("div", { class: "ago", text: `${r.correct} right of ${r.picks}` }))) : []));
-    $("board-rows").replaceChildren(...ranked.slice(0, 50).map((r, i) => el("tr", { class: `${i < 3 && boardMode === "week" ? "top" : ""} ${r.a === who ? "me" : ""}` },
-      el("td", { text: i < 3 ? medal[i] : String(i + 1) }),
-      el("td", { class: "mono" }, el("a", { href: EXPLORER + r.a, target: "_blank", rel: "noopener noreferrer", text: nameOf(r.a) })),
-      el("td", { class: "num", text: fmt(r.correct) }), el("td", { class: "num hide-sm", text: fmt(r.picks) }),
-      el("td", { class: "num hide-sm", text: fmt(r.answers) }), el("td", { class: "num hide-sm", text: fmt(r.points) }))));
-    if (!ranked.length) $("board-rows").replaceChildren(el("tr", {}, el("td", { colspan: "6", class: "ago", text: "No ranked picks yet." })));
-    const mine = who && rows.find((r) => r.a === who);
-    $("board-me").textContent = !who ? "" : !mine ? "You have no finished picks here yet." : mine.ranked
-      ? `You: #${ranked.indexOf(mine) + 1} with ${mine.correct} right of ${mine.picks} picks.`
-      : `Your score (only you see this): ${mine.correct} right of ${mine.picks} picks. To be ranked, hold at least 1 VHP or stake in Knode.`;
-  }
-  const setBoard = (m) => { boardMode = m; for (const [id, k] of [["b-today", "today"], ["b-week", "week"], ["b-all", "all"]]) $(id).setAttribute("aria-pressed", String(m === k)); renderBoard(); };
-  $("b-today").onclick = () => setBoard("today"); $("b-week").onclick = () => setBoard("week"); $("b-all").onclick = () => setBoard("all");
+  function renderBoard() { if (lb && board) { lb.setMe(me() || ""); lb.set(board); } }
   if (W && W.subscribe) W.subscribe(() => { loadMine(); renderBoard(); });
 
   const setMode = (m) => { histMode = m; $("h-today").setAttribute("aria-pressed", String(m === "today")); $("h-week").setAttribute("aria-pressed", String(m === "week")); renderHistory(); };

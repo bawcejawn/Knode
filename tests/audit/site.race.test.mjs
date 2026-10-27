@@ -164,7 +164,13 @@ test("the race page sends only one thing: the wallet's own pick on the race cont
   assert.doesNotMatch(js, /signTransaction|sendTransaction|privateKey|wif/i);
   assert.match(js, /if \(Date\.now\(\) >= M\.raceStart\(index\)\)/, "the page also refuses a started race (the chain enforces it)");
   assert.match(read("race.js"), /localStorage\.removeItem\("pr-guesses-v1"\)/);
-  assert.match(read("race.html"), /<script src="race-math\.js"><\/script>\s*<script src="race\.js"><\/script>/);
+  assert.match(read("race.html"), /<script src="race-math\.js"><\/script>\s*<script src="board\.js"><\/script>\s*<script src="race\.js"><\/script>/);
+});
+
+test("the shared leaderboard (board.js) only draws: no network, no storage, no wallet, no HTML from data", () => {
+  const js = read("board.js");
+  assert.doesNotMatch(js, /fetch\(|XMLHttpRequest|localStorage|sessionStorage|indexedDB|\.send\(|innerHTML|outerHTML|insertAdjacentHTML|eval\(|new Function/);
+  assert.match(js, /textContent = v/);
 });
 
 test("the recorder's files are read only from the race-data branch", () => {

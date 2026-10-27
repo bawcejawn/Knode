@@ -1,0 +1,24 @@
+/* KnodeGames leaderboard (board.js): the styles it needs, scoped to .kb so any game page can link this file.
+   Matches the Race page's look. Colours come from styles.css tokens, so light and dark both work. */
+.kb .tabs2 { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.kb .tabs2 button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+.kb .tabs2 button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.kb .tabs2 button:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+.kb .note { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+.kb .kb-sub { margin: 0 0 8px; }
+.kb .ago { color: var(--muted); font-size: 12px; }
+.kb .mono { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.kb .champs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+.kb .champs:empty { display: none; }
+.kb .champ { border-radius: 12px; padding: 10px 12px; background: var(--sun-soft); border: 1px solid var(--sun); font-size: 13px; min-width: 0; }
+.kb .champ.me { outline: 2px solid var(--violet); }
+.kb .champ b { display: block; font-family: var(--display); font-size: 16px; }
+.kb .champ .mono { word-break: break-all; }
+.kb .table-scroll { overflow-x: auto; }
+.kb table.hist { width: 100%; border-collapse: collapse; font-size: 14px; }
+.kb .hist th, .kb .hist td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.kb .hist th { font-size: 12px; color: var(--muted); font-weight: 700; }
+.kb .hist td.num, .kb .hist th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.kb .hist tr.top td { font-weight: 700; }
+.kb .hist tr.me td { background: var(--violet-soft); }
+@media (max-width: 640px) { .kb .champs { grid-template-columns: 1fr; } .kb .hist .hide-sm { display: none; } .kb .tabs2 { gap: 4px; } .kb .tabs2 button { padding: 6px 9px; } }

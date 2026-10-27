@@ -2,7 +2,7 @@
  * a race scored in the browser and a race recorded by the bot always agree. No network, no page, no wallet.
  *
  * FORMAT
- * - 4 races a day, 6 hours each, on UTC boundaries: 00:00, 06:00, 12:00, 18:00. The week is the Knode game's week
+ * - 4 races a day, 6 hours each, on UTC boundaries: 00:00, 06:00, 12:00, 18:00. The week is the KnodeGames week
  *   (Monday 00:00 UTC, counted from the game's start on 2026-10-19), so a week holds exactly 28 races.
  * - Every block a producer signs during a race moves its horse forward by that producer's handicap. Each race starts
  *   from 0. The winner is the horse with the most steps when the 6 hours are up.
@@ -21,11 +21,14 @@
  *   winning a fresh 6-hour race, from 4,000 simulated races with a fixed seed, so anyone re-running it gets the same c.
  * - Producers expected to sign fewer than 10 blocks in a race wait in the paddock: with so few blocks one lucky block
  *   decides the race, and no handicap gives them a fair chance (at 6 blocks it is about half a fair chance).
- * - The biggest producer always moves exactly 1 step per block. Handicaps are rounded to 4 decimals. */
+ * - The biggest producer always moves exactly 1 step per block. Handicaps are rounded to 4 decimals.
+ *
+ * SCORING A PICK
+ * - A pick on the winner scores a win (3 points); a pick on the horse that finishes 2nd or 3rd scores a show (1 point). */
 (function (root) {
   "use strict";
   const HOUR = 3600000, RACE = 6 * HOUR, LEG = HOUR, LEGS = 6, DAY = 24 * HOUR, WEEK = 7 * DAY;
-  const GENESIS = 1792368000000;    // the Knode game's week 0: Monday 2026-10-19 00:00 UTC (game-data/deployment.json genesisTime)
+  const GENESIS = 1792368000000;    // the KnodeGames week 0: Monday 2026-10-19 00:00 UTC (game-data/deployment.json genesisTime)
   const MIN_K = 10;                 // expected blocks in a race to enter (fewer: too few blocks for any handicap to be fair)
   const C_GRID = Array.from({ length: 26 }, (_, i) => i / 10);
   const SEED = 20261027, TRIALS = 4000;
@@ -43,7 +46,7 @@
   const legOf = (start, t, n = LEGS) => Math.min(n - 1, Math.max(0, Math.floor((t - start) / (RACE / n))));
   /** How many legs (cards) a race has: its cards array, else the current format. */
   const legsOf = (cards) => (Array.isArray(cards) && (cards.length === 3 || cards.length === 6) ? cards.length : LEGS);
-  /** The Knode game week of a time (same as the game contract's week_of: weeks before the start count as 0). */
+  /** The KnodeGames week of a time (same as the game contract's week_of: weeks before the start count as 0). */
   const weekOf = (t) => (t <= GENESIS ? 0 : Math.floor((t - GENESIS) / WEEK));
   const weekStart = (w) => GENESIS + w * WEEK;
   const dayOf = (t) => new Date(t).toISOString().slice(0, 10);   // UTC day
@@ -146,6 +149,10 @@
   }
   /** The winner of finished standings: most steps; on an exact tie, the horse that reached that total first. */
   function winners(st) { return st.length && st[0].steps > 0 ? [st[0].a] : []; }
+  /** Show: the horses that finish 2nd and 3rd (each with at least one step), once the race has a winner. A pick on the
+   *  winner is a win, not a show. Points: a win 3, a show 1 (owner's default 2026-10-27). */
+  const POINTS = Object.freeze({ win: 3, show: 1 });
+  function shows(st) { return winners(st).length ? st.slice(1, 3).filter((r) => r.steps > 0).map((r) => r.a) : []; }
   /** What the track shows during a race: a horse never passes the finish line, and the order among horses at the line
    *  stays hidden until the race ends. behind = steps behind the leader as drawn (capped at the line). */
   function track(st, line, ended) {
@@ -160,6 +167,6 @@
   root.KRaceMath = {
     HOUR, RACE, LEG, LEGS, DAY, WEEK, GENESIS, MIN_K, SEED, TRIALS,
     raceIndex, raceStart, raceId, parseRaceId, raceAt, legOf, legsOf, weekOf, weekStart, dayOf,
-    rng, handicapOf, winChances, calibrate, makeCard, cardForLeg, finishLine, standings, winners, track, lowerBound,
+    rng, handicapOf, winChances, calibrate, makeCard, cardForLeg, finishLine, standings, winners, shows, POINTS, track, lowerBound,
   };
 })(typeof window !== "undefined" ? window : globalThis);

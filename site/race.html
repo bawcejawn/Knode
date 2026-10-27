@@ -11,7 +11,7 @@
   <meta name="description" content="Every Koinos block producer is a horse. Four 6-hour races a day, handicapped by VHP so every horse has the same chance. Free, live from the chain.">
   <link rel="canonical" href="https://bawcejawn.github.io/Knode/site/race.html">
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="Knode">
+  <meta property="og:site_name" content="KnodeGames">
   <meta property="og:title" content="Koinos Producer Race">
   <meta property="og:description" content="Every Koinos block producer is a horse. Four 6-hour races a day, handicapped by VHP so every horse has the same chance. Free, live from the chain.">
   <meta property="og:url" content="https://bawcejawn.github.io/Knode/site/race.html">
@@ -31,6 +31,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Archivo:wdth,wght@62..125,600;62..125,800;62..125,900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="board.css">
   <style>
     .pr { max-width: 1000px; margin: 0 auto; padding: 28px 16px 60px; }
     .pr h1 { font-family: var(--display); font-size: clamp(28px, 4vw, 40px); margin: 0 0 6px; }
@@ -161,11 +162,12 @@
 <body>
   <header class="top">
     <div class="wrap top-row">
-      <a class="brand" href="./" aria-label="Knode home">
+      <a class="brand" href="./" aria-label="KnodeGames home">
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span class="brand-name">Knode</span>
+        <span class="brand-name">KnodeGames</span>
       </a>
       <nav class="tabs" aria-label="Sections">
+        <a href="games.html">Games</a>
         <a href="index.html#play">Play</a>
         <a href="index.html#leaderboard">Leaderboard</a>
         <a href="index.html#results">Results</a>
@@ -175,7 +177,7 @@
         <a href="race.html" aria-current="page">Race</a>
         <a href="index.html#welcome" class="tab-start">New here?</a>
       </nav>
-      <a class="btn btn-wallet" href="./#play">Play Knode</a>
+      <a class="btn btn-wallet" href="./#play">Play KnodeGames</a>
     </div>
   </header>
 
@@ -202,25 +204,22 @@
     <div id="pick-zone">
     <section class="card soon" id="picks-soon">
       <h2>Picks: coming next</h2>
-      <p class="note" style="margin-top:0">Soon: connect a wallet and pick one horse per race, up to 24 hours ahead. Picks lock when the race starts and are free. A weekly leaderboard follows the Knode game's week (Monday 00:00 UTC).</p>
+      <p class="note" style="margin-top:0">Soon: connect a wallet and pick one horse per race, up to 24 hours ahead. Picks lock when the race starts and are free. A weekly leaderboard follows the KnodeGames week (Monday 00:00 UTC).</p>
     </section>
 
     <section class="card" id="picks" hidden>
       <div class="head"><h2>My picks</h2><span class="note" id="picks-left" style="margin:0"></span></div>
       <p class="note" style="margin-top:0" id="picks-who"></p>
       <div class="pk-list" id="pk-list"></div>
-      <p class="note">Free: one horse per race, for the next 4 races. You can change a pick until its race starts; then the chain locks it. Up to 5 picks a day (changes count). The Mana is paid by Knode's Mana sponsor.</p>
+      <p class="note">Free: one horse per race, for the next 4 races. You can change a pick until its race starts; then the chain locks it. Up to 5 picks a day (changes count). The Mana is paid by KnodeGames' Mana sponsor.</p>
       <p class="note pk-msg" id="pk-msg" role="status"></p>
     </section>
     </div>
 
     <section class="card" id="board-box" hidden>
-      <div class="head"><h2>Leaderboard</h2><span class="note" id="board-sub" style="margin:0"></span></div>
-      <div class="tabs2" role="group" aria-label="Leaderboard"><button type="button" id="b-today" aria-pressed="false">Today</button><button type="button" id="b-week" aria-pressed="true">This week</button><button type="button" id="b-all" aria-pressed="false">All time</button></div>
-      <div id="champs" class="champs"></div>
-      <table class="hist"><thead><tr><th>#</th><th>Wallet</th><th class="num">Right picks</th><th class="num hide-sm">Picks</th><th class="num hide-sm">Knode answers</th><th class="num hide-sm">Knode score</th></tr></thead><tbody id="board-rows"></tbody></table>
-      <p class="note" id="board-me"></p>
-      <p class="note">Ranked by right winner picks; ties go to more picks placed, then more Knode questions answered, then a higher Knode score. Weeks are the Knode game's weeks (Monday 00:00 UTC). To be ranked, a wallet holds at least 1 VHP or has a Knode stake; other wallets see their own score here, only on their device.</p>
+      <div class="head"><h2>Leaderboard</h2></div>
+      <div id="race-board"></div>
+      <p class="note">A pick on the winner is a win (3 points). A pick on the horse that finishes 2nd or 3rd is a show (1 point). Ranked by points; ties go to more wins, then more picks placed, then more question-game answers, then a higher question-game score. Weeks are KnodeGames weeks (Monday 00:00 UTC). To be ranked, a wallet holds at least 1 VHP or has a KnodeGames stake; other wallets see their own score here, only on their device.</p>
     </section>
 
     <div class="cols">
@@ -242,8 +241,8 @@
     <section class="card" id="history">
       <div class="head"><h2>Results</h2></div>
       <div class="tabs2" role="group" aria-label="Show"><button type="button" id="h-today" aria-pressed="true">Today</button><button type="button" id="h-week" aria-pressed="false">This week</button></div>
-      <table class="hist"><thead><tr><th>Race (your time)</th><th>Status</th><th>Winner</th><th class="num hide-sm">Steps</th><th class="num hide-sm">Ahead by</th><th class="num hide-sm">Right picks</th><th></th></tr></thead><tbody id="hist-rows"></tbody></table>
-      <p class="note">Results are final once every block of the race is irreversible and matches on two independent Koinos nodes, the same check the Knode game uses. Days are UTC days; weeks are the Knode game's weeks.</p>
+      <table class="hist"><thead><tr><th>Race (your time)</th><th>Status</th><th>Winner</th><th class="num hide-sm">Steps</th><th class="num hide-sm">Ahead by</th><th class="num hide-sm">Wins · Shows</th><th></th></tr></thead><tbody id="hist-rows"></tbody></table>
+      <p class="note">Results are final once every block of the race is irreversible and matches on two independent Koinos nodes, the same check the question game uses. Days are UTC days; weeks are the KnodeGames weeks.</p>
     </section>
 
     <section class="card explain" id="how">
@@ -258,14 +257,15 @@
   </main>
 
   <nav class="tabbar" aria-label="Main">
+    <a href="games.html"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect></svg>Games</a>
     <a href="index.html#play"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.6 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg>Play</a>
     <a href="race.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 21V4"></path><path d="M5 4h12l-2.5 4L17 12H5"></path></svg>Race</a>
     <a href="swap.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4L3 8l4 4"></path><path d="M3 8h14"></path><path d="M17 20l4-4-4-4"></path><path d="M21 16H7"></path></svg>Swap</a>
-    <a href="index.html#leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg>Leaders</a>
     <button type="button" class="tb-more" aria-expanded="false" aria-controls="more-sheet"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>More</button>
   </nav>
   <div class="more-sheet" id="more-sheet" hidden>
     <nav class="more-panel" aria-label="More pages">
+      <a href="index.html#leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg><span>Question leaderboard</span></a>
       <a href="index.html#results"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg><span>Results</span></a>
       <a href="index.html#how"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"></path><path d="M9 9h6M9 13h6"></path></svg><span>Rules</span></a>
       <a href="get.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8M8 12h8"></path></svg><span>Get VHP</span></a>
@@ -283,7 +283,7 @@
   <footer class="foot">
     <div class="wrap">
       <div class="foot-row">
-        <span>Knode runs fully on Koinos. Open source.</span>
+        <span>KnodeGames runs fully on Koinos. Open source.</span>
         <span class="foot-links"><a href="start.html">New to Koinos</a> · <a href="node.html">Producer lookup</a> · <a href="burn.html">Burn KOIN</a> · <a href="pulse.html">Network pulse</a> · <a href="mana.html">Mana levels</a> · <a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a></span>
       </div>
     </div>
@@ -297,6 +297,7 @@
   <script src="nav.js"></script>
   <script src="chain-blocks.js"></script>
   <script src="race-math.js"></script>
+  <script src="board.js"></script>
   <script src="race.js"></script>
 </body>
 </html>
