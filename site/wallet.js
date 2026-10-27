@@ -198,6 +198,16 @@
 
   // ── Guest (site/guest.js) ──
   const GUEST_WARN = "Play-only wallet stored in this browser. Never send KOIN or VHP to it.";
+  // Audit (guest) M-2: say plainly that the browser itself can delete the key.
+  const GUEST_EVICT = "Your browser can delete this guest by itself (Safari does after 7 days without a visit). Back up the key to keep your points.";
+  // Audit (guest) L-1: a key someone hands you is theirs, not yours.
+  const RESTORE_WARN = "Only paste a key you backed up yourself. Anyone who gives you a key can take it back.";
+  // Audit (guest) L-3: what a guest sees when the sponsor won't pay (never Kondor or KOIN Vault advice).
+  const GUEST_NO_FREE = "Free answers are used up for today — try again after 00:00 UTC (5pm PT), or connect a wallet.";
+  // Audit (guest) L-5: on Koinos mainnet a guest only ever names the live Knode sponsor as payer and only answers on the
+  // Knode game, whatever deployment.json says (pinned like the chain id).
+  const PINNED_SPONSOR = "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8", PINNED_GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr";
+  const guestGame = () => (W.chainId === MAINNET_CHAIN_ID ? PINNED_GAME : (W.gameContract || null));
   // Owner switch: guest play is on only when game-data/deployment.json has "sponsor": { ..., "guest": true }. Keep it off
   // until the site has its own domain: on the shared bawcejawn.github.io origin, other pages there could read a guest key.
   const guestOn = () => !!(W.sponsor && W.sponsor.guest === true);
@@ -216,29 +226,60 @@
     close();
     let g = await window.KGuest.load();
     const isNew = !g;
-    if (!g) g = await window.KGuest.create();
+    if (!g) {
+      // Audit (guest) M-2: a guest this device had before is gone (the browser cleared it): say so, don't silently start over.
+      const last = window.KGuest.lastAddress && window.KGuest.lastAddress();
+      if (last) return guestMissing(last);
+      g = await window.KGuest.create();
+    }
     setAddress("guest", g.address);
     if (isNew) guestWelcome(g.address);
     return g.address;
+  }
+  function guestMissing(last) {
+    return new Promise((resolve) => {
+      open(h("h3", {}, "Your guest isn't here any more"),
+        h("p", {}, `Your previous guest ${last.slice(0, 6)}…${last.slice(-4)} is no longer on this device. Restore it from your backup, or start a new guest.`),
+        h("div", { class: "kw-row" },
+          h("button", { class: "kw-btn", type: "button", onclick: async () => { resolve(await restoreGuest()); } }, "Restore from backup"),
+          h("button", { class: "kw-btn", type: "button", onclick: async () => {
+            close();
+            try { const g = await window.KGuest.create(); setAddress("guest", g.address); guestWelcome(g.address); resolve(g.address); }
+            catch (e) { W.toast && W.toast(String(e.message || e), 8000); resolve(null); }
+          } }, "Start a new guest")));
+      onClose = () => resolve(null);
+    });
   }
   function guestWelcome(address) {
     open(h("h3", {}, "You're playing as a guest"),
       h("p", {}, "Your guest wallet is ", h("b", {}, address.slice(0, 6) + "…" + address.slice(-4)), ". Answering is free: the Knode Mana sponsor pays."),
       h("p", { class: "kw-warn" }, GUEST_WARN),
       h("p", {}, "It lives only in this browser. Back it up if you want to keep your points when you change phone or clear your browser."),
+      // Audit (guest) M-2: the browser can delete it by itself (Safari after 7 days without a visit).
+      h("p", { class: "kw-warn" }, GUEST_EVICT),
       h("div", { class: "kw-row" }, h("button", { class: "kw-btn", type: "button", onclick: () => backupGuest() }, "Back up guest key"), h("button", { class: "kw-btn", type: "button", onclick: () => close() }, "Start playing")));
   }
   async function backupGuest() {
+    // Audit (guest) L-4: read the key fresh, and show it only if it is the guest this page is connected as.
     const wif = await window.KGuest.backupWif();
     if (!wif) { close(); W.toast && W.toast("No guest key on this device.", 6000); return; }
+    let keyAddress = null;
+    try { keyAddress = lib.Signer.fromWif(wif).getAddress(); } catch { /* unreadable */ }
+    if (!keyAddress || (W.kind === "guest" && W.address && keyAddress !== W.address)) {
+      open(h("h3", {}, "Reload the page first"),
+        h("p", {}, "The guest key stored on this device isn't the guest this page is connected as (it was changed in another tab). Reload the page, then back it up."));
+      return;
+    }
     const key = h("div", { class: "kw-key", hidden: "" }, wif);
     const reveal = h("button", { class: "kw-btn", type: "button", onclick: () => { key.hidden = false; reveal.hidden = true; copy.hidden = false; } }, "Tap to reveal");
     const copy = h("button", { class: "kw-btn", type: "button", hidden: "", onclick: async () => { try { await navigator.clipboard.writeText(wif); copy.textContent = "Copied"; } catch { copy.textContent = "Select and copy it"; } } }, "Copy");
     open(h("h3", {}, "Back up your guest key"),
       h("p", { class: "kw-warn" }, "Anyone with this key controls this guest wallet. Keep it private: never paste it into a website or message."),
       h("p", {}, GUEST_WARN),
+      h("p", {}, "Guest ", h("b", {}, keyAddress)),
       reveal, key, h("div", { class: "kw-row" }, copy),
-      h("p", {}, "To restore it on another phone: Connect wallet → Play as a guest → Restore a guest key. To collect a prize, import it into Kondor (Import account → private key)."));
+      h("p", { class: "kw-warn" }, GUEST_EVICT),
+      h("p", {}, "To restore it on another phone: Connect wallet → Play as a guest → Restore a guest key."));
   }
   async function restoreGuest() {
     const input = h("input", { class: "kw-in", type: "password", autocomplete: "off", autocapitalize: "off", spellcheck: "false", placeholder: "Paste your guest key (starts with K or L)" });
@@ -246,13 +287,15 @@
     return new Promise((resolve) => {
       const go = h("button", { class: "kw-btn", type: "button", onclick: async () => {
         try {
+          if (!window.KGuest.isWif(input.value)) { status.textContent = "That isn't a valid private key (WIF)."; return; }
+          if (!window.confirm(`${RESTORE_WARN} Continue?`)) return;
           if (await window.KGuest.load() && !window.confirm("This replaces the guest already on this device. Make sure it's backed up. Continue?")) return;
           const g = await window.KGuest.restore(input.value);
           input.value = "";
           setAddress("guest", g.address); close(); resolve(g.address);
         } catch (e) { status.textContent = String(e.message || e); }
       } }, "Restore");
-      open(h("h3", {}, "Restore a guest key"), h("p", {}, "Paste the guest key you backed up. It stays in this browser."), input, h("div", { class: "kw-row" }, go), status, h("p", { class: "kw-warn" }, GUEST_WARN));
+      open(h("h3", {}, "Restore a guest key"), h("p", {}, "Paste the guest key you backed up. It stays in this browser."), h("p", { class: "kw-warn" }, RESTORE_WARN), input, h("div", { class: "kw-row" }, go), status, h("p", { class: "kw-warn" }, GUEST_WARN));
       onClose = () => resolve(null);
     });
   }
@@ -273,16 +316,16 @@
   }
   /** Explain why a guest can't do something, instead of failing silently. */
   function guestCant(ops) {
-    const sp = W.sponsor || {};
-    const game = Array.isArray(sp.covers) ? sp.covers[0] : null;
+    const game = guestGame();
     const isClaim = ops.some((o) => o && o.call_contract && o.call_contract.contract_id === game && Number(o.call_contract.entry_point) === CLAIM);
     if (isClaim) {
       open(h("h3", {}, "Collect your prize"),
-        h("p", {}, "Congratulations! A guest wallet has no Mana of its own to collect with, so collect it from Kondor:"),
-        h("p", {}, "1. Back up this guest key. 2. In Kondor, choose Import account → private key and paste it. 3. Open Knode in that browser, connect Kondor and tap Collect."),
+        // Audit (guest) L-2: a free player's claim must use its own Mana; the sponsor doesn't pay it yet.
+        h("p", {}, "Congratulations! Your prize is safe in the game and never expires."),
+        h("p", {}, "Collecting it from a guest wallet comes with the next Mana sponsor update; or back up this key, import it into Kondor (Import account → private key) and hold a little KOIN there to claim now."),
         h("div", { class: "kw-row" }, h("button", { class: "kw-btn", type: "button", onclick: () => backupGuest() }, "Back up guest key")),
         h("p", { class: "kw-warn" }, GUEST_WARN));
-      return new Error("A guest can't collect here: see the steps shown.");
+      return new Error("A guest can't collect yet: your prize is safe and never expires.");
     }
     open(h("h3", {}, "Connect KOIN Vault or Kondor to stake"),
       h("p", {}, "A guest wallet is for answering the daily questions only. To stake, withdraw or swap, connect a real wallet that holds your VHP."),
@@ -293,11 +336,13 @@
   /** Sign a guest's answers with the local key, paid by the sponsor, after checking exactly what will be sent. */
   async function sendGuest(label, ops) {
     const sp = sponsorFor(ops);
-    const game = sp && Array.isArray(sp.covers) ? sp.covers[0] : null;
+    const game = guestGame();
+    if (W.chainId === MAINNET_CHAIN_ID && (!sp || sp.address !== PINNED_SPONSOR || !Array.isArray(sp.covers) || !sp.covers.includes(PINNED_GAME)))
+      throw new Error("Guest play is paused: the page's Mana sponsor settings aren't the live Knode sponsor. Nothing was sent.");
     const answerOnly = !!game && ops.length > 0 && ops.every((o) => o && o.call_contract && o.call_contract.contract_id === game && Number(o.call_contract.entry_point) === ANSWER);
     if (!answerOnly) throw guestCant(ops);
     const rcLimit = String(sp.rcLimit || "100000000");
-    if (!(await sponsorSaysYes(sp, rcLimit, true))) throw new Error("Free answers are used up for today. Try again after 00:00 UTC, or connect a wallet.");
+    if (!(await sponsorSaysYes(sp, rcLimit, true))) throw new Error(GUEST_NO_FREE);
     const signer = await window.KGuest.signer();
     if (signer.getAddress() !== W.address) throw new Error("The guest key on this device changed. Reconnect as a guest.");
     signer.provider = W.provider;
@@ -308,12 +353,31 @@
     W.status && W.status(`Sending “${label}” (free: the Mana sponsor pays)…`);
     tx.transaction = await tx.sign();
     checkGuestTx(tx.transaction, { sponsor: sp.address, payee: W.address, chainId: W.chainId, game, rcLimit });
-    const receipt = await tx.send();
+    let receipt;
+    try { receipt = await tx.send(); }
+    catch (e) {
+      // Never retried with the guest's own Mana (it has none). A sponsor refusal gets the guest message; a game error
+      // (e.g. "answers for this question are closed") is shown as is.
+      const m = String((e && e.message) || e);
+      if (/SPONSOR|insufficient|\brc\b|rc_limit|mana|payer|authori[sz]/i.test(m)) throw new Error(GUEST_NO_FREE);
+      throw e;
+    }
     if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "the contract refused it"));
     const id = tx.transaction && tx.transaction.id;
     W.status && W.status("Sent. Waiting for the next block…");
+    guestNudge();
     if (id) { try { await W.provider.wait(id, "byBlock", 90000); return id; } catch { return null; } }
     return null;
+  }
+  /** Audit (guest) M-2: once, after a guest's first answer, ask them to back the key up. */
+  function guestNudge() {
+    if (store.get(localStorage, "kn-guest-nudged") === "1") return;
+    store.set(localStorage, "kn-guest-nudged", "1");
+    setTimeout(() => {
+      open(h("h3", {}, "Back up your guest"),
+        h("p", {}, "Nice, your first answer is in! " + GUEST_EVICT),
+        h("div", { class: "kw-row" }, h("button", { class: "kw-btn", type: "button", onclick: () => backupGuest() }, "Back up guest key"), h("button", { class: "kw-btn", type: "button", onclick: () => close() }, "Later")));
+    }, 0);
   }
   /** Throws unless the transaction is exactly: the sponsor pays, this guest is the payee, Koinos mainnet (or the pinned
    *  chain), within the asked Mana limit, and every operation is a game answer. */
@@ -476,7 +540,8 @@
     } finally { close(); }
   }
 
-  function init({ provider, onChange, toast, status, chainId, payer, sponsor } = {}) {
+  function init({ provider, onChange, toast, status, chainId, payer, sponsor, game } = {}) {
+    W.gameContract = typeof game === "string" ? game : null;   // the game contract (pinned on mainnet: PINNED_GAME)
     W.payer = payer === "sponsor" ? "sponsor" : "self";
     W.sponsor = sponsor && typeof sponsor.address === "string" ? sponsor : null;
     // Koinos mainnet's chain id is the default pin (audit L-3), so every page (burn, producer lookup included) refuses

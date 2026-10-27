@@ -1530,7 +1530,7 @@
       armed = 0; window.KWallet.disconnect();
     });
     const initWallet = () => window.KWallet && window.KWallet.init({
-      provider: S.provider, toast, chainId: S.dep && S.dep.chainId, payer: S.dep && S.dep.payer, sponsor: S.dep && S.dep.sponsor,
+      provider: S.provider, toast, chainId: S.dep && S.dep.chainId, payer: S.dep && S.dep.payer, sponsor: S.dep && S.dep.sponsor, game: S.dep && S.dep.contract,
       onChange: (addr) => {
         S.account = addr; S.player = null; S.entry = null; S.activeStake = null; S.balances = null; S.claims = [];
         if (addr) afterConnect(); else { toast("Wallet disconnected"); S.board = {}; renderAll(); }
