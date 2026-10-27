@@ -14,5 +14,19 @@
   "timelockLength": "172800000",
   "chainId": "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==",
   "producerKey": "AzCYCDLDa49PPVHKk60xQbOErS6XY1TcEA8bkSo8Sk6E",
-  "payer": "self"
+  "payer": "sponsor",
+  "sponsor": {
+    "address": "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8",
+    "covers": [
+      "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr",
+      "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR",
+      "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq",
+      "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK"
+    ],
+    "tokens": [
+      "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq",
+      "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK"
+    ],
+    "rcLimit": "100000000"
+  }
 }
