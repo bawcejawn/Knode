@@ -265,7 +265,11 @@ test("publish: a pick marked both win and show, or a board row with more wins an
   const bad11 = race0((r) => { r.standings.reverse(); });
   const bad12 = race0((r) => { r.standings.push({ ...r.standings[r.standings.length - 1] }); });
   const bad13 = race0((r) => { r.checked = true; });
-  for (const d of [bad1, bad2, bad3, bad4, bad5, bad6, bad7, bad8, bad9, bad10, bad11, bad12, bad13]) assert.equal(shapeOk(d), false, d);
+  const digits = Number("1".repeat(30));                              // a number that reads as an address once turned into text
+  const bad14 = race0((r) => { r.picks[0][0] = digits; });
+  const bad15 = tmp(); const b15 = JSON.parse(JSON.stringify(board)); b15.week.rows[0].a = digits;
+  fs.writeFileSync(path.join(bad15, "board.json"), JSON.stringify(b15));
+  for (const d of [bad1, bad2, bad3, bad4, bad5, bad6, bad7, bad8, bad9, bad10, bad11, bad12, bad13, bad14, bad15]) assert.equal(shapeOk(d), false, d);
 });
 
 test("workflow: the recorder holds no secret and no write token; only the publish job pushes, only to race-data, running no repository code", () => {
