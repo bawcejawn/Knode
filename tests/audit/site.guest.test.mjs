@@ -221,3 +221,9 @@ test("guests pick only on the pinned Knode race contract (mainnet)", () => {
   assert.match(walletSrc, /const PINNED_RACE = "1EN7xU8R9tQXjHvrX79qZvvvGkkKWVnB5K";/);
   assert.match(walletSrc, /const guestRace = \(\) => \(W\.chainId === MAINNET_CHAIN_ID \? \(PINNED_RACE \|\| null\)/);
 });
+
+test("race.html offers guest play too: it loads guest.js before wallet.js, from this site only", () => {
+  const h = fs.readFileSync(`${APP}/site/race.html`, "utf8");
+  const g = h.indexOf('<script src="guest.js"></script>'), wlt = h.indexOf('<script src="wallet.js"></script>');
+  assert.ok(g > 0 && wlt > g);
+});

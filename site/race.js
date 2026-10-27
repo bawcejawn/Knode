@@ -86,6 +86,7 @@
 
   // ── the race on the track ──
   function render() {
+    if (!B) return;                                     // the blocks aren't loaded yet (the picks panel can be first)
     const cur = M.raceAt(Date.now());
     const race = raceObj(view == null ? cur.index : view);
     const live = race.index === cur.index, ended = Date.now() >= race.end;
@@ -356,9 +357,11 @@
 
   // ── start ──
   (async () => {
+    // The wallet's settings (Mana sponsor, guest play) first, so Connect offers everything at once.
+    const picksReady = setupPicks().catch(() => {});
     try { await refresh(true); }
     catch (e) { say("Couldn't reach the Koinos network. Trying again in a moment…"); }
-    setupPicks().catch(() => {});
+    await picksReady; renderPicks();
     loadBoard();
     setInterval(() => { if (!document.hidden) loadBoard(); }, 300000);
     setInterval(() => { if (!document.hidden && raceContract) loadMine(); }, 60000);
