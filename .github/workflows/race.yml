@@ -1,4 +1,4 @@
-# Producer Race recorder: every hour, takes the handicap cards (every 2 hours: each race's start and 2 updates) and
+# Producer Race recorder: every hour, takes the handicap cards (every hour: each race's start and 5 updates) and
 # records finished races once their blocks are irreversible and match on two nodes. See bot/race.ts.
 #
 # Two jobs, like the main bot, so repository code never runs next to a write token:
@@ -11,7 +11,7 @@ name: Producer race
 
 on:
   schedule:
-    - cron: "37 * * * *"     # every hour at minute 37 (a card is taken by the last run before each 2-hour leg)
+    - cron: "37 * * * *"     # every hour at minute 37 (a card is taken by the last run before each 1-hour leg)
   workflow_dispatch: {}
 
 concurrency:
@@ -123,7 +123,7 @@ jobs:
               assert type(j["races"]) is list and len(j["races"]) == 28, f
               for r in j["races"]:
                   assert set(r) == {"id", "start", "end", "cards", "result"} and re.fullmatch(r"\d{4}-\d{2}-\d{2}T(00|06|12|18)", r["id"]), f
-                  assert type(r["cards"]) is list and len(r["cards"]) == 3 and all(card_ok(c) for c in r["cards"]) and result_ok(r["result"]), f + " " + r["id"]
+                  assert type(r["cards"]) is list and len(r["cards"]) in (3, 6) and all(card_ok(c) for c in r["cards"]) and result_ok(r["result"]), f + " " + r["id"]
           print("race files ok")
           PY
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"

@@ -54,7 +54,7 @@
   function raceObj(index) {
     const start = M.raceStart(index), id = M.raceId(index), rec = recorded(id);
     const cards = rec && Array.isArray(rec.cards) && rec.cards.some(Boolean) ? rec.cards : null;
-    return { index, id, start, end: start + M.RACE, number: ((index % 4) + 4) % 4 + 1, cards: cards || (prov ? [prov, null, null] : null), provisional: !cards, result: rec && rec.result };
+    return { index, id, start, end: start + M.RACE, number: ((index % 4) + 4) % 4 + 1, cards: cards || (prov ? [prov, ...new Array(M.LEGS - 1).fill(null)] : null), provisional: !cards, result: rec && rec.result };
   }
   async function readVhp(addrs) {
     const out = [], queue = addrs.slice();
@@ -97,7 +97,8 @@
     if (final && Array.isArray(race.result.standings)) st = race.result.standings.map((x) => ({ ...x }));
     else if (race.cards && B && B.ts[0] <= race.start) st = M.standings(B, race, race.cards, Math.min(headT + 1, race.end));
     const line = M.finishLine(race.cards || []) || (race.result && race.result.line) || 0;
-    const legNow = M.legOf(race.start, Math.min(Date.now(), race.end - 1)), card = race.cards ? M.cardForLeg(race.cards, legNow) : null;
+    const nLegs = M.legsOf(race.cards), legMs = M.RACE / nLegs;
+    const legNow = M.legOf(race.start, Math.min(Date.now(), race.end - 1), nLegs), card = race.cards ? M.cardForLeg(race.cards, legNow) : null;
 
     // Title, tag and clock
     $("race-title").textContent = `Race ${race.number} of 4 (${race.id.slice(11)}:00 UTC) · ${dayTime(race.start)} – ${clock(race.end)}`;
@@ -109,10 +110,13 @@
     $("clock-fill").classList.toggle("done", frac >= 1 || !live);
     $("clock").setAttribute("aria-valuenow", String(Math.round(frac * 100)));
     $("clock-txt").textContent = live ? `${dur(race.end - Date.now())} left · finishes ${clock(race.end)}` : ended ? "Race over" : `Starts in ${dur(race.start - Date.now())}`;
-    ["leg1", "leg2", "leg3"].forEach((id, l) => {
-      const t = race.start + l * M.LEG;
-      $(id).textContent = l === 0 ? `Start ${clock(t)}` : `${Date.now() >= t ? "Card" : "Next card"} ${l + 1} at ${clock(t)}`;
-    });
+    // A dashed mark at every handicap update (every hour; every 2 hours for races recorded before hourly cards).
+    const marks = $("clock-marks");
+    if (marks.childElementCount !== nLegs - 1) marks.replaceChildren(...Array.from({ length: nLegs - 1 }, (_, l) => el("div", { class: "clock-leg", style: `left:${((l + 1) / nLegs) * 100}%` })));
+    const nextLeg = Date.now() < race.start ? race.start : race.start + (legNow + 1) * legMs;
+    $("leg1").textContent = `Start ${clock(race.start)}`;
+    $("leg2").textContent = `Handicap updates every ${nLegs === 6 ? "hour" : "2 hours"}`;
+    $("leg3").textContent = live && nextLeg < race.end ? `Next card ${clock(nextLeg)}` : `Finish ${clock(race.end)}`;
 
     // Lanes
     const track = $("track");
@@ -175,16 +179,17 @@
       lineNote, ended ? "" : "Steps behind are counted with the handicap.",
     ].filter(Boolean).join(" ");
 
-    renderCard(race, card, legNow);
+    renderCard(race, card, legNow, nLegs);
     renderFeed(race, card);
     renderHistory();
   }
 
-  function renderCard(race, card, leg) {
-    $("card-title").textContent = `Handicap card ${leg + 1} of 3`;
+  function renderCard(race, card, leg, n) {
+    const legMs = M.RACE / n;
+    $("card-title").textContent = `Handicap card ${leg + 1} of ${n}`;
     if (!card) { $("card-sub").textContent = "No card yet."; $("card-rows").replaceChildren(); $("paddock-box").hidden = true; return; }
     const total = card.field.concat(card.paddock).reduce((s, x) => s + x.vhp, 0);
-    $("card-sub").textContent = `${race.provisional ? "Provisional, from VHP right now" : `Set at ${dayTime(card.at)}`}. Applies ${clock(race.start + leg * M.LEG)}–${clock(race.start + (leg + 1) * M.LEG)}. Luck trim c = ${card.c}.`;
+    $("card-sub").textContent = `${race.provisional ? "Provisional, from VHP right now" : `Set at ${dayTime(card.at)}`}. Applies ${clock(race.start + leg * legMs)}–${clock(race.start + (leg + 1) * legMs)}. Luck trim c = ${card.c}.`;
     $("card-rows").replaceChildren(...card.field.map((r) => el("tr", {},
       el("td", {}, el("span", { class: "pr-dot", style: `background:${colour(r.a)};margin-right:6px` }), el("a", { class: "mono", href: EXPLORER + r.a, target: "_blank", rel: "noopener noreferrer", text: nameOf(r.a) })),
       el("td", { class: "num", text: `${fmt((r.vhp / total) * 100, r.vhp / total < 0.01 ? 2 : 1)}%` }),
@@ -197,7 +202,7 @@
     const items = [];
     for (let i = B.sig.length - 1; i >= 0 && items.length < 8; i--) {
       const a = B.signers[B.sig[i]], live = B.ts[i] >= race.start && B.ts[i] < race.end;
-      const leg = M.legOf(race.start, B.ts[i]), c = live && race.cards ? M.cardForLeg(race.cards, leg) : card, h = c && c.field.find((x) => x.a === a);
+      const leg = M.legOf(race.start, B.ts[i], M.legsOf(race.cards)), c = live && race.cards ? M.cardForLeg(race.cards, leg) : card, h = c && c.field.find((x) => x.a === a);
       items.push(el("li", {}, el("span", { class: "pr-dot", style: `background:${colour(a)}` }), `${nameOf(a)} `, el("b", { text: !live ? "between races" : h ? `+${h.h.toFixed(2)}` : "paddock" }),
         el("span", { class: "ago", "data-t": String(B.ts[i]), text: ` · block ${fmt(B.from + i)} · ${Math.max(0, Math.round((Date.now() - B.ts[i]) / 1000))} s ago` })));
     }
@@ -234,6 +239,10 @@
   const ROOT = new URL("../", location.href);
   const W = window.KWallet;
   let raceContract = null, myPicks = new Map(), usage = null, sending = false, board = null, boardMode = "week";
+  // The pick panel is redrawn only when something in it changed (the race redraws every few seconds), and a horse you
+  // chose but haven't sent yet is kept across redraws.
+  let picksKey = "";
+  const drafts = new Map();
   const me = () => (W && W.address) || null;
   async function setupPicks() {
     let rdep = null, dep = null;
@@ -265,9 +274,15 @@
     }
     renderPicks(); render();
   }
-  function renderPicks() {
+  function renderPicks(force = false) {
     if (!raceContract) return;
     const who = me(), list = $("pk-list"), cur = M.raceIndex(Date.now());
+    // Leave the panel alone while a list is open or focused, or when nothing in it changed.
+    if (!force && list.contains(document.activeElement) && document.activeElement.tagName === "SELECT") return;
+    const fieldSig = [1, 2, 3, 4].map((k) => { const r = raceObj(cur + k), c = (r.cards && !r.provisional && M.cardForLeg(r.cards, 0)) || prov; return c ? `${c.at}:${c.field.length}` : "-"; }).join(",");
+    const key = JSON.stringify([who, W && W.kind, cur, sending, usage && usage.picks_today, usage && usage.max_picks_per_day, [...myPicks], fieldSig, [...weeks.keys()]]);
+    if (!force && key === picksKey && list.childElementCount) return;
+    picksKey = key;
     if (!who) {
       $("picks-who").textContent = "Connect a wallet to pick (Kondor, KOIN Vault or a guest wallet).";
       $("picks-left").textContent = "";
@@ -286,7 +301,7 @@
     // The next 4: open.
     // The field for a race: its own starting card once the recorder has set it (about an hour before the start);
     // until then the latest card there is (the live race's current one), or the provisional card made here.
-    const latest = () => { const lr = raceObj(cur); return (lr.cards && M.cardForLeg(lr.cards, M.legOf(lr.start, Date.now()))) || prov; };
+    const latest = () => { const lr = raceObj(cur); return (lr.cards && M.cardForLeg(lr.cards, M.legOf(lr.start, Date.now(), M.legsOf(lr.cards)))) || prov; };
     const fieldOf = (r) => (r.cards && !r.provisional && M.cardForLeg(r.cards, 0)) || latest();
     const label = (c, x) => { const tot = c.field.concat(c.paddock || []).reduce((t, y) => t + y.vhp, 0); const sh = tot ? (x.vhp / tot) * 100 : 0; return `${nameOf(x.a)} · ${fmt(sh, sh < 1 ? 2 : 1)}% VHP · ×${x.h.toFixed(2)} per block`; };
     for (let k = 1; k <= 4; k++) {
@@ -294,12 +309,13 @@
       const opts = c ? c.field : [];
       const sel = el("select", { "aria-label": `Horse for the race at ${dayTime(r.start)}` },
         el("option", { value: "", text: !opts.length ? "Loading the horses…" : mine ? "Change to…" : "Choose a horse…" }),
-        ...opts.map((x) => { const o = el("option", { value: x.a, text: label(c, x) }); if (x.a === mine) o.selected = true; return o; }));
+        ...opts.map((x) => { const o = el("option", { value: x.a, text: label(c, x) }); if (x.a === (drafts.get(cur + k) || mine)) o.selected = true; return o; }));
       if (!opts.length) sel.disabled = true;
+      sel.addEventListener("change", () => { if (sel.value) drafts.set(cur + k, sel.value); else drafts.delete(cur + k); });
       const btn = el("button", { class: "btn", type: "button", onclick: () => sendPick(cur + k, sel.value) }, mine ? "Change" : "Pick");
       if (sending || used >= max) btn.disabled = true;
       rows.push(el("div", { class: "pk-row" },
-        el("div", { class: "pk-when" }, el("b", { text: `${dayTime(r.start)}` }), el("span", { text: `${r.id.slice(11)}:00 UTC · locks in ${dur(r.start - Date.now())}` })),
+        el("div", { class: "pk-when" }, el("b", { text: `${dayTime(r.start)}` }), el("span", { "data-lock": String(r.start), text: `${r.id.slice(11)}:00 UTC · locks in ${dur(r.start - Date.now())}` })),
         el("div", {}, sel, mine ? el("div", { class: "pk-now ago", text: `Your pick: ${nameOf(mine)}` }) : null), btn));
     }
     // Finished races today with a pick: right or not.
@@ -314,22 +330,64 @@
     }
     list.replaceChildren(...rows);
   }
+  // ── the pick pop-up: wallet → sent → confirmed on the chain ──
+  let modal = null;
+  function pickModal(state, title, lines = [], actions = []) {
+    if (!modal) {
+      modal = el("div", { class: "pk-modal", role: "dialog", "aria-modal": "true", "aria-labelledby": "pk-m-title" });
+      modal.addEventListener("click", (e) => { if (e.target === modal && state !== "busy") closeModal(); });
+      document.body.append(modal);
+    }
+    const icon = { busy: el("span", { class: "pk-spin", "aria-hidden": "true" }), ok: el("span", { class: "pk-big ok", text: "✓" }), bad: el("span", { class: "pk-big bad", text: "✗" }), info: el("span", { class: "pk-big", text: "ℹ" }) }[state];
+    modal.replaceChildren(el("div", { class: `pk-box ${state}` }, icon, el("h3", { id: "pk-m-title", text: title }), ...lines.map((l) => (typeof l === "string" ? el("p", { text: l }) : l)),
+      actions.length ? el("div", { class: "pk-acts" }, ...actions) : null));
+    modal.hidden = false;
+    const btn = modal.querySelector("button"); if (btn) btn.focus();
+  }
+  function closeModal() { if (modal) modal.hidden = true; }
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && modal && !modal.hidden && !modal.querySelector(".pk-spin")) closeModal(); });
+  const okBtn = (text = "Done") => el("button", { class: "btn", type: "button", onclick: closeModal }, text);
+
   async function sendPick(index, horse) {
     const who = me();
     if (!who || !raceContract || sending) return;
-    if (!KBlocks.isAddr(horse)) { $("pk-msg").textContent = "Choose a horse first."; return; }
-    if (myPicks.get(index) === horse) { $("pk-msg").textContent = "That is already your pick."; return; }
-    if (Date.now() >= M.raceStart(index)) { $("pk-msg").textContent = "That race has started: picks are locked."; return; }
-    sending = true; renderPicks();
-    $("pk-msg").textContent = `Sending your pick: ${nameOf(horse)} for ${dayTime(M.raceStart(index))}…`;
+    const when = `${dayTime(M.raceStart(index))} (${M.raceId(index).slice(11)}:00 UTC)`;
+    if (!KBlocks.isAddr(horse)) return pickModal("info", "Choose a horse first", ["Pick a producer from the list, then press Pick."], [okBtn("OK")]);
+    if (myPicks.get(index) === horse) return pickModal("info", "That is already your pick", [`${nameOf(horse)} for the race at ${when}.`], [okBtn("OK")]);
+    if (Date.now() >= M.raceStart(index)) return pickModal("bad", "That race has started", ["Picks lock when a race starts."], [okBtn("OK")]);
+    sending = true; renderPicks(true);
+    const wallet = W.kind === "guest" ? "your guest wallet" : W.label ? W.label() : "your wallet";
+    pickModal("busy", W.kind === "guest" ? "Sending your pick…" : `Confirm in ${wallet}`, [`${nameOf(horse)} for the race at ${when}.`, W.kind === "guest" ? "Free: the Knode Mana sponsor pays." : "Free: the Knode Mana sponsor pays the Mana. Approve it in your wallet."]);
     try {
       const { operation } = await raceContract.functions.pick({ player: who, race: String(index), horse }, { onlyOperation: true });
       const id = await W.send(`pick ${nameOf(horse)} for the race at ${dayTime(M.raceStart(index))}`, [operation]);
-      $("pk-msg").textContent = id ? `Picked ${nameOf(horse)}. It locks when the race starts.` : "Sent; it should show in a few seconds.";
+      pickModal("busy", "Sent. Checking the chain…", [`${nameOf(horse)} for the race at ${when}.`]);
+      // Read the pick back from the race contract: confirmed only when the chain has it.
+      let onChain = false;
+      for (let t = 0; t < 10 && !onChain; t++) {
+        try { const r = await raceContract.functions.get_pick({ player: who, race: String(index) }); onChain = !!(r.result && r.result.pick && r.result.pick.horse === horse); } catch { /* try again */ }
+        if (!onChain) await new Promise((res) => setTimeout(res, 3000));
+      }
+      drafts.delete(index);
+      if (onChain) {
+        pickModal("ok", "Pick confirmed", [
+          el("p", {}, "Your horse: ", el("b", { text: nameOf(horse) })),
+          `Race: ${when}. It locks when the race starts; until then you can change it (changes count toward today's 5).`,
+          id ? el("p", { class: "ago mono", text: `Transaction ${String(id).slice(0, 18)}…` }) : null,
+          el("p", { class: "ago" }, el("a", { href: EXPLORER + who, target: "_blank", rel: "noopener noreferrer", text: "See your wallet on Koinosscan" })),
+        ].filter(Boolean), [okBtn()]);
+      } else {
+        pickModal("info", "Sent, not seen on the chain yet", ["Your wallet sent it. It usually shows within a minute; this panel updates by itself.", id ? `Transaction ${String(id).slice(0, 18)}…` : ""].filter(Boolean), [okBtn("OK")]);
+      }
     } catch (e) {
       const m = String((e && e.message) || e);
-      $("pk-msg").textContent = /locked|started/i.test(m) ? "That race has started: picks are locked." : /used up/i.test(m) ? "Today's picks are used up (changes count). More tomorrow (UTC)." : /reject|denied|cancel/i.test(m) ? "Cancelled in your wallet." : `Not sent: ${m.slice(0, 200)}`;
-    } finally { sending = false; await loadMine(); }
+      const why = /locked|started/i.test(m) ? "That race has started: picks are locked."
+        : /used up/i.test(m) ? "Today's picks are used up (changes count). More tomorrow, 00:00 UTC."
+        : /already your pick/i.test(m) ? "That is already your pick."
+        : /reject|denied|cancel/i.test(m) ? "Cancelled in your wallet. Nothing was sent."
+        : `Not sent: ${m.slice(0, 200)}`;
+      pickModal(/Cancelled/.test(why) ? "info" : "bad", /Cancelled/.test(why) ? "Cancelled" : "Pick not sent", [why], [okBtn("OK")]);
+    } finally { sending = false; await loadMine(); renderPicks(true); }
   }
 
   // ── leaderboard (the recorder's board.json) ──
@@ -385,6 +443,7 @@
         $("clock-fill").style.width = `${frac * 100}%`;
         if (view == null) $("clock-txt").textContent = `${dur(race.end - Date.now())} left · finishes ${clock(race.end)}`;
       }
+      document.querySelectorAll("#pk-list [data-lock]").forEach((n) => { const t = Number(n.dataset.lock); n.textContent = n.textContent.replace(/locks in .*$/, `locks in ${dur(t - Date.now())}`); });
       document.querySelectorAll("#feed .ago[data-t]").forEach((n) => { const t = Number(n.dataset.t); n.textContent = n.textContent.replace(/· \d+ s ago$/, `· ${Math.max(0, Math.round((Date.now() - t) / 1000))} s ago`); });
     }, 1000);
   })();
