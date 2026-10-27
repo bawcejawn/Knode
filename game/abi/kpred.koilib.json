@@ -659,6 +659,20 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "acc_seed_hi": {
+                "type": "uint64",
+                "id": 20,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "acc_seed_lo": {
+                "type": "uint64",
+                "id": 21,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
@@ -1098,6 +1112,13 @@
               "split": {
                 "type": "uint64",
                 "id": 44,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "seed_part": {
+                "type": "uint64",
+                "id": 45,
                 "options": {
                   "jstype": "JS_STRING"
                 }
@@ -2078,23 +2099,30 @@
                   "jstype": "JS_STRING"
                 }
               },
-              "acc_hi": {
+              "week_stake": {
                 "type": "uint64",
                 "id": 11,
                 "options": {
                   "jstype": "JS_STRING"
                 }
               },
-              "acc_lo": {
+              "week": {
                 "type": "uint64",
                 "id": 12,
                 "options": {
                   "jstype": "JS_STRING"
                 }
               },
-              "acc_time": {
+              "next_stake": {
                 "type": "uint64",
                 "id": 13,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "next_week": {
+                "type": "uint64",
+                "id": 14,
                 "options": {
                   "jstype": "JS_STRING"
                 }
@@ -2351,6 +2379,17 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "weight": {
+                "type": "uint64",
+                "id": 31,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "weight_set": {
+                "type": "bool",
+                "id": 32
               }
             }
           },

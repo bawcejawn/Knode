@@ -1,7 +1,7 @@
 # KnodeGames Vault (game v6): design
 
-Status: **draft, being built on branch `vault-v6`.** Nothing here is deployed or scheduled. Owner answers still open
-are marked *(default)*: the build uses my recommendation until the owner confirms or changes it.
+Status: **being built on branch `vault-v6`.** Nothing here is deployed or scheduled. Every rule below was confirmed by
+the owner on 2026-10-27 (checklist questions 1–9).
 
 v6 upgrades the live question-game contract `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr` in place. Every stored v5 value keeps
 its place and meaning; the question game stays game #1 with its on-chain scoring; other games are added beside it.
@@ -28,8 +28,9 @@ are closed and paid by the v5 code paths unchanged. The per-game stake accumulat
 | from_week | first week the game earns or pays |
 
 - `propose_game` (owner) announces a new game or a re-activation; `apply_game` after 48 h (within 7 days).
-- `deactivate_game` (owner) is immediate: no new deposits or moves in; it stops earning from the next week. Results
-  for weeks it already earned can still be posted. Withdrawals are never affected. *(default)*
+- `deactivate_game` (owner) is immediate: no new deposits or moves in; it stops earning from the next week, and its
+  VHP's rewards go to the games still running. Results for weeks it already earned can still be posted. Withdrawals
+  are never affected.
 - At most 12 games, so a week's close loop stays bounded.
 
 ## Per-game stakes
@@ -46,28 +47,34 @@ are closed and paid by the v5 code paths unchanged. The per-game stake accumulat
 ## Weekly close (once per week, for every game at once)
 1. `gain = holdings − owed` (rolled-over buckets are owed, so they never count as new gain).
 2. `fee = 5% × (gain − carry)`, where the carry is unused prize money returned to the pool (already charged once).
-   The fee is owed to the owner **in VHP** *(default)*. KOIN fees earned before v6 stay claimable as KOIN.
-3. Free prizes: each free-prize game needs its carried shortfall plus 3 VHP. If the pot can't cover all of it, each
-   game gets a share in proportion to what it needs, and the rest carries forward, capped at 12 VHP per game (4 weeks)
-   *(default)*. Prizes never come out of stakes or seed.
-4. The rest R is split by each game's **time-weighted stake** since the last close *(default)*:
-   `B_g = R × acc_g ÷ Σacc`. No stake anywhere: all of R goes to game 1.
+   The fee is owed to the owner **in VHP**. KOIN fees earned before v6 stay claimable as KOIN.
+3. **The seed's part pays the free prizes.** The pot is split by who produced it: the seed's VHP over time against
+   everything the vault holds that produced (stakes, seed, unpaid pots, rollovers, the fee waiting in VHP). Only the
+   seed's part pays prizes; players' rewards never do (owner: "staked players should be priority").
+   Each free-prize game needs its carried shortfall plus 3 VHP. If the seed's part can't cover all of it, each game
+   gets a share in proportion to what it needs, and the rest carries forward, capped at 12 VHP per game (4 weeks).
+   Whatever the seed's part doesn't need for prizes joins the split. **The owner keeps the seed large enough:** at
+   ~90 VHP of weekly rewards on ~22,000 VHP, 12 VHP of prizes a week needs a seed of roughly 3,000 VHP.
+4. The rest R is split by each staked game's **stake for that week, each player's stake counted at its lowest**:
+   a deposit counts from the next week, a withdrawal lowers this week at once (owner: "an increase only impacts the
+   following week"). `B_g = R × W_g ÷ ΣW`. No stake anywhere: all of R goes to game 1. A stopped game's share goes to
+   the games still running.
 5. Each game's bucket also gets back its own rollover from earlier weeks (fee-free).
 
 ## Inside a game
 - Game 1: exactly the v5 machinery (questions, settle, finalize, claim). Its pot is `B_1 + its rollover + prize_1`.
-  Free prize 2 + 1 VHP *(tie rule default)*: players tied for 1st share all 3; otherwise 1st gets 2 and players tied
+  Free prize 2 + 1 VHP : players tied for 1st share all 3; otherwise 1st gets 2 and players tied
   for 2nd share 1. A share nobody can take goes to basket B (as in v5).
 - Other staked games: the operator posts `(player, points)` batches for players with at least 1 point. The vault
   checks each player's own frozen or live stake (≥ 1 VHP, not voided) and adds them to that game's score buckets
-  (points 1–255) *(default)*. Then the same paged finalize and the same basket math as game 1.
+  (points 1–255). Then the same paged finalize and the same basket math as game 1.
 - Other free games: the operator posts the 1st-place and 2nd-place wallets (ties allowed, up to 10 each). Each must have
-  less than the minimum stake in that game that week *(default)*. A prize nobody wins returns to the pool, fee-free.
+  less than the minimum stake in that game that week. A prize nobody wins returns to the pool, fee-free.
 
 ### Results timeline (other games)
 | Step | When | Who |
 |---|---|---|
-| post results / prize winners | after the week ends, until the week's results deadline (week end + 3 days) *(default)* | operator |
+| post results / prize winners | after the week ends, until the week's results deadline (week end + 3 days) | operator |
 | seal | once posting is complete | operator |
 | correct a player's points, remove a winner, or void the game's week | until seal + 12 h | owner |
 | finalize | after the vault week is closed and seal + 12 h | anyone |
@@ -77,7 +84,7 @@ One game's missing results never hold up another game or the question game.
 
 ## Claims
 `claim_game(game, week, player)` pays a staked winner or a free-prize winner. Unclaimed rewards never expire
-*(default)*. Every claim ends with `assertSolvent`.
+. Every claim ends with `assertSolvent`.
 
 ## Compatibility
 - `get_player`, `get_state` and every v5 method keep their arguments and results. New fields are appended only.
@@ -85,6 +92,15 @@ One game's missing results never hold up another game or the question game.
   games shows `stake_other > 0`, a new field; the sponsor's next version (Build 3's allowlist upgrade) must read it.
 - New storage spaces 9–15; spaces 0–8 keep their v5 layout.
 
-## Owner questions still open (defaults above)
-Fee in VHP · time-weighted shares · 12 VHP carry cap · free-prize tie rule · free player = below minimum in that game ·
-points 1–255 · deactivation semantics · rewards never expire · 3-day results deadline.
+## Owner decisions (2026-10-27)
+| # | Question | Decision |
+|---|---|---|
+| 1 | Fee currency | VHP |
+| 2 | A game's share | its players' stake that week, each at its lowest |
+| 3 | Prize shortfall | capped at 4 weeks (12 VHP a game); prizes come from the seed's part, never from players' rewards |
+| 4 | Ties for 1st | share all 3 VHP; otherwise 2 VHP to 1st, 1 VHP shared by 2nd |
+| 5 | Free player | below the minimum stake in that game that week |
+| 6 | Points | 1–255 a week per game |
+| 7 | Stopped game | withdrawals open; its VHP's rewards go to the running games |
+| 8 | Unclaimed rewards | never expire |
+| 9 | Results deadline | 3 days after the week; then the bucket rolls over in its game |

@@ -55,6 +55,8 @@ message totals_object {
   uint64 fee_vhp = 17 [jstype = JS_STRING];           // v6: the 5% fee, owed to the owner in VHP
   uint64 games_rolled = 18 [jstype = JS_STRING];      // v6: buckets with no winners, waiting for their own game's next close (all games)
   uint64 stake_other = 19 [jstype = JS_STRING];       // v6: stake + pending in games other than the question game (part of total_stake)
+  uint64 acc_seed_hi = 20 [jstype = JS_STRING];       // v6: seed VHP x time since the last close (128-bit): the seed's part of the rewards
+  uint64 acc_seed_lo = 21 [jstype = JS_STRING];
 }
 
 message player_object {
@@ -145,6 +147,7 @@ message week_object {
   uint64 fee_vhp = 42 [jstype = JS_STRING];           // v6: fee taken at this close (VHP)
   uint64 prizes = 43 [jstype = JS_STRING];            // v6: all games' free prizes funded at this close
   uint64 split = 44 [jstype = JS_STRING];             // v6: R, the part split by stake share
+  uint64 seed_part = 45 [jstype = JS_STRING];         // v6: the seed's part of the pot, which pays the free prizes first
 }
 
 message bucket_object {
@@ -544,9 +547,12 @@ message game_object {
   uint64 rolled = 8 [jstype = JS_STRING];             // its buckets with no winners, added to its next bucket
   uint64 prize_carry = 9 [jstype = JS_STRING];        // unfunded free prize carried forward (not owed until funded)
   uint64 stake = 10 [jstype = JS_STRING];             // all stake + pending in this game
-  uint64 acc_hi = 11 [jstype = JS_STRING];            // stake x time since the last close (128-bit)
-  uint64 acc_lo = 12 [jstype = JS_STRING];
-  uint64 acc_time = 13 [jstype = JS_STRING];
+  // A game's share of a week's rewards is its players' stake for that week, each counted at its lowest: deposits count
+  // from the next week, withdrawals lower the week at once.
+  uint64 week_stake = 11 [jstype = JS_STRING];        // the stake counted for week `week` (so far)
+  uint64 week = 12 [jstype = JS_STRING];              // the week week_stake is for
+  uint64 next_stake = 13 [jstype = JS_STRING];        // deposits that start counting in week next_week
+  uint64 next_week = 14 [jstype = JS_STRING];
 }
 
 // A game announced by the owner; it can be applied after the timelock (within 7 days).
@@ -605,6 +611,8 @@ message gweek_object {
   uint64 prize_first = 28 [jstype = JS_STRING];       // set at finalize: what each 1st-place winner gets
   uint64 prize_second = 29 [jstype = JS_STRING];      // ... and each 2nd-place winner
   uint64 claimed = 30 [jstype = JS_STRING];
+  uint64 weight = 31 [jstype = JS_STRING];            // the game's stake counted for this week (kept when the next week starts)
+  bool weight_set = 32;
 }
 
 // @description One game (with one of its weeks).

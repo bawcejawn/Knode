@@ -89,6 +89,11 @@ function depositG(k: Kpred, game: u32, who: Uint8Array, amount: u64): void {
   k.deposit_to(new kpred.deposit_to_arguments(game, who, amount, false));
   MockVM.commitTransaction();
 }
+function seedIn(k: Kpred, amount: u64): void {
+  as(SEED);
+  k.seed_deposit_vhp(new kpred.seed_deposit_vhp_arguments(amount));
+  MockVM.commitTransaction();
+}
 function row(who: Uint8Array, points: u32): kpred.result_row { return new kpred.result_row(who, points); }
 function postRows(k: Kpred, game: u32, w: u64, rows: kpred.result_row[]): void {
   as(OPERATOR);
@@ -280,12 +285,13 @@ describe("v6 stakes per game", () => {
 });
 
 describe("v6 weekly split", () => {
-  it("5% fee in VHP, 3 VHP prize per free game, the rest by stake over time, and a bucket with no winner rolls over in its game", () => {
+  it("5% fee in VHP, 3 VHP prize per free game from the seed's part, the rest by stake, and a bucket with no winner rolls over in its game", () => {
     const k = setup();
     addGames(k);
     at(200);
     depositQ(k, A, 30 * VHP);
     depositG(k, G2, B, 10 * VHP);
+    seedIn(k, 1000 * VHP);
     // week 0: only game 1 earns (games 2 and 3 start in week 1)
     give(VHP_TAG, CONTRACT, 100 * VHP);
     closeWeek(k, 0);
@@ -294,6 +300,7 @@ describe("v6 weekly split", () => {
     expect(w0.fee_vhp).toBe(5 * VHP);
     expect(w0.fee).toBe(0);
     expect(w0.pot).toBe(95 * VHP);
+    expect(w0.seed_part > 90 * VHP).toBe(true);   // the seed is 1000 of 1040 VHP
     expect(w0.pot_free).toBe(3 * VHP);
     expect(w0.prizes).toBe(3 * VHP);
     expect(k.totals.get()!.fee_vhp).toBe(5 * VHP);
@@ -313,7 +320,7 @@ describe("v6 weekly split", () => {
     expect(w1.gain).toBe(80 * VHP);
     expect(w1.fee_vhp).toBe(4 * VHP);
     expect(w1.prizes).toBe(6 * VHP);              // game 1 and game 3
-    const R: u64 = 76 * VHP - 6 * VHP;            // 70 VHP split 30:10 by stake over time
+    const R: u64 = 76 * VHP - 6 * VHP;            // 70 VHP split 30:10 by the week's stake
     expect(w1.split).toBe(R);
     const b2 = gweek(k, G2, 1);
     expect(b2.closed).toBe(true);
@@ -328,41 +335,64 @@ describe("v6 weekly split", () => {
     k.assertSolvent();
   });
 
-  it("stake over time: a stake added just before the close barely moves the split", () => {
+  it("a game's share is its players' lowest stake that week: deposits count next week, withdrawals at once", () => {
     const k = setup();
     addGames(k);
     at(200);
     depositQ(k, A, 10 * VHP);
     depositG(k, G2, B, 10 * VHP);
-    closeWeek(k, 0);                               // starts the measure for week 1's close
-    at(weekEnd(1) - 5);
-    depositG(k, G2, C, 100 * VHP);                 // ten times bigger, but only for the last few blocks
-    give(VHP_TAG, CONTRACT, 106 * VHP);            // 106 - 5.3 fee - 6 prizes = 94.7 to split
+    seedIn(k, 1000 * VHP);
+    closeWeek(k, 0);
+    at(weekEnd(0) + 300);                          // in week 1
+    depositG(k, G2, C, 100 * VHP);                 // counts only from week 2
+    as(B);
+    k.withdraw_from(new kpred.withdraw_from_arguments(G2, B, 5 * VHP));   // week 1 counts 5 for B
+    MockVM.commitTransaction();
+    at(weekEnd(0) + 600);
+    depositG(k, G2, B, 5 * VHP);                   // back to 10, but week 1 stays at its lowest
+    give(VHP_TAG, CONTRACT, 106 * VHP);
     closeWeek(k, 1);
     const w1 = k.get_week(new kpred.get_week_arguments(1)).week!;
-    const b2 = gweek(k, G2, 1).bucket;
-    // without time weighting game 2 would take 110/120 = 92%; with it, a little over half
-    expect(b2 > w1.split / 2).toBe(true);
-    expect(b2 < w1.split * 56 / 100).toBe(true);
+    expect(gweek(k, G2, 1).bucket).toBe(w1.split / 3);   // game 1: 10, game 2: 5
+    give(VHP_TAG, CONTRACT, 106 * VHP);
+    closeWeek(k, 2);
+    const w2 = k.get_week(new kpred.get_week_arguments(2)).week!;
+    expect(gweek(k, G2, 2).bucket).toBe(w2.split * 110 / 120);   // game 2: 5 + 5 + 100
   });
 
-  it("a small pot pays the prizes in proportion and carries the shortfall, at most 12 VHP per game", () => {
+  it("with no seed the prizes wait and staked players get it all; the carry stops at 12 VHP per game", () => {
     const k = setup();
     addGames(k);
     at(200);
     depositQ(k, A, 10 * VHP);
     closeWeek(k, 0);
-    give(VHP_TAG, CONTRACT, 2 * VHP);              // pot 1.9 VHP; needs 3 + 3
+    give(VHP_TAG, CONTRACT, 20 * VHP);
     closeWeek(k, 1);
     const w1 = k.get_week(new kpred.get_week_arguments(1)).week!;
-    expect(w1.prizes <= w1.gain - w1.fee_vhp).toBe(true);
-    expect(w1.split <= 2).toBe(true);              // nothing left after the prizes (but rounding)
-    const g3 = game(k, G3);
-    expect(g3.prize_carry > 2 * VHP).toBe(true);
-    // weeks with nothing earned: the carry grows to its cap and stops
+    expect(w1.seed_part).toBe(0);
+    expect(w1.prizes).toBe(0);
+    expect(w1.split).toBe(19 * VHP);               // all of the pot to the stakers
     for (let w: u64 = 2; w < 8; w++) closeWeek(k, w);
     expect(game(k, G3).prize_carry).toBe(12 * VHP);
     expect(game(k, 1).prize_carry).toBe(12 * VHP);
+    k.assertSolvent();
+  });
+
+  it("a small seed pays what its part covers, in proportion to each game's need", () => {
+    const k = setup();
+    addGames(k);
+    at(200);
+    depositQ(k, A, 30 * VHP);
+    seedIn(k, 10 * VHP);                           // a quarter of what produces
+    closeWeek(k, 0);
+    give(VHP_TAG, CONTRACT, 20 * VHP);             // pot 19; the seed's part about 4.75; needs 6 + 3
+    closeWeek(k, 1);
+    const w1 = k.get_week(new kpred.get_week_arguments(1)).week!;
+    expect(w1.seed_part > 4 * VHP && w1.seed_part < 5 * VHP).toBe(true);
+    expect(w1.prizes <= w1.seed_part).toBe(true);
+    expect(w1.seed_part - w1.prizes < 3).toBe(true);           // all of it used (but rounding)
+    expect(w1.split).toBe(w1.gain - w1.fee_vhp - w1.prizes);
+    expect(game(k, G3).prize_carry > VHP).toBe(true);
     k.assertSolvent();
   });
 });
@@ -530,6 +560,7 @@ describe("v6 free prizes", () => {
     addGames(k);
     at(200);
     depositQ(k, A, 10 * VHP);
+    seedIn(k, 1000 * VHP);
     depositG(k, G2, B, 2 * VHP);
     closeWeek(k, 0);
     give(VHP_TAG, CONTRACT, 50 * VHP);
@@ -575,6 +606,7 @@ describe("v6 free prizes", () => {
     addGames(k);
     at(200);
     depositQ(k, A, 10 * VHP);
+    seedIn(k, 1000 * VHP);
     closeWeek(k, 0);
     give(VHP_TAG, CONTRACT, 50 * VHP);
     closeWeek(k, 1);
@@ -610,6 +642,7 @@ describe("v6 free prizes", () => {
     const k = setup();
     at(200);
     depositQ(k, A, 10 * VHP);
+    seedIn(k, 1000 * VHP);
     give(VHP_TAG, CONTRACT, 40 * VHP);
     // week 0 with three questions; A staked, C best free (3), D second free (2)
     at(GENESIS + 100);

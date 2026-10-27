@@ -209,7 +209,7 @@ export class Kpred {
     if (c.v6_rule_week_plus_one == 0) {
       c.v6_rule_week_plus_one = this.weekOf(c, this.now()) + 2;
       this.config.put(c);
-      this.initQuestionGame(this.now());
+      this.initQuestionGame(this.weekOf(c, this.now()));
     }
     return c;
   }
@@ -219,8 +219,10 @@ export class Kpred {
     return c.v6_rule_week_plus_one > 0 && w + 1 >= c.v6_rule_week_plus_one;
   }
 
-  /** Game 1, the question game: its stake is everyone's stake not in another game. */
-  initQuestionGame(now: u64): void {
+  /** Game 1, the question game: its stake is everyone's stake not in another game. All of it is counted for the week
+   *  running now (a v5-rule week, which the vault split never uses); deposits waiting for next week are in it too, which
+   *  is right from next week on. */
+  initQuestionGame(week: u64): void {
     if (this.games.get(u32Key(Q_GAME)) != null) return;
     const t = this.totals.get()!;
     const g = new kpred.game_object();
@@ -230,7 +232,8 @@ export class Kpred {
     g.free_prize = true;
     g.active = true;
     g.stake = t.total_stake - t.stake_other;
-    g.acc_time = now;
+    g.week_stake = g.stake;
+    g.week = week;
     this.games.put(u32Key(Q_GAME), g);
   }
 
@@ -302,11 +305,14 @@ export class Kpred {
     if (t.acc_time == 0) { t.acc_time = now; return; }   // first call after the upgrade: start measuring now
     if (now <= t.acc_time) return;
     const dt = u128.fromU64(now - t.acc_time);
-    const house = t.seed_vhp + t.pots_outstanding + t.rolled_over;
+    // Everything held that is not stake: the seed, unpaid pots, rollovers and (v6) the fee waiting in VHP.
+    const house = t.seed_vhp + t.pots_outstanding + t.rolled_over + t.games_rolled + t.fee_vhp;
     const ap = new u128(t.acc_player_lo, t.acc_player_hi) + u128.fromU64(t.total_stake) * dt;
     const ah = new u128(t.acc_house_lo, t.acc_house_hi) + u128.fromU64(house) * dt;
+    const as_ = new u128(t.acc_seed_lo, t.acc_seed_hi) + u128.fromU64(t.seed_vhp) * dt;   // v6: the seed's part
     t.acc_player_lo = ap.lo; t.acc_player_hi = ap.hi;
     t.acc_house_lo = ah.lo; t.acc_house_hi = ah.hi;
+    t.acc_seed_lo = as_.lo; t.acc_seed_hi = as_.hi;
     t.acc_time = now;
   }
 
@@ -574,7 +580,7 @@ export class Kpred {
     this.accrue(t);
     t.total_stake += amount;
     this.totals.put(t);
-    this.gameStakeAdd(Q_GAME, amount);
+    this.gameStakeAdd(Q_GAME, amount, p.pending_week);
   }
 
   deposit_vhp(args: kpred.deposit_vhp_arguments): kpred.deposit_vhp_result {
@@ -595,19 +601,20 @@ export class Kpred {
     const to = args.to!;
     System.requireAuthority(authority.authorization_type.contract_call, to);
     System.require(args.amount > 0, "amount must be positive");
-    this.takeQ(c, to, args.amount);
+    const fromWeek = this.takeQ(c, to, args.amount);
     const t = this.totals.get()!;
     this.accrue(t);
     t.total_stake -= args.amount;
     this.totals.put(t);
-    this.gameStakeSub(Q_GAME, args.amount);
+    this.gameStakeSub(Q_GAME, args.amount - fromWeek, fromWeek);
     this.ensureVhp(args.amount);
     Tokens.sendVhp(to, args.amount);
     return new kpred.withdraw_result();
   }
 
-  /** Take `amount` out of a player's question-game stake (a withdrawal, or the source of a move). */
-  takeQ(c: kpred.config_object, to: Uint8Array, amount: u64): void {
+  /** Take `amount` out of a player's question-game stake (a withdrawal, or the source of a move). Returns the part
+   *  taken from this week's stake (the rest came from deposits that don't count yet). */
+  takeQ(c: kpred.config_object, to: Uint8Array, amount: u64): u64 {
     const h = this.now();
     const w = this.weekOf(c, h);
     const p = this.players.get(to)!;
@@ -637,6 +644,7 @@ export class Kpred {
       }
     }
     this.players.put(to, p);
+    return rest;
   }
 
   answer(args: kpred.answer_arguments): kpred.answer_result {
@@ -805,7 +813,6 @@ export class Kpred {
    *  amount, so their timing never changes any week's measured gain. */
   closeInternal(c: kpred.config_object, week: u64, h: u64): kpred.close_week_result {
     if (this.v6Rule(c, week)) return this.closeV6(c, week, h);
-    if (c.v6_rule_week_plus_one > 0) this.resetGameAccs(h);   // v6 code closing a v5-rule week: start every game's measure now
     const t = this.totals.get()!;
     this.accrue(t);
     const wkKey = u64Key(week);
@@ -835,6 +842,7 @@ export class Kpred {
     const potA = v5 ? bps(pot - potFree, V5_BASKET_A_BPS) : bps(houseNet, BASKET_A_BPS);
     const retained: u64 = 0;                          // the owner share is retired
     t.acc_player_lo = 0; t.acc_player_hi = 0; t.acc_house_lo = 0; t.acc_house_hi = 0;
+    t.acc_seed_lo = 0; t.acc_seed_hi = 0;
     t.rolled_over = 0;
     t.creator_fee += fee;
     t.pots_outstanding += pot;
@@ -1352,28 +1360,58 @@ export class Kpred {
     return g.from_week <= w && (g.last_week_plus_one == 0 || w + 1 <= g.last_week_plus_one);
   }
 
-  /** Bring a game's stake x time measure up to `now`. */
-  accrueGame(g: kpred.game_object, now: u64): void {
-    if (g.acc_time == 0) { g.acc_time = now; return; }
-    if (now <= g.acc_time) return;
-    const a = new u128(g.acc_lo, g.acc_hi) + u128.fromU64(g.stake) * u128.fromU64(now - g.acc_time);
-    g.acc_lo = a.lo; g.acc_hi = a.hi;
-    g.acc_time = now;
+  /** Move a game's week count forward to week `w`. The finished week's count is kept for its close (and up to three
+   *  quiet weeks after it, in case closes run late); deposits waiting for a week that has now started begin to count. */
+  gameRoll(g: kpred.game_object, w: u64): void {
+    if (g.week >= w) return;
+    this.keepWeight(g.id, g.week, g.week_stake);
+    for (let x = g.week + 1; x < w && x <= g.week + 3; x++) {
+      this.keepWeight(g.id, x, g.week_stake + (g.next_stake > 0 && g.next_week <= x ? g.next_stake : 0));
+    }
+    if (g.next_stake > 0 && g.next_week <= w) { g.week_stake += g.next_stake; g.next_stake = 0; }
+    g.week = w;
   }
 
-  gameStakeAdd(id: u32, amount: u64): void {
+  keepWeight(game: u32, w: u64, weight: u64): void {
+    const k = this.gweekKey(game, w);
+    const gw = this.gweeks.get(k)!;
+    gw.weight = weight;
+    gw.weight_set = true;
+    this.gweeks.put(k, gw);
+  }
+
+  /** A game's stake counted for week `x`: its players' stakes that week, each at its lowest. */
+  weightFor(g: kpred.game_object, x: u64): u64 {
+    const gw = this.gweeks.get(this.gweekKey(g.id, x))!;
+    if (gw.weight_set) return gw.weight;
+    if (x > g.week) return g.week_stake + (g.next_stake > 0 && g.next_week <= x ? g.next_stake : 0);
+    return g.week_stake;
+  }
+
+  /** A deposit into a game: it counts from week `from` (the next week, or week 0 before the game's first week). */
+  gameStakeAdd(id: u32, amount: u64, from: u64): void {
     const g = this.games.get(u32Key(id));
     if (g == null) return;                          // only before v6 starts; cfg() creates game 1 on the first v6 write
-    this.accrueGame(g, this.now());
+    const w = this.weekOf(this.config.get()!, this.now());
+    this.gameRoll(g, w);
     g.stake += amount;
+    if (from <= w) g.week_stake += amount;
+    else { g.next_stake += amount; g.next_week = from; }
     this.games.put(u32Key(id), g);
   }
 
-  gameStakeSub(id: u32, amount: u64): void {
+  /** A withdrawal (or move) out of a game: `later` came from deposits not counting yet, `now_` from this week's stake. */
+  gameStakeSub(id: u32, later: u64, now_: u64): void {
     const g = this.games.get(u32Key(id));
     if (g == null) return;
-    this.accrueGame(g, this.now());
-    g.stake = g.stake > amount ? g.stake - amount : 0;
+    const w = this.weekOf(this.config.get()!, this.now());
+    this.gameRoll(g, w);
+    const all = later + now_;
+    g.stake = g.stake > all ? g.stake - all : 0;
+    // Game 1's first week under v6 counted waiting deposits as this week's: take what isn't there from this week.
+    let fromWeek = now_;
+    if (later > g.next_stake) { fromWeek += later - g.next_stake; g.next_stake = 0; } else g.next_stake -= later;
+    g.week_stake = g.week_stake > fromWeek ? g.week_stake - fromWeek : 0;
     this.games.put(u32Key(id), g);
   }
 
@@ -1385,17 +1423,9 @@ export class Kpred {
     return out;
   }
 
-  resetGameAccs(h: u64): void {
-    const list = this.gamesList();
-    for (let i = 0; i < list.length; i++) {
-      const g = list[i];
-      g.acc_lo = 0; g.acc_hi = 0; g.acc_time = h;
-      this.games.put(u32Key(g.id), g);
-    }
-  }
-
-  /** The vault's weekly split (v6). Gain once for all games; 5% fee in VHP; free prizes; the rest by each game's
-   *  stake over time; every game's bucket also gets back its own earlier rollover. */
+  /** The vault's weekly split (v6). Gain once for all games; 5% fee in VHP; the seed's part of the rewards pays the
+   *  free prizes first (players' rewards never do); the rest goes to the games by their players' stake that week, each
+   *  stake counted at its lowest; every game's bucket also gets back its own earlier rollover. */
   closeV6(c: kpred.config_object, week: u64, h: u64): kpred.close_week_result {
     const t = this.totals.get()!;
     this.accrue(t);
@@ -1406,10 +1436,22 @@ export class Kpred {
     const carried = t.rolled_over < gain ? t.rolled_over : gain;
     const fee = bps(gain - carried, FEE_BPS);
     const pot = gain - fee;
+    // The seed's part of the pot: its VHP over time against everything that produced (stakes, seed, unpaid pots).
+    const accSeed = new u128(t.acc_seed_lo, t.acc_seed_hi);
+    const accAll = new u128(t.acc_player_lo, t.acc_player_hi) + new u128(t.acc_house_lo, t.acc_house_hi);
+    let seedPart: u64;
+    if (accAll.isZero()) {
+      const all = t.total_stake + t.seed_vhp + t.pots_outstanding + t.games_rolled;
+      seedPart = all == 0 ? 0 : u128.muldiv(u128.fromU64(pot), u128.fromU64(t.seed_vhp), u128.fromU64(all)).toU64();
+    } else {
+      seedPart = u128.muldiv(u128.fromU64(pot), accSeed, accAll).toU64();
+    }
+    if (seedPart > pot) seedPart = pot;
 
     const list = this.gamesList();
     const n = list.length;
-    // 1. Free prizes: each free-prize game that earns this week needs its carried shortfall plus 3 VHP.
+    // 1. Free prizes, from the seed's part only: each free-prize game that earns this week needs its carried shortfall
+    //    plus 3 VHP. Short: each gets a share in proportion to its need, and the rest carries (at most 12 VHP a game).
     const need = new Array<u64>(n);
     let needTotal: u64 = 0;
     for (let i = 0; i < n; i++) {
@@ -1420,32 +1462,30 @@ export class Kpred {
     const got = new Array<u64>(n);
     let prizes: u64 = 0;
     for (let i = 0; i < n; i++) {
-      got[i] = pot >= needTotal ? need[i] : (needTotal == 0 ? 0 : u128.muldiv(u128.fromU64(pot), u128.fromU64(need[i]), u128.fromU64(needTotal)).toU64());
+      got[i] = seedPart >= needTotal ? need[i] : (needTotal == 0 ? 0 : u128.muldiv(u128.fromU64(seedPart), u128.fromU64(need[i]), u128.fromU64(needTotal)).toU64());
       prizes += got[i];
       if (need[i] > 0) {
         const short = need[i] - got[i];
         list[i].prize_carry = short < PRIZE_CARRY_CAP ? short : PRIZE_CARRY_CAP;
       }
     }
-    // 2. The rest is split by stake over time. A game that no longer earns releases its old rollover into the split.
+    // 2. The rest goes to the staked games by their stake for the week. A game that no longer earns releases its old
+    //    rollover into the split.
     let split = pot - prizes;
     let rolledUsed: u64 = 0;
-    let accTotal = u128.Zero;
+    const weight = new Array<u64>(n);
+    let weightTotal: u64 = 0;
     for (let i = 0; i < n; i++) {
       const g = list[i];
-      this.accrueGame(g, h);
+      weight[i] = 0;
       if (!this.gameEarns(g, week)) { split += g.rolled; rolledUsed += g.rolled; g.rolled = 0; }
-      else if (g.staked) accTotal = accTotal + new u128(g.acc_lo, g.acc_hi);
+      else if (g.staked) { weight[i] = this.weightFor(g, week); weightTotal += weight[i]; }
     }
     const bucket = new Array<u64>(n);
     let given: u64 = 0;
     for (let i = 0; i < n; i++) {
-      const g = list[i];
-      bucket[i] = 0;
-      if (!accTotal.isZero() && g.staked && this.gameEarns(g, week)) {
-        bucket[i] = u128.muldiv(u128.fromU64(split), new u128(g.acc_lo, g.acc_hi), accTotal).toU64();
-        given += bucket[i];
-      }
+      bucket[i] = weightTotal == 0 ? 0 : u128.muldiv(u128.fromU64(split), u128.fromU64(weight[i]), u128.fromU64(weightTotal)).toU64();
+      given += bucket[i];
     }
     bucket[0] += split - given;                       // rounding (or no stake anywhere): the question game
     // 3. Write every game's week.
@@ -1471,10 +1511,10 @@ export class Kpred {
         g.rolled = 0;
         this.gweeks.put(gk, gw);
       }
-      g.acc_lo = 0; g.acc_hi = 0; g.acc_time = h;
       this.games.put(u32Key(g.id), g);
     }
     t.acc_player_lo = 0; t.acc_player_hi = 0; t.acc_house_lo = 0; t.acc_house_hi = 0;
+    t.acc_seed_lo = 0; t.acc_seed_hi = 0;
     t.rolled_over = 0;
     t.games_rolled -= rolledUsed;
     t.fee_vhp += fee;
@@ -1488,6 +1528,7 @@ export class Kpred {
     wk.fee_vhp = fee;
     wk.prizes = prizes;
     wk.split = split;
+    wk.seed_part = seedPart;
     wk.retained = 0;
     wk.house_ppm = 0;
     wk.reward_rule = true;
@@ -1541,8 +1582,8 @@ export class Kpred {
     return g!;
   }
 
-  /** Add a pending deposit to a player's stake in another game (counts from next week). */
-  addG(c: kpred.config_object, game: u32, player: Uint8Array, amount: u64): void {
+  /** Add a pending deposit to a player's stake in another game (counts from next week). Returns the week it starts. */
+  addG(c: kpred.config_object, game: u32, player: Uint8Array, amount: u64): u64 {
     const h = this.now();
     const w = this.weekOf(c, h);
     const k = this.gplayerKey(game, player);
@@ -1553,11 +1594,13 @@ export class Kpred {
     p.pending += amount;
     p.pending_week = h < c.genesis_time ? 0 : w + 1;
     this.gplayers.put(k, p);
+    return p.pending_week;
   }
 
   /** Take `amount` out of a player's stake in another game. Same rules as the question game: all of this week's
-   *  stake voids the player's week in that game only; part of it lowers that week's stake. */
-  takeG(c: kpred.config_object, game: u32, player: Uint8Array, amount: u64): void {
+   *  stake voids the player's week in that game only; part of it lowers that week's stake. Returns the part taken from
+   *  this week's stake. */
+  takeG(c: kpred.config_object, game: u32, player: Uint8Array, amount: u64): u64 {
     const h = this.now();
     const w = this.weekOf(c, h);
     const k = this.gplayerKey(game, player);
@@ -1582,6 +1625,7 @@ export class Kpred {
       this.gentries.put(ek, e);
     }
     this.gplayers.put(k, p);
+    return rest;
   }
 
   playerOther(player: Uint8Array, add: u64, sub: u64): void {
@@ -1607,14 +1651,14 @@ export class Kpred {
     } else {
       Tokens.pullVhp(from, args.amount);
     }
-    this.addG(c, args.game, from, args.amount);
+    const startsAt = this.addG(c, args.game, from, args.amount);
     this.playerOther(from, args.amount, 0);
     const t = this.totals.get()!;
     this.accrue(t);
     t.total_stake += args.amount;
     t.stake_other += args.amount;
     this.totals.put(t);
-    this.gameStakeAdd(args.game, args.amount);
+    this.gameStakeAdd(args.game, args.amount, startsAt);
     return new kpred.deposit_to_result();
   }
 
@@ -1626,14 +1670,14 @@ export class Kpred {
     System.requireAuthority(authority.authorization_type.contract_call, to);
     System.require(args.amount > 0, "amount must be positive");
     this.otherGame(args.game);
-    this.takeG(c, args.game, to, args.amount);
+    const fromWeek = this.takeG(c, args.game, to, args.amount);
     this.playerOther(to, 0, args.amount);
     const t = this.totals.get()!;
     this.accrue(t);
     t.total_stake -= args.amount;
     t.stake_other -= args.amount;
     this.totals.put(t);
-    this.gameStakeSub(args.game, args.amount);
+    this.gameStakeSub(args.game, args.amount - fromWeek, fromWeek);
     this.ensureVhp(args.amount);
     Tokens.sendVhp(to, args.amount);
     return new kpred.withdraw_from_result();
@@ -1648,13 +1692,15 @@ export class Kpred {
     System.require(!c.paused, "new deposits are paused");
     const to = this.games.get(u32Key(args.to_game));
     System.require(to != null && to!.active && to!.staked, "that game does not take stakes now");
+    let fromWeek: u64;
     if (args.from_game == Q_GAME) {
-      this.takeQ(c, player, args.amount);
+      fromWeek = this.takeQ(c, player, args.amount);
     } else {
       this.otherGame(args.from_game);
-      this.takeG(c, args.from_game, player, args.amount);
+      fromWeek = this.takeG(c, args.from_game, player, args.amount);
       this.playerOther(player, 0, args.amount);
     }
+    let startsAt: u64;
     const t = this.totals.get()!;
     this.accrue(t);
     if (args.to_game == Q_GAME) {
@@ -1664,16 +1710,17 @@ export class Kpred {
       this.normalize(p, w);
       p.pending += args.amount;
       p.pending_week = h < c.genesis_time ? 0 : w + 1;
+      startsAt = p.pending_week;
       this.players.put(player, p);
       t.stake_other -= args.amount;
     } else {
-      this.addG(c, args.to_game, player, args.amount);
+      startsAt = this.addG(c, args.to_game, player, args.amount);
       this.playerOther(player, args.amount, 0);
       if (args.from_game == Q_GAME) t.stake_other += args.amount;
     }
     this.totals.put(t);
-    this.gameStakeSub(args.from_game, args.amount);
-    this.gameStakeAdd(args.to_game, args.amount);
+    this.gameStakeSub(args.from_game, args.amount - fromWeek, fromWeek);
+    this.gameStakeAdd(args.to_game, args.amount, startsAt);
     return new kpred.move_stake_result();
   }
 
@@ -2044,10 +2091,9 @@ export class Kpred {
       this.config.put(c);
       g = new kpred.game_object();
       g.id = args.game;
-      g.acc_time = now;
+      g.week = this.weekOf(c, now);
     } else {
       System.require(!g.active, "that game is running");
-      this.accrueGame(g, now);
     }
     g.name = pr!.game!.name;
     g.staked = pr!.game!.staked;

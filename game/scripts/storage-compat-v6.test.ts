@@ -32,7 +32,8 @@ const [contract, owner, operator, seedOwner, A, B, C, D, E, F] =
   ["contract", "owner", "operator", "seed", "A", "B", "C", "D", "E", "F"].map(key);
 const addr = (s: Signer) => s.getAddress();
 
-const V6_FIELDS = new Set(["v6_rule_week_plus_one", "game_count", "fee_vhp", "games_rolled", "stake_other", "prize_v6", "prizes", "split"]);
+const V6_FIELDS = new Set(["v6_rule_week_plus_one", "game_count", "fee_vhp", "games_rolled", "stake_other", "prize_v6", "prizes", "split",
+  "acc_seed_hi", "acc_seed_lo", "seed_part"]);
 const isDefault = (v: any) => v === undefined || v === null || v === false || v === 0 || v === "0" || v === "";
 function sameAsBefore(before: any, after: any, where: string) {
   if (before === null || typeof before !== "object") { assert.deepEqual(after, before, where); return; }
