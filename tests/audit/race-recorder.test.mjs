@@ -258,7 +258,14 @@ test("publish: a pick marked both win and show, or a board row with more wins an
   const bad6 = flip((pk) => { pk[1][5] = 0; });                       // W2 picked the 2nd horse but has no show
   const bad7 = flip((pk) => { pk[1][4] = true; });                    // a boolean where a 0/1 belongs
   const bad8 = flip((pk) => { pk[1].splice(1, 1, st[3].a); });        // a show on a horse that finished 4th
-  for (const d of [bad1, bad2, bad3, bad4, bad5, bad6, bad7, bad8]) assert.equal(shapeOk(d), false, d);
+  // A winner that isn't first in the standings (flags made to match), or standings out of order or with a repeat.
+  const race0 = (fn) => { const d = tmp(), w2 = JSON.parse(JSON.stringify(w)), r2 = w2.races.find((x) => x.result?.picks?.length); fn(r2.result); fs.writeFileSync(path.join(d, "W002.json"), JSON.stringify(w2)); return d; };
+  const bad9 = race0((r) => { r.winner = st[3].a; r.picks = r.picks.map((x) => [...x.slice(0, 3), x[1] === st[3].a ? 1 : 0, x[4], 0]); });
+  const bad10 = race0((r) => { r.winner = null; r.picks = r.picks.map((x) => [...x.slice(0, 3), 0, x[4], 0]); });
+  const bad11 = race0((r) => { r.standings.reverse(); });
+  const bad12 = race0((r) => { r.standings.push({ ...r.standings[r.standings.length - 1] }); });
+  const bad13 = race0((r) => { r.checked = true; });
+  for (const d of [bad1, bad2, bad3, bad4, bad5, bad6, bad7, bad8, bad9, bad10, bad11, bad12, bad13]) assert.equal(shapeOk(d), false, d);
 });
 
 test("workflow: the recorder holds no secret and no write token; only the publish job pushes, only to race-data, running no repository code", () => {
