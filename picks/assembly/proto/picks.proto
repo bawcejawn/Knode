@@ -1,0 +1,271 @@
+syntax = "proto3";
+
+// =====================================================================
+// KnodeGames Picks
+//
+// One contract that keeps the picks for every KnodeGames game (free and
+// staked). It holds no tokens, calls no other contract and never pays Mana:
+// it only keeps one pick per wallet per round and makes the chain enforce
+// each game's rules:
+//   - round r of a game has a target: r * round_size + round_offset, counted
+//     in block heights (HEIGHT games) or in ms since 1970 (TIME games);
+//   - a pick LOCKS lead before its target: refused once the head block's
+//     height (or time) has reached target - lead. lead is at least 100
+//     blocks (or 5 minutes), so every pick locks before the blocks that
+//     decide it;
+//   - picks open at most `ahead` before the target;
+//   - one pick per wallet per round. It can be changed until the lock, at
+//     most max_changes times;
+//   - at most max_picks_per_day picks (new picks and changes together) per
+//     wallet per game per UTC day;
+//   - the choice fits the game's kind: one producer, a short list of
+//     distinct producers, or a number in a range;
+//   - the pick must be signed by the wallet it is for (and come from that
+//     wallet's own transaction, not another contract).
+// A producer is any valid address: the game's handicap card is set off the
+// chain, so a pick on a producer that is not in the field simply can't win.
+//
+// Owner changes are timelocked: a new game, or a looser setting on a game,
+// waits 48 hours (announce_game, then apply_game). Switching a game off or
+// tightening it is immediate. A game's shape (kind, list size, number range,
+// lock mode, round size and offset) never changes once registered, so a
+// round always means the same target. The owner is handed over in two steps
+// (propose, 48 hours, accept), and the code is replaced only by the owner,
+// only with the announced code, only after 48 hours.
+// =====================================================================
+
+package picks;
+
+import "koinos/options.proto";
+
+// ── stored ──
+
+message config {
+  // The KnodeGames owner (before the first handover: the owner built into the code).
+  bytes owner = 1 [(koinos.btype) = ADDRESS];
+  // A proposed new owner and the time (ms) from which they can accept.
+  bytes pending_owner = 2 [(koinos.btype) = ADDRESS];
+  uint64 pending_owner_eta = 3 [jstype = JS_STRING];
+  // An announced upgrade: the sha256 of the new code and the time (ms) from which it can be uploaded.
+  bytes upgrade_hash = 4 [(koinos.btype) = HEX];
+  uint64 upgrade_eta = 5 [jstype = JS_STRING];
+}
+
+// A game's rules. kind: 1 = one producer, 2 = a list of 1 to list_size distinct producers, 3 = a number from
+// number_min to number_max. lock_mode: 1 = block heights, 2 = time (ms).
+message game_config {
+  uint32 id = 1;
+  string name = 2;
+  uint32 kind = 3;
+  uint32 list_size = 4;
+  uint64 number_min = 5 [jstype = JS_STRING];
+  uint64 number_max = 6 [jstype = JS_STRING];
+  uint32 lock_mode = 7;
+  uint64 round_size = 8 [jstype = JS_STRING];
+  uint64 round_offset = 9 [jstype = JS_STRING];
+  // How long before the target picks lock (blocks or ms).
+  uint64 lead = 10 [jstype = JS_STRING];
+  // How far before the target picks open (blocks or ms).
+  uint64 ahead = 11 [jstype = JS_STRING];
+  // Picks (new picks and changes) per wallet per UTC day in this game. 1 to 50.
+  uint32 max_picks_per_day = 12;
+  // How many times a pick may be changed after the first. 0 = never.
+  uint32 max_changes = 13;
+  bool enabled = 14;
+}
+
+message pending_game {
+  game_config game = 1;
+  // From this time (ms) apply_game can put it in force, for 7 days.
+  uint64 eta = 2 [jstype = JS_STRING];
+}
+
+message pick_object {
+  repeated bytes producers = 1 [(koinos.btype) = ADDRESS];
+  uint64 number = 2 [jstype = JS_STRING];
+  // Head block height and time (ms) of the latest pick.
+  uint64 height = 3 [jstype = JS_STRING];
+  uint64 time = 4 [jstype = JS_STRING];
+  // How many times this pick was changed after the first.
+  uint32 changes = 5;
+}
+
+// Picks made by one wallet in one game on one UTC day.
+message day_count {
+  uint64 day = 1 [jstype = JS_STRING];
+  uint32 count = 2;
+}
+
+message empty_object {}
+
+message eta_result {
+  uint64 eta = 1 [jstype = JS_STRING];
+}
+
+// ── player ──
+
+// @description Make or change your pick for a round of a game. Needs the player's signature. Refused when the game is off, the round is locked or not open yet, the choice doesn't fit the game, it is already your pick, changes or today's picks are used up.
+// @read-only false
+// @result empty_object
+message pick_arguments {
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  uint32 game = 2;
+  uint64 round = 3 [jstype = JS_STRING];
+  repeated bytes producers = 4 [(koinos.btype) = ADDRESS];
+  uint64 number = 5 [jstype = JS_STRING];
+}
+
+message pick_event {
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  uint32 game = 2;
+  uint64 round = 3 [jstype = JS_STRING];
+  repeated bytes producers = 4 [(koinos.btype) = ADDRESS];
+  uint64 number = 5 [jstype = JS_STRING];
+  uint64 height = 6 [jstype = JS_STRING];
+  uint64 time = 7 [jstype = JS_STRING];
+  bool change = 8;
+}
+
+// ── read-only ──
+
+// @description One wallet's pick for one round of a game (empty if none).
+// @read-only true
+// @result get_pick_result
+message get_pick_arguments {
+  uint32 game = 1;
+  uint64 round = 2 [jstype = JS_STRING];
+  bytes player = 3 [(koinos.btype) = ADDRESS];
+}
+
+message get_pick_result {
+  pick_object pick = 1;
+}
+
+// @description Every pick for a round of a game, in address order, up to limit (at most 100) at a time. Pass the last address you got as start_after for the next page.
+// @read-only true
+// @result list_picks_result
+message list_picks_arguments {
+  uint32 game = 1;
+  uint64 round = 2 [jstype = JS_STRING];
+  bytes start_after = 3 [(koinos.btype) = ADDRESS];
+  uint32 limit = 4;
+}
+
+message pick_row {
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  pick_object pick = 2;
+}
+
+message list_picks_result {
+  repeated pick_row rows = 1;
+}
+
+// @description Picks a wallet has made today (UTC) in a game, and the daily limit.
+// @read-only true
+// @result get_usage_result
+message get_usage_arguments {
+  uint32 game = 1;
+  bytes player = 2 [(koinos.btype) = ADDRESS];
+}
+
+message get_usage_result {
+  uint64 day = 1 [jstype = JS_STRING];
+  uint32 picks_today = 2;
+  uint32 max_picks_per_day = 3;
+}
+
+// @description The owner, a proposed new owner and an announced upgrade.
+// @read-only true
+// @result config
+message get_config_arguments {}
+
+// @description One game's rules and any announced change to them.
+// @read-only true
+// @result get_game_result
+message get_game_arguments {
+  uint32 game = 1;
+}
+
+message get_game_result {
+  game_config game = 1;
+  pending_game pending = 2;
+}
+
+// @description Every registered game, in id order.
+// @read-only true
+// @result list_games_result
+message list_games_arguments {}
+
+message list_games_result {
+  repeated game_config games = 1;
+}
+
+// ── owner ──
+
+// @description Announce a new game, or new settings for a game (owner only). Takes effect with apply_game 48 hours later. A game's shape can't change once registered.
+// @read-only false
+// @result eta_result
+message announce_game_arguments {
+  game_config game = 1;
+}
+
+// @description Put an announced game change in force, from 48 hours after it was announced and for 7 days. Anyone may call it.
+// @read-only false
+// @result empty_object
+message apply_game_arguments {
+  uint32 game = 1;
+}
+
+// @description Make a game stricter at once (owner only): switch it off, lower its caps, lock earlier or open later. Nothing looser is allowed.
+// @read-only false
+// @result empty_object
+message tighten_game_arguments {
+  game_config game = 1;
+}
+
+// @description Drop an announced game change (owner only).
+// @read-only false
+// @result empty_object
+message cancel_game_change_arguments {
+  uint32 game = 1;
+}
+
+// @description Propose a new owner (owner only). They can accept from 48 hours later. Proposing again replaces it; an empty owner cancels.
+// @read-only false
+// @result eta_result
+message propose_owner_arguments {
+  bytes owner = 1 [(koinos.btype) = ADDRESS];
+}
+
+// @description Become the owner (the proposed owner, 48 hours after the proposal). Clears every announced game change and any announced upgrade.
+// @read-only false
+// @result empty_object
+message accept_owner_arguments {}
+
+// @description Announce new code by its sha256 (owner only). It can be uploaded, signed by the owner, from 48 hours later and for 7 days. An all-zero or empty hash cancels.
+// @read-only false
+// @result eta_result
+message schedule_upgrade_arguments {
+  bytes hash = 1 [(koinos.btype) = HEX];
+}
+
+// ── events ──
+
+message game_event {
+  // "announced", "applied", "tightened", "cancelled"
+  string action = 1;
+  game_config game = 2;
+  uint64 eta = 3 [jstype = JS_STRING];
+}
+
+message owner_event {
+  // "proposed", "cancelled", "accepted"
+  string action = 1;
+  bytes owner = 2 [(koinos.btype) = ADDRESS];
+  uint64 eta = 3 [jstype = JS_STRING];
+}
+
+message upgrade_event {
+  bytes hash = 1 [(koinos.btype) = HEX];
+  uint64 eta = 2 [jstype = JS_STRING];
+}

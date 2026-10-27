@@ -1,0 +1,48 @@
+# On every push and every pull request that touches the KnodeGames Picks contract: build it and run its tests.
+name: Picks contract tests
+
+on:
+  push:
+    paths: ["picks/**", ".github/workflows/picks-test.yml"]
+  pull_request:
+    paths: ["picks/**", ".github/workflows/picks-test.yml"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: picks
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      # Exactly the lockfile, with no package install scripts (a compromised package could otherwise run code here).
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: npm test
+        run: |
+          set -o pipefail
+          # protoc's plugin sometimes fails with EAGAIN while it is installing. That is not a test failure.
+          for attempt in 1 2 3; do
+            if npm test 2>&1 | tee test.log; then exit 0; fi
+            if ! grep -q EAGAIN test.log || [ "$attempt" = 3 ]; then exit 1; fi
+            echo "Build tool hit EAGAIN (attempt $attempt); retrying."
+            sleep 5
+          done
+      - name: npm run check (no outgoing calls, no token methods)
+        run: npm run check
+      - name: Show what failed (as annotations on the run page)
+        if: failure()
+        run: |
+          sed 's/\x1b\[[0-9;]*m//g' test.log | grep -E "❌|\[Actual\]|\[Expected\]|ERROR|Error|error|Tests\]" | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+      - name: Summary
+        if: always()
+        run: |
+          strip() { sed 's/\x1b\[[0-9;]*m//g' "$1" 2>/dev/null; }
+          echo "::notice title=Tests::$(strip test.log | grep -E '\[(Groups|Result|Tests|Files)\]' | tr -s ' ' | tr '\n' ' ')"
+          sha=$(sha256sum build/release/contract.wasm 2>/dev/null | cut -d' ' -f1); echo "::notice title=Release build sha256::$sha"
