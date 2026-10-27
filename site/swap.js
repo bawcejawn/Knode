@@ -143,7 +143,7 @@
   function friendlyError(msg) {
     const m = msg.match(/"([^"]{6,160})"/);
     const text = m ? m[1] : msg;
-    if (/insufficient\s*(rc|mana|resources?)|\bmana\b|\brc[_ ]?limit\b|out of rc/i.test(text)) return `not enough Mana. In Kondor, tick the free Mana option; in KOIN Vault, hold a little KOIN; or wait for Mana to refill. (${text.slice(0, 90)})`;
+    if (/insufficient\s*(rc|mana|resources?)|\bmana\b|\brc[_ ]?limit\b|out of rc/i.test(text)) return `not enough Mana. The free Mana may be used up for today; in KOIN Vault, hold a little KOIN; or wait for Mana to refill. (${text.slice(0, 90)})`;
     return text.slice(0, 180);
   }
 
