@@ -162,3 +162,9 @@ test("the recorder's files are read only from the race-data branch", () => {
   assert.match(read("race.js"), /const DATA = "https:\/\/raw\.githubusercontent\.com\/bawcejawn\/Knode\/race-data\/"/);
   assert.match(read("race.html"), /connect-src [^"]*https:\/\/raw\.githubusercontent\.com\/bawcejawn\/Knode\/race-data\//);
 });
+
+test("the pick lists for upcoming races are never empty once any card exists: a race's own card, else the latest one", () => {
+  const js = read("race.js");
+  assert.match(js, /const fieldOf = \(r\) => \(r\.cards && !r\.provisional && M\.cardForLeg\(r\.cards, 0\)\) \|\| latest\(\);/);
+  assert.match(js, /const latest = \(\) => \{ const lr = raceObj\(cur\); return \(lr\.cards && M\.cardForLeg\(lr\.cards, M\.legOf\(lr\.start, Date\.now\(\)\)\)\) \|\| prov; \};/);
+});
