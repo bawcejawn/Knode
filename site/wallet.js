@@ -244,9 +244,14 @@
   const PINNED_RACE = "1EN7xU8R9tQXjHvrX79qZvvvGkkKWVnB5K";
   const guestGame = () => (W.chainId === MAINNET_CHAIN_ID ? PINNED_GAME : (W.gameContract || null));
   const guestRace = () => (W.chainId === MAINNET_CHAIN_ID ? (PINNED_RACE || null) : ((W.sponsor && W.sponsor.race) || null));
-  /** A guest may sign only free play: game answers, and picks on the race contract. */
-  const guestOp = (o, game, race) => !!(o && o.call_contract && ((game && o.call_contract.contract_id === game && Number(o.call_contract.entry_point) === ANSWER)
-    || (race && o.call_contract.contract_id === race && Number(o.call_contract.entry_point) === PICK)));
+  // The KnodeGames Picks contract (picks-data/deployment.json), pinned the same way once it is on mainnet. Until then
+  // guests can't make KnodeGames picks (empty = none).
+  const PINNED_PICKS = "";
+  const guestPicks = () => (W.chainId === MAINNET_CHAIN_ID ? (PINNED_PICKS || null) : ((W.sponsor && W.sponsor.picks) || null));
+  /** A guest may sign only free play: game answers, picks on the race contract, and KnodeGames picks. */
+  const guestOp = (o, game, race, picks) => !!(o && o.call_contract && ((game && o.call_contract.contract_id === game && Number(o.call_contract.entry_point) === ANSWER)
+    || (race && o.call_contract.contract_id === race && Number(o.call_contract.entry_point) === PICK)
+    || (picks && o.call_contract.contract_id === picks && Number(o.call_contract.entry_point) === PICK)));
   // Owner switch: guest play is on only when game-data/deployment.json has "sponsor": { ..., "guest": true }. Keep it off
   // until the site has its own domain: on the shared bawcejawn.github.io origin, other pages there could read a guest key.
   const guestOn = () => !!(W.sponsor && W.sponsor.guest === true);
@@ -378,8 +383,8 @@
     const game = guestGame();
     if (W.chainId === MAINNET_CHAIN_ID && (!sp || sp.address !== PINNED_SPONSOR || !Array.isArray(sp.covers) || !sp.covers.includes(PINNED_GAME)))
       throw new Error("Guest play is paused: the page's Mana sponsor settings aren't the live Knode sponsor. Nothing was sent.");
-    const race = guestRace();
-    const freeOnly = !!game && ops.length > 0 && ops.every((o) => guestOp(o, game, race));
+    const race = guestRace(), picks = guestPicks();
+    const freeOnly = !!game && ops.length > 0 && ops.every((o) => guestOp(o, game, race, picks));
     if (!freeOnly) throw guestCant(ops);
     const rcLimit = String(sp.rcLimit || "100000000");
     if (!(await sponsorSaysYes(sp, rcLimit, true))) throw new Error(GUEST_NO_FREE);
@@ -389,10 +394,10 @@
     const tx = new lib.Transaction({ signer, provider: W.provider, options: { payer: sp.address, payee: W.address, rcLimit, chainId: W.chainId } });
     for (const op of ops) await tx.pushOperation(op);
     const prepared = await tx.prepare({ payer: sp.address, payee: W.address, rcLimit, chainId: W.chainId });
-    checkGuestTx(prepared, { sponsor: sp.address, payee: W.address, chainId: W.chainId, game, race, rcLimit });
+    checkGuestTx(prepared, { sponsor: sp.address, payee: W.address, chainId: W.chainId, game, race, picks, rcLimit });
     W.status && W.status(`Sending “${label}” (free: the Mana sponsor pays)…`);
     tx.transaction = await tx.sign();
-    checkGuestTx(tx.transaction, { sponsor: sp.address, payee: W.address, chainId: W.chainId, game, race, rcLimit });
+    checkGuestTx(tx.transaction, { sponsor: sp.address, payee: W.address, chainId: W.chainId, game, race, picks, rcLimit });
     let receipt;
     try { receipt = await tx.send(); }
     catch (e) {
@@ -429,11 +434,12 @@
     if (want.chainId && hd.chain_id !== want.chainId) throw new Error("The transaction is for another chain. Nothing was sent.");
     if (BigInt(hd.rc_limit || 0) > BigInt(want.rcLimit)) throw new Error("The transaction asks for more Mana than expected. Nothing was sent.");
     const ops = tx.operations || [];
-    // (self-contained: answers on the game, or picks (0x8ce33c6c) on the pinned race contract)
+    // (self-contained: answers on the game, or picks (0x8ce33c6c) on the pinned race or KnodeGames Picks contract)
     const ok = (o) => !!(o && o.call_contract && ((want.game && o.call_contract.contract_id === want.game && Number(o.call_contract.entry_point) === ANSWER)
-      || (want.race && o.call_contract.contract_id === want.race && Number(o.call_contract.entry_point) === 0x8ce33c6c)));
+      || (want.race && o.call_contract.contract_id === want.race && Number(o.call_contract.entry_point) === 0x8ce33c6c)
+      || (want.picks && o.call_contract.contract_id === want.picks && Number(o.call_contract.entry_point) === 0x8ce33c6c)));
     if (!ops.length || !ops.every(ok))
-      throw new Error("A guest signs only game answers and race picks. Nothing was sent.");
+      throw new Error("A guest signs only game answers and picks. Nothing was sent.");
   }
 
   /** Disconnect: ends the KOIN Vault session and forgets every remembered account on this device. */
