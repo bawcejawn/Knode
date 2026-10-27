@@ -20,6 +20,9 @@
  *       - off switch: HEAL_AUTO_REPAIR=off in .env. It also stays off until node\install-heal.ps1 has been run again
  *         (the scheduled task needs room for a repair: up to 2 hours instead of 15 minutes).
  *     Old "...-broken-<date>" backups that a repair leaves are deleted after 7 days.
+ *   - nodes moved into a Docker volume (node\move-node-to-volume.ps1; their koinos folder has a docker-compose.override.yml
+ *     naming the volume) are handled the same way: their block-store log and backups are read inside the volume with a
+ *     small throwaway container, and repairs copy into or out of the volume. A move in progress holds the same lock.
  * Every restart (and every problem it can't fix) emails you through GitHub: it starts the "Heal alert" workflow,
  * which fails on purpose, and GitHub emails you about the failed run. That needs GITHUB_ALERT_TOKEN in .env.
  *
@@ -107,6 +110,19 @@ function docker(args, cwd) {
   return execFileSync(process.env.HEAL_DOCKER || "docker", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 180_000, windowsHide: true });
 }
 
+const ALPINE = "alpine:3.20";   // the small pinned image node\move-node-to-volume.ps1 and the repair script use
+
+/** The node's Docker volume, when node\move-node-to-volume.ps1 moved its data there (it writes the volume's name into
+ *  docker-compose.override.yml as "# knode-volume: <name>"), else null: the data is in the BASEDIR folder. */
+function volumeOf(dir) {
+  try { return (fs.readFileSync(path.join(dir, "docker-compose.override.yml"), "utf8").match(/^#\s*knode-volume:\s*(\S+)/m) || [])[1] || null; }
+  catch { return null; }
+}
+/** Runs a shell command in a throwaway container with the node's volume at /k (read-only unless rw). */
+function inVolume(vol, script, rw = false) {
+  return docker(["run", "--rm", "-v", `${vol}:/k${rw ? "" : ":ro"}`, ALPINE, "sh", "-c", script]);
+}
+
 /** The node's data folder (BASEDIR in its koinos\.env), or null. */
 function baseDir(dir) {
   try {
@@ -121,14 +137,20 @@ function baseDir(dir) {
 // loop shows up here even when the height looks fine.
 function blockStoreStarts(dir, ms, notBefore = 0) {
   try {
-    const base = baseDir(dir);
-    if (!base) return 0;
-    const f = path.join(base, "block_store", "logs", "block_store.log");
-    const size = fs.statSync(f).size, len = Math.min(size, 400_000);
-    const buf = Buffer.alloc(len);
-    const fd = fs.openSync(f, "r"); fs.readSync(fd, buf, 0, len, size - len); fs.closeSync(fd);
+    let text;
+    const vol = volumeOf(dir);
+    if (vol) text = inVolume(vol, "tail -c 400000 /k/block_store/logs/block_store.log");
+    else {
+      const base = baseDir(dir);
+      if (!base) return 0;
+      const f = path.join(base, "block_store", "logs", "block_store.log");
+      const size = fs.statSync(f).size, len = Math.min(size, 400_000);
+      const buf = Buffer.alloc(len);
+      const fd = fs.openSync(f, "r"); fs.readSync(fd, buf, 0, len, size - len); fs.closeSync(fd);
+      text = buf.toString("utf8");
+    }
     const since = Math.max(Date.now() - ms, notBefore);
-    return buf.toString("utf8").split("\n").filter((l) => l.includes("Koinos Block Store v"))
+    return text.split("\n").filter((l) => l.includes("Koinos Block Store v"))
       .map((l) => Date.parse(l.slice(0, 19).replace(" ", "T") + "Z")).filter((t) => t >= since).length;
   } catch { return 0; }
 }
@@ -157,8 +179,30 @@ function freeBytes(p) {
 function taskAllowsRepair() {
   try { return Number(JSON.parse(fs.readFileSync(TASK_INFO, "utf8")).limitMinutes) >= 100; } catch { return false; }
 }
+/** The same inside a node's Docker volume: lists the backups in a throwaway container and deletes only names that match
+ *  "db-broken-YYYYMMDD-HHMM" / "blockchain-broken-YYYYMMDD-HHMM" exactly. */
+function pruneVolumeBackups(n, vol) {
+  let listing = "";
+  try { listing = inVolume(vol, "ls -1 /k/block_store /k/chain 2>/dev/null; true"); } catch { return; }
+  const names = listing.split(/\r?\n/).map((x) => x.trim());
+  for (const [sub, name] of [["block_store", "db"], ["chain", "blockchain"]]) {
+    for (const e of names) {
+      const m = e.match(BACKUP_RE(name));
+      if (!m || !backupOld(m)) continue;
+      const p = `/k/${sub}/${e}`;
+      if (DRY) { log(`(dry run) would delete the old repair backup ${p} in the volume ${vol}`); continue; }
+      try { inVolume(vol, `rm -rf ${p}`, true); log(`${n.name}: deleted the repair backup ${e} in ${vol} (older than 7 days)`); }
+      catch (err) { log(`${n.name}: couldn't delete the old backup ${e} in ${vol}: ${err.message}`); }
+    }
+  }
+}
+
 /** Deletes "db-broken-YYYYMMDD-HHMM" / "blockchain-broken-…" folders (left by a repair) older than 7 days. */
+const BACKUP_RE = (name) => new RegExp(`^${name}-broken-(\\d{4})(\\d{2})(\\d{2})-(\\d{2})(\\d{2})$`);
+const backupOld = (m) => Date.now() - new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime() > BACKUP_KEEP_MS;   // named in the PC's local time
 function pruneBackups(n) {
+  const vol = volumeOf(n.dir);
+  if (vol) return pruneVolumeBackups(n, vol);
   const base = baseDir(n.dir);
   if (!base) return;
   for (const [sub, name] of [["block_store", "db"], ["chain", "blockchain"]]) {
@@ -314,10 +358,15 @@ async function handleCrashLoop({ n, s, starts }, st, now, lock) {
   if (!src) return nag("no other node has been healthy for two checks in a row");
   // Free disk: the copy needs the source's two databases plus room to spare (the script checks again).
   try {
+    const vol = volumeOf(src.dir);
     const base = baseDir(src.dir);
-    if (!base) return nag(`the ${src.name}'s data folder is unknown (no BASEDIR in ${path.join(src.dir, ".env")})`);
-    const need = dirBytes(path.join(base, "block_store", "db")) + dirBytes(path.join(base, "chain", "blockchain")) + DISK_MARGIN;
-    const free = freeBytes(base);
+    if (!vol && !base) return nag(`the ${src.name}'s data folder is unknown (no BASEDIR in ${path.join(src.dir, ".env")})`);
+    const used = vol
+      ? Number(inVolume(vol, "find /k/block_store/db /k/chain/blockchain -type f -exec stat -c %s {} + | awk '{s+=$1} END {print s+0}'").trim().split(/\s+/).pop())
+      : dirBytes(path.join(base, "block_store", "db")) + dirBytes(path.join(base, "chain", "blockchain"));
+    if (!Number.isFinite(used)) throw new Error(`couldn't measure the data in ${vol}`);
+    const need = used + DISK_MARGIN;
+    const free = freeBytes(vol ? src.dir : base);   // Docker's Linux disk (where volumes live) is on the same drive (C:)
     if (free < need) return nag(`not enough free disk space (need ${(need / 2 ** 30).toFixed(0)} GB, have ${(free / 2 ** 30).toFixed(0)} GB)`);
   } catch (e) { return nag(`couldn't check the free disk space (${e.message})`); }
 

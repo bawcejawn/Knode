@@ -231,6 +231,30 @@ Windows task "Knode self-heal" runs `node bot\heal.mjs` (log: `node\heal.log`), 
   `powershell -ExecutionPolicy Bypass -File node\repair-node-data.ps1 -Broken game -From desk`
   (`-Broken` / `-From`: `game`, `desk` or `personal`).
 
+### Moving a node's data into a Docker volume
+
+Each node's databases started in a Windows folder (`basedir`) that the Linux containers reach through Docker
+Desktop's Windows-to-Linux file bridge: slow for databases and a likely cause of the damaged block stores. A Docker
+volume keeps them on Linux's own disk inside WSL2. Move one node at a time (desk first, then game, then personal):
+
+```
+powershell -ExecutionPolicy Bypass -File node\move-node-to-volume.ps1 -Node desk -WhatIf   (the plan, changes nothing)
+powershell -ExecutionPolicy Bypass -File node\move-node-to-volume.ps1 -Node desk
+```
+
+It holds the self-heal's lock, stops the node, copies the whole `basedir` (keys included) into the volume
+`<project>-basedir` with a small `alpine:3.20` container, checks the copy (file count, total size, block-producer key),
+writes `docker-compose.override.yml` next to `docker-compose.yml` (which stays unchanged: Compose reads the override
+automatically and mounts the volume at `/koinos`), starts the node and waits for it to answer. If anything fails
+before the start, the override is set aside and the node starts on its old folder. Nothing is deleted: the old
+`basedir` folder is the backup (delete it yourself after a week of good running).
+
+- **Roll back**: in the node's `koinos` folder: `docker compose down`, rename `docker-compose.override.yml`,
+  `docker compose up -d` (the node runs on its old folder again).
+- **A copy that failed halfway**: run again with `-Resume` (it empties the half-filled volume and copies again).
+- The self-heal and `repair-node-data.ps1` know volume nodes: they read the block-store log and old backups inside the
+  volume, and repairs copy into or out of it with the same small container.
+
 ## Repository layout
 
 | Folder / file | What it is |
