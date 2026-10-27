@@ -203,7 +203,25 @@ export class Picks {
 
   get_game(args: picks.get_game_arguments): picks.get_game_result {
     const key = u32Bytes(args.game);
-    return new picks.get_game_result(this.games.get(key), this.pending.get(key));
+    const p = this.pending.get(key);
+    const live = p != null && p.generation == this.config.get()!.generation;
+    return new picks.get_game_result(this.games.get(key), live ? p : null);
+  }
+
+  /** Announced changes that can still be applied (current owner generation), by game id (audit P-7). */
+  list_pending(args: picks.list_pending_arguments): picks.list_pending_result {
+    const out = new picks.list_pending_result();
+    const limit: u32 = args.limit == 0 || args.limit > 50 ? 50 : args.limit;
+    const gen = this.config.get()!.generation;
+    let key = u32Bytes(args.start_after);
+    // Stale entries are skipped; at most 200 are looked at per call, so a page can be short (read-only, any caller).
+    for (let i = 0; i < 200 && <u32>out.pending.length < limit; i++) {
+      const obj = this.pending.getNext(key);
+      if (obj == null || obj.key == null || obj.key!.length != 4) break;
+      if (obj.value.generation == gen) out.pending.push(obj.value);
+      key = obj.key!;
+    }
+    return out;
   }
 
   list_games(args: picks.list_games_arguments): picks.list_games_result {
@@ -230,7 +248,7 @@ export class Picks {
     if (cur != null) System.require(sameShape(cur!, n), SHAPE_FIXED);
     else System.require(this.gameCount() < MAX_GAMES, "PICKS: at most 32 games");
     const eta = this.now() + TIMELOCK_MS;
-    this.pending.put(key, new picks.pending_game(n, eta));
+    this.pending.put(key, new picks.pending_game(n, eta, this.config.get()!.generation));
     this.gameEvent("announced", n, eta);
     return new picks.eta_result(eta);
   }
@@ -239,6 +257,8 @@ export class Picks {
     const key = u32Bytes(args.game);
     const p = this.pending.get(key);
     System.require(p != null && p!.game != null, "PICKS: nothing announced for this game");
+    // Audit P-1: an announcement from before an owner handover is dead.
+    System.require(p!.generation == this.config.get()!.generation, "PICKS: announced by a previous owner; the owner must announce it again");
     const now = this.now();
     System.require(now >= p!.eta, NOT_YET);
     System.require(now < p!.eta + EXPIRY_MS, EXPIRED);
@@ -270,6 +290,8 @@ export class Picks {
     );
     checkGame(n);
     this.games.put(key, n);
+    // Audit P-2: a change announced before the tightening must not undo it later.
+    if (this.pending.get(key) != null) { this.pending.remove(key); this.gameEvent("cancelled", n, 0); }
     this.gameEvent("tightened", n, 0);
     return new picks.empty_object();
   }
@@ -313,15 +335,9 @@ export class Picks {
     System.require(now < cfg.pending_owner_eta + EXPIRY_MS, EXPIRED);
     const next = cfg.pending_owner!;
     System.require(System.checkAuthority(authority.authorization_type.contract_call, next), "PICKS: the new owner must sign");
-    // The new owner starts clean: nothing the previous owner announced survives the handover.
-    let key = new Uint8Array(4);
-    for (let i: u32 = 0; i <= MAX_GAMES; i++) {
-      const obj = this.pending.getNext(key);
-      if (obj == null || obj.key == null || obj.key!.length != 4) break;
-      this.pending.remove(obj.key!);
-      key = obj.key!;
-    }
-    this.config.put(new picks.config(next, null, 0, null, 0));
+    // The new owner starts clean: a new generation makes every earlier announcement unusable (audit P-1: however many
+    // there are, without a loop), and the announced upgrade is cleared.
+    this.config.put(new picks.config(next, null, 0, null, 0, cfg.generation + 1));
     this.ownerEvent("accepted", next, 0);
     return new picks.empty_object();
   }

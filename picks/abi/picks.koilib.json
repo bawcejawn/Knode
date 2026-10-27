@@ -56,6 +56,13 @@
       "read_only": true,
       "description": "Every registered game, in id order."
     },
+    "list_pending": {
+      "entry_point": 1809552309,
+      "argument": "picks.list_pending_arguments",
+      "return": "picks.list_pending_result",
+      "read_only": true,
+      "description": "Announced game changes that can still be applied, in game id order, up to limit (at most 50) at a time. Pass the last game id you got as start_after for the next page."
+    },
     "announce_game": {
       "entry_point": 4158087113,
       "argument": "picks.announce_game_arguments",
@@ -75,7 +82,7 @@
       "argument": "picks.tighten_game_arguments",
       "return": "picks.empty_object",
       "read_only": false,
-      "description": "Make a game stricter at once (owner only): switch it off, lower its caps, lock earlier or open later. Nothing looser is allowed."
+      "description": "Make a game stricter at once (owner only): switch it off, lower its caps, lock earlier or open later. Nothing looser is allowed. It also drops any announced change for that game."
     },
     "cancel_game_change": {
       "entry_point": 3590283698,
@@ -96,7 +103,7 @@
       "argument": "picks.accept_owner_arguments",
       "return": "picks.empty_object",
       "read_only": false,
-      "description": "Become the owner (the proposed owner, 48 hours after the proposal). Clears every announced game change and any announced upgrade."
+      "description": "Become the owner (the proposed owner, 48 hours after the proposal). Every game change the previous owner announced can no longer be applied, and any announced upgrade is cleared."
     },
     "schedule_upgrade": {
       "entry_point": 2777493725,
@@ -143,6 +150,13 @@
               "upgrade_eta": {
                 "type": "uint64",
                 "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "generation": {
+                "type": "uint64",
+                "id": 6,
                 "options": {
                   "jstype": "JS_STRING"
                 }
@@ -236,6 +250,13 @@
               "eta": {
                 "type": "uint64",
                 "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "generation": {
+                "type": "uint64",
+                "id": 3,
                 "options": {
                   "jstype": "JS_STRING"
                 }
@@ -545,6 +566,27 @@
               "games": {
                 "rule": "repeated",
                 "type": "game_config",
+                "id": 1
+              }
+            }
+          },
+          "list_pending_arguments": {
+            "fields": {
+              "start_after": {
+                "type": "uint32",
+                "id": 1
+              },
+              "limit": {
+                "type": "uint32",
+                "id": 2
+              }
+            }
+          },
+          "list_pending_result": {
+            "fields": {
+              "pending": {
+                "rule": "repeated",
+                "type": "pending_game",
                 "id": 1
               }
             }

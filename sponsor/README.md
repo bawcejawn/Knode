@@ -137,7 +137,8 @@ v3 adds three things. With no `allowed` rows it behaves as v2, except for the tw
   free player (a guest too) can collect a free-game prize.
 - **Fixcheck L-3**: a stake counts as a real player from `min_vhp` up (active and pending together), like held VHP.
 
-Development build sha256 (v3, not audited): `1c9c4baf09fbe594a476e970d0543acb138f0452571c548adaf24e1550e31216` (31,783 bytes).
+Development build sha256 (v3, not audited): `bbd921e75a0e9fe48412ee65dab51539a2f5d7d3e8c65a956962b6c4af5e79d1` (31,794 bytes).
+Allowlisted calls and free claims are refused above 400 argument bytes (Picks audit P-3; the largest Picks pick is 317).
 The upload tool still pins v2 until v3 passes its audit and fix-check.
 
 ## Build

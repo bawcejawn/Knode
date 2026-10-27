@@ -49,6 +49,9 @@ message config {
   // An announced upgrade: the sha256 of the new code and the time (ms) from which it can be uploaded.
   bytes upgrade_hash = 4 [(koinos.btype) = HEX];
   uint64 upgrade_eta = 5 [jstype = JS_STRING];
+  // Counts owner handovers. An announcement carries the generation it was made in, and apply_game refuses one from an
+  // earlier generation, so nothing a previous owner announced survives a handover (audit P-1).
+  uint64 generation = 6 [jstype = JS_STRING];
 }
 
 // A game's rules. kind: 1 = one producer, 2 = a list of 1 to list_size distinct producers, 3 = a number from
@@ -78,6 +81,8 @@ message pending_game {
   game_config game = 1;
   // From this time (ms) apply_game can put it in force, for 7 days.
   uint64 eta = 2 [jstype = JS_STRING];
+  // The owner generation it was announced in (audit P-1).
+  uint64 generation = 3 [jstype = JS_STRING];
 }
 
 message pick_object {
@@ -200,6 +205,18 @@ message list_games_result {
   repeated game_config games = 1;
 }
 
+// @description Announced game changes that can still be applied, in game id order, up to limit (at most 50) at a time. Pass the last game id you got as start_after for the next page.
+// @read-only true
+// @result list_pending_result
+message list_pending_arguments {
+  uint32 start_after = 1;
+  uint32 limit = 2;
+}
+
+message list_pending_result {
+  repeated pending_game pending = 1;
+}
+
 // ── owner ──
 
 // @description Announce a new game, or new settings for a game (owner only). Takes effect with apply_game 48 hours later. A game's shape can't change once registered.
@@ -216,7 +233,7 @@ message apply_game_arguments {
   uint32 game = 1;
 }
 
-// @description Make a game stricter at once (owner only): switch it off, lower its caps, lock earlier or open later. Nothing looser is allowed.
+// @description Make a game stricter at once (owner only): switch it off, lower its caps, lock earlier or open later. Nothing looser is allowed. It also drops any announced change for that game.
 // @read-only false
 // @result empty_object
 message tighten_game_arguments {
@@ -237,7 +254,7 @@ message propose_owner_arguments {
   bytes owner = 1 [(koinos.btype) = ADDRESS];
 }
 
-// @description Become the owner (the proposed owner, 48 hours after the proposal). Clears every announced game change and any announced upgrade.
+// @description Become the owner (the proposed owner, 48 hours after the proposal). Every game change the previous owner announced can no longer be applied, and any announced upgrade is cleared.
 // @read-only false
 // @result empty_object
 message accept_owner_arguments {}

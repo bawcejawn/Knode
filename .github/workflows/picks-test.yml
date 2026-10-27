@@ -3,9 +3,9 @@ name: Picks contract tests
 
 on:
   push:
-    paths: ["picks/**", ".github/workflows/picks-test.yml"]
+    paths: ["picks/**", "tools/pbjs-helpers/**", ".github/workflows/picks-test.yml"]
   pull_request:
-    paths: ["picks/**", ".github/workflows/picks-test.yml"]
+    paths: ["picks/**", "tools/pbjs-helpers/**", ".github/workflows/picks-test.yml"]
   workflow_dispatch: {}
 
 permissions:

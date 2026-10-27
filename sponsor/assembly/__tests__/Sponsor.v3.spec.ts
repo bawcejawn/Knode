@@ -195,6 +195,13 @@ describe("v3 argument shape: the sponsor reads the player exactly as the target 
     expect(argsPlayer(with_([0x10]), t) == null).toBe(true);                          // varint cut off
     expect(argsPlayer(with_([0x10, 2, 0x18, 3, 0x22, 0, 0x22, 0, 0x28, 4]), t) != null).toBe(true);   // in order, repeated field 4 side by side
     expect(argsPlayer(with_([0x22, 0, 0x10, 2]), t) == null).toBe(true);              // field 2 after field 4
+    // Picks audit P-3: at most 400 bytes; a full 10-producer pick (317 bytes) fits.
+    const ten: u8[] = [0x10, 2, 0x18, 0xa0, 0x9c, 0x01];
+    for (let i = 0; i < 10; i++) { ten.push(0x22); ten.push(25); for (let j = 0; j < 25; j++) ten.push(H1[j]); }
+    ten.push(0x28); ten.push(1);
+    expect(argsPlayer(with_(ten), t) != null).toBe(true);
+    const big: u8[] = [0x22, 0xf8, 0x02]; for (let i = 0; i < 376; i++) big.push(0);   // 27 + 3 + 376 = 406 bytes
+    expect(argsPlayer(with_(big), t) == null).toBe(true);
   });
   it("fuzz: whenever the sponsor accepts arguments, the Picks contract's decoder reads the same player", () => {
     let seed: u32 = 20261027;

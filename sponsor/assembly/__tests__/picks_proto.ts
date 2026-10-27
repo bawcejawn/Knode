@@ -31,6 +31,11 @@ export namespace picks {
         writer.uint32(40);
         writer.uint64(message.upgrade_eta);
       }
+
+      if (message.generation != 0) {
+        writer.uint32(48);
+        writer.uint64(message.generation);
+      }
     }
 
     static decode(reader: Reader, length: i32): config {
@@ -60,6 +65,10 @@ export namespace picks {
             message.upgrade_eta = reader.uint64();
             break;
 
+          case 6:
+            message.generation = reader.uint64();
+            break;
+
           default:
             reader.skipType(tag & 7);
             break;
@@ -74,19 +83,22 @@ export namespace picks {
     pending_owner_eta: u64;
     upgrade_hash: Uint8Array | null;
     upgrade_eta: u64;
+    generation: u64;
 
     constructor(
       owner: Uint8Array | null = null,
       pending_owner: Uint8Array | null = null,
       pending_owner_eta: u64 = 0,
       upgrade_hash: Uint8Array | null = null,
-      upgrade_eta: u64 = 0
+      upgrade_eta: u64 = 0,
+      generation: u64 = 0
     ) {
       this.owner = owner;
       this.pending_owner = pending_owner;
       this.pending_owner_eta = pending_owner_eta;
       this.upgrade_hash = upgrade_hash;
       this.upgrade_eta = upgrade_eta;
+      this.generation = generation;
     }
   }
 
@@ -298,6 +310,11 @@ export namespace picks {
         writer.uint32(16);
         writer.uint64(message.eta);
       }
+
+      if (message.generation != 0) {
+        writer.uint32(24);
+        writer.uint64(message.generation);
+      }
     }
 
     static decode(reader: Reader, length: i32): pending_game {
@@ -315,6 +332,10 @@ export namespace picks {
             message.eta = reader.uint64();
             break;
 
+          case 3:
+            message.generation = reader.uint64();
+            break;
+
           default:
             reader.skipType(tag & 7);
             break;
@@ -326,10 +347,16 @@ export namespace picks {
 
     game: game_config | null;
     eta: u64;
+    generation: u64;
 
-    constructor(game: game_config | null = null, eta: u64 = 0) {
+    constructor(
+      game: game_config | null = null,
+      eta: u64 = 0,
+      generation: u64 = 0
+    ) {
       this.game = game;
       this.eta = eta;
+      this.generation = generation;
     }
   }
 
@@ -1287,6 +1314,91 @@ export namespace picks {
 
     constructor(games: Array<game_config> = []) {
       this.games = games;
+    }
+  }
+
+  @unmanaged
+  export class list_pending_arguments {
+    static encode(message: list_pending_arguments, writer: Writer): void {
+      if (message.start_after != 0) {
+        writer.uint32(8);
+        writer.uint32(message.start_after);
+      }
+
+      if (message.limit != 0) {
+        writer.uint32(16);
+        writer.uint32(message.limit);
+      }
+    }
+
+    static decode(reader: Reader, length: i32): list_pending_arguments {
+      const end: usize = length < 0 ? reader.end : reader.ptr + length;
+      const message = new list_pending_arguments();
+
+      while (reader.ptr < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1:
+            message.start_after = reader.uint32();
+            break;
+
+          case 2:
+            message.limit = reader.uint32();
+            break;
+
+          default:
+            reader.skipType(tag & 7);
+            break;
+        }
+      }
+
+      return message;
+    }
+
+    start_after: u32;
+    limit: u32;
+
+    constructor(start_after: u32 = 0, limit: u32 = 0) {
+      this.start_after = start_after;
+      this.limit = limit;
+    }
+  }
+
+  export class list_pending_result {
+    static encode(message: list_pending_result, writer: Writer): void {
+      const unique_name_pending = message.pending;
+      for (let i = 0; i < unique_name_pending.length; ++i) {
+        writer.uint32(10);
+        writer.fork();
+        pending_game.encode(unique_name_pending[i], writer);
+        writer.ldelim();
+      }
+    }
+
+    static decode(reader: Reader, length: i32): list_pending_result {
+      const end: usize = length < 0 ? reader.end : reader.ptr + length;
+      const message = new list_pending_result();
+
+      while (reader.ptr < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1:
+            message.pending.push(pending_game.decode(reader, reader.uint32()));
+            break;
+
+          default:
+            reader.skipType(tag & 7);
+            break;
+        }
+      }
+
+      return message;
+    }
+
+    pending: Array<pending_game>;
+
+    constructor(pending: Array<pending_game> = []) {
+      this.pending = pending;
     }
   }
 
