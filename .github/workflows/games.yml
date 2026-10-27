@@ -1,5 +1,5 @@
 # KnodeGames recorders: every hour, records each game's results from the chain (irreversible blocks only, two nodes
-# must agree). Today: Who Signs Block X (bot/games/blockx.ts). Each game has its own folder on the games-data branch.
+# must agree). Today: Who Signs Block X (bot/games/blockx.ts) and the Producer Bracket (bot/games/bracket.ts). Each game has its own folder on the games-data branch.
 #
 # Two jobs, like the race and the main bot, so repository code never runs next to a write token:
 #   record   runs the recorders with a read-only token and no secrets (they only read the chain), and hands the files on.
@@ -42,10 +42,12 @@ jobs:
       - name: Take the last run's files and the race cards
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/prev/blockx" "$RUNNER_TEMP/race"
+          mkdir -p "$RUNNER_TEMP/prev/blockx" "$RUNNER_TEMP/prev/bracket" "$RUNNER_TEMP/race"
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" games-data 2>/dev/null; then
-            for f in $(git ls-tree --name-only FETCH_HEAD:blockx 2>/dev/null); do
-              if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:blockx/$f" > "$RUNNER_TEMP/prev/blockx/$f"; fi
+            for g in blockx bracket; do
+              for f in $(git ls-tree --name-only "FETCH_HEAD:$g" 2>/dev/null); do
+                if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$g/$f" > "$RUNNER_TEMP/prev/$g/$f"; fi
+              done
             done
           else echo "No games-data branch yet."; fi
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
@@ -60,6 +62,14 @@ jobs:
           RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
           BLOCKX_PREV: ${{ runner.temp }}/prev/blockx
           BLOCKX_OUT: ${{ runner.temp }}/games-data/blockx
+          RACE_DATA: ${{ runner.temp }}/race
+      - name: Record the Producer Bracket
+        run: npm run bracket
+        env:
+          RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
+          RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
+          BRACKET_PREV: ${{ runner.temp }}/prev/bracket
+          BRACKET_OUT: ${{ runner.temp }}/games-data/bracket
           RACE_DATA: ${{ runner.temp }}/race
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -88,7 +98,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/bracket" \) -o \( -type f ! -regex "$IN/\(blockx\|bracket\)/\(index\|board\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           big=$(find "$IN" -type f -size +2048k -print)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
@@ -129,6 +139,60 @@ jobs:
               assert type(j["targets"]) is list and len(j["targets"]) <= 100 and all(target_ok(t) for t in j["targets"]), f
           print("games files ok")
           PY
+          # The Producer Bracket files (bot/games/bracket.ts): the same kind of shape check.
+          /usr/bin/python3 - "$IN/bracket" <<'PY'
+          import json, os, re, sys
+          d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          if not os.path.isdir(d): print("no bracket files"); sys.exit(0)
+          num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
+          nat = lambda x: type(x) is int and 0 <= x < 10**16
+          isa = lambda x: type(x) is str and addr.fullmatch(x) is not None
+          def hour_ok(h):
+              if h is None: return True
+              if type(h) is not dict or set(h) != {"from", "to", "n", "by", "share", "checked"}: return False
+              if not (nat(h["from"]) and nat(h["to"]) and nat(h["n"]) and h["n"] <= 100000 and h["checked"] in (1, 2)): return False
+              if type(h["by"]) is not dict or len(h["by"]) > 32 or not all(isa(a) and nat(v) and v <= h["n"] for a, v in h["by"].items()): return False
+              return h["share"] is None or (type(h["share"]) is dict and len(h["share"]) <= 32 and all(isa(a) and num(v) and 0 <= v <= 1 for a, v in h["share"].items()))
+          def week_ok(j):
+              if not set(j) <= {"v", "week", "start", "end", "status", "seeding", "picks", "days", "results", "points", "void"}: return False
+              if j.get("v") != 1 or not nat(j.get("week")) or not nat(j.get("start")) or not nat(j.get("end")): return False
+              if j.get("status") not in ("waiting", "none", "void", "open", "locked", "final"): return False
+              if "void" in j and (type(j["void"]) is not str or len(j["void"]) > 200): return False
+              s = j.get("seeding")
+              if s is not None:
+                  if type(s) is not dict or set(s) != {"at", "cardAt", "size", "seeds", "vhp", "out", "hash"} or s["size"] not in (0, 8, 16, 32): return False
+                  if not (nat(s["at"]) and num(s["cardAt"]) and type(s["seeds"]) is list and len(s["seeds"]) <= s["size"] and all(isa(a) for a in s["seeds"])): return False
+                  if not (type(s["vhp"]) is list and len(s["vhp"]) == len(s["seeds"]) and all(num(v) for v in s["vhp"]) and type(s["out"]) is list and len(s["out"]) <= 1000 and all(isa(a) for a in s["out"])): return False
+                  if type(s["hash"]) is not str or not re.fullmatch(r"[0-9a-f]{64}", s["hash"]): return False
+              ds = j.get("days")
+              if type(ds) is not list or len(ds) > 5 or not all(type(x) is list and len(x) == 24 and all(hour_ok(h) for h in x) for x in ds): return False
+              pk = j.get("picks")
+              if pk is not None and (type(pk) is not dict or set(pk) != {"checked", "rows"} or pk["checked"] not in (1, 2) or type(pk["rows"]) is not list or len(pk["rows"]) > 100000
+                  or not all(type(x) is list and len(x) == 4 and isa(x[0]) and nat(x[1]) and x[1] < 2**31 and nat(x[2]) and x[3] in (0, 1) for x in pk["rows"])): return False
+              r = j.get("results")
+              if r is not None and (type(r) is not dict or set(r) != {"rounds", "done"} or type(r["done"]) is not bool or type(r["rounds"]) is not list or len(r["rounds"]) > 5
+                  or not all(type(x) is list and len(x) <= 16 and all(type(v) is int and 1 <= v <= 32 for v in x) for x in r["rounds"])): return False
+              pts = j.get("points")
+              return type(pts) is list and len(pts) <= 100000 and all(type(x) is list and len(x) == 4 and isa(x[0]) and nat(x[1]) and x[1] <= 82 and x[2] in (0, 1) and nat(x[3]) and x[3] <= 31 for x in pts)
+          def rows_ok(rows):
+              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "place", "pts", "champion", "correct"} and isa(x["a"])
+                  and nat(x["place"]) and nat(x["pts"]) and type(x["champion"]) is bool and nat(x["correct"]) for x in rows)
+          def view_ok(v):
+              return type(v) is dict and set(v) == {"week", "status", "final", "rows"} and nat(v["week"]) and type(v["status"]) is str and len(v["status"]) <= 10 and type(v["final"]) is bool and rows_ok(v["rows"])
+          for f in os.listdir(d):
+              j = json.load(open(os.path.join(d, f), encoding="utf-8"))
+              if f == "board.json":
+                  assert set(j) == {"v", "updated", "next", "week", "lastWeek", "allTime"} and j["v"] == 1, f
+                  assert view_ok(j["next"]) and view_ok(j["week"]) and (j["lastWeek"] is None or view_ok(j["lastWeek"])), f
+                  assert type(j["allTime"]) is dict and set(j["allTime"]) == {"rows"} and rows_ok(j["allTime"]["rows"]), f
+                  continue
+              if f == "index.json":
+                  assert set(j) == {"v", "updated", "weeks", "contract", "game"} and j["v"] == 1 and j["game"] == 9 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
+                  assert j["contract"] is None or isa(j["contract"]), f
+                  continue
+              assert type(j) is dict and week_ok(j) and f == "W%03d.json" % j["week"], f
+          print("bracket files ok")
+          PY
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git init -q work && cd work
           parent=""
@@ -136,9 +200,12 @@ jobs:
             parent=$(git rev-parse FETCH_HEAD)
             git read-tree FETCH_HEAD
           else git read-tree --empty; fi
-          for f in "$IN"/blockx/*.json; do
-            blob=$(git hash-object -w "$f")
-            git update-index --add --cacheinfo 100644 "$blob" "blockx/$(basename "$f")"
+          for g in blockx bracket; do
+            [ -d "$IN/$g" ] || continue
+            for f in "$IN/$g"/*.json; do
+              blob=$(git hash-object -w "$f")
+              git update-index --add --cacheinfo 100644 "$blob" "$g/$(basename "$f")"
+            done
           done
           tree=$(git write-tree)
           if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi

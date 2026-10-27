@@ -30,6 +30,8 @@
   const MIN_FIELD = 8;
   const MAX_SIZE = 32, NUMBER_MAX = 2 ** (MAX_SIZE - 1) - 1;   // the Picks game's number range: 0 … 2,147,483,647
   const CHAMPION_BONUS = 2;
+  const GAME_ID = 9;                           // the Bracket's game id in the Picks contract (Block X is 2)
+  const MAX_CHANGES = 20, PICKS_PER_DAY = 20;  // the Picks game's limits
   const ROUND_NAMES = { 32: ["Round of 32", "Round of 16", "Quarterfinals", "Semifinals", "Final"],
     16: ["Round of 16", "Quarterfinals", "Semifinals", "Final"], 8: ["Quarterfinals", "Semifinals", "Final"] };
 
@@ -123,31 +125,48 @@
   }
 
   // ── the day index ──
-  /** Day index of each producer. B: blocks { ts: [...ascending ms], sig: [index], signers: [address] }.
-   *  hourCards: 24 race cards, one per UTC hour of the day (null where missing: the nearest earlier card of the day is
-   *  used, else the nearest later). Returns Map address → { blocks, expected, index } for every address on any card of
-   *  the day, or null when the day has no card at all. A producer's share on a card is its VHP ÷ the card's total VHP
-   *  (field and paddock), and 0 on a card it is not on. */
-  function dayIndex(B, dayStart, hourCards) {
-    if (!Array.isArray(hourCards) || hourCards.length !== 24 || !hourCards.some(Boolean)) return null;
-    const cards = hourCards.map((_, h) => { for (let i = h; i >= 0; i--) if (hourCards[i]) return hourCards[i]; for (let i = h + 1; i < 24; i++) if (hourCards[i]) return hourCards[i]; return null; });
-    const shares = cards.map((c) => {
-      const rows = [...(c.field || []), ...(c.paddock || [])].filter((r) => r && typeof r.a === "string" && Number.isFinite(r.vhp) && r.vhp > 0);
-      const tot = rows.reduce((s, r) => s + r.vhp, 0), m = new Map();
-      for (const r of rows) m.set(r.a, (m.get(r.a) || 0) + r.vhp / tot);
-      return m;
-    });
-    const out = new Map();
-    for (const m of shares) for (const a of m.keys()) if (!out.has(a)) out.set(a, { blocks: 0, expected: 0, index: 0 });
-    const perHour = new Array(24).fill(0);
-    let i = lowerBound(B.ts, dayStart);
-    for (; i < B.ts.length && B.ts[i] < dayStart + DAY; i++) {
-      const h = Math.floor((B.ts[i] - dayStart) / HOUR); perHour[h]++;
-      const r = out.get(B.signers[B.sig[i]]); if (r) r.blocks++;
+  /** A producer's VHP share on a race card: its VHP ÷ the card's total VHP (field and paddock). Map address → share. */
+  function sharesOf(card) {
+    const rows = card ? [...(card.field || []), ...(card.paddock || [])].filter((r) => r && typeof r.a === "string" && Number.isFinite(r.vhp) && r.vhp > 0) : [];
+    const tot = rows.reduce((s, r) => s + r.vhp, 0), m = new Map();
+    for (const r of rows) m.set(r.a, (m.get(r.a) || 0) + r.vhp / tot);
+    return m;
+  }
+  /** One UTC hour as the recorder stores it: { n: all blocks in the hour, by: { address: blocks signed }, share:
+   *  { address: VHP share on that hour's card } or null when the hour has no card }. `only` limits by/share to the
+   *  bracket's producers (the rest don't matter to any matchup). */
+  function hourOf(B, from, card, only) {
+    const keep = only ? new Set(only) : null, by = {};
+    if (keep) for (const a of keep) by[a] = 0;
+    let n = 0, i = lowerBound(B.ts, from);
+    for (; i < B.ts.length && B.ts[i] < from + HOUR; i++) { n++; const a = B.signers[B.sig[i]]; if (!keep || keep.has(a)) by[a] = (by[a] || 0) + 1; }
+    let share = null;
+    if (card) { share = {}; for (const [a, v] of sharesOf(card)) if (!keep || keep.has(a)) share[a] = v; if (keep) for (const a of keep) if (!(a in share)) share[a] = 0; }
+    return { n, by, share };
+  }
+  /** Day index from recorded hours (24 entries; null = an hour not recorded yet, counted as no blocks). An hour without
+   *  a card uses the nearest earlier hour's card of the day, else the nearest later. Returns Map address → { blocks,
+   *  expected, index }, or null when no hour of the day has a card. */
+  function indexFromHours(hours) {
+    if (!Array.isArray(hours) || hours.length !== 24) return null;
+    const sh = hours.map((h) => (h && h.share && typeof h.share === "object" ? h.share : null));
+    if (!sh.some(Boolean)) return null;
+    const use = sh.map((_, h) => { for (let i = h; i >= 0; i--) if (sh[i]) return sh[i]; for (let i = h + 1; i < 24; i++) if (sh[i]) return sh[i]; return null; });
+    const out = new Map(), get = (a) => { let r = out.get(a); if (!r) out.set(a, (r = { blocks: 0, expected: 0, index: 0 })); return r; };
+    for (let h = 0; h < 24; h++) {
+      const hr = hours[h]; if (!hr) continue;
+      const n = Number(hr.n) || 0;
+      for (const [a, s] of Object.entries(use[h])) if (Number.isFinite(s) && s >= 0) get(a).expected += n * s;
+      for (const [a, b] of Object.entries(hr.by || {})) if (Number.isFinite(b) && b >= 0) get(a).blocks += b;
     }
-    for (let h = 0; h < 24; h++) for (const [a, s] of shares[h]) out.get(a).expected += perHour[h] * s;
     for (const r of out.values()) r.index = r.expected > 0 ? r.blocks / r.expected : 0;
     return out;
+  }
+  /** Day index of each producer straight from blocks. B: blocks { ts: [...ascending ms], sig: [index], signers:
+   *  [address] }; hourCards: 24 race cards, one per UTC hour (null where missing). Same rules as indexFromHours. */
+  function dayIndex(B, dayStart, hourCards) {
+    if (!Array.isArray(hourCards) || hourCards.length !== 24) return null;
+    return indexFromHours(hourCards.map((c, h) => hourOf(B, dayStart + h * HOUR, c, null)));
   }
   /** Does `other` beat `better` on a day? Higher index wins; an exact tie (compared without division) goes to `other`,
    *  the lower seed. A producer missing from the day's index counts as 0 blocks. */
@@ -197,9 +216,9 @@
   function lowerBound(ts, t) { let lo = 0, hi = ts.length; while (lo < hi) { const m = (lo + hi) >> 1; if (ts[m] < t) lo = m + 1; else hi = m; } return lo; }
 
   root.KBracketMath = {
-    HOUR, DAY, WEEK, GENESIS, SEED_BEFORE, LOCK_BEFORE, MIN_FIELD, MAX_SIZE, NUMBER_MAX, CHAMPION_BONUS, ROUND_NAMES, ROUND_OFFSET,
+    GAME_ID, MAX_CHANGES, PICKS_PER_DAY, HOUR, DAY, WEEK, GENESIS, SEED_BEFORE, LOCK_BEFORE, MIN_FIELD, MAX_SIZE, NUMBER_MAX, CHAMPION_BONUS, ROUND_NAMES, ROUND_OFFSET,
     weekStart, weekOf, seedTime, lockTime, roundDay, picksRound, weekOfPicksRound,
     sizeFor, roundsOf, pointsFor, maxPoints, lineOrder, roundOffset, seeding, firstRound, play, byesOf, decode, encode,
-    dayIndex, otherWins, results, score, rank,
+    sharesOf, hourOf, indexFromHours, dayIndex, otherWins, results, score, rank,
   };
 })(typeof window !== "undefined" ? window : globalThis);
