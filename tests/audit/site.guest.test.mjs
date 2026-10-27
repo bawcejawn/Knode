@@ -263,3 +263,18 @@ test("the header's guest switch stays off while deployment.json says the player 
   const btn = w.find(/Play as a guest/)[0];
   assert.ok(btn && "disabled" in btn.attrs);
 });
+
+test("guests make KnodeGames picks only on the pinned Picks contract (empty until it is on mainnet)", () => {
+  assert.match(walletSrc, /const PINNED_PICKS = "";/, "not pinned before the Picks contract is live");
+  assert.match(walletSrc, /const guestPicks = \(\) => \(W\.chainId === MAINNET_CHAIN_ID \? \(PINNED_PICKS \|\| null\)/);
+  const start = walletSrc.indexOf("  function checkGuestTx("), end = walletSrc.indexOf("\n  }\n", start) + 4;
+  const ctx = { BigInt, Number, Error, ANSWER };
+  vm.createContext(ctx);
+  vm.runInContext(walletSrc.slice(start, end) + "\nthis.check = checkGuestTx;", ctx);
+  const PICKS = "1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW", PICK = 0x8ce33c6c;
+  const want = { sponsor: SPONSOR, payee: "1Guest", chainId: MAINNET, game: GAME, rcLimit: "100000000" };
+  const tx = (contract, entry) => ({ header: { payer: SPONSOR, payee: "1Guest", chain_id: MAINNET, rc_limit: "100000000" }, operations: [{ call_contract: { contract_id: contract, entry_point: entry } }] });
+  assert.throws(() => ctx.check(tx(PICKS, PICK), want), /only game answers/, "no Picks contract pinned: no picks");
+  ctx.check(tx(PICKS, PICK), { ...want, picks: PICKS });
+  assert.throws(() => ctx.check(tx(PICKS, 0x94871b42), { ...want, picks: PICKS }), /only game answers/, "only pick, never apply_game");
+});

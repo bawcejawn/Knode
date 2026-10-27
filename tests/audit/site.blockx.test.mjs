@@ -136,3 +136,20 @@ test("the cap keeps skill ahead of luck (seeded simulation on a 17-producer fiel
   }
   assert.ok(thoughtfulWins / WEEKS > 0.8, `thoughtful players won ${thoughtfulWins} of ${WEEKS} weeks`);
 });
+
+test("blockx.html: strict CSP with the games-data and race-data branches, scripts from the site, no HTML sinks", () => {
+  const h = read("blockx.html"), js = read("blockx.js");
+  const csp = h.match(/http-equiv="Content-Security-Policy" content="([^"]*)"/)[1];
+  assert.match(csp, /connect-src [^;]*https:\/\/raw\.githubusercontent\.com\/bawcejawn\/Knode\/games-data\//);
+  assert.match(csp, /connect-src [^;]*https:\/\/raw\.githubusercontent\.com\/bawcejawn\/Knode\/race-data\//);
+  assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/);
+  assert.doesNotMatch(h, /<script>(?!<\/script>)|\son[a-z]+="/, "no inline scripts or handlers");
+  const order = ["guest.js", "wallet.js", "header-wallet.js", "nav.js", "race-math.js", "blockx-math.js", "blockx.js"].map((f) => h.indexOf(`<script src="${f}"></script>`));
+  assert.ok(order.every((x, i) => x > 0 && (i === 0 || x > order[i - 1])), "script order");
+  assert.doesNotMatch(js, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/);
+  // The pick it builds: game 2, one producer, number 0, for the wallet that is connected.
+  assert.match(js, /functions\.pick\(\{ player: who, game: X\.GAME_ID, round: String\(r\), producers: \[producer\], number: "0" \}, \{ onlyOperation: true \}\)/);
+  // It never offers a target within 20 blocks of its lock, and checks again right before sending.
+  assert.match(js, /X\.offerRounds\(head\.height\)/);
+  assert.match(js, /if \(!\(X\.lockHeight\(r\) - head\.height > 20\)\)/);
+});
