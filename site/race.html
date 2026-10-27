@@ -116,6 +116,19 @@
     .pk-now { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
     .pk-ok { color: var(--mint); font-weight: 800; } .pk-no { color: var(--rose); font-weight: 800; }
     .pk-msg:empty { display: none; }
+    /* The pick pop-up. */
+    .pk-modal { position: fixed; inset: 0; z-index: 1000; background: rgba(10, 12, 30, .55); display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .pk-modal[hidden] { display: none; }
+    .pk-box { background: var(--surface); color: var(--ink); width: 100%; max-width: 400px; border-radius: 20px; padding: 24px 22px; box-shadow: 0 20px 60px rgba(0,0,0,.35); text-align: center; }
+    .pk-box h3 { font-family: var(--display); font-size: 21px; margin: 10px 0 6px; }
+    .pk-box p { margin: 6px 0; font-size: 14px; color: var(--muted); }
+    .pk-box p b { color: var(--ink); }
+    .pk-box .pk-acts { margin-top: 16px; display: flex; justify-content: center; gap: 8px; }
+    .pk-big { display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 50%; font-size: 30px; font-weight: 800; background: var(--paper); }
+    .pk-big.ok { background: var(--mint-soft); color: var(--mint); } .pk-big.bad { background: var(--rose-soft); color: var(--rose); }
+    .pk-spin { display: inline-block; width: 44px; height: 44px; border-radius: 50%; border: 4px solid var(--line); border-top-color: var(--violet); animation: spin .9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .pk-spin { animation: none; } }
     .pr-lane.mine .pr-name::after { content: " ★ your pick"; font-family: var(--body); font-weight: 800; font-size: 11px; color: var(--ink); background: var(--sun); border-radius: 99px; padding: 1px 7px; margin-left: 6px; }
     .champs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
     .champs:empty { display: none; }
@@ -165,7 +178,7 @@
       <div class="clock">
         <div class="clock-bar" role="progressbar" aria-label="Race time elapsed" aria-valuemin="0" aria-valuemax="100" id="clock">
           <div class="clock-fill" id="clock-fill"></div>
-          <div class="clock-leg" style="left:33.333%"></div><div class="clock-leg" style="left:66.667%"></div>
+          <div id="clock-marks"></div>
           <div class="clock-txt" id="clock-txt">–</div>
         </div>
         <div class="clock-legs"><span id="leg1">–</span><span id="leg2">–</span><span id="leg3">–</span></div>
@@ -225,7 +238,7 @@
       <p><b>Same chance.</b> A small producer's few blocks come in lucky and unlucky bursts, which would let the smallest horses win most races. A luck trim evens that out:</p>
       <p><code>steps per block = (biggest VHP ÷ your VHP) × (1 − c ÷ √k) ÷ (1 − c ÷ √k of the biggest)</code></p>
       <p>Here <i>k</i> is how many blocks a producer is expected to sign in a 6-hour race (luck in <i>k</i> blocks is about √<i>k</i>). <i>c</i> is re-tuned on every card by thousands of simulated races (the same ones for everyone) to the value where each horse's chance of winning is as equal as it gets.</p>
-      <p><b>Three cards per race.</b> The handicap is set from VHP at the start and updated twice, 2 and 4 hours in. Each card applies to the blocks signed in its 2-hour leg. Cards are recorded publicly by the race recorder.</p>
+      <p><b>Six cards per race.</b> The handicap is set from VHP at the start and updated every hour. Each card applies to the blocks signed in its hour, so moving VHP around during a race buys at most an hour. Cards are recorded publicly by the race recorder.</p>
       <p><b>The finish line</b> is how far every horse is expected to get in 6 hours. A horse that reaches it waits there, and the order among horses at the line is revealed when the race ends. The winner is the horse with the most steps at the 6-hour mark.</p>
     </section>
   </main>

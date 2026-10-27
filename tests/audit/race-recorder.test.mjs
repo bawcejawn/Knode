@@ -44,26 +44,42 @@ const tmp = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), "race-")); d
 async function hourly(at, prev, opts = {}) {
   const out = tmp();
   const log = console.log; console.log = () => {};
-  try { await run({ p: node(at), check: opts.check === null ? null : node(at, opts.check || {}), prev, out, vhpOf }); } finally { console.log = log; }
+  let r;
+  try { r = await run({ p: node(at), check: opts.check === null ? null : node(at, opts.check || {}), prev, out, vhpOf, raceContract: null }); } finally { console.log = log; }
+  if (process.env.SHOW_PROBLEMS) console.log(at, r && r.problems);
   return out;
 }
 const week = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "W002.json"), "utf8"));
 const race = (dir, id) => week(dir).races.find((r) => r.id === id);
 
-test("cards: the run just before a leg takes its card; a run during a leg with no card takes it; nothing is retaken", async () => {
+test("cards (hourly): the run just before a leg takes its card; a run during a leg with no card takes it; nothing is retaken", async () => {
   const a = await hourly(U("2026-11-02T05:37Z"), "");
-  assert.ok(race(a, "2026-11-02T00").cards[2], "05:37: the 04:00 leg had no card yet: taken now");
+  assert.equal(race(a, "2026-11-02T00").cards.length, 6, "6 one-hour legs");
+  assert.ok(race(a, "2026-11-02T00").cards[5], "05:37: the 05:00 leg had no card yet: taken now");
   assert.ok(race(a, "2026-11-02T06").cards[0], "05:37: the 06:00 leg starts in 23 minutes: taken now");
-  assert.equal(race(a, "2026-11-02T06").cards[1], null, "the 08:00 leg is not due yet");
+  assert.equal(race(a, "2026-11-02T06").cards[1], null, "the 07:00 leg is not due yet");
   const b = await hourly(U("2026-11-02T06:37Z"), a);
   assert.equal(race(b, "2026-11-02T06").cards[0].at, race(a, "2026-11-02T06").cards[0].at, "never retaken");
-  assert.equal(race(b, "2026-11-02T06").cards[1], null, "08:00 is 83 minutes away: the 07:37 run takes it");
+  assert.ok(race(b, "2026-11-02T06").cards[1] && race(b, "2026-11-02T06").cards[1].at < U("2026-11-02T07:00Z"), "06:37: the 07:00 leg's card, 23 minutes ahead");
   const c = await hourly(U("2026-11-02T07:37Z"), b);
-  assert.ok(race(c, "2026-11-02T06").cards[1] && race(c, "2026-11-02T06").cards[1].at < U("2026-11-02T08:00Z"));
+  assert.ok(race(c, "2026-11-02T06").cards[2] && race(c, "2026-11-02T06").cards[2].at < U("2026-11-02T08:00Z"));
   // Each card is the shared math's card for the producers' VHP.
   const card = race(c, "2026-11-02T06").cards[1];
   assert.equal(card.field[0].a, P[0]); assert.equal(card.field[0].h, 1);
   assert.ok(card.paddock.some((x) => x.a === P[4]), "the smallest producer (k under 10) waits in the paddock");
+});
+
+test("a race recorded with 3 two-hour cards keeps them (no change mid-race); races not started yet become hourly", async () => {
+  const a = await hourly(U("2026-11-02T05:37Z"), "");
+  // Turn the published file into the old format: the running 06:00 race with 3 cards, later races with 3 empty slots.
+  const wf = week(a), r6 = wf.races.find((r) => r.id === "2026-11-02T06");
+  r6.cards = [r6.cards[0], null, null];
+  for (const r of wf.races) if (r.start > r6.start) r.cards = [null, null, null];
+  const prev = tmp(); fs.writeFileSync(path.join(prev, "W002.json"), JSON.stringify(wf));
+  const b = await hourly(U("2026-11-02T07:37Z"), prev);
+  assert.equal(race(b, "2026-11-02T06").cards.length, 3, "the race that had started keeps 2-hour legs");
+  assert.ok(race(b, "2026-11-02T06").cards[1] && race(b, "2026-11-02T06").cards[1].at < U("2026-11-02T08:00Z"), "its 08:00 leg (2-hour) gets its card at 07:37");
+  assert.equal(race(b, "2026-11-02T12").cards.length, 6, "a race that hasn't started is hourly");
 });
 
 test("results: final only after the race is irreversible, with every block checked on both nodes; the same standings as the page", async () => {

@@ -6,8 +6,10 @@
  *   (Monday 00:00 UTC, counted from the game's start on 2026-10-19), so a week holds exactly 28 races.
  * - Every block a producer signs during a race moves its horse forward by that producer's handicap. Each race starts
  *   from 0. The winner is the horse with the most steps when the 6 hours are up.
- * - Each race has 3 handicap cards, one per 2-hour leg (0–2 h, 2–4 h, 4–6 h): the starting card and 2 updates. A card
- *   is set from each producer's VHP at the time it is taken, and applies to the blocks signed in its leg.
+ * - Each race has 6 handicap cards, one per 1-hour leg: the starting card and an update every hour (owner's decision
+ *   2026-10-27; races recorded before that have 3 cards of 2 hours, and keep them). A card is set from each producer's
+ *   VHP at the time it is taken, and applies to the blocks signed in its leg. A race's leg length is 6 h divided by its
+ *   number of cards.
  *
  * THE HANDICAP
  *   h = (VHP of the biggest producer ÷ this producer's VHP) × (1 − c ÷ √k) ÷ (1 − c ÷ √k_top)
@@ -22,7 +24,7 @@
  * - The biggest producer always moves exactly 1 step per block. Handicaps are rounded to 4 decimals. */
 (function (root) {
   "use strict";
-  const HOUR = 3600000, RACE = 6 * HOUR, LEG = 2 * HOUR, LEGS = 3, DAY = 24 * HOUR, WEEK = 7 * DAY;
+  const HOUR = 3600000, RACE = 6 * HOUR, LEG = HOUR, LEGS = 6, DAY = 24 * HOUR, WEEK = 7 * DAY;
   const GENESIS = 1792368000000;    // the Knode game's week 0: Monday 2026-10-19 00:00 UTC (game-data/deployment.json genesisTime)
   const MIN_K = 10;                 // expected blocks in a race to enter (fewer: too few blocks for any handicap to be fair)
   const C_GRID = Array.from({ length: 26 }, (_, i) => i / 10);
@@ -37,8 +39,10 @@
   function parseRaceId(id) { const m = /^(\d{4}-\d{2}-\d{2})T(00|06|12|18)$/.exec(String(id)); return m ? raceIndex(Date.parse(`${m[1]}T${m[2]}:00:00Z`)) : null; }
   /** The race running at time t. */
   function raceAt(t) { const i = raceIndex(t), start = raceStart(i); return { index: i, id: raceId(i), start, end: start + RACE, number: ((i % 4) + 4) % 4 + 1 }; }
-  /** The leg (0, 1, 2) of a race at time t, clamped to the race. */
-  const legOf = (start, t) => Math.min(LEGS - 1, Math.max(0, Math.floor((t - start) / LEG)));
+  /** The leg of a race at time t, clamped to the race; n = the race's number of cards (6, or 3 for older races). */
+  const legOf = (start, t, n = LEGS) => Math.min(n - 1, Math.max(0, Math.floor((t - start) / (RACE / n))));
+  /** How many legs (cards) a race has: its cards array, else the current format. */
+  const legsOf = (cards) => (Array.isArray(cards) && (cards.length === 3 || cards.length === 6) ? cards.length : LEGS);
   /** The Knode game week of a time (same as the game contract's week_of: weeks before the start count as 0). */
   const weekOf = (t) => (t <= GENESIS ? 0 : Math.floor((t - GENESIS) / WEEK));
   const weekStart = (w) => GENESIS + w * WEEK;
@@ -111,26 +115,28 @@
   function cardForLeg(cards, leg) {
     if (!Array.isArray(cards)) return null;
     for (let l = leg; l >= 0; l--) if (cards[l]) return cards[l];
-    for (let l = leg + 1; l < LEGS; l++) if (cards[l]) return cards[l];
+    for (let l = leg + 1; l < cards.length; l++) if (cards[l]) return cards[l];
     return null;
   }
   /** The finish line: the steps the biggest producer is expected to cover in the whole race (its k on each leg's card,
    *  a third of the race each). Every horse races toward it; the handicap makes it the same distance for all. */
   function finishLine(cards) {
     let s = 0;
-    for (let l = 0; l < LEGS; l++) { const c = cardForLeg(cards, l); if (!c || !c.field.length) return null; s += c.field[0].k / LEGS; }
+    const n = legsOf(cards);
+    for (let l = 0; l < n; l++) { const c = cardForLeg(cards, l); if (!c || !c.field.length) return null; s += c.field[0].k / n; }
     return round(s, 2);
   }
 
   /** Steps of every horse in a race up to time T. B: blocks { ts: [...ascending], sig: [index], signers: [address] }.
    *  Returns horses sorted by steps (ties: whoever reached the total first), each { a, steps, blocks, last }. */
   function standings(B, race, cards, T = race.end) {
-    const until = Math.min(T, race.end), hs = [0, 1, 2].map((l) => { const c = cardForLeg(cards, l); return new Map((c ? c.field : []).map((r) => [r.a, r.h])); });
+    const n = legsOf(cards), until = Math.min(T, race.end);
+    const hs = Array.from({ length: n }, (_, l) => { const c = cardForLeg(cards, l); return new Map((c ? c.field : []).map((r) => [r.a, r.h])); });
     const horses = new Map();
     for (const m of hs) for (const a of m.keys()) if (!horses.has(a)) horses.set(a, { a, steps: 0, blocks: 0, last: 0 });
     let i = lowerBound(B.ts, race.start);
     for (; i < B.ts.length && B.ts[i] < until; i++) {
-      const a = B.signers[B.sig[i]], h = hs[legOf(race.start, B.ts[i])].get(a);
+      const a = B.signers[B.sig[i]], h = hs[legOf(race.start, B.ts[i], n)].get(a);
       if (!h) continue;
       const r = horses.get(a); r.steps += h; r.blocks++; r.last = B.ts[i];
     }
@@ -153,7 +159,7 @@
 
   root.KRaceMath = {
     HOUR, RACE, LEG, LEGS, DAY, WEEK, GENESIS, MIN_K, SEED, TRIALS,
-    raceIndex, raceStart, raceId, parseRaceId, raceAt, legOf, weekOf, weekStart, dayOf,
+    raceIndex, raceStart, raceId, parseRaceId, raceAt, legOf, legsOf, weekOf, weekStart, dayOf,
     rng, handicapOf, winChances, calibrate, makeCard, cardForLeg, finishLine, standings, winners, track, lowerBound,
   };
 })(typeof window !== "undefined" ? window : globalThis);

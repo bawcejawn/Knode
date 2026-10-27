@@ -42,10 +42,19 @@ test("races follow the Knode game's week exactly: Monday 00:00 UTC, 28 races a w
   assert.equal(M.weekOf(M.raceAt(w0 - 1).start + 1), 2, "the last race of a week belongs to that week");
 });
 
-test("each race has 3 legs of 2 hours: the starting card and 2 updates", () => {
+test("each race has 6 one-hour legs (a card at the start and every hour); races recorded with 3 keep 2-hour legs", () => {
   const s = U("2026-10-27T06:00Z");
-  assert.deepEqual([0, 1.99, 2, 3.5, 4, 5.99, 6, 9].map((h) => M.legOf(s, s + h * H)), [0, 0, 1, 1, 2, 2, 2, 2]);
-  assert.equal(M.LEG * M.LEGS, M.RACE);
+  assert.deepEqual([0, 0.99, 1, 2.5, 4, 5.99, 6, 9].map((h) => M.legOf(s, s + h * H)), [0, 0, 1, 2, 4, 5, 5, 5]);
+  assert.deepEqual([0, 1.99, 2, 3.5, 4, 5.99].map((h) => M.legOf(s, s + h * H, 3)), [0, 0, 1, 1, 2, 2]);
+  assert.equal(M.LEG * M.LEGS, M.RACE); assert.equal(M.LEGS, 6);
+  assert.equal(M.legsOf([null, null, null]), 3); assert.equal(M.legsOf(new Array(6).fill(null)), 6); assert.equal(M.legsOf(null), 6);
+});
+
+test("hourly cards: each block uses the card of its hour", () => {
+  const B = chain([[R0.start + 10, Bb], [R0.start + H + 10, Bb], [R0.start + 5 * H + 10, Bb]]);
+  const cards = [card(1, 2), card(1, 3), null, null, null, card(1, 7)];
+  assert.equal(M.standings(B, R0, cards).find((x) => x.a === Bb).steps, 2 + 3 + 7);
+  assert.equal(M.finishLine(cards), 100);
 });
 
 // ── a small field to race with ──
@@ -166,5 +175,5 @@ test("the recorder's files are read only from the race-data branch", () => {
 test("the pick lists for upcoming races are never empty once any card exists: a race's own card, else the latest one", () => {
   const js = read("race.js");
   assert.match(js, /const fieldOf = \(r\) => \(r\.cards && !r\.provisional && M\.cardForLeg\(r\.cards, 0\)\) \|\| latest\(\);/);
-  assert.match(js, /const latest = \(\) => \{ const lr = raceObj\(cur\); return \(lr\.cards && M\.cardForLeg\(lr\.cards, M\.legOf\(lr\.start, Date\.now\(\)\)\)\) \|\| prov; \};/);
+  assert.match(js, /const latest = \(\) => \{ const lr = raceObj\(cur\); return \(lr\.cards && M\.cardForLeg\(lr\.cards, M\.legOf\(lr\.start, Date\.now\(\), M\.legsOf\(lr\.cards\)\)\)\) \|\| prov; \};/);
 });
