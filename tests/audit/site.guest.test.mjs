@@ -48,7 +48,7 @@ function memStorage(broken = false) {
 }
 
 /** Loads guest.js and wallet.js in a fresh vm. The fake node records everything it is sent. */
-function world({ payer = "sponsor", brokenStorage = false, yes = true, nodeChain = MAINNET } = {}) {
+function world({ payer = "sponsor", brokenStorage = false, yes = true, nodeChain = MAINNET, guest = true } = {}) {
   const { document, all } = fakeDom();
   const net = [];   // every call that leaves the page: [method, payload]
   const provider = {
@@ -71,7 +71,7 @@ function world({ payer = "sponsor", brokenStorage = false, yes = true, nodeChain
   vm.runInContext(walletSrc, ctx);
   const changes = [];
   win.KWallet.init({ provider, chainId: MAINNET, payer, toast: (m) => toasts.push(m), status: () => {},
-    sponsor: { address: SPONSOR, covers: [GAME, DESK, VHP, KOIN], tokens: [VHP, KOIN], rcLimit: "100000000" }, onChange: (a) => changes.push(a) });
+    sponsor: { address: SPONSOR, covers: [GAME, DESK, VHP, KOIN], tokens: [VHP, KOIN], rcLimit: "100000000", guest }, onChange: (a) => changes.push(a) });
   const op = (contract, entry, args = "") => ({ call_contract: { contract_id: contract, entry_point: entry, args } });
   const find = (re) => all.filter((e) => e.tag === "button" && re.test(e.text));
   return { win, KG: win.KGuest, KW: win.KWallet, net, toasts, all, find, op, changes, storage: win.localStorage };
@@ -199,4 +199,13 @@ test("the header check refuses a wrong payer, payee, chain, Mana limit or operat
   assert.throws(() => ctx.check(bad((t) => (t.header.rc_limit = "500000000")), want), /more Mana/);
   assert.throws(() => ctx.check(bad((t) => (t.operations[0].call_contract.entry_point = CLAIM)), want), /only game answers/);
   assert.throws(() => ctx.check(bad((t) => (t.operations = [])), want), /only game answers/);
+});
+
+test("guest play is off unless deployment.json's sponsor has guest: true (no option, no auto-reconnect, no sending)", async () => {
+  const w = world({ guest: false });
+  w.KW.connect();
+  assert.equal(w.find(/Play as a guest/).length, 0, "no guest option in the wallet picker");
+  assert.equal(w.find(/Restore a guest key/).length, 0);
+  const dep = JSON.parse(fs.readFileSync(`${APP}/game-data/deployment.json`, "utf8"));
+  assert.notEqual(dep.sponsor && dep.sponsor.guest, true, "keep guest play off until the custom domain is live");
 });
