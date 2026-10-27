@@ -545,7 +545,6 @@ message game_object {
   uint64 from_week = 6 [jstype = JS_STRING];          // first week it earns
   uint64 last_week_plus_one = 7 [jstype = JS_STRING]; // last week (+1) it earns; 0 = no end
   uint64 rolled = 8 [jstype = JS_STRING];             // its buckets with no winners, added to its next bucket
-  uint64 prize_carry = 9 [jstype = JS_STRING];        // unfunded free prize carried forward (not owed until funded)
   uint64 stake = 10 [jstype = JS_STRING];             // all stake + pending in this game
   // A game's share of a week's rewards is its players' stake for that week, each counted at its lowest: deposits count
   // from the next week, withdrawals lower the week at once.

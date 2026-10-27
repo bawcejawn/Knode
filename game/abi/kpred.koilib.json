@@ -2085,13 +2085,6 @@
                   "jstype": "JS_STRING"
                 }
               },
-              "prize_carry": {
-                "type": "uint64",
-                "id": 9,
-                "options": {
-                  "jstype": "JS_STRING"
-                }
-              },
               "stake": {
                 "type": "uint64",
                 "id": 10,

@@ -51,10 +51,10 @@ are closed and paid by the v5 code paths unchanged. The per-game stake accumulat
 3. **The seed's part pays the free prizes.** The pot is split by who produced it: the seed's VHP over time against
    everything the vault holds that produced (stakes, seed, unpaid pots, rollovers, the fee waiting in VHP). Only the
    seed's part pays prizes; players' rewards never do (owner: "staked players should be priority").
-   Each free-prize game needs its carried shortfall plus 3 VHP. If the seed's part can't cover all of it, each game
-   gets a share in proportion to what it needs, and the rest carries forward, capped at 12 VHP per game (4 weeks).
-   Whatever the seed's part doesn't need for prizes joins the split. **The owner keeps the seed large enough:** at
-   ~90 VHP of weekly rewards on ~22,000 VHP, 12 VHP of prizes a week needs a seed of roughly 3,000 VHP.
+   Each free-prize game that earns this week gets 3 VHP. If the seed's part is short, every game's prize is cut in the
+   same proportion that week, down to nothing if the part is 0, and **a cut is never owed later** (owner, 2026-10-27).
+   Whatever the seed's part doesn't need for prizes joins the split. The owner funds the seed to cover at least 12 VHP
+   a week before launch (at ~90 VHP of weekly rewards on ~22,000 VHP that is a seed of roughly 3,000 VHP).
 4. The rest R is split by each staked game's **stake for that week, each player's stake counted at its lowest**:
    a deposit counts from the next week, a withdrawal lowers this week at once (owner: "an increase only impacts the
    following week"). `B_g = R × W_g ÷ ΣW`. No stake anywhere: all of R goes to game 1. A stopped game's share goes to
@@ -97,7 +97,7 @@ One game's missing results never hold up another game or the question game.
 |---|---|---|
 | 1 | Fee currency | VHP |
 | 2 | A game's share | its players' stake that week, each at its lowest |
-| 3 | Prize shortfall | capped at 4 weeks (12 VHP a game); prizes come from the seed's part, never from players' rewards |
+| 3 | Prize shortfall | prizes come from the seed's part, never from players' rewards; if it's short, that week's prizes are cut or skipped and never owed later; the seed is funded to cover 12 VHP a week before launch |
 | 4 | Ties for 1st | share all 3 VHP; otherwise 2 VHP to 1st, 1 VHP shared by 2nd |
 | 5 | Free player | below the minimum stake in that game that week |
 | 6 | Points | 1–255 a week per game |

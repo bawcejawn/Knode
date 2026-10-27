@@ -360,7 +360,7 @@ describe("v6 weekly split", () => {
     expect(gweek(k, G2, 2).bucket).toBe(w2.split * 110 / 120);   // game 2: 5 + 5 + 100
   });
 
-  it("with no seed the prizes wait and staked players get it all; the carry stops at 12 VHP per game", () => {
+  it("with no seed there are no free prizes that week, nothing is owed later, and the stakers get it all", () => {
     const k = setup();
     addGames(k);
     at(200);
@@ -371,10 +371,14 @@ describe("v6 weekly split", () => {
     const w1 = k.get_week(new kpred.get_week_arguments(1)).week!;
     expect(w1.seed_part).toBe(0);
     expect(w1.prizes).toBe(0);
+    expect(w1.pot_free).toBe(0);
+    expect(gweek(k, G3, 1).prize).toBe(0);
     expect(w1.split).toBe(19 * VHP);               // all of the pot to the stakers
-    for (let w: u64 = 2; w < 8; w++) closeWeek(k, w);
-    expect(game(k, G3).prize_carry).toBe(12 * VHP);
-    expect(game(k, 1).prize_carry).toBe(12 * VHP);
+    // a seed arrives: the next week pays 3 VHP per game, not more (no catch-up)
+    seedIn(k, 1000 * VHP);
+    give(VHP_TAG, CONTRACT, 20 * VHP);
+    closeWeek(k, 2);
+    expect(k.get_week(new kpred.get_week_arguments(2)).week!.prizes).toBe(6 * VHP);
     k.assertSolvent();
   });
 
@@ -392,7 +396,7 @@ describe("v6 weekly split", () => {
     expect(w1.prizes <= w1.seed_part).toBe(true);
     expect(w1.seed_part - w1.prizes < 3).toBe(true);           // all of it used (but rounding)
     expect(w1.split).toBe(w1.gain - w1.fee_vhp - w1.prizes);
-    expect(game(k, G3).prize_carry > VHP).toBe(true);
+    expect(gweek(k, G3, 1).prize < 3 * VHP).toBe(true);        // cut this week, never owed later
     k.assertSolvent();
   });
 });

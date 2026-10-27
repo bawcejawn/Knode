@@ -102,7 +102,6 @@ const MAX_GAME_POINTS: u32 = 255;              // other games' weekly points: 1 
 const MAX_ROWS: i32 = 50;                      // results per post_results call
 const MAX_PRIZE_WINNERS: u32 = 10;             // wallets per free-prize place
 const PRIZE_V6: u64 = 3 * 100_000_000;         // free prize per game per week: 2 VHP for 1st + 1 VHP for 2nd
-const PRIZE_CARRY_CAP: u64 = 4 * PRIZE_V6;     // an unfunded prize carries forward, at most 4 weeks' worth
 const RESULTS_DAYS: u64 = 3;                   // other games' results are due 3/7 of a week (3 days) after the week
 const MAX_NAME: i32 = 32;
 
@@ -1450,13 +1449,14 @@ export class Kpred {
 
     const list = this.gamesList();
     const n = list.length;
-    // 1. Free prizes, from the seed's part only: each free-prize game that earns this week needs its carried shortfall
-    //    plus 3 VHP. Short: each gets a share in proportion to its need, and the rest carries (at most 12 VHP a game).
+    // 1. Free prizes, from the seed's part only: 3 VHP for each free-prize game that earns this week. If the seed's
+    //    part is short, every game's prize is cut in the same proportion that week (to nothing if the part is 0). A
+    //    cut is never owed later (owner, 2026-10-27).
     const need = new Array<u64>(n);
     let needTotal: u64 = 0;
     for (let i = 0; i < n; i++) {
       const g = list[i];
-      need[i] = g.free_prize && this.gameEarns(g, week) ? g.prize_carry + PRIZE_V6 : 0;
+      need[i] = g.free_prize && this.gameEarns(g, week) ? PRIZE_V6 : 0;
       needTotal += need[i];
     }
     const got = new Array<u64>(n);
@@ -1464,10 +1464,6 @@ export class Kpred {
     for (let i = 0; i < n; i++) {
       got[i] = seedPart >= needTotal ? need[i] : (needTotal == 0 ? 0 : u128.muldiv(u128.fromU64(seedPart), u128.fromU64(need[i]), u128.fromU64(needTotal)).toU64());
       prizes += got[i];
-      if (need[i] > 0) {
-        const short = need[i] - got[i];
-        list[i].prize_carry = short < PRIZE_CARRY_CAP ? short : PRIZE_CARRY_CAP;
-      }
     }
     // 2. The rest goes to the staked games by their stake for the week. A game that no longer earns releases its old
     //    rollover into the split.
