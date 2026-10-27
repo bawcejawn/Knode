@@ -169,7 +169,7 @@
       h("p", {}, "No KOIN Vault yet? ", h("a", { href: VAULT, target: "_blank", rel: "noopener" }, "Create one at koinvault.app"), " in a minute, no extension needed."));
     let cancelled = false; onClose = () => { cancelled = true; };
     try {
-      const s = await vaultApi("create", { body: { name: "KnodeGames" } });
+      const s = await vaultApi("create", { body: { name: "Knode" } });   // the name KOIN Vault knows this dapp by; rename only after checking with KOIN Vault
       const link = new URL(s.uri);
       if (link.origin !== VAULT || link.pathname !== "/") throw new Error("unexpected wallet address");
       go.href = s.uri; go.hidden = false;
