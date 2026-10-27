@@ -224,6 +224,8 @@ export function setPayer(choice: "sponsor" | "self", rcLimitMana = "1", files = 
   } : undefined;
   for (const [f, d] of [[files.game, game], [files.desk, desk]] as const) {
     d.payer = choice;
+    // Keep the owner's guest-play switch ("sponsor": { "guest": true }) when the sponsor block is rewritten.
+    if (block && (d as any).sponsor?.guest === true) (block as any).guest = true;
     if (block) d.sponsor = block; else delete d.sponsor;
     writeJson(f, d);
   }
