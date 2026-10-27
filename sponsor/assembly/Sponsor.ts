@@ -24,6 +24,8 @@ const MAX_OPERATIONS = 10;
 /** v3: at most 8 allowlisted player actions, each with at most 16 argument fields. */
 export const MAX_ALLOWED = 8;
 export const MAX_ARG_FIELDS = 16;
+/** Most argument bytes in an allowlisted call (or a free claim). */
+export const MAX_ARGS_BYTES = 400;
 const MS_PER_DAY: u64 = 86400000;
 /** KCS-4 approve entry point. */
 export const APPROVE_ENTRY: u32 = 0x74e21680;
@@ -377,6 +379,8 @@ function allowedRow(cfg: sponsor.config, contract: Uint8Array, entry: u32): spon
  */
 export function argsPlayer(raw: Uint8Array, types: Uint8Array): Uint8Array | null {
   if (types.length < 1 || types.length > MAX_ARG_FIELDS || types[0] != 3) return null;
+  // Picks audit P-3: player actions are small (the largest Picks pick is 317 bytes); anything longer is refused.
+  if (raw.length > MAX_ARGS_BYTES) return null;
   if (raw.length < 2 + ADDRESS_LENGTH || raw[0] != 0x0a || raw[1] != <u8>ADDRESS_LENGTH) return null;
   let pos: i32 = 2 + ADDRESS_LENGTH;
   let last: u32 = 1;

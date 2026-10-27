@@ -26,7 +26,7 @@ the vault pays prizes from the scores.
 |---|---|
 | Add a game, or loosen one (`announce_game`, then anyone calls `apply_game`) | 48 hours, then 7 days to apply |
 | Switch a game off, lower its caps, lock earlier, open later (`tighten_game`) | none |
-| Hand over ownership (`propose_owner`, then the new owner calls `accept_owner`) | 48 hours; clears all announcements |
+| Hand over ownership (`propose_owner`, then the new owner calls `accept_owner`) | 48 hours; every earlier announcement becomes unusable |
 | New code (`schedule_upgrade` with the sha256, then an upload signed by the owner) | 48 hours, then 7 days |
 
 A game's **shape** (kind, list size, number range, lock mode, round size and offset) never changes once registered, so a
@@ -53,8 +53,17 @@ certutil -hashfile picks\build\release\contract.wasm SHA256
 
 ## Build
 
-Not audited yet. Development build sha256: `25b78bb49b63424784f6bcca5fdea44761a0233e363b8696ec07e8dc52e1183d` (31,695 bytes).
-Tests: 30 contract tests (`npm test`, in the Koinos mock VM).
+Independent audit 2026-10-27 (`docs/history/AUDIT-2026-10-27-picks.md`): verdict "fix first" for P-1 (High, an
+announcement could survive an owner handover) and P-2 (Medium, tighten_game could be undone by an earlier
+announcement). Both are fixed (owner generations; tighten_game drops the game's announcement), plus P-4 (the check
+reads the compiled code too) and P-7 (`list_pending`). **Fix-check pending.**
+
+Development build sha256 (after the fixes): `6a508621028304cd91e1c5581c97ec9a95e3190707e73cf54ffc3421a3c4f936` (32,565 bytes).
+Tests: 42 contract tests (`npm test`, in the Koinos mock VM), including the auditor's attack tests (`Picks.audit.spec.ts`).
+
+Before announcing anything on mainnet (audit P-5, P-6): check on chain that all three overrides are on and the code's
+fingerprint matches; on Harbinger, check that a pick's stored height is the height of the block that holds it, that a
+Block X pick lands at X − 101 and is refused at X − 100.
 
 Mock VM note: the test VM compares storage keys as strings, and some key bytes above 0x7f compare equal there (game ids
 128 and 129 looked like the same game in a test). The chain compares raw bytes, so this affects tests only; tests keep
