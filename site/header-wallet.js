@@ -47,7 +47,7 @@
     const row = document.querySelector(".top-row");
     if (!row || /[?&]demo\b/.test(location.search)) return;   // the game's demo keeps its own pretend wallet
     if (!document.getElementById("hw-css")) { const s = el("style", { id: "hw-css" }); s.textContent = css; document.head.append(s); }
-    // The game page's own button (#connect) is reused; other pages' "Play Knode" link becomes the wallet button.
+    // The game page's own button (#connect) is reused; other pages' "Play KnodeGames" link becomes the wallet button.
     const old = row.querySelector("#connect, .btn-wallet");
     btn = old && old.tagName === "BUTTON" ? old : el("button", { class: "btn btn-wallet", type: "button" });
     btn.id = btn.id || "hw-btn";

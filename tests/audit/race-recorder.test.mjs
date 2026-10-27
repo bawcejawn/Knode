@@ -122,9 +122,9 @@ test("results: races before the recorder's first card are not listed; a later ra
 const W1 = "1HsM33pF8DbXPr8Vsd4vD7hQgvZ1SHY3Vv", W2 = "16ixK5DgvcojcZLvxyYWhHFcRXfhfrHbpL", W3 = "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8", GUEST = "1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717";
 const RACE00 = M.raceIndex(U("2026-11-02T00:00Z"));
 /** Picks for race 00:00 on Nov 2: W1 and GUEST pick the real winner, W2 and W3 another horse. */
-async function picksRun(at, prev, { winnerFor = null, theirs = null } = {}) {
+async function picksRun(at, prev, { winnerFor = null, theirs = null, custom = null } = {}) {
   const out = tmp();
-  const picks = (winner) => [[W1, winner, 1], [W2, P[3], 2], [W3, P[3], 3], [GUEST, winner, 4]];
+  const picks = (winner) => custom || [[W1, winner, 1], [W2, P[3], 2], [W3, P[3], 3], [GUEST, winner, 4]];
   const picksOf = async (node, r) => (r !== RACE00 ? [] : node === checkNode && theirs ? theirs : picks(winnerFor));
   const pNode = node(at), checkNode = node(at);
   const vhp = async (who) => Object.fromEntries(who.map((a) => [a, a === GUEST ? "0" : a === W3 ? "50000000" : String(5e8)]));   // W3: 0.5 VHP
@@ -164,11 +164,60 @@ test("picks: when the two nodes disagree about the picks, the race stays unfinis
   assert.equal(race(b, "2026-11-02T00").result, null);
 });
 
-test("leaderboard order: correct, then more picks placed, then more Knode answers, then a higher Knode score", async () => {
+test("leaderboard order: points, then more wins, then more picks placed, then more Knode answers, then a higher Knode score", async () => {
   const { rank } = await import(path.resolve(APP, "bot/race.ts"));
-  const r = (a, correct, picks, answers, points) => ({ a, correct, picks, answers, points, ranked: true });
-  const out = rank([r("1d", 2, 5, 9, 9), r("1a", 3, 1, 0, 0), r("1c", 2, 6, 0, 0), r("1b", 2, 5, 9, 10), r("1e", 2, 5, 10, 0)]);
-  assert.deepEqual(out.map((x) => x.a), ["1a", "1c", "1e", "1b", "1d"]);
+  const r = (a, correct, shows, picks, answers, points) => ({ a, pts: 3 * correct + shows, correct, shows, picks, answers, points, ranked: true });
+  const out = rank([r("1d", 2, 0, 5, 9, 9), r("1a", 3, 0, 3, 0, 0), r("1c", 2, 0, 6, 0, 0), r("1b", 2, 0, 5, 9, 10), r("1e", 2, 0, 5, 10, 0),
+    r("1f", 1, 6, 9, 0, 0), r("1g", 0, 10, 12, 0, 0)]);
+  // 1g: 10 shows = 10 pts beats 1a's 3 wins = 9 pts. 1f: 1 win + 6 shows = 9 pts ties 1a, and 1a has more wins.
+  assert.deepEqual(out.map((x) => x.a), ["1g", "1a", "1f", "1c", "1e", "1b", "1d"]);
+});
+
+// ── Show (the horse finishes 2nd or 3rd) ──
+test("show: 2nd and 3rd with at least one step; none without a winner; a win is never also a show", () => {
+  const st = (...steps) => steps.map((s, i) => ({ a: P[i], steps: s, blocks: s ? 1 : 0 }));
+  assert.deepEqual(M.shows(st(9, 7, 5, 3)), [P[1], P[2]]);
+  assert.deepEqual(M.shows(st(9, 7, 0, 0)), [P[1]], "a horse with no steps does not show");
+  assert.deepEqual(M.shows(st(0, 0, 0)), [], "no winner, no show");
+  assert.deepEqual(M.shows(st(9)), []);
+  assert.ok(!M.shows(st(9, 7, 5)).includes(P[0]));
+  assert.deepEqual({ ...M.POINTS }, { win: 3, show: 1 });
+});
+
+test("show: picks on the 2nd and 3rd horse score a show (1 point); the winner scores a win (3); the rest score 0", async () => {
+  const a = await hourly(U("2026-11-02T05:37Z"), "");
+  const B = { ts: chain.ts, sig: chain.who.map((x) => P.indexOf(x)), signers: P };
+  const st = M.standings(B, { start: U("2026-11-02T00:00Z"), end: U("2026-11-02T06:00Z") }, race(a, "2026-11-02T00").cards);
+  assert.ok(st[2].steps > 0, "the made-up race has a 3rd horse with steps");
+  const [first, second, third, fourth] = st.map((x) => x.a);
+  const b = await picksRun(U("2026-11-02T06:37Z"), a, { custom: [[W1, first, 1], [W2, second, 2], [W3, third, 3], [GUEST, fourth, 4]] });
+  const r = race(b, "2026-11-02T00").result;
+  const by = Object.fromEntries(r.picks.map((x) => [x[0], x]));
+  assert.ok(r.picks.every((x) => x.length === 6));
+  assert.deepEqual([W1, W2, W3, GUEST].map((w) => [by[w][3], by[w][5]]), [[1, 0], [0, 1], [0, 1], [0, 0]]);
+  const board = JSON.parse(fs.readFileSync(path.join(b, "board.json"), "utf8"));
+  const row = (w) => board.week.rows.find((x) => x.a === w);
+  assert.deepEqual([row(W1).pts, row(W2).pts, row(W3).pts, row(GUEST).pts], [3, 1, 1, 0]);
+  assert.deepEqual([row(W2).correct, row(W2).shows, row(W2).picks], [0, 1, 1]);
+  assert.equal(board.week.rows[0].a, W1);
+  assert.equal(board.week.rows[1].a, W2, "W2 and W3 tie on points, wins and picks; W2 answered more Knode questions (9 vs 1)");
+  assert.ok(shapeOk(b));
+});
+
+test("show: races recorded before Show (5-field picks) get their shows from their stored standings", async () => {
+  const a = await hourly(U("2026-11-02T05:37Z"), "");
+  const B = { ts: chain.ts, sig: chain.who.map((x) => P.indexOf(x)), signers: P };
+  const st = M.standings(B, { start: U("2026-11-02T00:00Z"), end: U("2026-11-02T06:00Z") }, race(a, "2026-11-02T00").cards);
+  const b = await picksRun(U("2026-11-02T06:37Z"), a, { custom: [[W1, st[0].a, 1], [W2, st[1].a, 2], [W3, st[3].a, 3]] });
+  // Turn the stored picks back into the old 5-field form, as a race from before this change.
+  const w = week(b); const old = w.races.find((x) => x.id === "2026-11-02T00");
+  old.result.picks = old.result.picks.map((x) => x.slice(0, 5));
+  fs.writeFileSync(path.join(b, "W002.json"), JSON.stringify(w));
+  const c = await hourly(U("2026-11-02T07:37Z"), b);
+  const picks = race(c, "2026-11-02T00").result.picks;
+  const by = Object.fromEntries(picks.map((x) => [x[0], x]));
+  assert.deepEqual([W1, W2, W3].map((x) => by[x][5]), [0, 1, 0]);
+  assert.ok(shapeOk(c));
 });
 
 // The publish job's shape check, run as it is in the workflow, on the recorder's real output.
@@ -184,6 +233,23 @@ test("publish: the recorder's files pass the publish job's shape check; anything
   const bad2 = tmp(); const w2 = JSON.parse(JSON.stringify(w)); w2.races[0].cards[0] = { ...w2.races[1].cards[0], field: [{ a: "<img onerror=x>", vhp: 1, k: 1, h: 1 }] };
   fs.writeFileSync(path.join(bad2, "W002.json"), JSON.stringify(w2));
   const bad3 = tmp(); fs.writeFileSync(path.join(bad3, "W003.json"), JSON.stringify(w));
+  for (const d of [bad1, bad2, bad3]) assert.equal(shapeOk(d), false);
+});
+
+test("publish: a pick marked both win and show, or a board row with more wins and shows than picks, is refused", async () => {
+  const a = await hourly(U("2026-11-02T05:37Z"), "");
+  const B = { ts: chain.ts, sig: chain.who.map((x) => P.indexOf(x)), signers: P };
+  const st = M.standings(B, { start: U("2026-11-02T00:00Z"), end: U("2026-11-02T06:00Z") }, race(a, "2026-11-02T00").cards);
+  const good = await picksRun(U("2026-11-02T06:37Z"), a, { custom: [[W1, st[0].a, 1], [W2, st[1].a, 2]] });
+  assert.ok(shapeOk(good));
+  const w = week(good), board = JSON.parse(fs.readFileSync(path.join(good, "board.json"), "utf8"));
+  const bad1 = tmp(); const w1 = JSON.parse(JSON.stringify(w)); const r1 = w1.races.find((x) => x.result?.picks?.length);
+  r1.result.picks[0] = [...r1.result.picks[0].slice(0, 3), 1, 1, 1];
+  fs.writeFileSync(path.join(bad1, "W002.json"), JSON.stringify(w1));
+  const bad2 = tmp(); const b2 = JSON.parse(JSON.stringify(board)); b2.week.rows[0].shows = 5;
+  fs.writeFileSync(path.join(bad2, "board.json"), JSON.stringify(b2));
+  const bad3 = tmp(); const b3 = JSON.parse(JSON.stringify(board)); delete b3.week.rows[0].pts;
+  fs.writeFileSync(path.join(bad3, "board.json"), JSON.stringify(b3));
   for (const d of [bad1, bad2, bad3]) assert.equal(shapeOk(d), false);
 });
 

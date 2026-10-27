@@ -1,5 +1,5 @@
-/* Knode guest wallet: a play-only key kept in this browser, so anyone can answer the daily questions for free with no
- * extension, no app and no KOIN. Its answers are paid by the Knode Mana sponsor (sponsor/README.md), which pays
+/* KnodeGames guest wallet: a play-only key kept in this browser, so anyone can answer the daily questions for free with no
+ * extension, no app and no KOIN. Its answers are paid by the KnodeGames Mana sponsor (sponsor/README.md), which pays
  * answer-only transactions for any wallet within its free daily allowance.
  *
  * Rules this file keeps:

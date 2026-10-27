@@ -6,22 +6,22 @@
        encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://koinvault.app; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Knode Swap · Swap VHP for KOIN on Koinos</title>
+  <title>KnodeGames Swap · Swap VHP for KOIN on Koinos</title>
   <!-- seo:start (written by tools/site-seo.mjs; edit there) -->
-  <meta name="description" content="Swap VHP back into KOIN in one step on Koinos. A small 3% fee, paid out from Knode's own node.">
+  <meta name="description" content="Swap VHP back into KOIN in one step on Koinos. A small 3% fee, paid out from KnodeGames' own node.">
   <link rel="canonical" href="https://bawcejawn.github.io/Knode/site/swap.html">
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="Knode">
-  <meta property="og:title" content="Knode Swap">
-  <meta property="og:description" content="Swap VHP back into KOIN in one step on Koinos. A small 3% fee, paid out from Knode's own node.">
+  <meta property="og:site_name" content="KnodeGames">
+  <meta property="og:title" content="KnodeGames Swap">
+  <meta property="og:description" content="Swap VHP back into KOIN in one step on Koinos. A small 3% fee, paid out from KnodeGames' own node.">
   <meta property="og:url" content="https://bawcejawn.github.io/Knode/site/swap.html">
   <meta property="og:image" content="https://bawcejawn.github.io/Knode/site/media/og-swap.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Knode Swap">
+  <meta property="og:image:alt" content="KnodeGames Swap">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Knode Swap">
-  <meta name="twitter:description" content="Swap VHP back into KOIN in one step on Koinos. A small 3% fee, paid out from Knode's own node.">
+  <meta name="twitter:title" content="KnodeGames Swap">
+  <meta name="twitter:description" content="Swap VHP back into KOIN in one step on Koinos. A small 3% fee, paid out from KnodeGames' own node.">
   <meta name="twitter:image" content="https://bawcejawn.github.io/Knode/site/media/og-swap.png">
   <!-- seo:end -->
   <link rel="icon" href="media/icon.svg" type="image/svg+xml">
@@ -38,11 +38,12 @@
 
   <header class="top">
     <div class="wrap top-row">
-      <a class="brand" href="index.html" aria-label="Knode home">
+      <a class="brand" href="index.html" aria-label="KnodeGames home">
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span class="brand-name">Knode</span>
+        <span class="brand-name">KnodeGames</span>
       </a>
       <nav class="tabs" aria-label="Sections">
+        <a href="games.html">Games</a>
         <a href="index.html#play">Play</a>
         <a href="index.html#leaderboard">Leaderboard</a>
         <a href="index.html#results">Results</a>
@@ -97,7 +98,7 @@
         </dl>
         <p class="warn" id="warn" hidden></p>
         <button class="btn btn-primary swap-go" id="go" type="submit">Connect wallet</button>
-        <p class="muted fine">One transaction: you approve the VHP and the desk pays the KOIN together. If the price changed before it lands, nothing moves. With Kondor, Knode's Mana sponsor pays the Mana for VHP holders. With KOIN Vault, your wallet needs a little KOIN for Mana. <a href="terms.html" target="_blank" rel="noopener">Terms &amp; risks</a></p>
+        <p class="muted fine">One transaction: you approve the VHP and the desk pays the KOIN together. If the price changed before it lands, nothing moves. With Kondor, KnodeGames' Mana sponsor pays the Mana for VHP holders. With KOIN Vault, your wallet needs a little KOIN for Mana. <a href="terms.html" target="_blank" rel="noopener">Terms &amp; risks</a></p>
       </form>
     </div>
 
@@ -122,20 +123,21 @@
         <details><summary>Why is there a fee?</summary><p>VHP turns back into KOIN only as it produces blocks, which takes time. The desk takes on that wait for you. The fee pays for running the node.</p></details>
         <details><summary>Why is there a limit?</summary><p>The desk can only pay out KOIN it holds, and sending KOIN on Koinos needs Mana at least equal to the amount. The page always shows the most you can swap right now. It grows with every block the desk produces.</p></details>
         <details><summary>Is my money ever held by the desk?</summary><p>No. Your VHP and your KOIN move in one transaction. Either both happen or nothing does. The desk contract never holds anyone else's funds, and you set the minimum you'll accept.</p></details>
-        <details><summary>Where can I check the contract?</summary><p>The desk's address is at the bottom of this page. Its code is open source in the Knode repository.</p></details>
+        <details><summary>Where can I check the contract?</summary><p>The desk's address is at the bottom of this page. Its code is open source in the KnodeGames repository.</p></details>
       </div>
     </section>
   </main>
 
   <nav class="tabbar" aria-label="Main">
+    <a href="games.html"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect></svg>Games</a>
     <a href="index.html#play"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.6 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg>Play</a>
     <a href="race.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 21V4"></path><path d="M5 4h12l-2.5 4L17 12H5"></path></svg>Race</a>
     <a href="swap.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4L3 8l4 4"></path><path d="M3 8h14"></path><path d="M17 20l4-4-4-4"></path><path d="M21 16H7"></path></svg>Swap</a>
-    <a href="index.html#leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg>Leaders</a>
     <button type="button" class="tb-more" aria-expanded="false" aria-controls="more-sheet"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>More</button>
   </nav>
   <div class="more-sheet" id="more-sheet" hidden>
     <nav class="more-panel" aria-label="More pages">
+      <a href="index.html#leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg><span>Question leaderboard</span></a>
       <a href="index.html#results"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg><span>Results</span></a>
       <a href="index.html#how"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"></path><path d="M9 9h6M9 13h6"></path></svg><span>Rules</span></a>
       <a href="get.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8M8 12h8"></path></svg><span>Get VHP</span></a>
@@ -153,7 +155,7 @@
   <footer class="foot">
     <div class="wrap">
       <div class="foot-row">
-        <span>Knode Swap runs fully on Koinos. Open source.</span>
+        <span>KnodeGames Swap runs fully on Koinos. Open source.</span>
         <span class="foot-links"><a href="start.html">New to Koinos</a> · <a href="node.html">Producer lookup</a> · <a href="burn.html">Burn KOIN</a> · <a href="pulse.html">Network pulse</a> · <a href="mana.html">Mana levels</a> · <a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a></span>
         <span id="foot-contract"></span>
       </div>

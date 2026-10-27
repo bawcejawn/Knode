@@ -102,14 +102,15 @@ jobs:
               st = r.get("standings")
               if not set(r) <= {"final", "checked", "heights", "blocks", "line", "winner", "standings", "picks"}: return False
               pk = r.get("picks", [])
-              if type(pk) is not list or len(pk) > 100000 or not all(type(x) is list and len(x) == 5 and addr.fullmatch(str(x[0])) and addr.fullmatch(str(x[1]))
-                  and type(x[2]) is int and x[3] in (0, 1) and x[4] in (0, 1) for x in pk): return False
+              if type(pk) is not list or len(pk) > 100000 or not all(type(x) is list and len(x) in (5, 6) and addr.fullmatch(str(x[0])) and addr.fullmatch(str(x[1]))
+                  and type(x[2]) is int and x[3] in (0, 1) and x[4] in (0, 1) and (len(x) == 5 or (x[5] in (0, 1) and not (x[3] and x[5]))) for x in pk): return False
               return (r.get("winner") is None or addr.fullmatch(str(r["winner"]))) and r.get("checked") in (1, 2) and type(st) is list and len(st) <= 500 \
                   and all(type(x) is dict and addr.fullmatch(str(x.get("a"))) and num(x.get("steps")) and type(x.get("blocks")) is int for x in st)
           def rows_ok(b):
               rows = b.get("rows") if type(b) is dict else None
-              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "correct", "picks", "answers", "points", "ranked"}
-                  and addr.fullmatch(str(x["a"])) and all(type(x[k]) is int and 0 <= x[k] < 10**9 for k in ("correct", "picks", "answers", "points")) and type(x["ranked"]) is bool for x in rows)
+              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "pts", "correct", "shows", "picks", "answers", "points", "ranked"}
+                  and addr.fullmatch(str(x["a"])) and all(type(x[k]) is int and 0 <= x[k] < 10**9 for k in ("pts", "correct", "shows", "picks", "answers", "points"))
+                  and x["correct"] + x["shows"] <= x["picks"] and type(x["ranked"]) is bool for x in rows)
           for f in os.listdir(d):
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "board.json":

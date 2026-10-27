@@ -1,6 +1,6 @@
-/* Knode wallet layer: one way to connect and sign, two wallets.
+/* KnodeGames wallet layer: one way to connect and sign, two wallets.
  *   - Kondor: the browser extension (desktop).
- *   - Guest: a play-only key kept in this browser (site/guest.js). It signs only game answers, paid by the Knode Mana
+ *   - Guest: a play-only key kept in this browser (site/guest.js). It signs only game answers, paid by the KnodeGames Mana
  *     sponsor, so anyone can play the daily questions for free with no extension, app or KOIN.
  *   - KOIN Vault: passkey smart accounts on the phone (https://koinvault.app), via its website connection API
  *     (docs/website-integration.md in therexdev/koin-vault). The user approves every transaction in KOIN Vault;
@@ -164,12 +164,12 @@
     const go = h("a", { class: "kw-go", href: VAULT, target: "_blank", rel: "noopener noreferrer", referrerpolicy: "no-referrer", hidden: "" }, "Open KOIN Vault");
     const qr = h("div", { class: "kw-qr" });
     const box = open(h("h3", {}, "Connect KOIN Vault"),
-      h("p", {}, isPhone() ? "Tap Open KOIN Vault, approve Knode with your fingerprint or face, then come back to this tab." : "Scan with your phone (or use Connect inside KOIN Vault), approve Knode with your passkey, and this page connects by itself."),
+      h("p", {}, isPhone() ? "Tap Open KOIN Vault, approve KnodeGames with your fingerprint or face, then come back to this tab." : "Scan with your phone (or use Connect inside KOIN Vault), approve KnodeGames with your passkey, and this page connects by itself."),
       qr, go, status,
       h("p", {}, "No KOIN Vault yet? ", h("a", { href: VAULT, target: "_blank", rel: "noopener" }, "Create one at koinvault.app"), " in a minute, no extension needed."));
     let cancelled = false; onClose = () => { cancelled = true; };
     try {
-      const s = await vaultApi("create", { body: { name: "Knode" } });
+      const s = await vaultApi("create", { body: { name: "KnodeGames" } });
       const link = new URL(s.uri);
       if (link.origin !== VAULT || link.pathname !== "/") throw new Error("unexpected wallet address");
       go.href = s.uri; go.hidden = false;
@@ -223,7 +223,7 @@
       const vault = h("button", { class: "kw-opt", type: "button", onclick: pick(connectVault) }, h("span", { class: "kw-ic", "aria-hidden": "true" }, "📱"),
         h("div", {}, h("b", {}, "KOIN Vault", phone ? h("span", { class: "kw-tag" }, "for phones") : null), h("span", {}, "Fingerprint or face, no extension. Works on any phone")));
       const guest = guestOption(pick);
-      open(h("h3", {}, "Connect a wallet"), h("p", {}, "Your wallet signs everything. Knode never sees a key."), ...(phone ? [vault, kondor] : [kondor, vault]), guest);
+      open(h("h3", {}, "Connect a wallet"), h("p", {}, "Your wallet signs everything. KnodeGames never sees a key."), ...(phone ? [vault, kondor] : [kondor, vault]), guest);
       onClose = () => resolve(null);
     });
   }
@@ -236,8 +236,8 @@
   const RESTORE_WARN = "Only paste a key you backed up yourself. Anyone who gives you a key can take it back.";
   // Audit (guest) L-3: what a guest sees when the sponsor won't pay (never Kondor or KOIN Vault advice).
   const GUEST_NO_FREE = "Free answers are used up for today — try again after 00:00 UTC (5pm PT), or connect a wallet.";
-  // Audit (guest) L-5: on Koinos mainnet a guest only ever names the live Knode sponsor as payer and only answers on the
-  // Knode game, whatever deployment.json says (pinned like the chain id).
+  // Audit (guest) L-5: on Koinos mainnet a guest only ever names the live KnodeGames sponsor as payer and only answers on the
+  // KnodeGames question game, whatever deployment.json says (pinned like the chain id).
   const PINNED_SPONSOR = "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8", PINNED_GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr";
   // The Producer Race picks contract, pinned the same way once it is on mainnet (race-data/deployment.json). Until
   // then guests can't pick (empty = none).
@@ -291,7 +291,7 @@
   }
   function guestWelcome(address) {
     open(h("h3", {}, "You're playing as a guest"),
-      h("p", {}, "Your guest wallet is ", h("b", {}, address.slice(0, 6) + "…" + address.slice(-4)), ". Answering is free: the Knode Mana sponsor pays."),
+      h("p", {}, "Your guest wallet is ", h("b", {}, address.slice(0, 6) + "…" + address.slice(-4)), ". Answering is free: the KnodeGames Mana sponsor pays."),
       h("p", { class: "kw-warn" }, GUEST_WARN),
       h("p", {}, "It lives only in this browser. Back it up if you want to keep your points when you change phone or clear your browser."),
       // Audit (guest) M-2: the browser can delete it by itself (Safari after 7 days without a visit).
@@ -377,7 +377,7 @@
     const sp = sponsorFor(ops);
     const game = guestGame();
     if (W.chainId === MAINNET_CHAIN_ID && (!sp || sp.address !== PINNED_SPONSOR || !Array.isArray(sp.covers) || !sp.covers.includes(PINNED_GAME)))
-      throw new Error("Guest play is paused: the page's Mana sponsor settings aren't the live Knode sponsor. Nothing was sent.");
+      throw new Error("Guest play is paused: the page's Mana sponsor settings aren't the live KnodeGames sponsor. Nothing was sent.");
     const race = guestRace();
     const freeOnly = !!game && ops.length > 0 && ops.every((o) => guestOp(o, game, race));
     if (!freeOnly) throw guestCant(ops);
@@ -467,7 +467,7 @@
     // "chainId", confirmed with "npm run bot -- chain-check"), nothing is signed for any other chain.
     if (W.chainId) {
       const id = await W.provider.getChainId().catch(() => null);
-      if (id !== W.chainId) throw new Error("The network node reports a different chain than Knode runs on. Nothing was signed.");
+      if (id !== W.chainId) throw new Error("The network node reports a different chain than KnodeGames runs on. Nothing was signed.");
     }
     if (W.kind === "guest") { if (!guestOn()) throw new Error("Guest play is paused for now. Connect Kondor or KOIN Vault to play."); return sendGuest(label, ops, opts); }
     return W.kind === "vault" ? sendVault(label, ops, opts) : sendKondor(label, ops, opts);
