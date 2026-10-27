@@ -216,3 +216,8 @@ test("guest play is off unless deployment.json's sponsor has guest: true (no opt
   // The live setting is the owner's choice: guest play was switched on 2026-10-26 before the custom domain, accepting
   // the shared-origin risk (guest audit M-1, tracked as a TODO in guest.audit.test.mjs).
 });
+
+test("guests pick only on the pinned Knode race contract (mainnet)", () => {
+  assert.match(walletSrc, /const PINNED_RACE = "1EN7xU8R9tQXjHvrX79qZvvvGkkKWVnB5K";/);
+  assert.match(walletSrc, /const guestRace = \(\) => \(W\.chainId === MAINNET_CHAIN_ID \? \(PINNED_RACE \|\| null\)/);
+});
