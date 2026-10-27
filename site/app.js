@@ -167,7 +167,8 @@
   const seenWelcome = () => { try { return localStorage.getItem(SEEN_KEY) === "1"; } catch { return true; } };
   const markWelcomed = () => { try { localStorage.setItem(SEEN_KEY, "1"); } catch { /* private window: shown again next time */ } };
   function route() {
-    const view = (location.hash || "").slice(1);
+    // "#how/race" opens the Rules on the Race tab (also "#how/game", "#how/swap").
+    const [view, sub] = (location.hash || "").slice(1).split("/");
     const known = ["play", "leaderboard", "results", "how", "welcome"];
     // Opening the site (or the installed app) with no particular page asked for always starts on the short welcome
     // ("New here?"): the owner's choice, so nobody lands in the game without knowing what it is. One tap to play.
@@ -178,8 +179,39 @@
     document.body && document.body.setAttribute && document.body.setAttribute("data-view", v);
     if (v === "leaderboard") renderBoard();
     if (v === "results") renderResults();
+    if (v === "how") showRulesTab(sub);
     window.scrollTo({ top: 0 });
   }
+
+  // ═══════════════ Rules: one tab per part of Knode (game, Producer Race, Swap) ═══════════════
+  const RULE_TABS = ["game", "race", "swap"];
+  function showRulesTab(name) {
+    const t = RULE_TABS.includes(name) ? name : "game";
+    document.querySelectorAll("[data-rules]").forEach((b) => { const on = b.dataset.rules === t; b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; });
+    document.querySelectorAll("[data-rules-panel]").forEach((p) => (p.hidden = p.dataset.rulesPanel !== t));
+  }
+  document.querySelectorAll("[data-rules]").forEach((b) => b.addEventListener("click", () => {
+    const want = `#how/${b.dataset.rules}`;
+    if (location.hash !== want) history.replaceState(null, "", want);
+    showRulesTab(b.dataset.rules);
+  }));
+  // A list of UTC start hours also gets one line in the visitor's own clock: " (in your time: 5:00 PM, 11:00 PM, …)".
+  document.querySelectorAll("[data-utc-hours]").forEach((el) => {
+    try {
+      if (new Date().getTimezoneOffset() === 0) return;
+      const n = new Date();
+      const t = el.dataset.utcHours.split(",").map((h) => new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate(), Number(h), 0)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+      el.textContent = ` (your time: ${t.join(", ")})`;
+    } catch { /* keep the UTC text */ }
+  });
+  // Times written as "12:00 UTC" also show the visitor's own clock: "12:00 UTC (5:00 AM your time)".
+  document.querySelectorAll("[data-utc-hour]").forEach((el) => {
+    try {
+      const n = new Date(), d = new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate(), Number(el.dataset.utcHour), 0));
+      const local = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      if (new Date().getTimezoneOffset() !== 0) el.textContent = `${String(el.dataset.utcHour).padStart(2, "0")}:00 UTC (${local} your time)`;
+    } catch { /* keep the UTC text */ }
+  });
   window.addEventListener("hashchange", route);
 
   // ═══════════════ reading the game ═══════════════
