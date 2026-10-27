@@ -67,7 +67,7 @@ website says: the page then falls back to the player's own Mana.
    other than the audited one, and after uploading it stops with an error if the code or the switches on chain are not
    exactly right (pays for transactions ON, call and upload OFF).
 5. **Set the caps** (dry run first, then `--send`):
-   `npm run sponsor -- config --per-tx 1 --per-player-day 10 --per-player-week 65 --per-day 1000 --free-per-day 300 --min-vhp 1`
+   `npm run sponsor -- config --per-tx 1 --per-player-day 25 --per-player-week 150 --per-day 1000 --free-per-day 300 --min-vhp 1`
    (once `race-data/deployment.json` exists, this also sets the race contract, so picks are sponsored)
    (`--free-per-day 0` turns free answers off; pass it each time you change the caps, because an unset value means 500)
 6. **Switch it on**: `npm run sponsor -- enable --send`.
@@ -86,9 +86,10 @@ it from the sponsor wallet in Kondor, like any wallet.
 - The caps count each transaction's **Mana limit**, not what it really used. The site asks for `rcLimit` (default
   1 Mana) per transaction. Knode's own transactions use well under that (announcing an upgrade used 0.31 Mana; the game
   pays up to 2 Mana for a sponsored player transaction).
-- Knode's settings: **1** per transaction, **10** per player per day (the day's 5 answers and up to 5 race picks), **65**
-  per player per week (the week's 30 questions and 35 picks), **1,000** for everyone per day (a hard cap: 1,000 is also the contract's own ceiling,
-  `CAP_LIMIT`), of which at most **500** for answers by wallets with no VHP and no stake. Every other action needs
+- Knode's settings: **1** per transaction, **25** per player per day and **150** per player per week (owner's decision
+  2026-10-27: answers, race picks and KnodeGames picks such as Who Signs Block X's 12 targets a day), **1,000** for
+  everyone per day (a hard cap: 1,000 is also the contract's own ceiling, `CAP_LIMIT`), of which at most **300** for
+  free play by wallets with no VHP and no stake (the spam control: fresh wallets can never use more than that). Every other action needs
   **1 VHP** or a stake.
 - Knode's sponsor wallet `1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8` keeps at least **5,000 KOIN**: it refills about a fifth of
   its balance a day, so about 1,000 Mana a day, matching the cap. Keep some headroom above that for transactions waiting
@@ -122,7 +123,7 @@ v1. The existing caps, counts and settings stay as they are on chain (the upgrad
 1. Build and test (step 3 above). The hash must match the "Build" line below.
 2. `npm run sponsor -- upload`, then `--send` (the sponsor wallet's key re-uploads its own code; nothing else changes).
 3. After the race contract is uploaded (race/README.md):
-   `npm run sponsor -- config --per-player-day 10 --per-player-week 65 --send`, then `npm run sponsor -- payer sponsor --send`,
+   `npm run sponsor -- config --per-player-day 25 --per-player-week 150 --send`, then `npm run sponsor -- payer sponsor --send`,
    and commit and push the deployment files.
 
 ## Upgrading to v3 (KnodeGames allowlist) — not audited yet

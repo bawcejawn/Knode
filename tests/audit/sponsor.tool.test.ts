@@ -15,9 +15,10 @@ test("the default caps are in order and convert to chain units", () => {
   assert.equal(c.desk, DESK.contract);
   assert.deepEqual(c.tokens, [GAME.vhp, GAME.koin]);
   assert.equal(c.max_mana_per_tx, "100000000");
-  // A day's 5 answers and 5 race picks; a week's 30 answers and 35 picks (each counts its 1 Mana limit).
-  assert.equal(c.max_mana_per_account_day, "1000000000");
-  assert.equal(c.max_mana_per_account_week, "6500000000");
+  // Owner's decision 2026-10-27: 25 a day and 150 a week per player (answers, race picks and KnodeGames picks; each
+  // transaction counts its 1 Mana limit). Spam controls stay: 1 per transaction, 1,000 for everyone, 300 free.
+  assert.equal(c.max_mana_per_account_day, "2500000000");
+  assert.equal(c.max_mana_per_account_week, "15000000000");
   assert.equal(c.max_mana_per_day, "100000000000");
   // Answers for any wallet: those by wallets with no VHP and no stake share 300 of the 1,000 a day.
   assert.equal(c.max_mana_free_day, "30000000000");

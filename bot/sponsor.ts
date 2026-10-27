@@ -4,7 +4,7 @@
  *
  *   npm run sponsor -- status                       the sponsor right now: on/off, caps, KOIN and Mana, today's use
  *   npm run sponsor -- upload [--send]              put the sponsor contract on the sponsor wallet (SPONSOR_WIF)
- *   npm run sponsor -- config [--per-tx 1] [--per-player-day 10] [--per-player-week 65] [--per-day 1000] [--free-per-day 300] [--min-vhp 1] [--send]
+ *   npm run sponsor -- config [--per-tx 1] [--per-player-day 25] [--per-player-week 150] [--per-day 1000] [--free-per-day 300] [--min-vhp 1] [--send]
  *                                                   set the caps (in Mana; 1 Mana = 1 KOIN of Mana); keeps on/off as is
  *   npm run sponsor -- enable [--send]              switch the sponsor on (it pays within the caps)
  *   npm run sponsor -- disable [--send]             switch it off (players pay their own Mana)
@@ -42,8 +42,10 @@ export const PICKS_PICK = 0x8ce33c6c;
 export const PICKS_ARG_TYPES = "0x0301010301";
 /** Suggested caps (Mana): per transaction, per player per day, per player per week, everyone per day.
  *  The caps count each transaction's Mana limit (1 Mana): a day's 5 answers and 5 race picks = 10, a week's 30
- *  answers and 35 picks = 65. */
-export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "10", perPlayerWeek: "65", perDay: "1000", minVhp: "1", freePerDay: "300" };
+ *  answers and 35 picks = 65. Owner's decision 2026-10-27: 25 a day and 150 a week, room for the KnodeGames picks
+ *  (Who Signs Block X: up to 12 targets a day). The spam controls stay: 1 Mana per transaction, everyone's 1,000 a day,
+ *  and wallets with no VHP and no stake share the free total (300 a day). */
+export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "25", perPlayerWeek: "150", perDay: "1000", minVhp: "1", freePerDay: "300" };
 /** The audited sponsor build (sponsor/README.md "Build"). upload refuses any other wasm. v2 (race picks), audited
  *  2026-10-27 (docs/history/AUDIT-2026-10-27-race-picks.md); v1 was 8cfeff6209b8d5cbc3b3e5fa30751e995767f5904b77693ed8a41e323ea2a8ed. */
 export const SPONSOR_SHA256 = "fa4659e65c6156da3dde34238e0545a489a8b7f00cdf51df9bf79517a0019f33";

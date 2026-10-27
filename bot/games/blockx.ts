@@ -10,7 +10,8 @@
  *     (race-data). A target whose card can't be found yet waits; after 3 days it is recorded as void (no points).
  *  3. The picks: every pick for the round from the Picks contract (game 2), on both nodes; they must agree. The chain
  *     locked them 100 blocks before the target. Each pick is stored with its time, points and whether the wallet may
- *     be ranked for prizes (holds 1 VHP or has a Knode stake when the target is recorded, like the race).
+ *     be ranked (holds 1 VHP or has a Knode stake when the target is recorded, like the race). Ranking is shown on
+ *     the board; prizes are open to every wallet, guests included (owner's decision 2026-10-27), with picks on 3+ days.
  *  4. Leaderboards (board.json): Today, This week, Last week (with its prizes once final) and All time, by
  *     site/blockx-math.js, the same file the page runs. A week is final 12 hours after it ends (the correction window)
  *     when every target in it is recorded.
@@ -231,8 +232,8 @@ export async function run(o: Opts) {
     const wf = all.get(lw);
     const complete = !!wf && wf.targets.length > 0 && targetsCover(wf, M.weekStart(lw), M.weekStart(nowW));
     const final = head.time >= M.weekStart(nowW) + CORRECTION_MS && complete;
-    const rk = rankedSet(rows);
-    lastWeek = { week: lw, start: M.weekStart(lw), final, rows: view(rows), prizes: final ? X.prizes(rows.filter((x) => rk.has(x.player))) : [] };
+    // Prizes: every wallet, guests included (owner's decision 2026-10-27); the 3-day rule and ≥1 point apply.
+    lastWeek = { week: lw, start: M.weekStart(lw), final, rows: view(rows), prizes: final ? X.prizes(rows) : [] };
   }
   const board = {
     v: 1, updated: new Date(head.time).toISOString(),

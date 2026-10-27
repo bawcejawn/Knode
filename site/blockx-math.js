@@ -21,7 +21,8 @@
  *
  * LEADERBOARD: Today (the target block's UTC day), This week (the Knode game week of the target block) and All time.
  *   Ranked by points; ties: more correct picks, then the earlier last correct pick (lower height), then address.
- * PRIZE ELIGIBILITY (weekly 2 VHP / 1 VHP): picks made on at least 3 different UTC days that week. */
+ * PRIZE ELIGIBILITY (weekly 2 VHP / 1 VHP): any wallet, guests included (owner's decision 2026-10-27), with at least
+ *   one point and picks made on at least 3 different UTC days that week (so a wallet can't win from one visit). */
 (function (root) {
   "use strict";
   const ROUND = 2400, LEAD = 100, AHEAD = 28900, CAP = 3, OPEN = 12, MAX_CHANGES = 5, PICKS_PER_DAY = 30;
