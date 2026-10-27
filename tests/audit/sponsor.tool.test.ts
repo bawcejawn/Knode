@@ -18,8 +18,8 @@ test("the default caps are in order and convert to chain units", () => {
   assert.equal(c.max_mana_per_account_day, "500000000");
   assert.equal(c.max_mana_per_account_week, "3000000000");
   assert.equal(c.max_mana_per_day, "100000000000");
-  // Answers for any wallet: those by wallets with no VHP and no stake share 500 of the 1,000 a day.
-  assert.equal(c.max_mana_free_day, "50000000000");
+  // Answers for any wallet: those by wallets with no VHP and no stake share 300 of the 1,000 a day.
+  assert.equal(c.max_mana_free_day, "30000000000");
   // Only real players (audit M-1): VHP is the token checked, at least 1 VHP by default.
   assert.equal(c.vhp, GAME.vhp);
   assert.equal(c.min_vhp, "100000000");
@@ -88,4 +88,11 @@ test("payer sponsor is refused before the sponsor is uploaded", () => {
   const f = files(false);
   assert.throws(() => setPayer("sponsor", "1", f), /no sponsor yet/);
   assert.equal(read(f.game).payer, undefined);
+});
+
+test("audit L-4: an unset free cap defaults to 300 but never above everyone's daily cap; an explicit 0 stays 0", () => {
+  const c = buildConfig(GAME, DESK, { perTx: "1", perPlayerDay: "5", perPlayerWeek: "30", perDay: "200" }, true);
+  assert.equal(c.max_mana_free_day, "20000000000");
+  const z = buildConfig(GAME, DESK, { perTx: "1", perPlayerDay: "5", perPlayerWeek: "30", perDay: "1000", freePerDay: "0" }, false);
+  assert.equal(z.max_mana_free_day, "0");
 });

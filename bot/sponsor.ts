@@ -4,7 +4,7 @@
  *
  *   npm run sponsor -- status                       the sponsor right now: on/off, caps, KOIN and Mana, today's use
  *   npm run sponsor -- upload [--send]              put the sponsor contract on the sponsor wallet (SPONSOR_WIF)
- *   npm run sponsor -- config [--per-tx 1] [--per-player-day 5] [--per-player-week 30] [--per-day 1000] [--free-per-day 500] [--min-vhp 1] [--send]
+ *   npm run sponsor -- config [--per-tx 1] [--per-player-day 5] [--per-player-week 30] [--per-day 1000] [--free-per-day 300] [--min-vhp 1] [--send]
  *                                                   set the caps (in Mana; 1 Mana = 1 KOIN of Mana); keeps on/off as is
  *   npm run sponsor -- enable [--send]              switch the sponsor on (it pays within the caps)
  *   npm run sponsor -- disable [--send]             switch it off (players pay their own Mana)
@@ -34,7 +34,7 @@ const STATE = path.join("sponsor-data", "deployment.json");
 const GAME_DEP = path.join("game-data", "deployment.json");
 const DESK_DEP = path.join("desk-data", "deployment.json");
 /** Suggested caps (Mana): per transaction, per player per day, per player per week, everyone per day. */
-export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "5", perPlayerWeek: "30", perDay: "1000", minVhp: "1", freePerDay: "500" };
+export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "5", perPlayerWeek: "30", perDay: "1000", minVhp: "1", freePerDay: "300" };
 /** The audited sponsor build (sponsor/README.md "Build"). upload refuses any other wasm. */
 export const SPONSOR_SHA256 = "8cfeff6209b8d5cbc3b3e5fa30751e995767f5904b77693ed8a41e323ea2a8ed";
 
@@ -188,8 +188,11 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
     perPlayerWeek: flag(a, "--per-player-week", fromSat(cur.max_mana_per_account_week, DEFAULT_CAPS.perPlayerWeek)),
     perDay: flag(a, "--per-day", fromSat(cur.max_mana_per_day, DEFAULT_CAPS.perDay)),
     minVhp: flag(a, "--min-vhp", fromSat(cur.min_vhp, DEFAULT_CAPS.minVhp)),
-    // 0 can't be told apart from "never set" on chain: pass --free-per-day 0 each time to keep free answers off.
-    freePerDay: flag(a, "--free-per-day", fromSat(cur.max_mana_free_day, DEFAULT_CAPS.freePerDay)),
+    // Audit L-4: once the sponsor has been configured (its daily cap is set), its free cap is read back as it is,
+    // 0 included, so enable/disable never switch free answers back on or fail. Only a never-configured sponsor
+    // starts from the default.
+    freePerDay: flag(a, "--free-per-day", cur.max_mana_per_day && cur.max_mana_per_day !== "0"
+      ? (Number(cur.max_mana_free_day ?? 0) / 1e8).toString() : undefined as any),
   };
   const enabled = enabledArg ?? !!cur.enabled;
   const config = buildConfig(game, desk, caps, enabled);
@@ -197,7 +200,7 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
   log(`  set_config: ${enabled ? "ON" : "off"}; pays for the game ${config.game} and Knode Swap ${config.desk}; approves on VHP and KOIN`);
   log(`  caps: ${caps.perTx} Mana per transaction, ${caps.perPlayerDay} per player per day, ${caps.perPlayerWeek} per player per week, ${caps.perDay} for everyone per day`);
   log(`  players: answers for any wallet; everything else only for wallets holding at least ${caps.minVhp} VHP, or with a stake in the game`);
-  log(`  free answers (wallets with no VHP and no stake): at most ${caps.freePerDay} Mana for everyone per day, inside the ${caps.perDay}`);
+  log(`  free answers (wallets with no VHP and no stake): at most ${Number(config.max_mana_free_day) / 1e8} Mana for everyone per day, inside the ${caps.perDay}`);
   if (!send) { log("\nDry run only. Nothing was sent. Add --send to send it."); return; }
   const chain = new KoinosChain(rpc, A);
   const r = await chain.send([{ contract: A, abi: loadAbi(), method: "set_config", args: { config } }], [s], { payer: A, rcLimitKoin: 2 });
