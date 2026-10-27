@@ -85,16 +85,45 @@
   }
   const creds = () => ({ sessionId: W.session.sessionId, secret: W.session.secret });
 
+  // ── Remembered accounts: so the wallet stays connected across pages, reloads and tabs ──
+  // Only public data is kept (in localStorage): each account's wallet kind and address, and which one is active.
+  // Never a key, a KOIN Vault session secret, or a signature. A remembered account still has to be signed for by its
+  // own wallet: Kondor signs only for accounts it holds, and KOIN Vault asks for a fresh approval (and must name the
+  // same address) before anything is sent. "Disconnect" forgets all of it.
+  const ACCTS = "kw-accounts", ACTIVE = "kw-active", KINDS = ["kondor", "vault", "guest"], MAX_ACCTS = 20;
+  const isAddr = (a) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
+  function remembered() {
+    let r = null; try { r = JSON.parse(store.get(localStorage, ACCTS) || "[]"); } catch { r = null; }
+    if (!Array.isArray(r)) return [];
+    const seen = new Set(), out = [];
+    for (const x of r) if (x && KINDS.includes(x.kind) && isAddr(x.address) && !seen.has(x.address) && out.length < MAX_ACCTS) { seen.add(x.address); out.push({ kind: x.kind, address: x.address }); }
+    return out;
+  }
+  const saveAccts = (list) => store.set(localStorage, ACCTS, list.length ? JSON.stringify(list.map(({ kind, address }) => ({ kind, address }))) : null);
+  function remember(kind, address) {
+    if (!isAddr(address)) return;
+    const list = remembered(), i = list.findIndex((x) => x.address === address);
+    if (i >= 0) list[i] = { kind, address }; else list.push({ kind, address });
+    saveAccts(list.slice(-MAX_ACCTS));
+  }
+  function forgetAcct(address) { saveAccts(remembered().filter((x) => x.address !== address)); }
+  const listeners = new Set();
+  function notify() { for (const f of [W.onChange, ...listeners]) { try { f(W.address, W.kind); } catch { /* one listener never stops the others */ } } }
+
   function setAddress(kind, address) {
-    const changed = address !== W.address;
+    const changed = address !== W.address || (address && kind !== W.kind);
     W.kind = address ? kind : null; W.address = address || null;
     store.set(localStorage, "kw-kind", W.kind);
-    if (changed) W.onChange(W.address, W.kind);
+    store.set(localStorage, ACTIVE, W.address);
+    if (W.address) remember(W.kind, W.address);
+    if (changed) notify();
   }
-  function dropVault(reason) {
+  /** The KOIN Vault session ended. On a plain expiry the address stays (the next action asks KOIN Vault again); when the
+   *  wallet itself disconnected or switched accounts (`forget`), that account is forgotten here too. */
+  function dropVault(reason, forget = false) {
     if (W.poll) { clearTimeout(W.poll); W.poll = null; }
     W.session = null; store.set(sessionStorage, "kw-vault", null);
-    if (W.kind === "vault") setAddress(null, null);
+    if (forget && W.kind === "vault") { forgetAcct(W.address); setAddress(null, null); }
     if (reason && W.toast) W.toast(reason, 7000);
   }
   /** Keep checking the KOIN Vault session so a disconnect or expiry in the wallet also clears this page. */
@@ -103,13 +132,13 @@
     let fails = 0;
     const tick = async () => {
       if (!W.session) return;
-      if (Date.now() > W.session.expiresAt) return dropVault("KOIN Vault connection expired (they last 30 minutes). Connect again.");
+      if (Date.now() > W.session.expiresAt) return dropVault("KOIN Vault connection expired (they last 30 minutes). Your next action asks KOIN Vault again.");
       if (!document.hidden) {
         try {
           const st = await vaultApi("status", { query: creds() }); fails = 0;
-          if (!st.connected || (W.address && st.address !== W.address)) return dropVault("KOIN Vault disconnected. Connect again to keep playing.");
+          if (!st.connected || (W.address && st.address !== W.address)) return dropVault("KOIN Vault disconnected. Connect again to keep playing.", true);
         } catch (e) {
-          if (e.status === 404 || e.status === 410) return dropVault("KOIN Vault connection ended. Connect again.");
+          if (e.status === 404 || e.status === 410) return dropVault("KOIN Vault connection ended. Your next action asks KOIN Vault again.");
           fails++;
         }
       }
@@ -177,7 +206,10 @@
     if (!window.kondor) { W.toast && W.toast("Kondor isn't installed in this browser. On a phone, use KOIN Vault.", 7000); return null; }
     const accounts = await withTimeout(window.kondor.getAccounts(), 15000, "No answer from Kondor. Is the extension installed and unlocked?");
     if (!accounts || !accounts.length) { W.toast && W.toast("Kondor shared no account. Open Kondor and allow this site.", 7000); return null; }
-    setAddress("kondor", accounts[0].address);
+    const addrs = accounts.map((a) => a && a.address).filter((a) => typeof a === "string" && a.length > 0);   // only real addresses are remembered
+    if (!addrs.length) { W.toast && W.toast("Kondor shared no account. Open Kondor and allow this site.", 7000); return null; }
+    for (const a of addrs) remember("kondor", a);
+    setAddress("kondor", addrs.includes(W.address) ? W.address : addrs[0]);
     return W.address;
   }
 
@@ -307,10 +339,10 @@
       h("div", { class: "kw-row" },
         h("button", { class: "kw-btn", type: "button", onclick: () => backupGuest() }, "Back up guest key"),
         h("button", { class: "kw-btn", type: "button", onclick: () => restoreGuest() }, "Restore a guest key"),
-        h("button", { class: "kw-btn", type: "button", onclick: () => { close(); setAddress(null, null); } }, "Disconnect"),
+        h("button", { class: "kw-btn", type: "button", onclick: () => { close(); disconnect(); } }, "Disconnect"),
         h("button", { class: "kw-btn kw-danger", type: "button", onclick: async () => {
           if (!window.confirm("Forget this guest? Without a backup its points and any prize are gone for good.")) return;
-          await window.KGuest.forget(); close(); setAddress(null, null); W.toast && W.toast("Guest forgotten on this device.", 6000);
+          await window.KGuest.forget(); close(); forget(W.address); W.toast && W.toast("Guest forgotten on this device.", 6000);
         } }, "Forget this guest")),
       h("p", {}, "Want to stake and share the weekly pool? ", h("a", { href: "get.html" }, "Get a wallet and VHP"), "."));
   }
@@ -393,9 +425,25 @@
       throw new Error("A guest signs only game answers. Nothing was sent.");
   }
 
+  /** Disconnect: ends the KOIN Vault session and forgets every remembered account on this device. */
   function disconnect() {
-    if (W.kind === "vault" && W.session) vaultApi("disconnect", { body: creds() }).catch(() => {});
-    if (W.kind === "vault") dropVault(); else setAddress(null, null);
+    if (W.session) vaultApi("disconnect", { body: creds() }).catch(() => {});
+    dropVault();
+    saveAccts([]);
+    setAddress(null, null);
+  }
+  /** Make a remembered account the active one. Returns false for an account that isn't remembered here. */
+  function switchTo(address) {
+    const a = remembered().find((x) => x.address === address);
+    if (!a) return false;
+    if (W.session && a.address !== W.address) dropVault();   // a KOIN Vault session belongs to one account only
+    setAddress(a.kind, a.address);
+    return true;
+  }
+  /** Forget one remembered account (the others stay). */
+  function forget(address) {
+    if (address === W.address) { if (W.session) { vaultApi("disconnect", { body: creds() }).catch(() => {}); dropVault(); } forgetAcct(address); const next = remembered()[0]; return next ? setAddress(next.kind, next.address) : setAddress(null, null); }
+    forgetAcct(address); notify();
   }
 
   const MAINNET_CHAIN_ID = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";
@@ -504,7 +552,13 @@
   }
 
   async function sendVault(label, ops, opts = {}) {
-    if (!W.session) { dropVault(); throw new Error("KOIN Vault isn't connected any more. Connect again."); }
+    if (!W.session) {
+      // A remembered KOIN Vault account: ask KOIN Vault again, and only go on if it is the same account.
+      const want = W.address, got = await connectVault();
+      if (!got) throw new Error("Not connected to KOIN Vault, nothing was sent.");
+      if (got !== want) throw new Error("KOIN Vault connected a different account, nothing was sent. Check the account and try again.");
+      if (!W.session) throw new Error("KOIN Vault isn't connected. Connect again.");
+    }
     const operations = ops.map((o) => ({ call_contract: { contract_id: o.call_contract.contract_id, entry_point: Number(o.call_contract.entry_point), args: o.call_contract.args } }));
     let req;
     try { req = await vaultApi("request", { body: { ...creds(), operations, mana: "auto" } }); }
@@ -546,7 +600,15 @@
     W.sponsor = sponsor && typeof sponsor.address === "string" ? sponsor : null;
     // Koinos mainnet's chain id is the default pin (audit L-3), so every page (burn, producer lookup included) refuses
     // to sign for another chain; a page can pass a different expected id (a testnet deployment.json "chainId").
-    W.provider = provider; W.chainId = chainId || MAINNET_CHAIN_ID; W.onChange = onChange || (() => {}); W.toast = toast; W.status = status;
+    W.provider = provider || W.provider; W.chainId = chainId || MAINNET_CHAIN_ID; W.toast = toast || W.toast; W.status = status || W.status;
+    if (onChange) {
+      if (!W.inited) W.onChange = onChange;
+      else {
+        listeners.add(onChange);
+        // A page that sets up after the header did still hears about the account that is already active.
+        if (W.address && !W.restoring) setTimeout(() => { try { onChange(W.address, W.kind); } catch {} }, 0);
+      }
+    }
     // An earlier version of this page kept the KOIN Vault session in sessionStorage. Delete any such entry and never
     // use it: another page of this origin could have written it, and the user has not chosen it on this page.
     store.set(sessionStorage, "kw-vault", null);
@@ -554,10 +616,18 @@
     if (store.get(localStorage, "kw-kind") === "guest" && guestReady()) {
       window.KGuest.load().then((g) => { if (g && !W.address) setAddress("guest", g.address); }).catch(() => {});
     }
+    // The account that was active on this device comes back on every page (address only; nothing is asked of the
+    // wallet until something has to be signed). A guest account comes back only where its key is (above).
+    if (!W.inited && !W.address) {
+      const act = store.get(localStorage, ACTIVE), a = remembered().find((x) => x.address === act);
+      if (a && a.kind !== "guest") { W.kind = a.kind; W.address = a.address; W.restoring = setTimeout(() => { W.restoring = null; notify(); }, 0); }
+    }
+    W.inited = true;
   }
 
   window.KWallet = {
-    init, connect, disconnect, send, isPhone, manageGuest, guestInfo: () => { guestCant([]); },
+    init, connect, disconnect, send, isPhone, manageGuest, guestInfo: () => { guestCant([]); }, switchTo, forget,
+    accounts: () => remembered(), subscribe: (f) => { listeners.add(f); return () => listeners.delete(f); },
     get address() { return W.address; }, get kind() { return W.kind; },
     label: () => (W.kind === "vault" ? "KOIN Vault" : W.kind === "kondor" ? "Kondor" : W.kind === "guest" ? "your guest wallet" : "your wallet"),
   };

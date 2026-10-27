@@ -1,0 +1,133 @@
+# Producer Race recorder: every hour, takes the handicap cards (every 2 hours: each race's start and 2 updates) and
+# records finished races once their blocks are irreversible and match on two nodes. See bot/race.ts.
+#
+# Two jobs, like the main bot, so repository code never runs next to a write token:
+#   record   runs bot/race.ts with a read-only token and no secrets (it only reads the chain), and hands the files on.
+#   publish  runs no repository code: it checks the files' shape and pushes them to the race-data branch.
+# It never touches main, holds no key, and does not run on pull requests.
+#
+# Turn it on: Settings → Secrets and variables → Actions → Variables: RACE_ENABLED = true
+name: Producer race
+
+on:
+  schedule:
+    - cron: "37 * * * *"     # every hour at minute 37 (a card is taken by the last run before each 2-hour leg)
+  workflow_dispatch: {}
+
+concurrency:
+  group: knode-race
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    if: ${{ vars.RACE_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      # The files the last run published (public branch; read without a token). Only plain JSON files are taken.
+      - name: Take the last run's race files
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/prev"
+          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
+            for f in $(git ls-tree --name-only FETCH_HEAD); do
+              if [[ "$f" =~ ^(index|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; fi
+            done
+          else echo "No race-data branch yet."; fi
+      - name: Record the race
+        run: npm run race
+        env:
+          RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
+          RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
+          RACE_PREV: ${{ runner.temp }}/prev
+          RACE_OUT: ${{ runner.temp }}/race-data
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: race-data
+          path: ${{ runner.temp }}/race-data/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  publish:
+    needs: record
+    if: ${{ vars.RACE_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write         # push the race-data branch (never main)
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: race-data
+          path: ${{ runner.temp }}/incoming
+      - name: Push race-data (and nothing else)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IN: ${{ runner.temp }}/incoming
+        run: |
+          set -euo pipefail
+          if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
+          bad=$(find "$IN" -mindepth 1 \( -type l -o -type d -o \( -type f ! -regex "$IN/\(index\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
+          if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
+          big=$(find "$IN" -type f -size +2048k -print)
+          if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
+          # The content must be the recorder's own shape, not only parse as JSON.
+          /usr/bin/python3 - "$IN" <<'PY'
+          import json, os, re, sys
+          d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
+          def card_ok(c):
+              if c is None: return True
+              if type(c) is not dict or not num(c.get("at")) or not num(c.get("c")) or not num(c.get("blocksPerRace")): return False
+              if type(c.get("field")) is not list or type(c.get("paddock")) is not list or len(c["field"]) + len(c["paddock"]) > 500: return False
+              return all(type(r) is dict and addr.fullmatch(str(r.get("a"))) and num(r.get("vhp")) and num(r.get("k")) and ("h" not in r or num(r["h"])) for r in c["field"] + c["paddock"]) and all(num(r.get("h")) and r["h"] > 0 for r in c["field"])
+          def result_ok(r):
+              if r is None: return True
+              if type(r) is not dict or r.get("final") is not True: return False
+              if r.get("missed"): return set(r) <= {"final", "missed", "note"} and len(str(r.get("note", ""))) < 200
+              st = r.get("standings")
+              return (r.get("winner") is None or addr.fullmatch(str(r["winner"]))) and r.get("checked") in (1, 2) and type(st) is list and len(st) <= 500 \
+                  and all(type(x) is dict and addr.fullmatch(str(x.get("a"))) and num(x.get("steps")) and type(x.get("blocks")) is int for x in st)
+          for f in os.listdir(d):
+              j = json.load(open(os.path.join(d, f), encoding="utf-8"))
+              if f == "index.json":
+                  assert set(j) == {"v", "updated", "weeks"} and j["v"] == 1 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
+                  continue
+              assert set(j) == {"v", "week", "start", "end", "races"} and j["v"] == 1 and f == "W%03d.json" % j["week"], f
+              assert type(j["races"]) is list and len(j["races"]) == 28, f
+              for r in j["races"]:
+                  assert set(r) == {"id", "start", "end", "cards", "result"} and re.fullmatch(r"\d{4}-\d{2}-\d{2}T(00|06|12|18)", r["id"]), f
+                  assert type(r["cards"]) is list and len(r["cards"]) == 3 and all(card_ok(c) for c in r["cards"]) and result_ok(r["result"]), f + " " + r["id"]
+          print("race files ok")
+          PY
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git init -q work && cd work
+          parent=""
+          if git fetch -q --depth 1 "$remote" race-data 2>/dev/null; then
+            parent=$(git rev-parse FETCH_HEAD)
+            git read-tree FETCH_HEAD
+          else git read-tree --empty; fi
+          for f in "$IN"/*.json; do
+            blob=$(git hash-object -w "$f")
+            git update-index --add --cacheinfo 100644 "$blob" "$(basename "$f")"
+          done
+          tree=$(git write-tree)
+          if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi
+          export GIT_AUTHOR_NAME=kpred-bot GIT_AUTHOR_EMAIL=kpred-bot@users.noreply.github.com GIT_COMMITTER_NAME=kpred-bot GIT_COMMITTER_EMAIL=kpred-bot@users.noreply.github.com
+          commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "race: record")
+          git push -q "$remote" "$commit:refs/heads/race-data"
+          echo "Race files published."

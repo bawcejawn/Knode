@@ -214,8 +214,13 @@
 
   // "Use my wallet": asks Kondor or KOIN Vault for the address only. Nothing is signed.
   const W = window.KWallet;
-  W.init({ provider, toast: (t) => say(t, true), onChange: (addr) => { if (addr) check(addr); } });
+  // A shared link (?addr=) wins; otherwise the gauge follows the wallet chosen in the header (switching accounts there
+  // switches the gauge too).
+  const fromLink = new URLSearchParams(location.search).get("addr");
+  let followWallet = !fromLink;
+  W.init({ provider, toast: (t) => say(t, true), onChange: (addr) => { if (addr && followWallet) check(addr); } });
   $("mine").onclick = async () => {
+    followWallet = true;
     if (W.address) return check(W.address);
     try { await W.connect(); } catch (e) { say(String(e.message || e), true); }
   };
@@ -236,17 +241,11 @@
   ["pl-answer", "pl-transfer", "pl-swap"].forEach((id) => $(id).addEventListener("input", renderPlan));
   renderPlan();
 
-  // ── start: a shared link first, then a Kondor wallet this site was already allowed to see, then the last check ──
+  // ── start: a shared link first, then the connected wallet (it reports itself through onChange), then the last check ──
   (async () => {
-    const fromLink = new URLSearchParams(location.search).get("addr");
     if (fromLink) return check(fromLink);
-    let kind = null; try { kind = localStorage.getItem("kw-kind"); } catch {}
-    if (kind === "kondor" && window.kondor) {
-      try {
-        const accts = await Promise.race([window.kondor.getAccounts(), sleep(4000).then(() => null)]);
-        if (accts && accts[0] && accts[0].address) return check(accts[0].address);
-      } catch { /* fall through */ }
-    }
+    await sleep(50);                       // the remembered wallet account (if any) arrives first
+    if (cur || W.address) return;
     const last = store.get(LAST);
     if (last && isAddr(last)) return check(last);
     say("Enter an address, or tap Use my wallet.");

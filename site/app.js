@@ -1219,9 +1219,7 @@
       el("dt", {}, prevOpen ? `Earned (week ${P.week + 1}, closing)` : "Earned this week"), el("dd", {}, `${amount(earned)} VHP`),
       el("dt", {}, "Winners get"), el("dd", {}, rewardRule(S.week) ? "95%, minus up to 2 VHP for the top free players" : "95%"),
       el("dt", {}, "Waiting to be collected"), el("dd", {}, `${amount(t.pots_outstanding)} VHP`));
-    const btn = $("#connect");
-    btn.textContent = S.account ? (isGuest() ? `Guest ${short(S.account)}` : short(S.account)) : "Connect wallet";
-    btn.classList.toggle("connected", !!S.account);
+    if (S.demo) { const btn = $("#connect"); btn.textContent = S.account ? short(S.account) : "Connect wallet"; btn.classList.toggle("connected", !!S.account); }
     $("#foot-contract").textContent = S.dep?.contract ? `Contract ${S.dep.contract}` : "";
   }
 
@@ -1505,7 +1503,6 @@
 
   // ═══════════════ start ═══════════════
   async function start() {
-    let armed = 0;
     const rs = $("#res-search");
     if (rs) rs.addEventListener("input", () => { RV.q = rs.value || ""; renderResults(); });
     const rm = $("#res-mine");
@@ -1523,12 +1520,9 @@
     renderReminders();
     // Installable app: the service worker keeps only the page shell for offline start-up (never game data or chain reads).
     if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
-    $("#connect").addEventListener("click", () => {
-      if (!S.account) return connect();
-      if (isGuest()) return window.KWallet.manageGuest();
-      if (S.demo || Date.now() - armed > 5000) { armed = Date.now(); return toast(`Connected with ${S.demo ? "the demo wallet" : window.KWallet.label()}: ${S.account}. Tap again to disconnect.`, 5000); }
-      armed = 0; window.KWallet.disconnect();
-    });
+    // The header's wallet button and its account menu are header-wallet.js (shared by every page). In the demo it
+    // only explains itself.
+    if (/[?&]demo\b/.test(location.search) || !window.KWallet) $("#connect").addEventListener("click", () => { if (!S.account) return connect(); toast(`Connected with the demo wallet: ${S.account}.`, 5000); });
     const initWallet = () => window.KWallet && window.KWallet.init({
       provider: S.provider, toast, chainId: S.dep && S.dep.chainId, payer: S.dep && S.dep.payer, sponsor: S.dep && S.dep.sponsor, game: S.dep && S.dep.contract,
       onChange: (addr) => {

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <!-- Only these sources may run scripts, load data or be framed. This page signs nothing and loads no wallet code. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; manifest-src 'self'; worker-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://koinvault.app; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; manifest-src 'self'; worker-src 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Get the Knode app · iPhone, Android and computer</title>
   <!-- seo:start (written by tools/site-seo.mjs; edit there) -->
@@ -48,8 +48,6 @@
         <a href="get.html">Get VHP</a>
         <a href="swap.html">Swap</a>
         <a href="race.html">Race</a>
-        <a href="pulse.html">Pulse</a>
-        <a href="mana.html">Mana</a>
         <a href="index.html#welcome" class="tab-start">New here?</a>
       </nav>
       <a class="btn btn-wallet" href="./#play">Play Knode</a>
@@ -118,6 +116,9 @@
       </div>
     </div>
   </footer>
+  <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js" integrity="sha384-WOeNFfSdOron0s4x9jdzLtA7Ic7RSqZCXZAaeQd6HRL6WezQp0KAtIF2XSa+11TL" crossorigin="anonymous"></script>
+  <script src="wallet.js"></script>
+  <script src="header-wallet.js"></script>
   <script src="install.js"></script>
 </body>
 </html>
