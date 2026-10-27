@@ -1,0 +1,138 @@
+// Who Signs Block X (site/blockx-math.js, shared by the page and the recorder bot/games/blockx.ts): the lock and the
+// 12 open targets (the Picks contract's rule), the capped score, the leaderboard order and the weekly prizes. Offline.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import vm from "node:vm";
+
+const APP = process.env.APP || ".";
+const read = (f) => fs.readFileSync(`${APP}/site/${f}`, "utf8");
+const box = { window: {} };
+vm.runInNewContext(read("race-math.js") + "\n" + read("blockx-math.js"), box);
+const X = box.window.KBlockX, RM = box.window.KRaceMath;
+const plain = (x) => JSON.parse(JSON.stringify(x));
+
+test("the same week and clock as the race and the game", () => {
+  assert.equal(X.GENESIS, RM.GENESIS);
+  assert.equal(X.WEEK, RM.WEEK);
+  for (const t of [RM.GENESIS - 1, RM.GENESIS + 1, Date.parse("2026-11-02T00:00:00Z"), Date.parse("2026-11-08T23:59:59Z")]) assert.equal(X.weekOf(t), RM.weekOf(t));
+});
+
+test("the lock: a pick can land in block X − 101 at the latest", () => {
+  const r = 20000, x = r * 2400;
+  assert.equal(X.target(r), x);
+  assert.equal(X.lockHeight(r), x - 100);
+  assert.equal(X.isOpen(r, x - 101), true);
+  assert.equal(X.isOpen(r, x - 100), false);
+  assert.equal(X.isOpen(r, x), false);
+  assert.equal(X.isOpen(r, x - 28900), true);
+  assert.equal(X.isOpen(r, x - 28901), false);
+  assert.equal(X.isOpen(0, 0), false);
+});
+
+test("exactly 12 targets are open at every height", () => {
+  for (let h = 47_990_000; h < 48_010_000; h += 37) {
+    const o = X.openRounds(h);
+    assert.equal(o.length, 12, `height ${h}`);
+    for (const r of o) assert.ok(X.isOpen(r, h));
+    assert.ok(!X.isOpen(o[0] - 1, h) && !X.isOpen(o[11] + 1, h), `only those, at ${h}`);
+    for (let i = 1; i < 12; i++) assert.equal(o[i], o[i - 1] + 1);
+  }
+});
+
+test("the page offers a target only while its lock is more than 20 blocks away", () => {
+  const x = 48_000_000;
+  assert.ok(X.offerRounds(x - 121).includes(20000));
+  assert.ok(!X.offerRounds(x - 120).includes(20000));
+  assert.ok(X.openRounds(x - 120).includes(20000), "still open on chain");
+});
+
+const CARD = {
+  field: [{ a: "1Big", vhp: 3_000_000, k: 600 }, { a: "1Mid", vhp: 1_500_000, k: 300 }, { a: "1Third", vhp: 1_000_000, k: 200 }],
+  paddock: [{ a: "1Small", vhp: 100_000, k: 20 }],
+};
+
+test("score: min(3, top VHP ÷ picked VHP) for a correct pick, 0 for a wrong one; missing from the card scores 3", () => {
+  assert.equal(X.multiplier(CARD, "1Big"), 1);
+  assert.equal(X.multiplier(CARD, "1Mid"), 2);
+  assert.equal(X.multiplier(CARD, "1Third"), 3);
+  assert.equal(X.multiplier(CARD, "1Small"), 3, "capped (30× uncapped)");
+  assert.equal(X.multiplier(CARD, "1New"), 3);
+  assert.equal(X.pointsOf(CARD, "1Mid", "1Mid"), 200);
+  assert.equal(X.pointsOf(CARD, "1Mid", "1Big"), 0);
+  assert.equal(X.pointsOf(CARD, null, "1Big"), 0);
+  assert.equal(X.multiplier({ field: [{ a: "1A", vhp: 7 }, { a: "1B", vhp: 3 }] }, "1B"), 2.33, "2 decimals");
+});
+
+test("expected score is min(3 × share, top share): every producer with a third of the top's VHP is equally good", () => {
+  const { m, top } = X.vhpOf(CARD);
+  const total = [...m.values()].reduce((s, v) => s + v, 0);
+  const ev = (a) => (m.get(a) / total) * X.multiplier(CARD, a);
+  const best = top / total;
+  for (const a of ["1Big", "1Mid", "1Third"]) assert.ok(Math.abs(ev(a) - best) < 1e-9, a);
+  assert.ok(ev("1Small") < best / 3);
+});
+
+test("leaderboard: points, then more correct picks, then the earlier last correct pick", () => {
+  const T = Date.parse("2026-11-03T10:00:00Z");
+  const rows = [
+    { player: "1A", height: 100, correct: true, pts: 300, pickTime: T },
+    { player: "1B", height: 200, correct: true, pts: 150, pickTime: T },
+    { player: "1B", height: 300, correct: true, pts: 150, pickTime: T },
+    { player: "1C", height: 50, correct: true, pts: 300, pickTime: T },
+    { player: "1D", height: 60, correct: false, pts: 0, pickTime: T },
+  ];
+  const b = plain(X.board(rows));
+  assert.deepEqual(b.map((r) => r.player), ["1B", "1C", "1A", "1D"]);
+  assert.equal(b[0].correct, 2);
+  const p = plain(X.places(X.board(rows)));
+  assert.deepEqual(p.map((r) => r.place), [1, 2, 3, 4]);
+});
+
+test("prizes: 2 VHP and 1 VHP to eligible players (picks on 3+ days, ≥1 point); ties split the places they cover", () => {
+  const d = (n) => Date.parse(`2026-11-0${n}T12:00:00Z`);
+  const days3 = (player, pts) => [3, 4, 5].map((n, i) => ({ player, height: 1000 + i, correct: i === 0 && pts > 0, pts: i === 0 ? pts : 0, pickTime: d(n) }));
+  // A has the most points but picked on only 2 days: not eligible.
+  const rows = [
+    { player: "1A", height: 1, correct: true, pts: 900, pickTime: d(3) }, { player: "1A", height: 2, correct: false, pts: 0, pickTime: d(4) },
+    ...days3("1B", 500), ...days3("1C", 400), ...days3("1D", 300), ...days3("1E", 0),
+  ];
+  assert.deepEqual(plain(X.prizes(rows)), [{ player: "1B", place: 1, vhp: 2 }, { player: "1C", place: 2, vhp: 1 }]);
+  // two tied for 1st split 2 + 1
+  const tie = [...days3("1B", 500), ...days3("1C", 500), ...days3("1D", 300)];
+  for (const r of tie) if (r.player === "1C") r.height = r.height;   // same heights: a full tie
+  assert.deepEqual(plain(X.prizes(tie)), [{ player: "1B", place: 1, vhp: 1.5 }, { player: "1C", place: 1, vhp: 1.5 }]);
+  // a tie for 2nd splits the 1 VHP
+  const tie2 = [...days3("1B", 500), ...days3("1C", 400), ...days3("1D", 400)];
+  assert.deepEqual(plain(X.prizes(tie2)), [{ player: "1B", place: 1, vhp: 2 }, { player: "1C", place: 2, vhp: 0.5 }, { player: "1D", place: 2, vhp: 0.5 }]);
+  // nobody eligible: no prizes
+  assert.deepEqual(plain(X.prizes([...days3("1E", 0)])), []);
+});
+
+test("the cap keeps skill ahead of luck (seeded simulation on a 17-producer field)", () => {
+  // 17 producers with a long tail, 84 targets a week; 20 thoughtful players pick among producers with ≥ a third of the
+  // top's VHP; 20 long-shot players always pick from the 5 smallest. Thoughtful players should win most weeks.
+  const vhp = [30, 22, 18, 14, 11, 9, 7, 6, 5, 4, 3, 2.5, 2, 1.5, 1, 0.7, 0.5].map((v) => v * 1e5);
+  const card = { field: vhp.map((v, i) => ({ a: "1P" + i, vhp: v })) };
+  const total = vhp.reduce((s, v) => s + v, 0);
+  const R = RM.rng(20261027);
+  const draw = () => { let x = R.next() * total; for (let i = 0; i < vhp.length; i++) { x -= vhp[i]; if (x < 0) return "1P" + i; } return "1P0"; };
+  const good = vhp.map((v, i) => [v, i]).filter(([v]) => v >= vhp[0] / 3).map(([, i]) => "1P" + i);
+  const long = ["1P12", "1P13", "1P14", "1P15", "1P16"];
+  let thoughtfulWins = 0;
+  const WEEKS = 200;
+  for (let w = 0; w < WEEKS; w++) {
+    const pts = new Map();
+    for (let t = 0; t < 84; t++) {
+      const signer = draw();
+      for (let p = 0; p < 40; p++) {
+        const pick = p < 20 ? good[Math.floor(R.next() * good.length)] : long[Math.floor(R.next() * long.length)];
+        pts.set(p, (pts.get(p) || 0) + X.pointsOf(card, pick, signer));
+      }
+    }
+    let best = -1, who = -1;
+    for (const [p, v] of pts) if (v > best) { best = v; who = p; }
+    if (who < 20) thoughtfulWins++;
+  }
+  assert.ok(thoughtfulWins / WEEKS > 0.8, `thoughtful players won ${thoughtfulWins} of ${WEEKS} weeks`);
+});
