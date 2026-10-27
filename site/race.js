@@ -81,6 +81,7 @@
     }
     if (!raceObj(cur.index).cards || raceObj(cur.index).provisional) { if (first) say("Reading each producer's VHP…"); await provisionalCard(); }
     render();
+    renderPicks();
     say("");
   }
 
@@ -283,12 +284,18 @@
       el("div", { class: "pk-when" }, el("b", { text: `Live now (${live.id.slice(11)}:00 UTC)` }), el("span", { text: `ends ${clock(live.end)}` })),
       el("div", { class: "pk-now", text: mineLive ? `Your pick: ${nameOf(mineLive)} 🔒` : "No pick for this race (locked)" }), el("span")));
     // The next 4: open.
-    const horses = (r) => { const c = r.cards ? M.cardForLeg(r.cards, 0) : prov; return c ? c.field.map((x) => x.a) : []; };
+    // The field for a race: its own starting card once the recorder has set it (about an hour before the start);
+    // until then the latest card there is (the live race's current one), or the provisional card made here.
+    const latest = () => { const lr = raceObj(cur); return (lr.cards && M.cardForLeg(lr.cards, M.legOf(lr.start, Date.now()))) || prov; };
+    const fieldOf = (r) => (r.cards && !r.provisional && M.cardForLeg(r.cards, 0)) || latest();
+    const label = (c, x) => { const tot = c.field.concat(c.paddock || []).reduce((t, y) => t + y.vhp, 0); const sh = tot ? (x.vhp / tot) * 100 : 0; return `${nameOf(x.a)} · ${fmt(sh, sh < 1 ? 2 : 1)}% VHP · ×${x.h.toFixed(2)} per block`; };
     for (let k = 1; k <= 4; k++) {
-      const r = raceObj(cur + k), mine = myPicks.get(cur + k), opts = horses(r);
+      const r = raceObj(cur + k), mine = myPicks.get(cur + k), c = fieldOf(r);
+      const opts = c ? c.field : [];
       const sel = el("select", { "aria-label": `Horse for the race at ${dayTime(r.start)}` },
-        el("option", { value: "", text: mine ? "Change to…" : "Choose a horse…" }),
-        ...opts.map((a) => { const o = el("option", { value: a, text: nameOf(a) }); if (a === mine) o.selected = true; return o; }));
+        el("option", { value: "", text: !opts.length ? "Loading the horses…" : mine ? "Change to…" : "Choose a horse…" }),
+        ...opts.map((x) => { const o = el("option", { value: x.a, text: label(c, x) }); if (x.a === mine) o.selected = true; return o; }));
+      if (!opts.length) sel.disabled = true;
       const btn = el("button", { class: "btn", type: "button", onclick: () => sendPick(cur + k, sel.value) }, mine ? "Change" : "Pick");
       if (sending || used >= max) btn.disabled = true;
       rows.push(el("div", { class: "pk-row" },
