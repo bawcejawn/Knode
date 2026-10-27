@@ -3,7 +3,7 @@
 Audited commit `b3325cc` (branch `race-picks`); fixes in `85f3887`. The auditor's attack tests are kept as regression
 tests: `race/assembly/__tests__/Race.audit.spec.ts` and `sponsor/assembly/__tests__/Sponsor.audit-v2.spec.ts`.
 
-No Critical, High or Medium findings.
+No Critical, High or Medium findings. A fix check of `85f3887` by the same auditor confirmed S-1, R-1 and R-3 fixed with no new issue (20 more sponsor tests, `Sponsor.fixcheck.spec.ts`, incl. 300 single-byte mutations; the caller check read against koinos-chain 1.5.2 `get_caller`: a direct transaction reports an empty caller). Audited builds: race `61e8f21230e8b4bdb165bacfe7281517a5adf78f6c6b1b8a0d84ce41537afac5`, sponsor v2 `fa4659e65c6156da3dde34238e0545a489a8b7f00cdf51df9bf79517a0019f33`.
 
 | ID | Severity | Finding | Status |
 |---|---|---|---|

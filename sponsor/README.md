@@ -126,6 +126,7 @@ v1. The existing caps, counts and settings stay as they are on chain (the upgrad
 
 ## Build
 
-Release build sha256: `8cfeff6209b8d5cbc3b3e5fa30751e995767f5904b77693ed8a41e323ea2a8ed` (27,473 bytes).
-Tests: 91 contract tests (including the auditor's attack and fuzz tests, `Sponsor.audit-attacks.spec.ts`) (`npm test`, real signatures from `scripts/make-test-fixtures.cjs`: test-only keys from public
+Release build sha256 (v2, race picks; audited 2026-10-27): `fa4659e65c6156da3dde34238e0545a489a8b7f00cdf51df9bf79517a0019f33` (28,916 bytes).
+v1 (live until the upgrade): `8cfeff6209b8d5cbc3b3e5fa30751e995767f5904b77693ed8a41e323ea2a8ed` (27,473 bytes).
+Tests: 127 contract tests (including the auditors' attack and fuzz tests: `Sponsor.audit-attacks.spec.ts`, and for v2 `Sponsor.audit-v2.spec.ts` and `Sponsor.fixcheck.spec.ts`) (`npm test`, real signatures from `scripts/make-test-fixtures.cjs`: test-only keys from public
 labels, never fund them), plus `tests/audit/sponsor.wallet.test.mjs` (the website) and `tests/audit/sponsor.tool.test.ts`.

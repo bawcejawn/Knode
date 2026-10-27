@@ -38,8 +38,9 @@ const RACE_DEP = path.join("race-data", "deployment.json");
  *  The caps count each transaction's Mana limit (1 Mana): a day's 5 answers and 5 race picks = 10, a week's 30
  *  answers and 35 picks = 65. */
 export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "10", perPlayerWeek: "65", perDay: "1000", minVhp: "1", freePerDay: "300" };
-/** The audited sponsor build (sponsor/README.md "Build"). upload refuses any other wasm. */
-export const SPONSOR_SHA256 = "8cfeff6209b8d5cbc3b3e5fa30751e995767f5904b77693ed8a41e323ea2a8ed";
+/** The audited sponsor build (sponsor/README.md "Build"). upload refuses any other wasm. v2 (race picks), audited
+ *  2026-10-27 (docs/history/AUDIT-2026-10-27-race-picks.md); v1 was 8cfeff6209b8d5cbc3b3e5fa30751e995767f5904b77693ed8a41e323ea2a8ed. */
+export const SPONSOR_SHA256 = "fa4659e65c6156da3dde34238e0545a489a8b7f00cdf51df9bf79517a0019f33";
 
 const sha256hex = (b: Uint8Array) => crypto.createHash("sha256").update(b).digest("hex");
 const readJson = (f: string, d: any = null) => (fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : d);

@@ -40,13 +40,16 @@ need the Knode owner's key (the very first setup needs the race wallet's key).
    `npm run sponsor -- config --per-player-day 10 --per-player-week 65 --send` (it adds the race contract from
    `race-data/deployment.json` and makes room for 5 picks a day next to the 5 answers), and
    `npm run sponsor -- payer sponsor --send` so the website lists the race contract.
-6. **Commit and push** `race-data/deployment.json`, `game-data/deployment.json`, `desk-data/deployment.json`: the Race
-   page then shows the pick buttons, and the race recorder starts reading picks.
-7. **Check**: `npm run racepicks -- status`.
+6. **Pin it for guests**: put the race contract's address in `site/wallet.js` (`const PINNED_RACE = "1…";`). Guest
+   wallets only ever sign picks on this pinned address (like the pinned game and sponsor); until it is set, guests can
+   answer but not pick.
+7. **Commit and push** `race-data/deployment.json`, `game-data/deployment.json`, `desk-data/deployment.json` and
+   `site/wallet.js`: the Race page then shows the pick buttons, and the race recorder starts reading picks.
+8. **Check**: `npm run racepicks -- status`.
 
 To pause picks: `npm run racepicks -- disable --send` (owner's key, `OWNER_WIF`). Picks already made stay recorded.
 
 ## Build
 
-Release build sha256: *(set after the audit)*.
-Tests: 11 contract tests (`npm test`, in the Koinos mock VM).
+Release build sha256 (audited 2026-10-27, docs/history/AUDIT-2026-10-27-race-picks.md): `61e8f21230e8b4bdb165bacfe7281517a5adf78f6c6b1b8a0d84ce41537afac5` (17,066 bytes).
+Tests: 22 contract tests (`npm test`, in the Koinos mock VM), including the auditor's attack tests (`Race.audit.spec.ts`).
