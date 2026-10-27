@@ -143,6 +143,18 @@
     .explain code { font-size: 13px; color: var(--ink); }
     .paddock a { color: var(--ink); }
     @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+    #live, #pick-zone, #board-box, #history, #how { scroll-margin-top: 80px; }
+    @media (max-width: 760px) {
+      .pr { padding-top: 16px; }
+      .pr .lede { font-size: 15px; margin-bottom: 12px; }
+      .lede-more, .tools .hide-sm { display: none; }
+      #live, #pick-zone, #board-box, #history, #how { scroll-margin-top: 124px; }
+      .tools { position: sticky; top: calc(60px + env(safe-area-inset-top, 0px)); z-index: 19; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 8px; margin: 0 -16px 14px; padding: 8px 16px; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+      .tools::-webkit-scrollbar { display: none; }
+      .tools a { flex: none; padding: 7px 14px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); text-decoration: none; font-weight: 700; font-size: 14px; }
+      .tools a.go-pick { background: var(--tang); border-color: var(--tang); color: #1b1206; }
+      .card { padding: 14px; border-radius: 18px; }
+    }
     @media (max-width: 640px) { .pr-lane { grid-template-columns: 1fr 96px; } .pr-who { grid-column: 1 / -1; } .pr-meta { padding-left: 0; } .hist .hide-sm { display: none; } }
   </style>
 </head>
@@ -169,10 +181,10 @@
 
   <main class="pr">
     <h1>Producer Race</h1>
-    <p class="lede">Every Koinos block producer is a horse. Each block it signs moves it forward, and smaller producers get a handicap so every horse has the same chance. Four 6-hour races a day, starting at 00:00, 06:00, 12:00 and 18:00 UTC. Free, just for fun.</p>
-    <nav class="tools"><a href="#history">Results</a><a href="#how">How the handicap works</a><a href="node.html">Producer lookup</a></nav>
+    <p class="lede">Every Koinos block producer is a horse. Each block it signs moves it forward, and smaller producers get a handicap so every horse has the same chance.<span class="lede-more"> Four 6-hour races a day, starting at 00:00, 06:00, 12:00 and 18:00 UTC.</span> Free, just for fun.</p>
+    <nav class="tools" aria-label="On this page"><a href="#live">Live race</a><a href="#pick-zone" class="go-pick">Pick a horse</a><a href="#board-box">Race board</a><a href="#history">Results</a><a href="#how">How it works</a><a href="node.html" class="hide-sm">Producer lookup</a></nav>
 
-    <section class="card">
+    <section class="card" id="live">
       <p class="status" id="status" role="status">Getting the horses ready…</p>
       <div class="head"><h2 id="race-title">–</h2><span class="tag" id="race-tag">–</span></div>
       <div class="clock">
@@ -187,6 +199,7 @@
       <p class="note" id="track-note"></p>
     </section>
 
+    <div id="pick-zone">
     <section class="card soon" id="picks-soon">
       <h2>Picks: coming next</h2>
       <p class="note" style="margin-top:0">Soon: connect a wallet and pick one horse per race, up to 24 hours ahead. Picks lock when the race starts and are free. A weekly leaderboard follows the Knode game's week (Monday 00:00 UTC).</p>
@@ -199,6 +212,7 @@
       <p class="note">Free: one horse per race, for the next 4 races. You can change a pick until its race starts; then the chain locks it. Up to 5 picks a day (changes count). The Mana is paid by Knode's Mana sponsor.</p>
       <p class="note pk-msg" id="pk-msg" role="status"></p>
     </section>
+    </div>
 
     <section class="card" id="board-box" hidden>
       <div class="head"><h2>Leaderboard</h2><span class="note" id="board-sub" style="margin:0"></span></div>
@@ -245,11 +259,26 @@
 
   <nav class="tabbar" aria-label="Main">
     <a href="index.html#play"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.6 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg>Play</a>
+    <a href="race.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 21V4"></path><path d="M5 4h12l-2.5 4L17 12H5"></path></svg>Race</a>
+    <a href="swap.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4L3 8l4 4"></path><path d="M3 8h14"></path><path d="M17 20l4-4-4-4"></path><path d="M21 16H7"></path></svg>Swap</a>
     <a href="index.html#leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg>Leaders</a>
-    <a href="index.html#results"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg>Results</a>
-    <a href="get.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8M8 12h8"></path></svg>Get VHP</a>
-    <a href="index.html#welcome"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg>Help</a>
+    <button type="button" class="tb-more" aria-expanded="false" aria-controls="more-sheet"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>More</button>
   </nav>
+  <div class="more-sheet" id="more-sheet" hidden>
+    <nav class="more-panel" aria-label="More pages">
+      <a href="index.html#results"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg><span>Results</span></a>
+      <a href="index.html#how"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"></path><path d="M9 9h6M9 13h6"></path></svg><span>Rules</span></a>
+      <a href="get.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8M8 12h8"></path></svg><span>Get VHP</span></a>
+      <a href="mana.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M13 3L5 14h6l-1 7 8-11h-6z"></path></svg><span>Mana levels</span></a>
+      <a href="pulse.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12h4l2-5 4 10 2-5h6"></path></svg><span>Network pulse</span></a>
+      <a href="node.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg><span>Producer lookup</span></a>
+      <a href="burn.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 21c-4 0-6.5-2.6-6.5-6 0-3.5 3-5.5 3.5-9 2 1.5 3 3 3 5 1-1 1.5-2 1.5-3.5 2.5 2 4.5 4.6 4.5 7.5 0 3.4-2.5 6-6 6z"></path></svg><span>Burn KOIN</span></a>
+      <a href="index.html#welcome"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg><span>New here?</span></a>
+      <a href="install.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v11"></path><path d="M7.5 10.5L12 15l4.5-4.5"></path><path d="M5 20h14"></path></svg><span>Install app</span></a>
+      <a href="trust.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z"></path></svg><span>Trust</span></a>
+      <a href="terms.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"></path><path d="M10 12h5M10 16h5"></path></svg><span>Terms &amp; risks</span></a>
+    </nav>
+  </div>
 
   <footer class="foot">
     <div class="wrap">
@@ -265,6 +294,7 @@
   <script src="guest.js"></script>
   <script src="wallet.js"></script>
   <script src="header-wallet.js"></script>
+  <script src="nav.js"></script>
   <script src="chain-blocks.js"></script>
   <script src="race-math.js"></script>
   <script src="race.js"></script>
