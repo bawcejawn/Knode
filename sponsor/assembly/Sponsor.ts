@@ -104,6 +104,9 @@ export class Sponsor {
     if (args.type != authority.authorization_type.transaction_application) {
       return new authority.authorize_result(false);
     }
+    // Fix-check S3-1: the default 1 KB buffer for reading transaction fields fits only ~7 picks; make room for the
+    // full 10 operations of up to 400 argument bytes each, plus signatures.
+    System.setSystemBufferSize(16 * 1024);
     const signed = signatureAddresses();
     // The owner's own transactions (settings, top-ups, moving KOIN out).
     if (contains(signed, this.contractId)) return new authority.authorize_result(true);

@@ -126,7 +126,7 @@ v1. The existing caps, counts and settings stay as they are on chain (the upgrad
    `npm run sponsor -- config --per-player-day 25 --per-player-week 150 --send`, then `npm run sponsor -- payer sponsor --send`,
    and commit and push the deployment files.
 
-## Upgrading to v3 (KnodeGames allowlist) — not audited yet
+## Upgrading to v3 (KnodeGames allowlist)
 
 v3 adds three things. With no `allowed` rows it behaves as v2, except for the two fixes below.
 
@@ -139,9 +139,19 @@ v3 adds three things. With no `allowed` rows it behaves as v2, except for the tw
   free player (a guest too) can collect a free-game prize.
 - **Fixcheck L-3**: a stake counts as a real player from `min_vhp` up (active and pending together), like held VHP.
 
-Development build sha256 (v3, not audited): `bbd921e75a0e9fe48412ee65dab51539a2f5d7d3e8c65a956962b6c4af5e79d1` (31,794 bytes).
 Allowlisted calls and free claims are refused above 400 argument bytes (Picks audit P-3; the largest Picks pick is 317).
-The upload tool still pins v2 until v3 passes its audit and fix-check.
+Audit 2026-10-27 (`docs/history/AUDIT-2026-10-27-sponsor-v3.md`): "ready for testnet; fix S3-1 and S3-2 before mainnet",
+no Critical, High or Medium. Fixed: S3-1 (a 16 KB buffer, so 10 picks fit in one transaction), S3-2 (allowlisted
+arguments must have no nested messages: documented, and `npm run check` confirms it for the Picks row), S3-7 (the Picks
+ABI checks are required). Accepted by the owner: S3-4 (guests can win Block X prizes; the free daily total bounds the
+cost, to be monitored).
+
+Release candidate sha256 (v3): `15ffd998ee6bb28734ee3a209cd06fa6da5667ce28b1d867ad604f6be94849f7` (31,808 bytes).
+The upload tool still pins v2 until v3 has passed a short fix-check and the Harbinger trial.
+
+When v3 is live (audit S3-5, S3-6): measure `rc_used` for 1, 3 and 7 picks and set the site's `rcLimit` to about twice
+one pick; change the guest prize message in `site/wallet.js` (the sponsor now pays a guest's own claim) and ask a
+claim's Mana with the answers' 1 Mana limit, not `rcLimitOther`.
 
 ## Build
 

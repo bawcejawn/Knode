@@ -215,12 +215,16 @@ export class Picks {
     const gen = this.config.get()!.generation;
     let key = u32Bytes(args.start_after);
     // Stale entries are skipped; at most 200 are looked at per call, so a page can be short (read-only, any caller).
-    for (let i = 0; i < 200 && <u32>out.pending.length < limit; i++) {
+    let more = false;
+    for (let i = 0; ; i++) {
+      if (i >= 200 || <u32>out.pending.length >= limit) { more = true; break; }
       const obj = this.pending.getNext(key);
       if (obj == null || obj.key == null || obj.key!.length != 4) break;
       if (obj.value.generation == gen) out.pending.push(obj.value);
       key = obj.key!;
     }
+    // Fix-check PF-1: a cursor whenever the scan stopped early, even with nothing found, so monitoring can't be blinded.
+    if (more) out.next = keyId(key);
     return out;
   }
 
@@ -459,6 +463,10 @@ function u64Bytes(v: u64): Uint8Array {
   const b = new Uint8Array(8);
   for (let i = 7; i >= 0; i--) { b[i] = <u8>(v & 0xff); v >>= 8; }
   return b;
+}
+function keyId(k: Uint8Array): u32 {
+  if (k.length != 4) return 0;
+  return (<u32>k[0] << 24) | (<u32>k[1] << 16) | (<u32>k[2] << 8) | <u32>k[3];
 }
 function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
   const out = new Uint8Array(a.length + b.length);

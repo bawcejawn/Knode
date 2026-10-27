@@ -51,13 +51,19 @@ const body = (f: string) => fs.readFileSync(f, "utf8").replace(/^\/\/ A copy of[
 // v3: the tests' copy of the Picks decoder, and the Picks pick_arguments shape the tool allowlists (bot/sponsor.ts
 // PICKS_ARG_TYPES: player bytes, game varint, round varint, producers bytes, number varint).
 const picksAbiFile = "../picks/abi/picks.koilib.json";
+// Fix-check S3-7: required, not skipped when missing.
+ok(fs.existsSync(picksAbiFile), `${picksAbiFile} exists`);
 if (fs.existsSync(picksAbiFile)) {
   const picksAbi = JSON.parse(fs.readFileSync(picksAbiFile, "utf8"));
   const f = picksAbi.koilib_types?.nested?.picks?.nested?.pick_arguments?.fields ?? {};
   const shape = Object.entries(f).map(([n, x]: any) => `${x.id}:${x.type}${x.rule === "repeated" ? "[]" : ""}`).join(",");
   ok(shape === "1:bytes,2:uint32,3:uint64,4:bytes[],5:uint64", `Picks pick_arguments shape is player, game, round, producers[], number (${shape})`);
   ok(picksAbi.methods?.pick?.entry_point === 0x8ce33c6c, "Picks pick entry point is 0x8ce33c6c");
+  // Fix-check S3-2: no nested messages in the allowlisted arguments (every field is a scalar, bytes or a string).
+  const scalars = new Set(["bytes", "string", "uint32", "uint64", "int32", "int64", "bool", "sint32", "sint64", "fixed32", "fixed64", "sfixed32", "sfixed64"]);
+  ok(Object.values(f).every((x: any) => scalars.has(x.type)), "Picks pick_arguments has no nested messages");
   const picksGenerated = "../picks/assembly/proto/picks.ts";
+  // (The generated decoder exists only after building picks/, as for the race; CI checks the ABI, which is committed.)
   if (fs.existsSync(picksGenerated)) ok(body("assembly/__tests__/picks_proto.ts") === body(picksGenerated), "the tests' copy of the Picks decoder is current");
 }
 const testCopy = "assembly/__tests__/race_proto.ts", generated = "../race/assembly/proto/race.ts";

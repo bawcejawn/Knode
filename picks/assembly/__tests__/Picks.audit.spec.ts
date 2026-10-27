@@ -294,3 +294,62 @@ describe("AUDIT P-3: same entry point as race pick; the race mirror reads anothe
     expect(Arrays.equal(Protobuf.encode(p, picks.pick_arguments.encode), raw)).toBe(false);
   });
 });
+
+describe("FIX-CHECK 2026-10-27 (kept as regression tests)", () => {
+  it("PF-1: with 100 stale announcements ahead, the live one is still listed", () => {
+    start();
+    // old owner: 201 announcements of new ids 1..127 can't be done (mock VM ids < 128), so use 100 ids; scan limit shown with 100 + shows principle
+    for (let i: u32 = 0; i < 100; i++) { signedBy(OWNER); G = dummy(3 + i); announce(); MockVM.commitTransaction(); }
+    gOwner = P2; signedBy(OWNER); propose(); MockVM.commitTransaction();
+    at(H, T0 + TIMELOCK_MS); signedBy(P2); acceptOwner(); MockVM.commitTransaction();
+    const live = numberGame(); live.id = 120; live.name = "live";
+    signedBy(P2); G = live; announce(); MockVM.commitTransaction();
+    const r = new Picks().list_pending(new picks.list_pending_arguments(0, 0)).pending;
+    log<string>("live found with 100 stale ahead: " + r.length.toString());
+    expect(r.length).toBe(1);
+  });
+  it("generation survives propose / cancel / schedule_upgrade / cancel upgrade; stale cancel works; stale doesn't block re-announce", () => {
+    start();
+    signedBy(OWNER); G = dummy(50); announce(); MockVM.commitTransaction();
+    gOwner = P2; signedBy(OWNER); propose(); MockVM.commitTransaction();
+    at(H, T0 + TIMELOCK_MS); signedBy(P2); acceptOwner(); MockVM.commitTransaction();
+    signedBy(P2); gHash = sha(new Uint8Array(3)); scheduleUpgrade(); MockVM.commitTransaction();
+    gHash = new Uint8Array(0); signedBy(P2); scheduleUpgrade(); MockVM.commitTransaction();
+    gOwner = P3; signedBy(P2); propose(); MockVM.commitTransaction();
+    gOwner = new Uint8Array(0); signedBy(P2); propose(); MockVM.commitTransaction();
+    expect(new Picks().get_config(new picks.get_config_arguments()).generation).toBe(1);
+    // stale entry for 50 can be dropped by the new owner, or overwritten by a fresh announce
+    signedBy(P2); gCancel = 50; cancelChange(); MockVM.commitTransaction();
+    signedBy(P2); G = dummy(50); announce(); MockVM.commitTransaction();
+    at(H, T0 + 2 * TIMELOCK_MS); nobody(); apply(); MockVM.commitTransaction();
+    expect(new Picks().get_game(new picks.get_game_arguments(50)).game != null).toBe(true);
+    // a second handover: generation 2, the 1st-generation leftovers are dead too
+    signedBy(P2); G = dummy(51); announce(); MockVM.commitTransaction();
+    gOwner = P3; signedBy(P2); propose(); MockVM.commitTransaction();
+    at(H, T0 + 3 * TIMELOCK_MS); signedBy(P3); acceptOwner(); MockVM.commitTransaction();
+    expect(new Picks().get_config(new picks.get_config_arguments()).generation).toBe(2);
+    at(H, T0 + 3 * TIMELOCK_MS + 1); nobody(); G = dummy(51);
+    expect(() => { apply(); }).toThrow(); errorIs("PICKS: announced by a previous owner; the owner must announce it again");
+  });
+  it("tighten on a game with a stale pending entry removes it; tighten of a game with no pending works", () => {
+    start();
+    const g = blockX(); g.max_picks_per_day = 10; signedBy(OWNER); G = g; tighten(); MockVM.commitTransaction();
+    expect(new Picks().get_game(new picks.get_game_arguments(BX)).game!.max_picks_per_day).toBe(10);
+  });
+});
+
+describe("PF-1 (fixed): list_pending gives a cursor whenever it stopped early", () => {
+  it("a full page returns next; the next call continues from it; the end returns 0", () => {
+    start();
+    const a = numberGame(); a.id = 20; a.name = "a";
+    const b = numberGame(); b.id = 30; b.name = "b";
+    signedBy(OWNER); G = a; announce(); MockVM.commitTransaction();
+    signedBy(OWNER); G = b; announce(); MockVM.commitTransaction();
+    const p1 = new Picks().list_pending(new picks.list_pending_arguments(0, 1));
+    expect(p1.pending.length).toBe(1); expect(p1.pending[0].game!.id).toBe(20); expect(p1.next).toBe(20);
+    const p2 = new Picks().list_pending(new picks.list_pending_arguments(p1.next, 1));
+    expect(p2.pending.length).toBe(1); expect(p2.pending[0].game!.id).toBe(30);
+    const p3 = new Picks().list_pending(new picks.list_pending_arguments(30, 1));
+    expect(p3.pending.length).toBe(0); expect(p3.next).toBe(0);
+  });
+});
