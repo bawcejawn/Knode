@@ -513,6 +513,9 @@ function signatureAddresses(): Uint8Array[] {
   if (!id || !id.bytes_value) return out;
   const txId = id.bytes_value!;
   for (let i = 0; i < list.values.length; i++) {
+    // Audit S3-8: a player's transaction has one signature; past 4, stop recovering keys (each costs node time) and
+    // mark the rest as "someone else signed", which the one-signer rule refuses.
+    if (i >= 4) { out.push(new Uint8Array(0)); break; }
     const raw = list.values[i].bytes_value;
     // A signature that isn't 65 bytes or doesn't recover still counts as "someone else signed": fail closed.
     if (!raw || raw.length != SIGNATURE_LENGTH) { out.push(new Uint8Array(0)); continue; }

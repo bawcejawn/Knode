@@ -64,3 +64,17 @@ worth fixing before mainnet but does not block testnet.
 
 - On-chain ordering of more than 200 stale entries (mock VM key-order limitation; reasoned instead).
 - P-5 head-info semantics (testnet).
+
+## Re-check: d2a8f2e (/home/claude/knode, branch `picks`)
+
+**Verdict: ready for testnet.** Tests pass **46 / 46** (30 original + 16 audit and fix-check). `npm run check` passes.
+Release sha256 **`700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594`**, as expected.
+
+- **PF-1: fixed.** `list_pending` now sets `next` whenever it stopped early, either because the page is full or
+  because it scanned 200 entries. That includes the case where it stopped early with nothing found, which is the
+  blind spot. Game ids start at 1, so `next = 0` can only mean "done". The cursor is the last key scanned, so the next
+  call continues after it with nothing skipped and nothing repeated. A full page that ends exactly on the last entry
+  returns a non-zero `next`, and the next call then returns an empty page with `next = 0`. That is harmless. The kept
+  regression test covers a full page, continuing from `next`, and the end.
+- No other Picks code changed. The proto adds `list_pending_result.next = 2`, which is backward-compatible.
+- No new findings.
