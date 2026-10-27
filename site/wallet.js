@@ -487,9 +487,10 @@
   async function sendKondor(label, ops, opts = {}) {
     const sp = !opts.gamePays ? sponsorFor(ops) : null;
     // A transaction made only of game answers is sponsored for any wallet (free play), within the sponsor's caps.
-    // Free play (game answers, race picks) is sponsored for any wallet, within the sponsor's caps.
+    // Free play (game answers, race picks, KnodeGames picks with sponsor v3) is sponsored for any wallet, within the sponsor's caps.
     const answerOnly = !!sp && ops.every((o) => o.call_contract && ((o.call_contract.contract_id === sp.covers[0] && Number(o.call_contract.entry_point) === ANSWER)
-      || (sp.race && o.call_contract.contract_id === sp.race && Number(o.call_contract.entry_point) === PICK)));
+      || (sp.race && o.call_contract.contract_id === sp.race && Number(o.call_contract.entry_point) === PICK)
+      || (sp.picks && o.call_contract.contract_id === sp.picks && Number(o.call_contract.entry_point) === PICK)));
     // Answers are light (rcLimit, 1 Mana); staking, withdrawing, swapping and claiming do much more in one transaction
     // (approve, transfer, burn, stake), so they ask for rcLimitOther (default 3 Mana).
     const rcLimit = sp ? String(answerOnly ? (sp.rcLimit || "100000000") : (sp.rcLimitOther || "300000000")) : null;

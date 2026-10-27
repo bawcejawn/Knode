@@ -104,3 +104,11 @@ test("audit L-4: an unset free cap defaults to 300 but never above everyone's da
   const z = buildConfig(GAME, DESK, { perTx: "1", perPlayerDay: "5", perPlayerWeek: "30", perDay: "1000", freePerDay: "0" }, false);
   assert.equal(z.max_mana_free_day, "0");
 });
+
+test("v3: the Picks contract is allowlisted as free play in the Picks argument shape, and must be a new contract", () => {
+  const PICKS = "1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW", RACE = "15CM9Qr4GKREDgqnyXJ8tckPj2biERTM1T";
+  const c: any = buildConfig(GAME, DESK, DEFAULT_CAPS, true, RACE, PICKS);
+  assert.deepEqual(c.allowed, [{ contract: PICKS, entry_point: 0x8ce33c6c, free_play: true, arg_types: "0x0301010301" }]);
+  assert.equal("allowed" in buildConfig(GAME, DESK, DEFAULT_CAPS, true, RACE), false);
+  for (const bad of [GAME.contract, DESK.contract, GAME.vhp, GAME.koin, RACE]) assert.throws(() => buildConfig(GAME, DESK, DEFAULT_CAPS, true, RACE, bad), /Picks contract must differ/);
+});

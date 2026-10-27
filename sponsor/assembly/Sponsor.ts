@@ -21,6 +21,9 @@ const ADDRESS_LENGTH = 25;
 const SIGNATURE_LENGTH = 65;
 const MAX_TOKENS = 4;
 const MAX_OPERATIONS = 10;
+/** v3: at most 8 allowlisted player actions, each with at most 16 argument fields. */
+export const MAX_ALLOWED = 8;
+export const MAX_ARG_FIELDS = 16;
 const MS_PER_DAY: u64 = 86400000;
 /** KCS-4 approve entry point. */
 export const APPROVE_ENTRY: u32 = 0x74e21680;
@@ -125,7 +128,7 @@ export class Sponsor {
     let answerOnly = true;    // free play only: game answers and race picks
     for (let i = 0; i < ops.length; i++) {
       checkOperation(ops[i], cfg, payee);
-      if (!isFreePlay(ops[i], cfg)) answerOnly = false;
+      if (!isFreePlay(ops[i], cfg, payee)) answerOnly = false;
     }
 
     const now = System.getHeadInfo().head_block_time;
@@ -259,6 +262,26 @@ export class Sponsor {
       );
       for (let j = 0; j < i; j++) System.require(!Arrays.equal(t, cfg.tokens[j]), "SPONSOR: duplicate token");
     }
+    // v3: the allowlist. Each row: a real contract that is none of the built-in ones, a token or the sponsor; a
+    // well-formed argument shape with the player first; no row twice.
+    System.require(cfg.allowed.length <= MAX_ALLOWED, "SPONSOR: at most 8 allowlisted calls");
+    for (let i = 0; i < cfg.allowed.length; i++) {
+      const r = cfg.allowed[i];
+      System.require(isAddress(r.contract), "SPONSOR: invalid allowlisted contract address");
+      const c = r.contract!;
+      System.require(
+        !Arrays.equal(c, cfg.game!) && !Arrays.equal(c, cfg.desk!) && !Arrays.equal(c, this.contractId) &&
+          !(hasRace && Arrays.equal(c, cfg.race!)) && !contains(cfg.tokens, c) && !(cfg.vhp != null && Arrays.equal(c, cfg.vhp!)),
+        "SPONSOR: an allowlisted contract can't be the game, Knode Swap, the race, a token or the sponsor"
+      );
+      const t = r.arg_types != null ? r.arg_types! : new Uint8Array(0);
+      System.require(t.length >= 1 && t.length <= MAX_ARG_FIELDS && t[0] == 3, "SPONSOR: arg_types must be 1 to 16 bytes, field 1 the player (3)");
+      for (let j = 0; j < t.length; j++) System.require(t[j] == 0 || t[j] == 1 || t[j] == 2 || t[j] == 3 || t[j] == 6, "SPONSOR: arg_types bytes must be 0, 1, 2, 3 or 6");
+      for (let j = 0; j < i; j++) {
+        const o = cfg.allowed[j];
+        System.require(!(Arrays.equal(o.contract!, c) && o.entry_point == r.entry_point), "SPONSOR: duplicate allowlisted call");
+      }
+    }
     System.require(
       cfg.max_mana_per_tx <= cfg.max_mana_per_account_day &&
         cfg.max_mana_per_account_day <= cfg.max_mana_per_account_week &&
@@ -294,7 +317,10 @@ function isPlayer(cfg: sponsor.config, account: Uint8Array): bool {
     Protobuf.encode(new sponsor.game_get_player_args(account, 0), sponsor.game_get_player_args.encode));
   if (g.code != error.error_code.success || g.res.object == null) return false;
   const p = Protobuf.decode<sponsor.game_get_player_result>(g.res.object!, sponsor.game_get_player_result.decode);
-  return p.player != null && (p.player!.stake > 0 || p.player!.pending > 0);
+  // Fixcheck L-3 (v3): a stake counts like held VHP, from min_vhp up (active and pending together).
+  if (p.player == null) return false;
+  const st = p.player!.stake, pe = p.player!.pending;
+  return st >= cfg.min_vhp || pe >= cfg.min_vhp || st + pe >= cfg.min_vhp;
 }
 
 function isGameAction(entry: u32): bool {
@@ -306,12 +332,101 @@ function hasRace(cfg: sponsor.config): bool {
   return cfg.race != null && cfg.race!.length == ADDRESS_LENGTH;
 }
 
-/** Free play: a call to the game's `answer` or the race's `pick` (checkOperation has already accepted the operation). */
-function isFreePlay(op: protocol.operation, cfg: sponsor.config): bool {
+/** Free play (checkOperation has already accepted the operation): a game `answer`; the payee's own game `claim` (v3:
+ *  so a free player, a guest included, can collect a free-game prize); a race `pick`; an allowlisted call marked free play. */
+function isFreePlay(op: protocol.operation, cfg: sponsor.config, payee: Uint8Array): bool {
   const call = op.call_contract;
   if (call == null || call.contract_id == null) return false;
-  if (Arrays.equal(call.contract_id!, cfg.game!)) return call.entry_point == GAME_ANSWER;
-  return hasRace(cfg) && Arrays.equal(call.contract_id!, cfg.race!) && call.entry_point == RACE_PICK;
+  if (Arrays.equal(call.contract_id!, cfg.game!)) {
+    if (call.entry_point == GAME_ANSWER) return true;
+    if (call.entry_point != GAME_CLAIM) return false;
+    // Only the payee's own claim, with canonical arguments (claim_arguments: player = 1, week = 2).
+    const raw = call.args ? call.args! : new Uint8Array(0);
+    const who = argsPlayer(raw, CLAIM_ARG_TYPES);
+    return who != null && Arrays.equal(who!, payee);
+  }
+  if (hasRace(cfg) && Arrays.equal(call.contract_id!, cfg.race!)) return call.entry_point == RACE_PICK;
+  const row = allowedRow(cfg, call.contract_id!, call.entry_point);
+  return row != null && row!.free_play;
+}
+
+/** The game's claim_arguments: player (bytes), week (varint). */
+const CLAIM_ARG_TYPES: Uint8Array = bytesOf([3, 1]);
+
+function bytesOf(a: u8[]): Uint8Array {
+  const b = new Uint8Array(a.length);
+  for (let i = 0; i < a.length; i++) b[i] = a[i];
+  return b;
+}
+
+/** The allowlisted row for a call, or null. */
+function allowedRow(cfg: sponsor.config, contract: Uint8Array, entry: u32): sponsor.allowed_call | null {
+  for (let i = 0; i < cfg.allowed.length; i++) {
+    const r = cfg.allowed[i];
+    if (r.contract != null && Arrays.equal(r.contract!, contract) && r.entry_point == entry) return r;
+  }
+  return null;
+}
+
+/**
+ * v3, audit S-1 for any contract: the player in a call's arguments, read exactly as the target contract will read it,
+ * or null when the arguments could be read two ways. Field 1 must come first, once, as 25 bytes (the player). Every
+ * later field must have the wire type that arg_types lists for its number, in field-number order (a repeated field's
+ * entries side by side), with nothing left over. A contract's decoder reads each field by its declared type, so a field
+ * sent with another wire type could swallow or expose bytes the sponsor reads differently; that is refused here.
+ */
+export function argsPlayer(raw: Uint8Array, types: Uint8Array): Uint8Array | null {
+  if (types.length < 1 || types.length > MAX_ARG_FIELDS || types[0] != 3) return null;
+  if (raw.length < 2 + ADDRESS_LENGTH || raw[0] != 0x0a || raw[1] != <u8>ADDRESS_LENGTH) return null;
+  let pos: i32 = 2 + ADDRESS_LENGTH;
+  let last: u32 = 1;
+  const n = raw.length;
+  while (pos < n) {
+    // The tag: a varint of at most 5 bytes.
+    let tag: u64 = 0;
+    let shift: u64 = 0;
+    let k = 0;
+    while (true) {
+      if (pos >= n || k >= 5) return null;
+      const b = raw[pos++];
+      tag |= (<u64>(b & 0x7f)) << shift;
+      shift += 7; k++;
+      if ((b & 0x80) == 0) break;
+    }
+    const field = <u32>(tag >> 3), wt = <u32>(tag & 7);
+    if (field < 2 || field < last || field > <u32>types.length) return null;
+    if (<u32>types[field - 1] != wt + 1) return null;
+    last = field;
+    if (wt == 0) {
+      let m = 0;
+      while (true) {
+        if (pos >= n || m >= 10) return null;
+        const b = raw[pos++]; m++;
+        if ((b & 0x80) == 0) break;
+      }
+    } else if (wt == 1) {
+      pos += 8;
+    } else if (wt == 5) {
+      pos += 4;
+    } else if (wt == 2) {
+      let len: u64 = 0;
+      let sh: u64 = 0;
+      let m = 0;
+      while (true) {
+        if (pos >= n || m >= 5) return null;
+        const b = raw[pos++];
+        len |= (<u64>(b & 0x7f)) << sh;
+        sh += 7; m++;
+        if ((b & 0x80) == 0) break;
+      }
+      if (len > <u64>(n - pos)) return null;
+      pos += <i32>len;
+    } else {
+      return null;
+    }
+    if (pos > n) return null;
+  }
+  return raw.slice(2, 2 + ADDRESS_LENGTH);
 }
 
 /** One operation is sponsored only if it is a player action on the game or Knode Swap, or approves one of them. */
@@ -340,6 +455,13 @@ function checkOperation(op: protocol.operation, cfg: sponsor.config, payee: Uint
     const p = Protobuf.decode<sponsor.race_pick_args>(raw, sponsor.race_pick_args.decode);
     System.require(Arrays.equal(Protobuf.encode(p, sponsor.race_pick_args.encode), raw), "SPONSOR: a pick's arguments must be canonical");
     System.require(p.player != null && Arrays.equal(p.player!, payee), "SPONSOR: a pick must be the payee's own");
+    return;
+  }
+  const row = allowedRow(cfg, target, call.entry_point);
+  if (row != null) {
+    const raw = call.args ? call.args! : new Uint8Array(0);
+    const who = argsPlayer(raw, row!.arg_types != null ? row!.arg_types! : new Uint8Array(0));
+    System.require(who != null && Arrays.equal(who!, payee), "SPONSOR: an allowlisted call must be the payee's own, with arguments in the listed shape");
     return;
   }
   System.require(contains(cfg.tokens, target), "SPONSOR: only Knode calls are sponsored");

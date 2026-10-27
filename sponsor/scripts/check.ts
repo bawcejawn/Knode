@@ -47,8 +47,20 @@ for (const [k, [a, name]] of Object.entries(pinned)) {
 const fieldsOf = (a: any, pkg: string, msg: string) => JSON.stringify(a.koilib_types?.nested?.[pkg]?.nested?.[msg]?.fields ?? null);
 ok(fieldsOf(abi, "sponsor", "race_pick_args") === fieldsOf(raceAbi, "race", "pick_arguments") && fieldsOf(abi, "sponsor", "race_pick_args") !== "null",
   "race_pick_args = the race contract's pick_arguments, field for field");
-const testCopy = "assembly/__tests__/race_proto.ts", generated = "../race/assembly/proto/race.ts";
 const body = (f: string) => fs.readFileSync(f, "utf8").replace(/^\/\/ A copy of[^\n]*\n/, "");
+// v3: the tests' copy of the Picks decoder, and the Picks pick_arguments shape the tool allowlists (bot/sponsor.ts
+// PICKS_ARG_TYPES: player bytes, game varint, round varint, producers bytes, number varint).
+const picksAbiFile = "../picks/abi/picks.koilib.json";
+if (fs.existsSync(picksAbiFile)) {
+  const picksAbi = JSON.parse(fs.readFileSync(picksAbiFile, "utf8"));
+  const f = picksAbi.koilib_types?.nested?.picks?.nested?.pick_arguments?.fields ?? {};
+  const shape = Object.entries(f).map(([n, x]: any) => `${x.id}:${x.type}${x.rule === "repeated" ? "[]" : ""}`).join(",");
+  ok(shape === "1:bytes,2:uint32,3:uint64,4:bytes[],5:uint64", `Picks pick_arguments shape is player, game, round, producers[], number (${shape})`);
+  ok(picksAbi.methods?.pick?.entry_point === 0x8ce33c6c, "Picks pick entry point is 0x8ce33c6c");
+  const picksGenerated = "../picks/assembly/proto/picks.ts";
+  if (fs.existsSync(picksGenerated)) ok(body("assembly/__tests__/picks_proto.ts") === body(picksGenerated), "the tests' copy of the Picks decoder is current");
+}
+const testCopy = "assembly/__tests__/race_proto.ts", generated = "../race/assembly/proto/race.ts";
 if (fs.existsSync(generated)) ok(body(testCopy) === body(generated), "the tests' copy of the race decoder is current");
 
 const s = Signer.fromSeed("sponsor-offline-check");
