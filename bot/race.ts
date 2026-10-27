@@ -7,8 +7,13 @@
  *     starts (within the hour before), or else by the first run during it. A leg no run reached keeps the card before it.
  *  2. Results. A race is final once its last block is irreversible and every one of its blocks matches on two
  *     independent nodes (RPC and RPC_CHECK, like the game's results). Until then it stays "checking".
- *  3. Writes race-data/index.json and race-data/W<week>.json (the Knode game's weeks), which the publish job puts on
- *     the race-data branch for the website.
+ *     Once the race picks contract is live (race-data/deployment.json on main), each final race also records every
+ *     pick (read on both nodes; picks are locked by the chain when a race starts), who picked the winner, and whether
+ *     each wallet could be ranked (holds 1 VHP or has a Knode stake) when the race was finalized.
+ *  3. Leaderboards (board.json): Today (UTC day), This week (the Knode game's week) and All time, ranked by correct
+ *     winner picks; ties: more picks placed, then more Knode questions answered, then a higher Knode score.
+ *  4. Writes race-data/index.json, race-data/W<week>.json and race-data/board.json, which the publish job puts on the
+ *     race-data branch for the website.
  * The scoring is site/race-math.js, the same file the website runs.
  *
  *   RPC, RPC_CHECK ("off" to skip the second node), RACE_PREV (the race-data files from the last run), RACE_OUT.
@@ -18,6 +23,7 @@ import { Provider } from "koilib";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
+import { Contract } from "koilib";
 import { readVhp, MAINNET_VHP, withRetry, sleep } from "../common.ts";
 await import("../site/race-math.js");
 const M: any = (globalThis as any).KRaceMath;
@@ -97,12 +103,67 @@ async function heightAt(p: any, headId: string, t: number, lo: number, hi: numbe
   return lo;
 }
 
-type Opts = { p: any; check: any | null; prev?: string; out?: string; vhpOf?: (who: string[]) => Promise<Record<string, string>> };
+/** One pick as recorded: [player, horse, time of the pick (ms)]. */
+type Pick = [string, string, number];
+/** What the game knows about a wallet: stake, and the week's Knode answers and points. */
+type PlayerInfo = { stake: bigint; answers: number; points: number };
+type Opts = {
+  p: any; check: any | null; prev?: string; out?: string; vhpOf?: (who: string[]) => Promise<Record<string, string>>;
+  raceContract?: string | null;                                       // the picks contract (default: race-data/deployment.json)
+  picksOf?: (node: any, race: number) => Promise<Pick[]>;             // for the tests
+  playerOf?: (node: any, who: string, week: number) => Promise<PlayerInfo>;
+};
+
+// ── the picks contract and the game (read only) ──
+const RACE_ABI = () => JSON.parse(fs.readFileSync(new URL("../race/abi/race.koilib.json", import.meta.url), "utf8"));
+const GAME_ABI = () => JSON.parse(fs.readFileSync(new URL("../game/abi/kpred.koilib.json", import.meta.url), "utf8"));
+const GAME = (() => { try { return JSON.parse(fs.readFileSync(new URL("../game-data/deployment.json", import.meta.url), "utf8")).contract as string; } catch { return ""; } })();
+function defaultRaceContract(): string | null {
+  try { const d = JSON.parse(fs.readFileSync(new URL("../race-data/deployment.json", import.meta.url), "utf8")); return isAddr(d.contract) ? d.contract : null; } catch { return null; }
+}
+/** Every pick for a race, page by page (100 at a time). */
+async function readPicks(node: any, contract: string, raceNo: number): Promise<Pick[]> {
+  const c = new Contract({ id: contract, abi: RACE_ABI(), provider: node });
+  const out: Pick[] = [];
+  let after: string | undefined;
+  for (let page = 0; page < 1000; page++) {
+    const r: any = await withRetry(`picks for race ${raceNo}`, () => (c.functions as any).list_picks({ race: String(raceNo), ...(after ? { start_after: after } : {}), limit: 100 }));
+    const rows = r?.result?.rows ?? [];
+    for (const x of rows) if (isAddr(x.player) && isAddr(x.pick?.horse)) out.push([x.player, x.pick.horse, Number(x.pick.at || 0)]);
+    if (rows.length < 100) break;
+    after = rows[rows.length - 1].player;
+  }
+  return out;
+}
+async function readPlayer(node: any, who: string, week: number): Promise<PlayerInfo> {
+  if (!GAME) return { stake: 0n, answers: 0, points: 0 };
+  const c = new Contract({ id: GAME, abi: GAME_ABI(), provider: node });
+  const r: any = await withRetry(`Knode player ${who}`, () => (c.functions as any).get_player({ player: who, week: String(week) }));
+  const p = r?.result?.player ?? {}, e = r?.result?.entry ?? {};
+  return { stake: BigInt(p.stake || "0") + BigInt(p.pending || "0"), answers: Array.isArray(e.answers) ? e.answers.length : 0, points: Number(e.points || 0) };
+}
 /** One run. Exported for the tests, which pass fake nodes. */
-export async function run({ p, check, prev, out, vhpOf }: Opts) {
+export async function run({ p, check, prev, out, vhpOf, raceContract, picksOf, playerOf }: Opts) {
   if (prev !== undefined) PREV = prev;
   if (out !== undefined) OUT = out;
   const vhpRead = vhpOf || (async (who: string[]) => (await readVhp(p, MAINNET_VHP, who)).values);
+  const picksContract = raceContract === undefined ? defaultRaceContract() : raceContract;
+  const picksRead = picksOf || (picksContract ? (node: any, r: number) => readPicks(node, picksContract, r) : null);
+  const playerRead = playerOf || readPlayer;
+  // Who may be ranked: at least 1 VHP, or a Knode stake (the Mana sponsor's "real player" rule). Read once per run.
+  const eligibleCache = new Map<string, boolean>();
+  async function eligible(who: string[]) {
+    const todo = who.filter((a) => !eligibleCache.has(a));
+    if (todo.length) {
+      const vhp = await vhpRead(todo);
+      for (const a of todo) {
+        let ok = BigInt(vhp[a] || "0") >= 100000000n;
+        if (!ok) { try { ok = (await playerRead(p, a, M.weekOf(Date.now()))).stake > 0n; } catch { ok = false; } }
+        eligibleCache.set(a, ok);
+      }
+    }
+    return (a: string) => eligibleCache.get(a) === true;
+  }
   const head: any = await withRetry("head", () => p.getHeadInfo());
   const headH = Number(head.head_topology.height), headId = head.head_topology.id, now = Number(head.head_block_time);
   const libH = Number(head.last_irreversible_block), libT = await blockTime(p, headId, libH);
@@ -156,16 +217,35 @@ export async function run({ p, check, prev, out, vhpOf }: Opts) {
         checked = 2;
       }
       const st = M.standings(B, race, race.cards);
+      const winner = M.winners(st)[0] || null;
+      // The picks (locked by the chain since the race started), read on both nodes like the blocks.
+      let picks: any[] | undefined;
+      if (picksRead) {
+        const raceNo = M.raceIndex(race.start);
+        const mine = await picksRead(p, raceNo);
+        if (check) {
+          const theirs = await picksRead(check, raceNo);
+          const key = (x: Pick[]) => JSON.stringify([...x].sort((u, v) => (u[0] < v[0] ? -1 : 1)));
+          if (key(mine) !== key(theirs)) { problems.push(`${race.id}: the two nodes disagree about the race's picks; not final this run`); continue; }
+        }
+        const can = await eligible(mine.map((x) => x[0]));
+        // [player, horse, time, right (1/0), may be ranked (1/0)]
+        picks = mine.map(([who, horse, at]) => [who, horse, at, horse === winner ? 1 : 0, can(who) ? 1 : 0]);
+      }
       race.result = {
         final: true, checked, heights: [a, b], blocks: B.ts.length, line: M.finishLine(race.cards),
-        winner: M.winners(st)[0] || null, standings: st.map((x: any) => ({ a: x.a, steps: x.steps, blocks: x.blocks })),
+        winner, standings: st.map((x: any) => ({ a: x.a, steps: x.steps, blocks: x.blocks })),
+        ...(picks ? { picks } : {}),
       };
       console.log(`${race.id}: final, winner ${race.result.winner} (${st[0]?.steps} steps), blocks ${a}-${b}, checked on ${checked} node(s)`);
     } catch (e) { problems.push(`${race.id}: ${(e as Error).message} (tried again next run)`); }
     await sleep(200);
   }
 
-  // ── 3. write ──
+  // ── 3. leaderboards ──
+  const board = await leaderboards(weeks, now, (who, week) => playerRead(p, who, week), problems);
+
+  // ── 4. write ──
   fs.mkdirSync(OUT, { recursive: true });
   const idx = readPrev("index.json"), known = new Set<number>(Array.isArray(idx?.weeks) ? idx.weeks.filter((w: any) => Number.isInteger(w) && w >= 0 && w < 10000) : []);
   for (const [w, wf] of weeks) {
@@ -174,8 +254,62 @@ export async function run({ p, check, prev, out, vhpOf }: Opts) {
     fs.writeFileSync(path.join(OUT, `W${String(w).padStart(3, "0")}.json`), JSON.stringify(wf) + "\n");
   }
   fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), weeks: [...known].sort((x, y) => x - y) }) + "\n");
+  if (board) fs.writeFileSync(path.join(OUT, "board.json"), JSON.stringify(board) + "\n");
   for (const pr of problems) console.log(`::warning::${pr}`);
   return { problems };
+}
+
+// ── leaderboards ──
+type Row = { a: string; correct: number; picks: number; answers: number; points: number; ranked: boolean };
+/** Sort: correct winner picks, then more picks placed, then more Knode answers, then a higher Knode score. Exported. */
+export function rank(rows: Row[]): Row[] {
+  return [...rows].sort((x, y) => y.correct - x.correct || y.picks - x.picks || y.answers - x.answers || y.points - x.points || (x.a < y.a ? -1 : 1));
+}
+/** The picks of final races in [from, to): per wallet, right picks and picks placed, and whether it may be ranked. */
+function tally(weeks: Map<number, WeekFile>, from: number, to: number) {
+  const t = new Map<string, { correct: number; picks: number; ranked: boolean }>();
+  for (const wf of weeks.values()) for (const r of wf.races) {
+    if (r.start < from || r.start >= to || !r.result?.final || !Array.isArray(r.result.picks)) continue;
+    for (const [who, , , right, can] of r.result.picks) {
+      const x = t.get(who) || { correct: 0, picks: 0, ranked: false };
+      x.picks++; x.correct += right ? 1 : 0; x.ranked = x.ranked || !!can;
+      t.set(who, x);
+    }
+  }
+  return t;
+}
+async function leaderboards(weeks: Map<number, WeekFile>, now: number, player: (who: string, week: number) => Promise<PlayerInfo>, problems: string[]) {
+  // All time needs every week: load the ones this run didn't (read only).
+  const all = new Map(weeks);
+  const idx = readPrev("index.json");
+  for (const w of Array.isArray(idx?.weeks) ? idx.weeks : []) if (Number.isInteger(w) && !all.has(w)) all.set(w, loadWeek(w));
+  const anyPicks = [...all.values()].some((wf) => wf.races.some((r) => Array.isArray(r.result?.picks)));
+  if (!anyPicks) return null;
+  const wNow = M.weekOf(now), day0 = Math.floor(now / M.DAY) * M.DAY;
+  // Knode answers and points: this week's for Today and This week; summed over the weeks with picks for All time.
+  const knode = new Map<string, PlayerInfo>();   // key: who|week
+  const info = async (who: string, week: number) => {
+    const k = `${who}|${week}`;
+    if (!knode.has(k)) { try { knode.set(k, await player(who, week)); } catch (e) { problems.push(`Knode record of ${who}: ${(e as Error).message}`); knode.set(k, { stake: 0n, answers: 0, points: 0 }); } }
+    return knode.get(k)!;
+  };
+  const build = async (from: number, to: number, weeksFor: (who: string) => number[]) => {
+    const rows: Row[] = [];
+    for (const [a, x] of tally(all, from, to)) {
+      let answers = 0, points = 0;
+      for (const w of weeksFor(a)) { const i = await info(a, w); answers += i.answers; points += i.points; }
+      rows.push({ a, correct: x.correct, picks: x.picks, answers, points, ranked: x.ranked });
+    }
+    return rank(rows);
+  };
+  const weeksOf = (who: string) => [...all.values()].filter((wf) => wf.races.some((r) => Array.isArray(r.result?.picks) && r.result.picks.some((p: any) => p[0] === who))).map((wf) => wf.week);
+  return {
+    v: 1, updated: new Date(now).toISOString(),
+    today: { day: M.dayOf(now), rows: await build(day0, day0 + M.DAY, () => [wNow]) },
+    week: { week: wNow, start: M.weekStart(wNow), rows: await build(M.weekStart(wNow), M.weekStart(wNow + 1), () => [wNow]) },
+    lastWeek: wNow > 0 ? { week: wNow - 1, start: M.weekStart(wNow - 1), rows: await build(M.weekStart(wNow - 1), M.weekStart(wNow), () => [wNow - 1]) } : null,
+    allTime: { rows: await build(0, Infinity, weeksOf) },
+  };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

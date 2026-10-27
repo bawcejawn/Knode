@@ -1,0 +1,21 @@
+{
+  "name": "kpred-race",
+  "version": "0.1.0",
+  "license": "UNLICENSED",
+  "description": "Knode Producer Race picks: one free pick per wallet per race, locked by the chain when the race starts.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prebuild": "node scripts/prebuild.cjs",
+    "build": "koinos-sdk-as-cli build-all release 0 race.proto && node scripts/make-abi.cjs",
+    "test": "npm run build && node node_modules/@as-pect/cli/bin/asp.js --config as-pect.config.js"
+  },
+  "dependencies": {
+    "koilib": "9.4.1"
+  },
+  "devDependencies": {
+    "@koinos/sdk-as": "1.5.1",
+    "@koinos/sdk-as-cli": "1.0.2",
+    "tsx": "4.23.15"
+  }
+}

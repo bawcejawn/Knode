@@ -11,6 +11,7 @@ import {
   Sponsor, APPROVE_ENTRY, dayOf, weekOf,
   NOT_A_PLAYER, FREE_USED_UP,
   GAME_DEPOSIT_VHP, GAME_DEPOSIT_KOIN, GAME_WITHDRAW, GAME_ANSWER, GAME_SETTLE, GAME_CLAIM, GAME_CLOSE_WEEK, GAME_FINALIZE_WEEK, DESK_SWAP,
+  RACE_PICK,
 } from "../Sponsor";
 import { sponsor } from "../proto/sponsor";
 import { F } from "./fixtures";
@@ -887,7 +888,7 @@ describe("free answers for any wallet (owner's decision 2026-10-26)", () => {
     emptyWallet();
     const c = wouldPayAnswer(OTHER, MANA);
     expect(c.ok).toBe(false);
-    expect(c.reason).toBe("today's free-player answers are used up");
+    expect(c.reason).toBe("today's free-player answers and picks are used up");
     READS = [vhpBalance(5 * MANA)];
     const d = wouldPayAnswer(OTHER, MANA);
     expect(d.ok).toBe(true);
@@ -898,5 +899,118 @@ describe("free answers for any wallet (owner's decision 2026-10-26)", () => {
     CFG = new sponsor.config(true, GAME, DESK, [VHP, KOIN], MANA, 5 * MANA, 30 * MANA, 100 * MANA, VHP, MANA, 101 * MANA);
     expect(() => { setConfig(); }).toThrow();
     errorIs("SPONSOR: the free-player cap can't be above the daily cap");
+  });
+});
+
+// ═══════════════════════ Producer Race picks (v2, owner's decision 2026-10-27) ═══════════════════════
+const RACE = Base58.decode("15CM9Qr4GKREDgqnyXJ8tckPj2biERTM1T");
+const RACE_SET_CONFIG: u32 = 0x4ba58c89;
+
+/** As freeConfig, with the race contract set. */
+function raceConfig(free: u64): void {
+  CFG = new sponsor.config(true, GAME, DESK, [VHP, KOIN], MANA, 5 * MANA, 30 * MANA, 100 * MANA, VHP, MANA, free, RACE);
+  setConfig();
+  MockVM.commitTransaction();
+}
+/** A real pick's arguments: player (field 1), race number (field 2), horse (field 3). */
+function pickArgs(player: Uint8Array): Uint8Array {
+  const head = Protobuf.encode(new sponsor.race_pick_args(player), sponsor.race_pick_args.encode);
+  const out = new Uint8Array(head.length + 4 + 27);
+  out.set(head, 0);
+  out[head.length] = 0x10; out[head.length + 1] = 0xc5; out[head.length + 2] = 0x88; out[head.length + 3] = 0x05;   // race 83013
+  out[head.length + 4] = 0x1a; out[head.length + 5] = 25;
+  out.set(DESK, head.length + 6);
+  return out;
+}
+function userPick(tx: i32, player: Uint8Array): void {
+  TX = tx; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
+  OPS = [call(RACE, RACE_PICK, pickArgs(player))];
+}
+
+describe("Producer Race picks are free play, like answers", () => {
+  beforeEach(() => { start(); raceConfig(3 * MANA); });
+
+  it("pays a player's own pick", () => {
+    userPick(1, USER);
+    expect(pays()).toBe(true);
+    expect(new Sponsor().get_usage(new sponsor.get_usage_arguments(USER)).used_day).toBe(MANA);
+  });
+
+  it("pays an empty wallet's pick (a guest) and counts it against the free sub-cap", () => {
+    emptyWallet();
+    userPick(1, USER);
+    expect(pays()).toBe(true);
+    expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day).toBe(MANA);
+  });
+
+  it("free picks and free answers share the free sub-cap and the player's daily cap", () => {
+    for (let i = 1; i <= 3; i++) {
+      emptyWallet();
+      if (i == 2) userCall(i, MANA, GAME, GAME_ANSWER); else userPick(i, USER);
+      expect(pays()).toBe(true);
+      MockVM.commitTransaction();
+    }
+    emptyWallet();
+    userPick(1, USER);
+    expect(() => { pays(); }).toThrow();
+    errorIs(FREE_USED_UP);
+  });
+
+  it("an answer and a pick in one transaction is still free play", () => {
+    emptyWallet();
+    TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
+    OPS = [call(GAME, GAME_ANSWER, new Uint8Array(0)), call(RACE, RACE_PICK, pickArgs(USER))];
+    expect(pays()).toBe(true);
+  });
+
+  it("a pick with a swap is not free play: only real players", () => {
+    emptyWallet();
+    TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
+    OPS = [call(RACE, RACE_PICK, pickArgs(USER)), call(DESK, DESK_SWAP, new Uint8Array(0))];
+    expect(() => { pays(); }).toThrow();
+    errorIs(NOT_A_PLAYER);
+  });
+
+  it("refuses a pick for another wallet, a pick with no player, and any other race call", () => {
+    userPick(1, OTHER);
+    expect(() => { pays(); }).toThrow();
+    errorIs("SPONSOR: a pick must be the payee's own");
+    TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
+    OPS = [call(RACE, RACE_PICK, new Uint8Array(0))];
+    expect(() => { pays(); }).toThrow();
+    errorIs("SPONSOR: a pick must be the payee's own");
+    userCall(1, MANA, RACE, RACE_SET_CONFIG);
+    expect(() => { pays(); }).toThrow();
+    errorIs("SPONSOR: only picks on the Producer Race are sponsored");
+  });
+
+  it("without a race contract set, picks are not sponsored (as before)", () => {
+    freeConfig(3 * MANA);
+    userPick(1, USER);
+    expect(() => { pays(); }).toThrow();
+    errorIs("SPONSOR: only Knode calls are sponsored");
+  });
+
+  it("would_pay with answer_only (free play) says yes to an empty wallet's pick", () => {
+    emptyWallet();
+    const a = wouldPayAnswer(USER, MANA);
+    expect(a.ok).toBe(true);
+    expect(a.free).toBe(true);
+  });
+
+  it("refuses a race contract that is invalid, the game, Knode Swap, the sponsor or a token", () => {
+    const bad: Uint8Array[] = [Base58.decode("15CM9Qr4GKREDgqnyXJ8tckPj2biERTM1z"), GAME, DESK, SELF, VHP];
+    const msg: string[] = [
+      "SPONSOR: invalid race contract address",
+      "SPONSOR: the race contract must differ from the game, Knode Swap and the sponsor",
+      "SPONSOR: the race contract must differ from the game, Knode Swap and the sponsor",
+      "SPONSOR: the race contract must differ from the game, Knode Swap and the sponsor",
+      "SPONSOR: a token can't be a Knode contract or the sponsor",
+    ];
+    for (let i = 0; i < bad.length; i++) {
+      CFG = new sponsor.config(true, GAME, DESK, [VHP, KOIN], MANA, 5 * MANA, 30 * MANA, 100 * MANA, VHP, MANA, 3 * MANA, bad[i]);
+      expect(() => { setConfig(); }).toThrow();
+      errorIs(msg[i]);
+    }
   });
 });

@@ -145,8 +145,15 @@ test("the race page shows no odds, no wagers, no payouts", () => {
   for (const f of ["race.js", "race.html", "race-math.js"]) assert.doesNotMatch(read(f), /\bodds\b|\bpays\s+\d|\bpaysFor\b|\bwager|\bbet\b/i, f);
 });
 
-test("the race page only reads: it never signs or sends; the old rolling-race guesses are deleted", () => {
-  for (const f of ["race.js", "race-math.js", "chain-blocks.js"]) assert.doesNotMatch(read(f), /\.send\(|signTransaction|sendTransaction|onlyOperation/, f);
+test("the race page sends only one thing: the wallet's own pick on the race contract, through the wallet", () => {
+  for (const f of ["race-math.js", "chain-blocks.js"]) assert.doesNotMatch(read(f), /\.send\(|signTransaction|sendTransaction|onlyOperation/, f);
+  const js = read("race.js");
+  const sends = [...js.matchAll(/\.send\(/g)];
+  assert.equal(sends.length, 1, "one send");
+  assert.match(js, /raceContract\.functions\.pick\(\{ player: who, race: String\(index\), horse \}, \{ onlyOperation: true \}\)/);
+  assert.match(js, /await W\.send\(`pick [^`]*`, \[operation\]\)/);
+  assert.doesNotMatch(js, /signTransaction|sendTransaction|privateKey|wif/i);
+  assert.match(js, /if \(Date\.now\(\) >= M\.raceStart\(index\)\)/, "the page also refuses a started race (the chain enforces it)");
   assert.match(read("race.js"), /localStorage\.removeItem\("pr-guesses-v1"\)/);
   assert.match(read("race.html"), /<script src="race-math\.js"><\/script>\s*<script src="race\.js"><\/script>/);
 });

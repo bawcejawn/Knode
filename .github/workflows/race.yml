@@ -44,7 +44,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/prev"
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
             for f in $(git ls-tree --name-only FETCH_HEAD); do
-              if [[ "$f" =~ ^(index|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; fi
+              if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; fi
             done
           else echo "No race-data branch yet."; fi
       - name: Record the race
@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o -type d -o \( -type f ! -regex "$IN/\(index\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o -type d -o \( -type f ! -regex "$IN/\(index\|board\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           big=$(find "$IN" -type f -size +2048k -print)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
@@ -100,10 +100,22 @@ jobs:
               if type(r) is not dict or r.get("final") is not True: return False
               if r.get("missed"): return set(r) <= {"final", "missed", "note"} and len(str(r.get("note", ""))) < 200
               st = r.get("standings")
+              if not set(r) <= {"final", "checked", "heights", "blocks", "line", "winner", "standings", "picks"}: return False
+              pk = r.get("picks", [])
+              if type(pk) is not list or len(pk) > 100000 or not all(type(x) is list and len(x) == 5 and addr.fullmatch(str(x[0])) and addr.fullmatch(str(x[1]))
+                  and type(x[2]) is int and x[3] in (0, 1) and x[4] in (0, 1) for x in pk): return False
               return (r.get("winner") is None or addr.fullmatch(str(r["winner"]))) and r.get("checked") in (1, 2) and type(st) is list and len(st) <= 500 \
                   and all(type(x) is dict and addr.fullmatch(str(x.get("a"))) and num(x.get("steps")) and type(x.get("blocks")) is int for x in st)
+          def rows_ok(b):
+              rows = b.get("rows") if type(b) is dict else None
+              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "correct", "picks", "answers", "points", "ranked"}
+                  and addr.fullmatch(str(x["a"])) and all(type(x[k]) is int and 0 <= x[k] < 10**9 for k in ("correct", "picks", "answers", "points")) and type(x["ranked"]) is bool for x in rows)
           for f in os.listdir(d):
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
+              if f == "board.json":
+                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1, f
+                  assert all(rows_ok(j[k]) for k in ("today", "week", "allTime")) and (j["lastWeek"] is None or rows_ok(j["lastWeek"])), f
+                  continue
               if f == "index.json":
                   assert set(j) == {"v", "updated", "weeks"} and j["v"] == 1 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
                   continue

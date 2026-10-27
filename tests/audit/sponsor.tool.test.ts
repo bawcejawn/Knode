@@ -15,14 +15,22 @@ test("the default caps are in order and convert to chain units", () => {
   assert.equal(c.desk, DESK.contract);
   assert.deepEqual(c.tokens, [GAME.vhp, GAME.koin]);
   assert.equal(c.max_mana_per_tx, "100000000");
-  assert.equal(c.max_mana_per_account_day, "500000000");
-  assert.equal(c.max_mana_per_account_week, "3000000000");
+  // A day's 5 answers and 5 race picks; a week's 30 answers and 35 picks (each counts its 1 Mana limit).
+  assert.equal(c.max_mana_per_account_day, "1000000000");
+  assert.equal(c.max_mana_per_account_week, "6500000000");
   assert.equal(c.max_mana_per_day, "100000000000");
   // Answers for any wallet: those by wallets with no VHP and no stake share 300 of the 1,000 a day.
   assert.equal(c.max_mana_free_day, "30000000000");
   // Only real players (audit M-1): VHP is the token checked, at least 1 VHP by default.
   assert.equal(c.vhp, GAME.vhp);
   assert.equal(c.min_vhp, "100000000");
+});
+
+test("the race picks contract is passed through when set, and must not be another Knode contract or a token", () => {
+  const RACE = "15CM9Qr4GKREDgqnyXJ8tckPj2biERTM1T";
+  assert.equal(buildConfig(GAME, DESK, DEFAULT_CAPS, true, RACE).race, RACE);
+  assert.equal("race" in buildConfig(GAME, DESK, DEFAULT_CAPS, true), false);
+  for (const bad of [GAME.contract, DESK.contract, GAME.vhp, GAME.koin]) assert.throws(() => buildConfig(GAME, DESK, DEFAULT_CAPS, true, bad), /race contract must differ/);
 });
 
 test("a VHP minimum of 0 is refused (empty wallets would be sponsored)", () => {

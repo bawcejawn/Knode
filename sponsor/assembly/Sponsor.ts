@@ -5,7 +5,8 @@ import { sponsor } from "./proto/sponsor";
  * Knode mana sponsor. See assembly/proto/sponsor.proto for the rules.
  * Ported from the SwarmTales sponsor; adds a per-player weekly cap, a read-only would_pay, refuses any signature
  * other than the player's (the owner's own transactions excepted), and pays only for real Knode players (audit M-1),
- * except that game answers are paid for anyone within a daily free-player sub-cap (owner's decision 2026-10-26).
+ * except that free play (game answers, and Producer Race picks since v2) is paid for anyone within a daily
+ * free-player sub-cap (owner's decisions 2026-10-26 and 2026-10-27).
  *
  * Uploaded onto a fresh wallet with ONLY the transaction-application override on. Settings and moving KOIN out use
  * the wallet's own key, as for any wallet.
@@ -37,11 +38,13 @@ export const GAME_CLAIM: u32 = 0xdd1b3c31;
 export const GAME_CLOSE_WEEK: u32 = 0x250d08be;
 export const GAME_FINALIZE_WEEK: u32 = 0x8c516995;
 export const DESK_SWAP: u32 = 0xda47c2f4;
+/** Producer Race `pick` (race/abi/race.koilib.json). */
+export const RACE_PICK: u32 = 0x8ce33c6c;
 /** Read-only entry points used by the player check. */
 export const TOKEN_BALANCE_OF: u32 = 0x5c721497;
 export const GAME_GET_PLAYER: u32 = 0x37ce3085;
 export const NOT_A_PLAYER = "SPONSOR: only players who hold VHP or have a Knode stake are sponsored";
-export const FREE_USED_UP = "SPONSOR: today's free-player answers are used up";
+export const FREE_USED_UP = "SPONSOR: today's free-player answers and picks are used up";
 
 /** UTC day number of a time in ms. */
 export function dayOf(ms: u64): u64 {
@@ -119,10 +122,10 @@ export class Sponsor {
     const tx = System.getTransaction();
     const ops = tx.operations;
     System.require(ops.length > 0 && ops.length <= MAX_OPERATIONS, "SPONSOR: 1 to 10 operations");
-    let answerOnly = true;
+    let answerOnly = true;    // free play only: game answers and race picks
     for (let i = 0; i < ops.length; i++) {
       checkOperation(ops[i], cfg, payee);
-      if (!isAnswer(ops[i], cfg)) answerOnly = false;
+      if (!isFreePlay(ops[i], cfg)) answerOnly = false;
     }
 
     const now = System.getHeadInfo().head_block_time;
@@ -218,7 +221,7 @@ export class Sponsor {
       out.left_free_today = cfg.max_mana_free_day > f.used_day ? cfg.max_mana_free_day - f.used_day : 0;
       if (player) out.ok = true;
       else if (!args.answer_only) out.reason = "only players who hold VHP or have a Knode stake are sponsored";
-      else if (rc > out.left_free_today) out.reason = "today's free-player answers are used up";
+      else if (rc > out.left_free_today) out.reason = "today's free-player answers and picks are used up";
       else out.ok = true;
     }
     return out;
@@ -237,12 +240,21 @@ export class Sponsor {
       !Arrays.equal(cfg.game!, this.contractId) && !Arrays.equal(cfg.desk!, this.contractId),
       "SPONSOR: the sponsor can't be a Knode contract"
     );
+    // The race contract is optional; when set it must be a real address and not any other Knode contract or the sponsor.
+    const hasRace = cfg.race != null && cfg.race!.length > 0;
+    if (hasRace) {
+      System.require(isAddress(cfg.race), "SPONSOR: invalid race contract address");
+      System.require(
+        !Arrays.equal(cfg.race!, cfg.game!) && !Arrays.equal(cfg.race!, cfg.desk!) && !Arrays.equal(cfg.race!, this.contractId),
+        "SPONSOR: the race contract must differ from the game, Knode Swap and the sponsor"
+      );
+    }
     System.require(cfg.tokens.length <= MAX_TOKENS, "SPONSOR: at most 4 tokens");
     for (let i = 0; i < cfg.tokens.length; i++) {
       const t = cfg.tokens[i];
       System.require(isAddress(t), "SPONSOR: invalid token address");
       System.require(
-        !Arrays.equal(t, cfg.game!) && !Arrays.equal(t, cfg.desk!) && !Arrays.equal(t, this.contractId),
+        !Arrays.equal(t, cfg.game!) && !Arrays.equal(t, cfg.desk!) && !Arrays.equal(t, this.contractId) && !(hasRace && Arrays.equal(t, cfg.race!)),
         "SPONSOR: a token can't be a Knode contract or the sponsor"
       );
       for (let j = 0; j < i; j++) System.require(!Arrays.equal(t, cfg.tokens[j]), "SPONSOR: duplicate token");
@@ -290,10 +302,16 @@ function isGameAction(entry: u32): bool {
     entry == GAME_SETTLE || entry == GAME_CLAIM || entry == GAME_CLOSE_WEEK || entry == GAME_FINALIZE_WEEK;
 }
 
-/** A call to the game's `answer` (checkOperation has already accepted the operation). */
-function isAnswer(op: protocol.operation, cfg: sponsor.config): bool {
+function hasRace(cfg: sponsor.config): bool {
+  return cfg.race != null && cfg.race!.length == ADDRESS_LENGTH;
+}
+
+/** Free play: a call to the game's `answer` or the race's `pick` (checkOperation has already accepted the operation). */
+function isFreePlay(op: protocol.operation, cfg: sponsor.config): bool {
   const call = op.call_contract;
-  return call != null && call.contract_id != null && Arrays.equal(call.contract_id!, cfg.game!) && call.entry_point == GAME_ANSWER;
+  if (call == null || call.contract_id == null) return false;
+  if (Arrays.equal(call.contract_id!, cfg.game!)) return call.entry_point == GAME_ANSWER;
+  return hasRace(cfg) && Arrays.equal(call.contract_id!, cfg.race!) && call.entry_point == RACE_PICK;
 }
 
 /** One operation is sponsored only if it is a player action on the game or Knode Swap, or approves one of them. */
@@ -311,6 +329,17 @@ function checkOperation(op: protocol.operation, cfg: sponsor.config, payee: Uint
   }
   if (Arrays.equal(target, cfg.desk!)) {
     System.require(call.entry_point == DESK_SWAP, "SPONSOR: only swaps on Knode Swap are sponsored");
+    return;
+  }
+  if (hasRace(cfg) && Arrays.equal(target, cfg.race!)) {
+    System.require(call.entry_point == RACE_PICK, "SPONSOR: only picks on the Producer Race are sponsored");
+    // Only the payee's own pick (the race contract also requires the player's signature). Audit S-1: the arguments must
+    // be the canonical encoding of what they decode to, so the sponsor and the race contract can't read different
+    // players from the same bytes (a skipped field with an unexpected wire type would otherwise shift the reading).
+    const raw = call.args ? call.args! : new Uint8Array(0);
+    const p = Protobuf.decode<sponsor.race_pick_args>(raw, sponsor.race_pick_args.decode);
+    System.require(Arrays.equal(Protobuf.encode(p, sponsor.race_pick_args.encode), raw), "SPONSOR: a pick's arguments must be canonical");
+    System.require(p.player != null && Arrays.equal(p.player!, payee), "SPONSOR: a pick must be the payee's own");
     return;
   }
   System.require(contains(cfg.tokens, target), "SPONSOR: only Knode calls are sponsored");

@@ -9,12 +9,13 @@ From then on, when a transaction names the sponsor as payer, the chain asks this
 - the sponsor is switched on;
 - the transaction is signed by the payee (the player) **and by nobody else**;
 - every operation is a player action on the Knode game (`deposit_vhp`, `deposit_koin`, `withdraw`, `answer`,
-  `settle`, `claim`, `close_week`, `finalize_week`) or a `swap` on Knode Swap, or a VHP/KOIN `approve` whose spender is
-  the game or Knode Swap and whose owner is the payee (owner, operator, seed and upgrade actions are never paid);
-- **answers are free for everyone** (owner's decision 2026-10-26: free play drives chain activity and traffic): a
-  transaction made only of game `answer` calls is paid for any wallet, even an empty one. Answers by wallets that hold
-  no VHP and have no stake also count against a separate daily total for everyone, `max_mana_free_day` (default 300 of
-  the 1,000), so free answers can never use up what real players need;
+  `settle`, `claim`, `close_week`, `finalize_week`), a `swap` on Knode Swap, a `pick` on the Producer Race for the
+  payee's own wallet (v2, once the `race` setting is set), or a VHP/KOIN `approve` whose spender is the game or Knode
+  Swap and whose owner is the payee (owner, operator, seed and upgrade actions are never paid);
+- **free play is free for everyone** (owner's decisions 2026-10-26 and 2026-10-27: free play drives chain activity and
+  traffic): a transaction made only of game `answer` calls and Producer Race `pick` calls is paid for any wallet, even
+  an empty one (a guest). Free play by wallets that hold no VHP and have no stake also counts against a separate daily
+  total for everyone, `max_mana_free_day` (default 300 of the 1,000), so it can never use up what real players need;
 - **everything else** (approve, deposit, withdraw, settle, claim, close/finalize, swap) is paid only for a **real
   Knode player**: holds at least `min_vhp` VHP (default 1 VHP) or has a stake (active or pending) in the game
   (audit 2026-10-26, M-1). The check reads the VHP token and the game (read-only). For those actions a read that fails
@@ -65,7 +66,8 @@ website says: the page then falls back to the player's own Mana.
    other than the audited one, and after uploading it stops with an error if the code or the switches on chain are not
    exactly right (pays for transactions ON, call and upload OFF).
 5. **Set the caps** (dry run first, then `--send`):
-   `npm run sponsor -- config --per-tx 1 --per-player-day 5 --per-player-week 30 --per-day 1000 --free-per-day 300 --min-vhp 1`
+   `npm run sponsor -- config --per-tx 1 --per-player-day 10 --per-player-week 65 --per-day 1000 --free-per-day 300 --min-vhp 1`
+   (once `race-data/deployment.json` exists, this also sets the race contract, so picks are sponsored)
    (`--free-per-day 0` turns free answers off; pass it each time you change the caps, because an unset value means 500)
 6. **Switch it on**: `npm run sponsor -- enable --send`.
 7. **Point the website at it**: `npm run sponsor -- payer sponsor --send`, then
@@ -83,8 +85,8 @@ it from the sponsor wallet in Kondor, like any wallet.
 - The caps count each transaction's **Mana limit**, not what it really used. The site asks for `rcLimit` (default
   1 Mana) per transaction. Knode's own transactions use well under that (announcing an upgrade used 0.31 Mana; the game
   pays up to 2 Mana for a sponsored player transaction).
-- Knode's settings: **1** per transaction, **5** per player per day (the day's 5 answers), **30** per player per week
-  (the week's 30 questions), **1,000** for everyone per day (a hard cap: 1,000 is also the contract's own ceiling,
+- Knode's settings: **1** per transaction, **10** per player per day (the day's 5 answers and up to 5 race picks), **65**
+  per player per week (the week's 30 questions and 35 picks), **1,000** for everyone per day (a hard cap: 1,000 is also the contract's own ceiling,
   `CAP_LIMIT`), of which at most **500** for answers by wallets with no VHP and no stake. Every other action needs
   **1 VHP** or a stake.
 - Knode's sponsor wallet `1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8` keeps at least **5,000 KOIN**: it refills about a fifth of
@@ -110,8 +112,21 @@ it from the sponsor wallet in Kondor, like any wallet.
 - `settle`, `close_week` and `finalize_week` can be called by anyone for anyone: a wallet can spend its own sponsored
   caps on them, never more.
 
+## Upgrading to v2 (Producer Race picks)
+
+v2 adds one optional setting, `race` (the race picks contract), and pays for a `pick` on it exactly like a game answer
+(only the payee's own pick; any other call on the race contract is refused). With `race` unset, v2 behaves exactly as
+v1. The existing caps, counts and settings stay as they are on chain (the upgrade keeps the storage).
+
+1. Build and test (step 3 above). The hash must match the "Build" line below.
+2. `npm run sponsor -- upload`, then `--send` (the sponsor wallet's key re-uploads its own code; nothing else changes).
+3. After the race contract is uploaded (race/README.md):
+   `npm run sponsor -- config --per-player-day 10 --per-player-week 65 --send`, then `npm run sponsor -- payer sponsor --send`,
+   and commit and push the deployment files.
+
 ## Build
 
-Release build sha256: `8cfeff6209b8d5cbc3b3e5fa30751e995767f5904b77693ed8a41e323ea2a8ed` (27,473 bytes).
-Tests: 91 contract tests (including the auditor's attack and fuzz tests, `Sponsor.audit-attacks.spec.ts`) (`npm test`, real signatures from `scripts/make-test-fixtures.cjs`: test-only keys from public
+Release build sha256 (v2, race picks; audited 2026-10-27): `fa4659e65c6156da3dde34238e0545a489a8b7f00cdf51df9bf79517a0019f33` (28,916 bytes).
+v1 (live until the upgrade): `8cfeff6209b8d5cbc3b3e5fa30751e995767f5904b77693ed8a41e323ea2a8ed` (27,473 bytes).
+Tests: 127 contract tests (including the auditors' attack and fuzz tests: `Sponsor.audit-attacks.spec.ts`, and for v2 `Sponsor.audit-v2.spec.ts` and `Sponsor.fixcheck.spec.ts`) (`npm test`, real signatures from `scripts/make-test-fixtures.cjs`: test-only keys from public
 labels, never fund them), plus `tests/audit/sponsor.wallet.test.mjs` (the website) and `tests/audit/sponsor.tool.test.ts`.

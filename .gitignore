@@ -10,3 +10,4 @@ game/kpred.pb
 verify-results.log
 node/heal.log
 node/heal-state.json
+.claude/

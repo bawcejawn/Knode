@@ -199,6 +199,13 @@ test("the header check refuses a wrong payer, payee, chain, Mana limit or operat
   assert.throws(() => ctx.check(bad((t) => (t.header.rc_limit = "500000000")), want), /more Mana/);
   assert.throws(() => ctx.check(bad((t) => (t.operations[0].call_contract.entry_point = CLAIM)), want), /only game answers/);
   assert.throws(() => ctx.check(bad((t) => (t.operations = [])), want), /only game answers/);
+  // Race picks (0x8ce33c6c): only on the pinned race contract, and only when one is pinned.
+  const RACE = "15CM9Qr4GKREDgqnyXJ8tckPj2biERTM1T", PICK = 0x8ce33c6c;
+  const pick = bad((t) => (t.operations = [{ call_contract: { contract_id: RACE, entry_point: PICK } }]));
+  assert.throws(() => ctx.check(pick, want), /only game answers/, "no race pinned: no picks");
+  ctx.check(pick, { ...want, race: RACE });
+  assert.throws(() => ctx.check(bad((t) => (t.operations = [{ call_contract: { contract_id: GAME, entry_point: PICK } }])), { ...want, race: RACE }), /only game answers/);
+  assert.throws(() => ctx.check(bad((t) => (t.operations = [{ call_contract: { contract_id: RACE, entry_point: ANSWER } }])), { ...want, race: RACE }), /only game answers/);
 });
 
 test("guest play is off unless deployment.json's sponsor has guest: true (no option, no auto-reconnect, no sending)", async () => {

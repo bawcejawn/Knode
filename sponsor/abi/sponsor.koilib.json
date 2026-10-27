@@ -40,7 +40,7 @@
       "argument": "sponsor.would_pay_arguments",
       "return": "sponsor.would_pay_result",
       "read_only": true,
-      "description": "Would the sponsor pay a transaction from this player with this Mana limit (on/off, caps and the player rule; the operations themselves are checked when it is sent). answer_only = the transaction is only game answers."
+      "description": "Would the sponsor pay a transaction from this player with this Mana limit (on/off, caps and the player rule; the operations themselves are checked when it is sent). answer_only = the transaction is only free play (game answers and race picks)."
     },
     "set_config": {
       "entry_point": 1269140617,
@@ -129,6 +129,13 @@
                 "id": 11,
                 "options": {
                   "jstype": "JS_STRING"
+                }
+              },
+              "race": {
+                "type": "bytes",
+                "id": 12,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
                 }
               }
             }
@@ -281,6 +288,31 @@
                 "id": 1,
                 "options": {
                   "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "race_pick_args": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "race": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "horse": {
+                "type": "bytes",
+                "id": 3,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
                 }
               }
             }

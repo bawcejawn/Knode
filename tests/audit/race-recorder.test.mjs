@@ -102,6 +102,59 @@ test("results: races before the recorder's first card are not listed; a later ra
   assert.equal(race(b, "2026-11-02T12").result.final, true, "the 12:00 race had a card: recorded");
 });
 
+// ── picks and leaderboards ──
+const W1 = "1HsM33pF8DbXPr8Vsd4vD7hQgvZ1SHY3Vv", W2 = "16ixK5DgvcojcZLvxyYWhHFcRXfhfrHbpL", W3 = "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8", GUEST = "1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717";
+const RACE00 = M.raceIndex(U("2026-11-02T00:00Z"));
+/** Picks for race 00:00 on Nov 2: W1 and GUEST pick the real winner, W2 and W3 another horse. */
+async function picksRun(at, prev, { winnerFor = null, theirs = null } = {}) {
+  const out = tmp();
+  const picks = (winner) => [[W1, winner, 1], [W2, P[3], 2], [W3, P[3], 3], [GUEST, winner, 4]];
+  const picksOf = async (node, r) => (r !== RACE00 ? [] : node === checkNode && theirs ? theirs : picks(winnerFor));
+  const pNode = node(at), checkNode = node(at);
+  const vhp = async (who) => Object.fromEntries(who.map((a) => [a, a === GUEST ? "0" : a === W3 ? "50000000" : String(5e8)]));   // W3: 0.5 VHP
+  const playerOf = async (n, who, week) => ({ stake: who === W3 ? 10n : 0n, answers: { [W1]: 3, [W2]: 9, [W3]: 1, [GUEST]: 5 }[who] ?? 0, points: { [W1]: 2, [W2]: 7, [W3]: 1, [GUEST]: 4 }[who] ?? 0 });
+  const log = console.log; console.log = () => {};
+  try { await run({ p: pNode, check: checkNode, prev, out, vhpOf: async (w) => ({ ...(await vhpOf(w)), ...(await vhp(w)) }), raceContract: "x", picksOf, playerOf }); } finally { console.log = log; }
+  return out;
+}
+
+test("picks: a final race records every pick, who picked the winner, and who may be ranked (1 VHP or a stake)", async () => {
+  const a = await hourly(U("2026-11-02T05:37Z"), "");
+  // Find the winner the recorder will name, then run with picks that name it.
+  const B = { ts: chain.ts, sig: chain.who.map((x) => P.indexOf(x)), signers: P };
+  const card = race(a, "2026-11-02T00").cards;
+  const winner = M.standings(B, { start: U("2026-11-02T00:00Z"), end: U("2026-11-02T06:00Z") }, card)[0].a;
+  const b = await picksRun(U("2026-11-02T06:37Z"), a, { winnerFor: winner });
+  const r = race(b, "2026-11-02T00").result;
+  assert.equal(r.winner, winner);
+  const by = Object.fromEntries(r.picks.map((x) => [x[0], x]));
+  assert.deepEqual([by[W1][3], by[W2][3], by[W3][3], by[GUEST][3]], [1, 0, 0, 1], "right picks");
+  assert.deepEqual([by[W1][4], by[W2][4], by[W3][4], by[GUEST][4]], [1, 1, 1, 0], "W3 has a stake; the guest has nothing");
+  // Leaderboard: correct first, then picks placed, then Knode answers, then Knode score. The guest is listed but not ranked.
+  const board = JSON.parse(fs.readFileSync(path.join(b, "board.json"), "utf8"));
+  const wk = board.week.rows;
+  assert.deepEqual(wk.slice(0, 2).map((x) => x.a).sort(), [W1, GUEST].sort(), "the two right pickers lead");
+  assert.equal(wk[0].a, GUEST, "tied on correct and picks: more Knode answers (5 vs 3) wins");
+  assert.equal(wk[2].a, W2, "W2 and W3 tied on correct and picks: W2 answered more");
+  assert.equal(wk.find((x) => x.a === GUEST).ranked, false);
+  assert.equal(wk.find((x) => x.a === W1).ranked, true);
+  assert.equal(board.today.rows.length, 4); assert.equal(board.allTime.rows.length, 4);
+  assert.ok(shapeOk(b), "board.json and the picks pass the publish check");
+});
+
+test("picks: when the two nodes disagree about the picks, the race stays unfinished", async () => {
+  const a = await hourly(U("2026-11-02T05:37Z"), "");
+  const b = await picksRun(U("2026-11-02T06:37Z"), a, { winnerFor: P[0], theirs: [[W1, P[1], 1]] });
+  assert.equal(race(b, "2026-11-02T00").result, null);
+});
+
+test("leaderboard order: correct, then more picks placed, then more Knode answers, then a higher Knode score", async () => {
+  const { rank } = await import(path.resolve(APP, "bot/race.ts"));
+  const r = (a, correct, picks, answers, points) => ({ a, correct, picks, answers, points, ranked: true });
+  const out = rank([r("1d", 2, 5, 9, 9), r("1a", 3, 1, 0, 0), r("1c", 2, 6, 0, 0), r("1b", 2, 5, 9, 10), r("1e", 2, 5, 10, 0)]);
+  assert.deepEqual(out.map((x) => x.a), ["1a", "1c", "1e", "1b", "1d"]);
+});
+
 // The publish job's shape check, run as it is in the workflow, on the recorder's real output.
 const yml = fs.readFileSync(path.resolve(APP, ".github/workflows/race.yml"), "utf8");
 const checkPy = yml.match(/<<'PY'\n([\s\S]*?)\n\s*PY\n/)[1].split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n");
