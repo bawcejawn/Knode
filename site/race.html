@@ -76,6 +76,14 @@
     .pr-lane.line .pr-gap { color: var(--mint); font-weight: 700; }
     .pr-lane.win { background: var(--sun-soft); }
     .pr-step .pr-horse { animation: hop .5s ease; }
+    /* Horses that moved since the last refresh: a "+steps" badge by the name and a glow on the lane, fading out. */
+    .pr-plus { font-family: var(--num); font-weight: 800; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--ink); background: var(--sun); border-radius: 99px; padding: 1px 8px; opacity: 0; }
+    .pr-plus:not(.on) { display: none; }
+    .pr-plus.on { animation: plus 5s ease-out forwards; }
+    @keyframes plus { 0% { opacity: 1; transform: scale(1.25); } 12% { transform: scale(1); } 70% { opacity: 1; } 100% { opacity: 0; } }
+    .pr-lane.moved .pr-run { animation: glow 2.5s ease-out; }
+    @keyframes glow { 0% { box-shadow: 0 0 0 3px var(--sun) inset; } 100% { box-shadow: 0 0 0 0 transparent inset; } }
+    @media (prefers-reduced-motion: reduce) { .pr-plus.on { animation: none; opacity: 1; } .pr-lane.moved .pr-run { animation: none; } }
     @keyframes hop { 40% { transform: scaleX(-1) translateY(-6px); } }
     @media (prefers-reduced-motion: reduce) { .pr-horse, .pr-trail { transition: none; } .pr-step .pr-horse { animation: none; } }
 

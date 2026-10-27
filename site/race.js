@@ -38,6 +38,8 @@
   const colour = (a) => { if (!colorOf.has(a)) colorOf.set(a, COLORS[colorOf.size % COLORS.length]); return colorOf.get(a); };
 
   let B = null, headT = 0, weeks = new Map(), prov = null, view = null, histMode = "today", lastTop = 0;
+  // Steps and blocks each horse had at the last refresh, to flash "+steps" on the horses that moved since.
+  let seen = { race: null, steps: new Map(), blocks: new Map() };
 
   // ── data ──
   async function fetchJson(url) { const r = await fetch(url, { cache: "no-cache" }); if (!r.ok) throw new Error(String(r.status)); return r.json(); }
@@ -120,12 +122,17 @@
       const atLine = rows.filter((r) => r.atLine && !ended).sort((a, b) => (a.a < b.a ? -1 : 1)), rest = rows.filter((r) => !(r.atLine && !ended));
       const ordered = [...atLine, ...rest];
       const existing = new Map([...track.querySelectorAll(".pr-lane")].map((c) => [c.dataset.addr, c]));
+      // Who moved since the last refresh (only while watching the live race; a new race or view starts clean).
+      const fresh = seen.race !== race.id;
+      const gained = new Map();
+      if (live && !fresh) for (const r of rows) { const d = r.steps - (seen.steps.get(r.a) || 0); if (d > 1e-9) gained.set(r.a, { steps: d, blocks: r.blocks - (seen.blocks.get(r.a) || 0) }); }
+      seen = { race: race.id, steps: new Map(rows.map((r) => [r.a, r.steps])), blocks: new Map(rows.map((r) => [r.a, r.blocks])) };
       const keep = [];
       ordered.forEach((r, i) => {
         let lane = existing.get(r.a);
         if (!lane) {
           lane = el("div", { class: "pr-lane", "data-addr": r.a },
-            el("div", { class: "pr-who" }, el("span", { class: "pr-rank" }), el("span", { class: "pr-dot" }), el("a", { class: "pr-name", href: EXPLORER + r.a, target: "_blank", rel: "noopener noreferrer" }), el("span", { class: "pr-meta" })),
+            el("div", { class: "pr-who" }, el("span", { class: "pr-rank" }), el("span", { class: "pr-dot" }), el("a", { class: "pr-name", href: EXPLORER + r.a, target: "_blank", rel: "noopener noreferrer" }), el("span", { class: "pr-plus", "aria-hidden": "true" }), el("span", { class: "pr-meta" })),
             el("div", { class: "pr-run" }, el("div", { class: "pr-trail" }), el("div", { class: "pr-horse", "aria-hidden": "true", text: "🏇" })),
             el("div", { class: "pr-gap" }));
           lane.querySelector(".pr-dot").style.background = colour(r.a);
@@ -134,6 +141,12 @@
         const h = card && card.field.find((x) => x.a === r.a), share = card ? h ? h.vhp / card.field.concat(card.paddock).reduce((s, x) => s + x.vhp, 0) : 0 : 0;
         lane.querySelector(".pr-rank").textContent = !ended && r.atLine ? "🏁" : String(i + 1);
         lane.querySelector(".pr-name").textContent = nameOf(r.a);
+        const plus = lane.querySelector(".pr-plus"), g = gained.get(r.a);
+        if (g) {
+          plus.textContent = `+${fmt(g.steps, 2)}${g.blocks > 1 ? ` (${g.blocks} blocks)` : ""}`;
+          plus.classList.remove("on"); lane.classList.remove("moved"); void plus.offsetWidth;   // restart the flash
+          plus.classList.add("on"); lane.classList.add("moved");
+        } else { plus.classList.remove("on"); lane.classList.remove("moved"); if (!live) plus.textContent = ""; }
         lane.querySelector(".pr-meta").textContent = `${h ? `×${h.h.toFixed(2)} per block` : "no handicap this leg"} · ${fmt(r.blocks)} blocks${share ? ` · ${fmt(share * 100, share < 0.01 ? 2 : 1)}% VHP` : ""}`;
         const x = r.x * 100;
         lane.querySelector(".pr-horse").style.left = `calc(${x}% - ${x > 4 ? 30 : 0}px)`;   // stops at the line, never past it
@@ -222,7 +235,7 @@
     try { await refresh(true); }
     catch (e) { say("Couldn't reach the Koinos network. Trying again in a moment…"); }
     let shown = M.raceIndex(Date.now());
-    setInterval(() => { if (!document.hidden) refresh().catch(() => {}); }, 15000);
+    setInterval(() => { if (!document.hidden) refresh().catch(() => {}); }, 6000);   // new blocks every ~3 s: a light top-up
     setInterval(() => {
       if (!B) return;
       // A new race starts by itself: every horse back to 0, the last one goes to the results.

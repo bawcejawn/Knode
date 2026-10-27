@@ -1,0 +1,295 @@
+{
+    "methods": {
+        "pick": {
+            "input": "race.pick_arguments",
+            "output": "race.empty_object",
+            "description": "Pick a horse for a race (or change your pick). Needs the player's signature. Refused once the race has started, for races more than 24 hours ahead, and after today's picks are used up.",
+            "entryPoint": 2363702380,
+            "readOnly": false
+        },
+        "get_pick": {
+            "input": "race.get_pick_arguments",
+            "output": "race.get_pick_result",
+            "description": "One wallet's pick for one race (empty if none).",
+            "entryPoint": 4083214051,
+            "readOnly": true
+        },
+        "list_picks": {
+            "input": "race.list_picks_arguments",
+            "output": "race.list_picks_result",
+            "description": "Every pick for a race, in address order, up to limit (at most 100) at a time. Pass the last address you got as start_after for the next page.",
+            "entryPoint": 2118033200,
+            "readOnly": true
+        },
+        "get_usage": {
+            "input": "race.get_usage_arguments",
+            "output": "race.get_usage_result",
+            "description": "Picks a wallet has made today (UTC) and the daily limit.",
+            "entryPoint": 1236253562,
+            "readOnly": true
+        },
+        "get_config": {
+            "input": "race.get_config_arguments",
+            "output": "race.config",
+            "description": "The settings.",
+            "entryPoint": 3159346644,
+            "readOnly": true
+        },
+        "set_config": {
+            "input": "race.set_config_arguments",
+            "output": "race.empty_object",
+            "description": "Change the settings. Needs the owner's key (the first time: this contract's own key).",
+            "entryPoint": 1269140617,
+            "readOnly": false
+        }
+    },
+    "types": {
+        "nested": {
+            "race": {
+                "nested": {
+                    "config": {
+                        "fields": {
+                            "owner": {
+                                "type": "bytes",
+                                "id": 1,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            },
+                            "enabled": {
+                                "type": "bool",
+                                "id": 2
+                            },
+                            "maxPicksPerDay": {
+                                "type": "uint32",
+                                "id": 3
+                            }
+                        }
+                    },
+                    "pick_object": {
+                        "fields": {
+                            "horse": {
+                                "type": "bytes",
+                                "id": 1,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            },
+                            "at": {
+                                "type": "uint64",
+                                "id": 2,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "changes": {
+                                "type": "uint32",
+                                "id": 3
+                            }
+                        }
+                    },
+                    "day_count": {
+                        "fields": {
+                            "day": {
+                                "type": "uint64",
+                                "id": 1,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "count": {
+                                "type": "uint32",
+                                "id": 2
+                            }
+                        }
+                    },
+                    "empty_object": {
+                        "fields": {}
+                    },
+                    "pick_arguments": {
+                        "fields": {
+                            "player": {
+                                "type": "bytes",
+                                "id": 1,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            },
+                            "race": {
+                                "type": "uint64",
+                                "id": 2,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "horse": {
+                                "type": "bytes",
+                                "id": 3,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            }
+                        }
+                    },
+                    "pick_event": {
+                        "fields": {
+                            "player": {
+                                "type": "bytes",
+                                "id": 1,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            },
+                            "race": {
+                                "type": "uint64",
+                                "id": 2,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "horse": {
+                                "type": "bytes",
+                                "id": 3,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            },
+                            "at": {
+                                "type": "uint64",
+                                "id": 4,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "change": {
+                                "type": "bool",
+                                "id": 5
+                            }
+                        }
+                    },
+                    "get_pick_arguments": {
+                        "fields": {
+                            "player": {
+                                "type": "bytes",
+                                "id": 1,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            },
+                            "race": {
+                                "type": "uint64",
+                                "id": 2,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            }
+                        }
+                    },
+                    "get_pick_result": {
+                        "fields": {
+                            "pick": {
+                                "type": "pick_object",
+                                "id": 1
+                            }
+                        }
+                    },
+                    "list_picks_arguments": {
+                        "fields": {
+                            "race": {
+                                "type": "uint64",
+                                "id": 1,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "startAfter": {
+                                "type": "bytes",
+                                "id": 2,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            },
+                            "limit": {
+                                "type": "uint32",
+                                "id": 3
+                            }
+                        }
+                    },
+                    "pick_row": {
+                        "fields": {
+                            "player": {
+                                "type": "bytes",
+                                "id": 1,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            },
+                            "pick": {
+                                "type": "pick_object",
+                                "id": 2
+                            }
+                        }
+                    },
+                    "list_picks_result": {
+                        "fields": {
+                            "rows": {
+                                "rule": "repeated",
+                                "type": "pick_row",
+                                "id": 1
+                            }
+                        }
+                    },
+                    "get_usage_arguments": {
+                        "fields": {
+                            "player": {
+                                "type": "bytes",
+                                "id": 1,
+                                "options": {
+                                    "(koinos.btype)": "ADDRESS"
+                                }
+                            }
+                        }
+                    },
+                    "get_usage_result": {
+                        "fields": {
+                            "day": {
+                                "type": "uint64",
+                                "id": 1,
+                                "options": {
+                                    "jstype": "JS_STRING"
+                                }
+                            },
+                            "picksToday": {
+                                "type": "uint32",
+                                "id": 2
+                            },
+                            "maxPicksPerDay": {
+                                "type": "uint32",
+                                "id": 3
+                            }
+                        }
+                    },
+                    "get_config_arguments": {
+                        "fields": {}
+                    },
+                    "set_config_arguments": {
+                        "fields": {
+                            "config": {
+                                "type": "config",
+                                "id": 1
+                            }
+                        }
+                    },
+                    "config_event": {
+                        "fields": {
+                            "config": {
+                                "type": "config",
+                                "id": 1
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
