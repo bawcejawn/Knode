@@ -1,0 +1,9 @@
+node_modules/
+build/
+abi/*
+!abi/picks.koilib.json
+.env
+assembly/index.ts
+assembly/*.boilerplate.ts
+assembly/proto/*.ts
+picks.pb
