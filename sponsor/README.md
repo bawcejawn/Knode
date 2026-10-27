@@ -124,6 +124,22 @@ v1. The existing caps, counts and settings stay as they are on chain (the upgrad
    `npm run sponsor -- config --per-player-day 10 --per-player-week 65 --send`, then `npm run sponsor -- payer sponsor --send`,
    and commit and push the deployment files.
 
+## Upgrading to v3 (KnodeGames allowlist) — not audited yet
+
+v3 adds three things. With no `allowed` rows it behaves as v2, except for the two fixes below.
+
+- **Allowlist** (`allowed`, up to 8 rows): {contract, entry point, free play, argument shape}. A listed call is paid only
+  when its arguments have exactly the listed shape: field 1 is the player (25 bytes) and must be the payee, it comes
+  first and once, and every other field has its listed wire type, in field-number order (race audit S-1, for any
+  contract: the sponsor and the target contract can't read different players). Free-play rows count like answers. The
+  KnodeGames Picks contract's `pick` is added automatically once `picks-data/deployment.json` exists.
+- **Free players' prize claims**: a game `claim` for the payee's own wallet (canonical arguments) is free play, so a
+  free player (a guest too) can collect a free-game prize.
+- **Fixcheck L-3**: a stake counts as a real player from `min_vhp` up (active and pending together), like held VHP.
+
+Development build sha256 (v3, not audited): `1c9c4baf09fbe594a476e970d0543acb138f0452571c548adaf24e1550e31216` (31,783 bytes).
+The upload tool still pins v2 until v3 passes its audit and fix-check.
+
 ## Build
 
 Release build sha256 (v2, race picks; audited 2026-10-27): `fa4659e65c6156da3dde34238e0545a489a8b7f00cdf51df9bf79517a0019f33` (28,916 bytes).

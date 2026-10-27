@@ -34,6 +34,12 @@ const STATE = path.join("sponsor-data", "deployment.json");
 const GAME_DEP = path.join("game-data", "deployment.json");
 const DESK_DEP = path.join("desk-data", "deployment.json");
 const RACE_DEP = path.join("race-data", "deployment.json");
+const PICKS_DEP = path.join("picks-data", "deployment.json");
+/** v3: the KnodeGames Picks contract's `pick` (picks/abi/picks.koilib.json) and its argument shape, one byte per field:
+ *  wire type + 1 (player bytes, game varint, round varint, producers bytes, number varint). npm run check (sponsor)
+ *  confirms the shape against the Picks ABI. */
+export const PICKS_PICK = 0x8ce33c6c;
+export const PICKS_ARG_TYPES = "0x0301010301";
 /** Suggested caps (Mana): per transaction, per player per day, per player per week, everyone per day.
  *  The caps count each transaction's Mana limit (1 Mana): a day's 5 answers and 5 race picks = 10, a week's 30
  *  answers and 35 picks = 65. */
@@ -59,7 +65,8 @@ function knode() {
   const rpc = E.RPC ?? game.rpc ?? "https://api.koinos.io";
   pinDeployment("game", game, rpc, GAME_DEP);
   pinDeployment("desk", desk, rpc, DESK_DEP);
-  return { game, desk, rpc, race: race?.contract ? String(race.contract) : undefined };
+  const picks = readJson(PICKS_DEP);
+  return { game, desk, rpc, race: race?.contract ? String(race.contract) : undefined, picks: picks?.contract ? String(picks.contract) : undefined };
 }
 
 function sponsorKey(provider: Provider) {
@@ -157,7 +164,7 @@ async function upload(send: boolean) {
 function flag(a: string[], name: string, d: string) { const i = a.indexOf(name); return i >= 0 && a[i + 1] && !a[i + 1].startsWith("--") ? a[i + 1] : d; }
 
 /** Builds the config: the pinned game, Desk, VHP and KOIN, and the caps. Exported for the tests. */
-export function buildConfig(game: any, desk: any, caps: { perTx: string; perPlayerDay: string; perPlayerWeek: string; perDay: string; minVhp?: string; freePerDay?: string }, enabled: boolean, race?: string) {
+export function buildConfig(game: any, desk: any, caps: { perTx: string; perPlayerDay: string; perPlayerWeek: string; perDay: string; minVhp?: string; freePerDay?: string }, enabled: boolean, race?: string, picks?: string) {
   const vhp = game.vhp ?? PINNED_MAINNET.vhp;
   const c = {
     enabled, game: game.contract, desk: desk.contract, tokens: [vhp, game.koin ?? PINNED_MAINNET.koin],
@@ -171,8 +178,11 @@ export function buildConfig(game: any, desk: any, caps: { perTx: string; perPlay
       : (BigInt(units(DEFAULT_CAPS.freePerDay)) < BigInt(units(caps.perDay)) ? units(DEFAULT_CAPS.freePerDay) : units(caps.perDay)),
     // Producer Race picks are free play like answers (sponsor v2). Left out: picks aren't sponsored.
     ...(race ? { race } : {}),
+    // v3: the KnodeGames Picks contract's picks are free play like answers (the payee's own, arguments in the Picks shape).
+    ...(picks ? { allowed: [{ contract: picks, entry_point: PICKS_PICK, free_play: true, arg_types: PICKS_ARG_TYPES }] } : {}),
   };
   if (race && [c.game, c.desk, ...c.tokens].includes(race)) throw new Error("The race contract must differ from the game, Knode Swap and the tokens.");
+  if (picks && [c.game, c.desk, ...c.tokens, race].includes(picks)) throw new Error("The Picks contract must differ from the game, Knode Swap, the race and the tokens.");
   if (BigInt(c.min_vhp) === 0n) throw new Error("The VHP minimum must be above 0 (empty wallets would be sponsored).");
   const n = (x: string) => BigInt(x);
   if (!(n(c.max_mana_per_tx) <= n(c.max_mana_per_account_day) && n(c.max_mana_per_account_day) <= n(c.max_mana_per_account_week) && n(c.max_mana_per_account_day) <= n(c.max_mana_per_day)))
@@ -184,7 +194,7 @@ export function buildConfig(game: any, desk: any, caps: { perTx: string; perPlay
 }
 
 async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
-  const { game, desk, rpc, race } = knode();
+  const { game, desk, rpc, race, picks } = knode();
   if (send && isMainnet(rpc) && E.CONFIRM_MAINNET !== "yes") throw new Error("MAINNET: add CONFIRM_MAINNET=yes to .env first.");
   const provider = new Provider([rpc]);
   const s = sponsorKey(provider);
@@ -204,12 +214,13 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
       ? (Number(cur.max_mana_free_day ?? 0) / 1e8).toString() : undefined as any),
   };
   const enabled = enabledArg ?? !!cur.enabled;
-  const config = buildConfig(game, desk, caps, enabled, race);
+  const config = buildConfig(game, desk, caps, enabled, race, picks);
   log(`To the sponsor contract ${A} on ${rpc}${isMainnet(rpc) ? "   ⚠ MAINNET" : ""}, signed and paid by the sponsor wallet:`);
   log(`  set_config: ${enabled ? "ON" : "off"}; pays for the game ${config.game} and Knode Swap ${config.desk}; approves on VHP and KOIN`);
   log(`  caps: ${caps.perTx} Mana per transaction, ${caps.perPlayerDay} per player per day, ${caps.perPlayerWeek} per player per week, ${caps.perDay} for everyone per day`);
   log(`  race picks: ${race ? `free play like answers, on ${race}` : "not sponsored (no race-data/deployment.json yet)"}`);
-  log(`  players: answers${race ? " and race picks" : ""} for any wallet; everything else only for wallets holding at least ${caps.minVhp} VHP, or with a stake in the game`);
+  log(`  KnodeGames picks: ${picks ? `free play like answers, on ${picks} (sponsor v3)` : "not sponsored (no picks-data/deployment.json yet)"}`);
+  log(`  players: answers${race ? " and race picks" : ""}${picks ? " and KnodeGames picks" : ""} for any wallet; everything else only for wallets holding at least ${caps.minVhp} VHP, or with a stake in the game`);
   log(`  free answers (wallets with no VHP and no stake): at most ${Number(config.max_mana_free_day) / 1e8} Mana for everyone per day, inside the ${caps.perDay}`);
   if (!send) { log("\nDry run only. Nothing was sent. Add --send to send it."); return; }
   const chain = new KoinosChain(rpc, A);
@@ -220,16 +231,19 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
 
 // ═══════════════════════════════ website payer ═══════════════════════════════
 /** Who the website asks to pay: writes "payer" (and the "sponsor" block) into both deployment files. Exported for tests. */
-export function setPayer(choice: "sponsor" | "self", rcLimitMana = "1", files: { game: string; desk: string; state: string; race?: string } = { game: GAME_DEP, desk: DESK_DEP, state: STATE, race: RACE_DEP }) {
+export function setPayer(choice: "sponsor" | "self", rcLimitMana = "1", files: { game: string; desk: string; state: string; race?: string; picks?: string } = { game: GAME_DEP, desk: DESK_DEP, state: STATE, race: RACE_DEP, picks: PICKS_DEP }) {
   const game = readJson(files.game), desk = readJson(files.desk), st = readJson(files.state);
   const race = files.race ? readJson(files.race)?.contract : undefined;
+  const picks = files.picks ? readJson(files.picks)?.contract : undefined;
   if (!game?.contract || !desk?.contract) throw new Error("game-data and desk-data deployment.json are needed.");
   if (choice === "sponsor" && !st?.address) throw new Error(`${files.state} has no sponsor yet: upload it first (npm run sponsor -- upload --send).`);
   const block = st?.address ? {
     address: st.address,
-    covers: [game.contract, desk.contract, game.vhp ?? PINNED_MAINNET.vhp, game.koin ?? PINNED_MAINNET.koin, ...(race ? [race] : [])],
+    covers: [game.contract, desk.contract, game.vhp ?? PINNED_MAINNET.vhp, game.koin ?? PINNED_MAINNET.koin, ...(race ? [race] : []), ...(picks ? [picks] : [])],
     // Producer Race picks: free play like answers (the website asks with the answers' Mana limit).
     ...(race ? { race } : {}),
+    // KnodeGames picks (sponsor v3): free play like answers.
+    ...(picks ? { picks } : {}),
     tokens: [game.vhp ?? PINNED_MAINNET.vhp, game.koin ?? PINNED_MAINNET.koin],
     rcLimit: units(rcLimitMana),
     // Staking, withdrawing, swapping and claiming do far more than an answer (approve, transfer, Proof-of-Burn, stake).

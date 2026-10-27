@@ -65,6 +65,24 @@ message config {
   // The Producer Race picks contract (race/). When set, `pick` calls for the payee are sponsored as free play, like
   // game answers. Empty = picks are not sponsored.
   bytes race = 12 [(koinos.btype) = ADDRESS];
+  // v3: more Knode player actions, by contract and entry point, so new KnodeGames contracts (the Picks contract first)
+  // are sponsored without new sponsor code. At most 8. See allowed_call.
+  repeated allowed_call allowed = 13;
+}
+
+// v3: one more player action the sponsor pays for. The call is paid only when its arguments are exactly what the
+// target contract will read (audit S-1): field 1 is the player (25 bytes) and must be the payee; every other field must
+// have the wire type listed in arg_types and come in field-number order, and field 1 appears once, first. A contract
+// whose decoder skipped a field of an unexpected type could otherwise read a different player than the sponsor.
+message allowed_call {
+  bytes contract = 1 [(koinos.btype) = ADDRESS];
+  uint32 entry_point = 2;
+  // Free play: paid for any wallet, like game answers (wallets that are not real players count against
+  // max_mana_free_day). Otherwise: real players only.
+  bool free_play = 3;
+  // One byte per field number from 1: the field's protobuf wire type + 1 (1 = varint, 2 = 64-bit, 3 = bytes or a
+  // message, 6 = 32-bit), or 0 = the field may not appear. arg_types[0] must be 3 (the player). 1 to 16 bytes.
+  bytes arg_types = 4 [(koinos.btype) = HEX];
 }
 
 message usage {

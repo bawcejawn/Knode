@@ -137,6 +137,37 @@
                 "options": {
                   "(koinos.btype)": "ADDRESS"
                 }
+              },
+              "allowed": {
+                "rule": "repeated",
+                "type": "allowed_call",
+                "id": 13
+              }
+            }
+          },
+          "allowed_call": {
+            "fields": {
+              "contract": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "entry_point": {
+                "type": "uint32",
+                "id": 2
+              },
+              "free_play": {
+                "type": "bool",
+                "id": 3
+              },
+              "arg_types": {
+                "type": "bytes",
+                "id": 4,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
               }
             }
           },
