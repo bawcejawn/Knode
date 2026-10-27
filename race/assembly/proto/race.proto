@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+// =====================================================================
+// Knode Producer Race: picks
+//
+// Free to play: no entry fee, no wager, no pot, no token. A wallet picks one
+// horse (a block producer) for a race; the race recorder (bot/race.ts) scores
+// the picks after the race. This contract only keeps the picks, and makes the
+// chain itself enforce the rules:
+//   - a race is a 6-hour UTC window: race number r runs from r * 6 h to
+//     (r + 1) * 6 h after 1970-01-01 00:00 UTC (races start at 00:00, 06:00,
+//     12:00 and 18:00 UTC);
+//   - picks are open for the next 4 races (the coming 24 hours) and LOCK when
+//     the race starts: a pick is refused once the head block's time has
+//     reached the race's start;
+//   - one pick per wallet per race; it can be changed until the race starts;
+//   - at most max_picks_per_day picks (new picks and changes together) per
+//     wallet per UTC day (default 5), so nobody can spam it;
+//   - the pick must be signed by the wallet it is for.
+// The horse is any valid address: the race's handicap card is set off the
+// chain, so a pick on a producer that is not in the race simply can't win.
+//
+// The contract holds no funds and never pays Mana: the Knode Mana sponsor
+// pays for picks (like game answers). Settings change only with the owner's
+// key (the Knode owner); the very first setup needs this contract's own key.
+// =====================================================================
+
+package race;
+
+import "koinos/options.proto";
+
+message config {
+  // The Knode owner: the only one who may change the settings.
+  bytes owner = 1 [(koinos.btype) = ADDRESS];
+  bool enabled = 2;
+  // Picks (new picks and changes) per wallet per UTC day. 1 to 20.
+  uint32 max_picks_per_day = 3;
+}
+
+message pick_object {
+  bytes horse = 1 [(koinos.btype) = ADDRESS];
+  // Head block time of the latest pick (ms).
+  uint64 at = 2 [jstype = JS_STRING];
+  // How many times this pick was changed after the first.
+  uint32 changes = 3;
+}
+
+// Picks made by one wallet on one UTC day.
+message day_count {
+  uint64 day = 1 [jstype = JS_STRING];
+  uint32 count = 2;
+}
+
+message empty_object {}
+
+// @description Pick a horse for a race (or change your pick). Needs the player's signature. Refused once the race has started, for races more than 24 hours ahead, and after today's picks are used up.
+// @read-only false
+// @result empty_object
+message pick_arguments {
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  // Race number: the race's UTC start time in ms divided by 21600000.
+  uint64 race = 2 [jstype = JS_STRING];
+  bytes horse = 3 [(koinos.btype) = ADDRESS];
+}
+
+message pick_event {
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  uint64 race = 2 [jstype = JS_STRING];
+  bytes horse = 3 [(koinos.btype) = ADDRESS];
+  uint64 at = 4 [jstype = JS_STRING];
+  bool change = 5;
+}
+
+// @description One wallet's pick for one race (empty if none).
+// @read-only true
+// @result get_pick_result
+message get_pick_arguments {
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  uint64 race = 2 [jstype = JS_STRING];
+}
+
+message get_pick_result {
+  pick_object pick = 1;
+}
+
+// @description Every pick for a race, in address order, up to limit (at most 100) at a time. Pass the last address you got as start_after for the next page.
+// @read-only true
+// @result list_picks_result
+message list_picks_arguments {
+  uint64 race = 1 [jstype = JS_STRING];
+  bytes start_after = 2 [(koinos.btype) = ADDRESS];
+  uint32 limit = 3;
+}
+
+message pick_row {
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  pick_object pick = 2;
+}
+
+message list_picks_result {
+  repeated pick_row rows = 1;
+}
+
+// @description Picks a wallet has made today (UTC) and the daily limit.
+// @read-only true
+// @result get_usage_result
+message get_usage_arguments {
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+}
+
+message get_usage_result {
+  uint64 day = 1 [jstype = JS_STRING];
+  uint32 picks_today = 2;
+  uint32 max_picks_per_day = 3;
+}
+
+// @description The settings.
+// @read-only true
+// @result config
+message get_config_arguments {}
+
+// @description Change the settings. Needs the owner's key (the first time: this contract's own key).
+// @read-only false
+// @result empty_object
+message set_config_arguments {
+  config config = 1;
+}
+
+message config_event {
+  config config = 1;
+}
