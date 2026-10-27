@@ -43,7 +43,9 @@ const NEW_FIELDS = new Set(["min_stake_next", "min_stake_next_week", "pending_ow
   "pending_seed_owner", "pending_seed_owner_height", "reward_rule_week_plus_one", "aw_hi", "aw_lo", "reward_rule", "capped",
   "pot_free", "free_best", "free_best_n", "free_second", "free_second_n",
   // v5, after the 2026-10-26 audit: an entry's highest stake this week, and whether it settled as a free player
-  "peak_stake", "free_player"]);
+  "peak_stake", "free_player",
+  // v6: the KnodeGames vault
+  "v6_rule_week_plus_one", "game_count", "fee_vhp", "games_rolled", "stake_other", "prize_v6", "prizes", "split"]);
 const isDefault = (v: any) => v === undefined || v === null || v === false || v === 0 || v === "0" || v === "";
 
 /** Every value in `before` must be in `after` unchanged; anything only in `after` must be a new field at its default

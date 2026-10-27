@@ -29,6 +29,8 @@ message config_object {
   bytes pending_seed_owner = 18 [(koinos.btype) = ADDRESS];   // v5: a proposed new seed owner
   uint64 pending_seed_owner_height = 19 [jstype = JS_STRING]; // v5: block height of propose_seed_owner; accept waits a day
   uint64 reward_rule_week_plus_one = 20 [jstype = JS_STRING]; // v5: first week (+1) paid 40% by rank x capped stake / 60% by rank x stake; 0 = not set yet
+  uint64 v6_rule_week_plus_one = 21 [jstype = JS_STRING];   // v6: first week (+1) closed by the KnodeGames vault split; 0 = not set yet
+  uint32 game_count = 22;                                   // v6: games registered besides the question game (at most 12)
 }
 
 message totals_object {
@@ -50,6 +52,9 @@ message totals_object {
   uint64 acc_house_hi = 14 [jstype = JS_STRING];
   uint64 acc_house_lo = 15 [jstype = JS_STRING];
   uint64 acc_time = 16 [jstype = JS_STRING];          // time (ms) the accumulators were last brought up to date
+  uint64 fee_vhp = 17 [jstype = JS_STRING];           // v6: the 5% fee, owed to the owner in VHP
+  uint64 games_rolled = 18 [jstype = JS_STRING];      // v6: buckets with no winners, waiting for their own game's next close (all games)
+  uint64 stake_other = 19 [jstype = JS_STRING];       // v6: stake + pending in games other than the question game (part of total_stake)
 }
 
 message player_object {
@@ -58,6 +63,7 @@ message player_object {
   uint64 pending_week = 3 [jstype = JS_STRING];
   uint64 void_week_plus_one = 4 [jstype = JS_STRING]; // week (+1) in which the player withdrew; 0 = never
   uint64 last_week_plus_one = 5 [jstype = JS_STRING]; // latest week (+1) the player answered in; 0 = never
+  uint64 stake_other = 6 [jstype = JS_STRING];        // v6: this player's stake + pending in other games (not part of stake/pending)
 }
 
 message answer_record {
@@ -135,6 +141,10 @@ message week_object {
   uint32 free_best_n = 38;                            // v5: free players settled with that score
   uint32 free_second = 39;                            // v5: the second-best free score
   uint32 free_second_n = 40;                          // v5: free players settled with that score
+  bool prize_v6 = 41;                                 // v6: the free prize is split 2 VHP (1st) / 1 VHP (2nd), ties at 1st share both
+  uint64 fee_vhp = 42 [jstype = JS_STRING];           // v6: fee taken at this close (VHP)
+  uint64 prizes = 43 [jstype = JS_STRING];            // v6: all games' free prizes funded at this close
+  uint64 split = 44 [jstype = JS_STRING];             // v6: R, the part split by stake share
 }
 
 message bucket_object {
@@ -519,3 +529,270 @@ message execute_seed_withdrawal_result {
   uint64 vhp = 1 [jstype = JS_STRING];
   uint64 koin = 2 [jstype = JS_STRING];
 }
+
+// ════════════════════════════ v6: KnodeGames vault ════════════════════════════
+
+// A game in the vault. Game 1 is the question game (its players, weeks and buckets keep the v5 records).
+message game_object {
+  uint32 id = 1;
+  string name = 2;
+  bool staked = 3;                                    // has a stake bucket (top 30%, baskets A and B)
+  bool free_prize = 4;                                // pays 2 + 1 VHP a week to its best free players
+  bool active = 5;                                    // takes new deposits and moves
+  uint64 from_week = 6 [jstype = JS_STRING];          // first week it earns
+  uint64 last_week_plus_one = 7 [jstype = JS_STRING]; // last week (+1) it earns; 0 = no end
+  uint64 rolled = 8 [jstype = JS_STRING];             // its buckets with no winners, added to its next bucket
+  uint64 prize_carry = 9 [jstype = JS_STRING];        // unfunded free prize carried forward (not owed until funded)
+  uint64 stake = 10 [jstype = JS_STRING];             // all stake + pending in this game
+  uint64 acc_hi = 11 [jstype = JS_STRING];            // stake x time since the last close (128-bit)
+  uint64 acc_lo = 12 [jstype = JS_STRING];
+  uint64 acc_time = 13 [jstype = JS_STRING];
+}
+
+// A game announced by the owner; it can be applied after the timelock (within 7 days).
+message game_proposal_object {
+  game_object game = 1;
+  uint64 eta = 2 [jstype = JS_STRING];
+}
+
+// A player's stake in a game other than the question game.
+message gplayer_object {
+  uint64 stake = 1 [jstype = JS_STRING];
+  uint64 pending = 2 [jstype = JS_STRING];
+  uint64 pending_week = 3 [jstype = JS_STRING];
+  uint64 void_week_plus_one = 4 [jstype = JS_STRING];
+}
+
+// A player's week in a game other than the question game.
+message gentry_object {
+  uint64 stake = 1 [jstype = JS_STRING];              // stake that week (frozen at the first change or the first result)
+  bool voided = 2;                                    // withdrew all of that week's stake
+  uint32 points = 3;                                  // posted points (1-255); 0 = not posted
+  bool claimed = 4;
+  uint64 reward = 5 [jstype = JS_STRING];
+  uint32 prize_place = 6;                             // free prize: 1 = first, 2 = second, 0 = none
+}
+
+// A week of a game other than the question game.
+message gweek_object {
+  bool closed = 1;                                    // the vault week is closed: bucket and prize are set
+  uint64 bucket = 2 [jstype = JS_STRING];             // stake bucket (with its rollover)
+  uint64 prize = 3 [jstype = JS_STRING];              // free prize funded this week
+  bool sealed = 4;
+  uint64 seal_time = 5 [jstype = JS_STRING];
+  uint64 last_change_time = 6 [jstype = JS_STRING];   // latest owner correction
+  bool voided = 7;                                    // the owner voided this week's results
+  bool finalized = 8;
+  bool rolled_over = 9;
+  uint32 eligible_players = 10;
+  uint32 max_points = 11;
+  uint32 cutoff = 12;
+  uint32 winners = 13;
+  uint64 pot_a = 14 [jstype = JS_STRING];
+  uint64 pot_b = 15 [jstype = JS_STRING];
+  uint64 sum_w = 16 [jstype = JS_STRING];
+  uint64 bw_hi = 17 [jstype = JS_STRING];
+  uint64 bw_lo = 18 [jstype = JS_STRING];
+  uint64 aw_hi = 19 [jstype = JS_STRING];
+  uint64 aw_lo = 20 [jstype = JS_STRING];
+  bool fin_started = 21;
+  uint32 fin_points = 22;
+  uint32 fin_index = 23;
+  uint64 fin_rank = 24 [jstype = JS_STRING];
+  uint64 fin_gw = 25 [jstype = JS_STRING];
+  uint32 first_n = 26;                                // free-prize winners posted for 1st place
+  uint32 second_n = 27;                               // ... and for 2nd
+  uint64 prize_first = 28 [jstype = JS_STRING];       // set at finalize: what each 1st-place winner gets
+  uint64 prize_second = 29 [jstype = JS_STRING];      // ... and each 2nd-place winner
+  uint64 claimed = 30 [jstype = JS_STRING];
+}
+
+// @description One game (with one of its weeks).
+// @read-only true
+message get_game_arguments {
+  uint32 game = 1;
+  uint64 week = 2 [jstype = JS_STRING];
+}
+
+message get_game_result {
+  game_object game = 1;
+  gweek_object week = 2;
+  repeated bucket_object buckets = 3;                 // index = points (other games)
+  game_proposal_object proposal = 4;
+}
+
+// @description Every game in the vault, the question game first.
+// @read-only true
+message list_games_arguments {}
+
+message list_games_result {
+  repeated game_object games = 1;
+}
+
+// @description A player's stake and week in a game other than the question game.
+// @read-only true
+message get_game_player_arguments {
+  uint32 game = 1;
+  bytes player = 2 [(koinos.btype) = ADDRESS];
+  uint64 week = 3 [jstype = JS_STRING];
+}
+
+message get_game_player_result {
+  gplayer_object player = 1;
+  gentry_object entry = 2;
+  uint64 active_stake = 3 [jstype = JS_STRING];
+  uint64 week_stake = 4 [jstype = JS_STRING];         // the stake that counts for that week (0 = voided or none)
+}
+
+// @description Announce a new game, or a change to one (owner). It can be applied 48 hours later.
+// @read-only false
+message propose_game_arguments {
+  uint32 game = 1;
+  string name = 2;
+  bool staked = 3;
+  bool free_prize = 4;
+}
+
+message propose_game_result {
+  uint64 eta = 1 [jstype = JS_STRING];
+}
+
+// @description Apply an announced game after its timelock (owner). It earns from the next week.
+// @read-only false
+message apply_game_arguments {
+  uint32 game = 1;
+}
+
+message apply_game_result {
+  uint64 from_week = 1 [jstype = JS_STRING];
+}
+
+// @description Stop a game at once (owner): no new deposits or moves; it stops earning after this week. Withdrawals stay open.
+// @read-only false
+message deactivate_game_arguments {
+  uint32 game = 1;
+}
+
+message deactivate_game_result {}
+
+// @description Stake VHP in a game other than the question game (whole numbers; counts from next week).
+// @read-only false
+message deposit_to_arguments {
+  uint32 game = 1;
+  bytes from = 2 [(koinos.btype) = ADDRESS];
+  uint64 amount = 3 [jstype = JS_STRING];
+  bool koin = 4;                                      // pay in KOIN (burned 1:1 into VHP)
+}
+
+message deposit_to_result {}
+
+// @description Withdraw from a game other than the question game. Any amount, at any time.
+// @read-only false
+message withdraw_from_arguments {
+  uint32 game = 1;
+  bytes to = 2 [(koinos.btype) = ADDRESS];
+  uint64 amount = 3 [jstype = JS_STRING];
+}
+
+message withdraw_from_result {}
+
+// @description Move stake from one game to another (no tokens move). It counts in the new game from next week.
+// @read-only false
+message move_stake_arguments {
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  uint32 from_game = 2;
+  uint32 to_game = 3;
+  uint64 amount = 4 [jstype = JS_STRING];
+}
+
+message move_stake_result {}
+
+message result_row {
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  uint32 points = 2;
+}
+
+// @description Post a game's weekly points (operator), up to 50 players per call.
+// @read-only false
+message post_results_arguments {
+  uint32 game = 1;
+  uint64 week = 2 [jstype = JS_STRING];
+  repeated result_row rows = 3;
+}
+
+message post_results_result {}
+
+// @description Post a game's free-prize winners (operator): place 1 or 2, up to 10 wallets per place.
+// @read-only false
+message post_prize_winners_arguments {
+  uint32 game = 1;
+  uint64 week = 2 [jstype = JS_STRING];
+  uint32 place = 3;
+  repeated bytes players = 4 [(koinos.btype) = ADDRESS];
+}
+
+message post_prize_winners_result {}
+
+// @description Mark a game's weekly results complete (operator). The owner can correct them for 24 hours.
+// @read-only false
+message seal_results_arguments {
+  uint32 game = 1;
+  uint64 week = 2 [jstype = JS_STRING];
+}
+
+message seal_results_result {}
+
+// @description Correct one player's points (0 removes them), or take away a free-prize place (owner).
+// @read-only false
+message correct_result_arguments {
+  uint32 game = 1;
+  uint64 week = 2 [jstype = JS_STRING];
+  bytes player = 3 [(koinos.btype) = ADDRESS];
+  uint32 points = 4;
+  bool remove_prize = 5;
+}
+
+message correct_result_result {}
+
+// @description Void a game's week (owner): its bucket rolls over within the game and its prize returns to the pool.
+// @read-only false
+message void_game_week_arguments {
+  uint32 game = 1;
+  uint64 week = 2 [jstype = JS_STRING];
+}
+
+message void_game_week_result {}
+
+// @description Find a game week's winners (anyone), in pages like finalize_week.
+// @read-only false
+message finalize_game_week_arguments {
+  uint32 game = 1;
+  uint64 week = 2 [jstype = JS_STRING];
+}
+
+message finalize_game_week_result {
+  uint32 cutoff = 1;
+  uint32 winners = 2;
+  bool done = 3;
+}
+
+// @description Claim a game week's reward or free prize.
+// @read-only false
+message claim_game_arguments {
+  uint32 game = 1;
+  bytes player = 2 [(koinos.btype) = ADDRESS];
+  uint64 week = 3 [jstype = JS_STRING];
+}
+
+message claim_game_result {
+  uint64 reward = 1 [jstype = JS_STRING];
+}
+
+// @description Claim the 5% fee in VHP (owner).
+// @read-only false
+message claim_fee_vhp_arguments {
+  bytes to = 1 [(koinos.btype) = ADDRESS];
+  uint64 amount = 2 [jstype = JS_STRING];
+}
+
+message claim_fee_vhp_result {}
