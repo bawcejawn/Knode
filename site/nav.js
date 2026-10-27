@@ -1,4 +1,4 @@
-/* Phone navigation: the bottom tab bar (Play · Race · Swap · Leaders · More) and the "More" sheet with every other page.
+/* Phone navigation: the bottom tab bar (Games · Play · Race · Swap · More, written by tools/site-nav.mjs) and the "More" sheet with every other page.
    Marks the tab for the page you're on, and opens/closes the sheet. No data, no storage, no network. */
 (function () {
   "use strict";

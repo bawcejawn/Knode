@@ -21,4 +21,4 @@
 .kb .hist td.num, .kb .hist th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .kb .hist tr.top td { font-weight: 700; }
 .kb .hist tr.me td { background: var(--violet-soft); }
-@media (max-width: 640px) { .kb .champs { grid-template-columns: 1fr; } .kb .hist .hide-sm { display: none; } }
+@media (max-width: 640px) { .kb .champs { grid-template-columns: 1fr; } .kb .hist .hide-sm { display: none; } .kb .tabs2 { gap: 4px; } .kb .tabs2 button { padding: 6px 9px; } }

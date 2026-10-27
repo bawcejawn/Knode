@@ -164,7 +164,7 @@
     const go = h("a", { class: "kw-go", href: VAULT, target: "_blank", rel: "noopener noreferrer", referrerpolicy: "no-referrer", hidden: "" }, "Open KOIN Vault");
     const qr = h("div", { class: "kw-qr" });
     const box = open(h("h3", {}, "Connect KOIN Vault"),
-      h("p", {}, isPhone() ? "Tap Open KOIN Vault, approve KnodeGames with your fingerprint or face, then come back to this tab." : "Scan with your phone (or use Connect inside KOIN Vault), approve KnodeGames with your passkey, and this page connects by itself."),
+      h("p", {}, isPhone() ? "Tap Open KOIN Vault, approve Knode (KnodeGames) with your fingerprint or face, then come back to this tab." : "Scan with your phone (or use Connect inside KOIN Vault), approve Knode (KnodeGames) with your passkey, and this page connects by itself."),
       qr, go, status,
       h("p", {}, "No KOIN Vault yet? ", h("a", { href: VAULT, target: "_blank", rel: "noopener" }, "Create one at koinvault.app"), " in a minute, no extension needed."));
     let cancelled = false; onClose = () => { cancelled = true; };

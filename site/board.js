@@ -20,7 +20,8 @@
 (function (root) {
   "use strict";
   const MEDAL = ["🥇", "🥈", "🥉"], ORD = ["1st", "2nd", "3rd"];
-  const MODES = [["today", "Today"], ["week", "This week"], ["all", "All time"]];
+  // "Last week" appears only when the data has it, so the week that just ended stays visible on Monday.
+  const MODES = [["today", "Today"], ["week", "This week"], ["last", "Last week"], ["all", "All time"]];
   let n = 0;
 
   function el(tag, attrs, ...kids) {
@@ -39,7 +40,7 @@
   /** The rows for one view, ranked rows only, in the order the data gives (the recorder already sorted them). */
   function partOf(data, mode) {
     if (!data) return null;
-    return mode === "today" ? data.today : mode === "all" ? data.allTime : data.week;
+    return mode === "today" ? data.today : mode === "all" ? data.allTime : mode === "last" ? data.lastWeek : data.week;
   }
 
   function create(host, opt) {
@@ -65,13 +66,15 @@
 
     function render() {
       const part = partOf(data, mode), rows = (part && Array.isArray(part.rows)) ? part.rows : [];
-      const ranked = rows.filter((r) => r && r.ranked);
-      sub.textContent = mode === "week" && part && part.start ? `Week ${part.week + 1}, from ${day(part.start)} (UTC)` : mode === "today" && part && part.day ? `${part.day} (UTC)` : mode === "all" ? "Every week so far" : "";
-      podium.replaceChildren(...(mode === "week" ? ranked.slice(0, 3).filter(o.scored).map((r, i) =>
+      const ranked = rows.filter((r) => r && r.ranked), weekly = mode === "week" || mode === "last";
+      btns[2].hidden = !(data && data.lastWeek);
+      if (mode === "last" && btns[2].hidden) { mode = "week"; btns.forEach((x, i) => x.setAttribute("aria-pressed", String(MODES[i][0] === mode))); return render(); }
+      sub.textContent = weekly && part && part.start ? `Week ${part.week + 1}, from ${day(part.start)} (UTC)` : mode === "today" && part && part.day ? `${part.day} (UTC)` : mode === "all" ? "Every week so far" : "";
+      podium.replaceChildren(...(weekly ? ranked.slice(0, 3).filter(o.scored).map((r, i) =>
         el("div", { class: "champ" + (r.a === who ? " me" : "") }, el("b", { text: `${MEDAL[i]} ${ORD[i]}` }), el("span", { class: "mono", text: o.name(r.a) }), el("div", { class: "ago", text: o.summary(r) }))) : []));
       body.replaceChildren(...ranked.slice(0, 50).map((r, i) => {
         const href = o.link ? o.link(r.a) : null;
-        return el("tr", { class: [i < 3 && mode === "week" && o.scored(r) ? "top" : "", r.a === who ? "me" : ""].join(" ").trim() || null },
+        return el("tr", { class: [i < 3 && weekly && o.scored(r) ? "top" : "", r.a === who ? "me" : ""].join(" ").trim() || null },
           el("td", { text: i < 3 && o.scored(r) ? MEDAL[i] : String(i + 1) }),
           el("td", { class: "mono" }, href ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: o.name(r.a) }) : el("span", { text: o.name(r.a) })),
           ...o.columns.map((c) => el("td", { class: "num" + (c.wide ? " hide-sm" : ""), text: fmt(r[c.key]) })));

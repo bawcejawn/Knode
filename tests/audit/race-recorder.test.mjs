@@ -250,7 +250,15 @@ test("publish: a pick marked both win and show, or a board row with more wins an
   fs.writeFileSync(path.join(bad2, "board.json"), JSON.stringify(b2));
   const bad3 = tmp(); const b3 = JSON.parse(JSON.stringify(board)); delete b3.week.rows[0].pts;
   fs.writeFileSync(path.join(bad3, "board.json"), JSON.stringify(b3));
-  for (const d of [bad1, bad2, bad3]) assert.equal(shapeOk(d), false);
+  // Points that don't follow from wins and shows; flags that don't follow from the race's own result; true for 1.
+  const bad4 = tmp(); const b4 = JSON.parse(JSON.stringify(board)); b4.week.rows[0].pts = 999;
+  fs.writeFileSync(path.join(bad4, "board.json"), JSON.stringify(b4));
+  const flip = (fn) => { const d = tmp(), w2 = JSON.parse(JSON.stringify(w)), r2 = w2.races.find((x) => x.result?.picks?.length); fn(r2.result.picks); fs.writeFileSync(path.join(d, "W002.json"), JSON.stringify(w2)); return d; };
+  const bad5 = flip((pk) => { pk[0][3] = 0; });                       // W1 picked the winner but is marked as not won
+  const bad6 = flip((pk) => { pk[1][5] = 0; });                       // W2 picked the 2nd horse but has no show
+  const bad7 = flip((pk) => { pk[1][4] = true; });                    // a boolean where a 0/1 belongs
+  const bad8 = flip((pk) => { pk[1].splice(1, 1, st[3].a); });        // a show on a horse that finished 4th
+  for (const d of [bad1, bad2, bad3, bad4, bad5, bad6, bad7, bad8]) assert.equal(shapeOk(d), false, d);
 });
 
 test("workflow: the recorder holds no secret and no write token; only the publish job pushes, only to race-data, running no repository code", () => {

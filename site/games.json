@@ -2,7 +2,7 @@
   "v": 1,
   "games": [
     { "id": "race", "name": "Producer Race", "kinds": ["free"], "status": "live", "href": "race.html",
-      "line": "Pick the producer that wins each 6-hour race, four a day. A top-3 finish scores a Show." },
+      "line": "Pick the producer that wins each 6-hour race, four a day. A 2nd or 3rd place finish scores a Show." },
     { "id": "questions", "name": "Daily Questions", "kinds": ["free", "staked"], "status": "live", "href": "index.html#play",
       "line": "Answer quick questions about block producers, Monday to Saturday. Stake VHP to share the weekly rewards." },
     { "id": "blockx", "name": "Who Signs Block X", "kinds": ["free"], "status": "soon", "href": "",
