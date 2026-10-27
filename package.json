@@ -17,7 +17,8 @@
     "admin": "tsx admin/server.ts",
     "heal": "node bot/heal.mjs",
     "sponsor": "tsx bot/sponsor.ts",
-    "race": "tsx bot/race.ts"
+    "race": "tsx bot/race.ts",
+    "racepicks": "tsx bot/race-picks.ts"
   },
   "dependencies": {
     "koilib": "9.4.1"

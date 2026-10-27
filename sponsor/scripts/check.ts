@@ -30,11 +30,13 @@ ok(/0xda1fd8f5/.test(site), "site/wallet.js asks would_pay at 0xda1fd8f5");
 // The player actions the contract pays for are the game's and the Desk's entry points by name.
 const game = JSON.parse(fs.readFileSync("../game/abi/kpred.koilib.json", "utf8"));
 const desk = JSON.parse(fs.readFileSync("../desk/abi/desk.koilib.json", "utf8"));
+const raceAbi = JSON.parse(fs.readFileSync("../race/abi/race.koilib.json", "utf8"));
 const src = fs.readFileSync("assembly/Sponsor.ts", "utf8");
 const pinned: Record<string, [any, string]> = {
   GAME_DEPOSIT_VHP: [game, "deposit_vhp"], GAME_DEPOSIT_KOIN: [game, "deposit_koin"], GAME_WITHDRAW: [game, "withdraw"],
   GAME_ANSWER: [game, "answer"], GAME_SETTLE: [game, "settle"], GAME_CLAIM: [game, "claim"],
   GAME_CLOSE_WEEK: [game, "close_week"], GAME_FINALIZE_WEEK: [game, "finalize_week"], DESK_SWAP: [desk, "swap"],
+  RACE_PICK: [raceAbi, "pick"],
 };
 for (const [k, [a, name]] of Object.entries(pinned)) {
   const m = src.match(new RegExp(`${k}: u32 = (0x[0-9a-f]+)`));
