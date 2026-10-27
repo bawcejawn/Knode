@@ -61,7 +61,7 @@
       "argument": "picks.list_pending_arguments",
       "return": "picks.list_pending_result",
       "read_only": true,
-      "description": "Announced game changes that can still be applied, in game id order, up to limit (at most 50) at a time. Pass the last game id you got as start_after for the next page."
+      "description": "Announced game changes that can still be applied, in game id order, up to limit (at most 50) at a time. Pass next as start_after for the next page."
     },
     "announce_game": {
       "entry_point": 4158087113,
@@ -588,6 +588,10 @@
                 "rule": "repeated",
                 "type": "pending_game",
                 "id": 1
+              },
+              "next": {
+                "type": "uint32",
+                "id": 2
               }
             }
           },

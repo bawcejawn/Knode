@@ -74,6 +74,9 @@ message config {
 // target contract will read (audit S-1): field 1 is the player (25 bytes) and must be the payee; every other field must
 // have the wire type listed in arg_types and come in field-number order, and field 1 appears once, first. A contract
 // whose decoder skipped a field of an unexpected type could otherwise read a different player than the sponsor.
+// Only for actions whose arguments have NO nested messages (fix-check S3-2): wire type 2 must be plain bytes or a
+// string in the target contract's ABI, never a sub-message (whose inner fields the sponsor doesn't read). The sponsor
+// can't see the target's ABI, so the tool (bot/sponsor.ts) and npm run check confirm it for every row they build.
 message allowed_call {
   bytes contract = 1 [(koinos.btype) = ADDRESS];
   uint32 entry_point = 2;

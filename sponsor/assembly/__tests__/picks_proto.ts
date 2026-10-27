@@ -1373,6 +1373,11 @@ export namespace picks {
         pending_game.encode(unique_name_pending[i], writer);
         writer.ldelim();
       }
+
+      if (message.next != 0) {
+        writer.uint32(16);
+        writer.uint32(message.next);
+      }
     }
 
     static decode(reader: Reader, length: i32): list_pending_result {
@@ -1386,6 +1391,10 @@ export namespace picks {
             message.pending.push(pending_game.decode(reader, reader.uint32()));
             break;
 
+          case 2:
+            message.next = reader.uint32();
+            break;
+
           default:
             reader.skipType(tag & 7);
             break;
@@ -1396,9 +1405,11 @@ export namespace picks {
     }
 
     pending: Array<pending_game>;
+    next: u32;
 
-    constructor(pending: Array<pending_game> = []) {
+    constructor(pending: Array<pending_game> = [], next: u32 = 0) {
       this.pending = pending;
+      this.next = next;
     }
   }
 

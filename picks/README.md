@@ -56,10 +56,12 @@ certutil -hashfile picks\build\release\contract.wasm SHA256
 Independent audit 2026-10-27 (`docs/history/AUDIT-2026-10-27-picks.md`): verdict "fix first" for P-1 (High, an
 announcement could survive an owner handover) and P-2 (Medium, tighten_game could be undone by an earlier
 announcement). Both are fixed (owner generations; tighten_game drops the game's announcement), plus P-4 (the check
-reads the compiled code too) and P-7 (`list_pending`). **Fix-check pending.**
+reads the compiled code too) and P-7 (`list_pending`). Fix-check 2026-10-27 (`docs/history/AUDIT-2026-10-27-picks-fixcheck.md`):
+"ready for testnet"; its one new finding, PF-1 (Low, `list_pending` could come back empty with no cursor), is fixed
+(`next`).
 
-Development build sha256 (after the fixes): `6a508621028304cd91e1c5581c97ec9a95e3190707e73cf54ffc3421a3c4f936` (32,565 bytes).
-Tests: 42 contract tests (`npm test`, in the Koinos mock VM), including the auditor's attack tests (`Picks.audit.spec.ts`).
+Release candidate sha256 (after the fix-check): `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594` (32,667 bytes).
+Tests: 46 contract tests (`npm test`, in the Koinos mock VM), including the auditor's attack tests (`Picks.audit.spec.ts`).
 
 Before announcing anything on mainnet (audit P-5, P-6): check on chain that all three overrides are on and the code's
 fingerprint matches; on Harbinger, check that a pick's stored height is the height of the block that holds it, that a

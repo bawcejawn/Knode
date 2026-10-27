@@ -205,7 +205,7 @@ message list_games_result {
   repeated game_config games = 1;
 }
 
-// @description Announced game changes that can still be applied, in game id order, up to limit (at most 50) at a time. Pass the last game id you got as start_after for the next page.
+// @description Announced game changes that can still be applied, in game id order, up to limit (at most 50) at a time. Pass next as start_after for the next page.
 // @read-only true
 // @result list_pending_result
 message list_pending_arguments {
@@ -215,6 +215,9 @@ message list_pending_arguments {
 
 message list_pending_result {
   repeated pending_game pending = 1;
+  // Fix-check PF-1: when not 0, more may follow; call again with start_after = next (a page can be short or empty
+  // because stale announcements are skipped).
+  uint32 next = 2;
 }
 
 // ── owner ──
