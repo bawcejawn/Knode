@@ -198,9 +198,12 @@
 
   // ── Guest (site/guest.js) ──
   const GUEST_WARN = "Play-only wallet stored in this browser. Never send KOIN or VHP to it.";
-  const guestReady = () => !!(window.KGuest && W.payer === "sponsor" && W.sponsor && W.sponsor.address);
+  // Owner switch: guest play is on only when game-data/deployment.json has "sponsor": { ..., "guest": true }. Keep it off
+  // until the site has its own domain: on the shared bawcejawn.github.io origin, other pages there could read a guest key.
+  const guestOn = () => !!(W.sponsor && W.sponsor.guest === true);
+  const guestReady = () => !!(window.KGuest && guestOn() && W.payer === "sponsor" && W.sponsor && W.sponsor.address);
   function guestOption(pick) {
-    if (!window.KGuest) return null;   // pages without guest play (swap, burn): no option
+    if (!window.KGuest || !guestOn()) return null;   // pages without guest play (swap, burn), or guest play switched off
     const ready = guestReady();
     const btn = h("button", { class: "kw-opt", type: "button", ...(ready ? {} : { disabled: "", "aria-disabled": "true" }), onclick: ready ? pick(connectGuest) : () => {} },
       h("span", { class: "kw-ic", "aria-hidden": "true" }, "🎟️"),
@@ -343,7 +346,7 @@
       const id = await W.provider.getChainId().catch(() => null);
       if (id !== W.chainId) throw new Error("The network node reports a different chain than Knode runs on. Nothing was signed.");
     }
-    if (W.kind === "guest") return sendGuest(label, ops, opts);
+    if (W.kind === "guest") { if (!guestOn()) throw new Error("Guest play is paused for now. Connect Kondor or KOIN Vault to play."); return sendGuest(label, ops, opts); }
     return W.kind === "vault" ? sendVault(label, ops, opts) : sendKondor(label, ops, opts);
   }
 
