@@ -103,9 +103,11 @@
     const who = me();
     myPicks = new Map(); usage = null;
     if (picksContract && who) {
-      // Today, the open days, and day 1 of the current season (whether you joined, before the recorder has it).
+      // Every day of the current season so far (whether you joined, and the producers you already picked, before
+      // the recorder has those days: audit SV-5), today, and the open days.
       const se = S.seasonOf(today());
-      const days = [today(), ...S.openDays(Date.now()), ...(se ? [se.start] : [])].filter((d, i, a) => a.indexOf(d) === i);
+      const past = se ? Array.from({ length: today() - se.start }, (_, i) => se.start + i) : [];
+      const days = [...past, today(), ...S.openDays(Date.now())].filter((d, i, a) => a.indexOf(d) === i);
       try {
         const got = await Promise.all(days.map((d) => picksContract.functions.get_pick({ game: S.GAME_ID, round: String(d), player: who })
           .then((x) => [d, x.result && x.result.pick && Array.isArray(x.result.pick.producers) && x.result.pick.producers.length ? x.result.pick : null])));
@@ -132,15 +134,19 @@
     // The recorder hasn't recorded day 1 yet: you're in if you picked for it.
     return !(season && season.season === sd.season && season.days.length) && myPicks.has(sd.start);
   }
-  /** Producers I can't pick for day d: used this season, or already my pick for another open day this season. */
+  /** Producers I can't pick for day d: used this season (as recorded), my pick on a season day the recorder hasn't
+   *  recorded yet (audit SV-5: it most likely counts as used), or my pick for another upcoming day this season. */
   function blockedFor(d) {
     const out = new Map();
     const se = S.seasonOf(d);
     const mineS = se ? mySeason(se.season) : null;
     for (const a of (mineS && mineS.used) || []) out.set(a, "used");
+    const recorded = season && se && season.season === se.season ? season.startDay + season.days.length : null;
     for (const [x, p] of myPicks) {
-      const sx = S.seasonOf(x);
-      if (x !== d && se && sx && sx.season === se.season && p.producers && p.producers[0] && x >= today()) out.set(p.producers[0], `picked for ${dayName(x)}`);
+      const sx = S.seasonOf(x), a = p.producers && p.producers[0];
+      if (x === d || !se || !sx || sx.season !== se.season || !a || out.has(a)) continue;
+      if (x >= today()) out.set(a, `picked for ${dayName(x)}`);
+      else if (recorded === null || x >= recorded) out.set(a, `picked for ${dayName(x)}`);
     }
     return out;
   }

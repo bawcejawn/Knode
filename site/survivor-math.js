@@ -25,7 +25,9 @@
  * LIVES AND PICKS
  * - 2 lives. You lose one when your producer lands in the out-zone, or when you have no valid pick: no pick, a
  *   producer not in the day's field, or a producer you already used this season (each producer once a season).
- * - Safety net: if everyone still in would lose a life on the same day, nobody does.
+ * - Safety net: if everyone still in would lose a life on the same day, nobody loses one for the out-zone. A missing
+ *   pick, a producer not in the field or a reused producer still costs the life (audit SV-1: otherwise wallets that
+ *   pick on day 1 and never again would all be saved every day). A producer picked on a saved day still counts as used.
  * - The season ends after the day on which 2 or fewer players are left (if it started with more than 2), or after
  *   day 14. Simulated on the live 17-producer field: ends about day 11 with 10 players, day 13 with 50; with 200
  *   about 4 are left on day 14 and the ranking decides.
@@ -34,7 +36,8 @@
  *   Equal on all three: the same place.
  * PRIZES at season end: 4 VHP for 1st and 2 VHP for 2nd (two weeks of the free-game 2 + 1), ties split the places
  *   they cover. Only for wallets that held at least 1 VHP (or a Knode stake) at every daily check while they were in
- *   the season, so a farm of empty wallets can't win it. The vault pays them (Build 1). */
+ *   the season, so a farm of empty wallets can't win it, and only in a season that at least 3 players joined
+ *   (default pending the owner's OK, audit SV-1). The vault pays them (Build 1). */
 (function (root) {
   "use strict";
   const DAY = 86400000;
@@ -43,6 +46,9 @@
   const FORM_DAYS = 7, FORM_GAP = 2, MIN_FORM = 280;
   const LEAD_MS = 5 * 60000, AHEAD_MS = 7 * DAY, PICKS_PER_DAY = 20, MAX_CHANGES = 5;
   const PRIZES = [4, 2];
+  const MIN_PRIZE_PLAYERS = 3;             // a season needs at least this many players for prizes (default, audit SV-1)
+  /** One letter a day in a player's log: s safe, o out-zone, n no pick, f not in the field, u already used, v saved. */
+  const CODE = { safe: "s", out: "o", none: "n", field: "f", used: "u", saved: "v" };
   const CORRECTION_MS = 12 * 3600000;      // a season's result is final 12 hours after it ends
   /** Season 1's first UTC day (days since 1970), a Monday. null until the owner sets the launch. */
   const FIRST_DAY = null;
@@ -110,17 +116,16 @@
   }
 
   // ── a season ──
-  /** Play a season from its recorded days, in order. days: [{ n, field, counts, picks: [[player, producer, time]],
-   *  held: [players who held 1 VHP or a stake at that day's check] }] for n = 1, 2, … without gaps.
+  /** Play a season from its recorded days, in order. days: [{ n, field, counts, picks: [[player, producer]],
+   *  noVhp: [players still in who did NOT hold 1 VHP or a stake at that day's check] }] for n = 1, 2, … without gaps.
    *  Returns { players: [...ranked, with place], over, endN }. Each player: { a, lives, outN (the day they went out,
-   *  or null), total (sum of their picks' scores, 4 decimals), used: [producers], log: [[n, producer|null, code]],
-   *  eligible } where code is "safe", "out" (in the out-zone), "none" (no pick), "field" (not in the day's field),
-   *  "used" (already used), "saved" (would have lost, but everyone did). */
+   *  or null), total (sum of their picks' scores, 4 decimals), used: [producers], log (one letter per day played, see
+   *  CODE), eligible }. */
   function playSeason(days) {
     const ps = new Map();
     const first = days.find((x) => x.n === 1);
     if (!first) return { players: [], over: false, endN: 0 };
-    for (const [p] of first.picks || []) if (isAddr(p) && !ps.has(p)) ps.set(p, { a: p, lives: LIVES, outN: null, total4: 0, used: [], log: [], eligible: true });
+    for (const [p] of first.picks || []) if (isAddr(p) && !ps.has(p)) ps.set(p, { a: p, lives: LIVES, outN: null, total4: 0, used: [], log: "", eligible: true });
     const started = ps.size;
     let over = false, endN = 0;
     for (let i = 0; i < days.length; i++) {
@@ -130,21 +135,22 @@
       const score = new Map(sc.rows.map((r) => [r.a, r.score])), out = new Set(sc.out);
       const pick = new Map();
       for (const [p, a] of day.picks || []) if (isAddr(p) && isAddr(a)) pick.set(p, a);
-      const held = new Set(day.held || []);
+      const noVhp = new Set(day.noVhp || []);
       const alive = [...ps.values()].filter((x) => x.outN === null);
       const fate = alive.map((x) => {
         const a = pick.get(x.a) || null;
         const code = !a ? "none" : !score.has(a) ? "field" : x.used.includes(a) ? "used" : out.has(a) ? "out" : "safe";
         return { x, a, code };
       });
+      // The safety net: everyone still in would lose a life today. It saves only out-zone losses (audit SV-1).
       const allLose = fate.length > 0 && fate.every((f) => f.code !== "safe");
       for (const { x, a, code } of fate) {
-        if (!held.has(x.a)) x.eligible = false;
+        if (noVhp.has(x.a)) x.eligible = false;
         const valid = code === "safe" || code === "out";
         if (valid) { x.used.push(a); x.total4 += Math.round(score.get(a) * 1e4); }
-        if (code === "safe") { x.log.push([day.n, a, "safe"]); continue; }
-        if (allLose) { x.log.push([day.n, a, "saved"]); continue; }
-        x.log.push([day.n, a, code]);
+        if (code === "safe") { x.log += CODE.safe; continue; }
+        if (allLose && code === "out") { x.log += CODE.saved; continue; }
+        x.log += CODE[code];
         x.lives--;
         if (x.lives <= 0) x.outN = day.n;
       }
@@ -169,6 +175,7 @@
   /** Season prizes among eligible players (held 1 VHP at every check): 4 VHP for 1st, 2 VHP for 2nd; tied players
    *  split the prizes of the places they cover. Places are re-counted among the eligible. Returns [{ player, place, vhp }]. */
   function prizes(players, amounts = PRIZES) {
+    if (players.length < MIN_PRIZE_PLAYERS) return [];
     const ranked = rank(players.filter((x) => x.eligible));
     const out = [];
     for (let i = 0; i < ranked.length && i < amounts.length; ) {
@@ -185,7 +192,7 @@
 
   root.KSurvivor = {
     DAY, GAME_ID, SEASON_DAYS, LIVES, USES, FORM_DAYS, FORM_GAP, MIN_FORM, LEAD_MS, AHEAD_MS, PICKS_PER_DAY, MAX_CHANGES,
-    PRIZES, CORRECTION_MS, FIRST_DAY,
+    PRIZES, MIN_PRIZE_PLAYERS, CODE, CORRECTION_MS, FIRST_DAY,
     dayIndex, dayStart, dayLabel, isMonday, lockTime, isOpen, openDays, seasonOf, seasonStartDay,
     formDays, fieldFor, outSize, scoreDay, playSeason, rank, prizes,
   };

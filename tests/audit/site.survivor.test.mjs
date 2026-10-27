@@ -91,8 +91,8 @@ const FIELD = [P1, P2, P3, P4, P5, P6, P7, P8].map((a) => ({ a, k: 1000, h: 1 })
 function seasonDay(n, outs, picks, held = null) {
   // outs: producers to put at the bottom (they sign 1 block, the rest 100: tied, so safe).
   const counts = FIELD.map((f) => [f.a, outs.includes(f.a) ? 1 : 100]);
-  const pk = Object.entries(picks).map(([p, a]) => [p, a, 0]);
-  return { n, field: FIELD, counts, picks: pk, held: held || Object.keys(picks) };
+  const pk = Object.entries(picks).map(([p, a]) => [p, a]);
+  return { n, field: FIELD, counts, picks: pk, noVhp: held ? Object.keys(picks).filter((p) => !held.includes(p)) : [] };
 }
 
 test("lives: the out-zone, no pick, a producer not in the field and a reused producer each cost a life", () => {
@@ -103,11 +103,31 @@ test("lives: the out-zone, no pick, a producer not in the field and a reused pro
   ];
   const r = S.playSeason(days);
   const by = Object.fromEntries(r.players.map((x) => [x.a, x]));
-  assert.equal(by[U1].lives, 1); assert.deepEqual(plain(by[U1].log.map((x) => x[2])), ["safe", "used"]);
-  assert.equal(by[U2].lives, 1); assert.deepEqual(plain(by[U2].log.map((x) => x[2])), ["out", "safe"]);
-  assert.equal(by[U3].lives, 0); assert.equal(by[U3].outN, 2); assert.deepEqual(plain(by[U3].log.map((x) => x[2])), ["field", "none"]);
+  assert.equal(by[U1].lives, 1); assert.equal(by[U1].log, "su");
+  assert.equal(by[U2].lives, 1); assert.equal(by[U2].log, "os");
+  assert.equal(by[U3].lives, 0); assert.equal(by[U3].outN, 2); assert.equal(by[U3].log, "fn");
   assert.equal(by[U4].lives, 2); assert.equal(by[U5].lives, 2);
   assert.deepEqual(plain(by[U1].used), [P1], "an invalid pick isn't a use");
+});
+
+test("audit SV-1: the safety net never saves a missing, out-of-field or reused pick", () => {
+  // One idle wallet: picks day 1, then nothing. It used to be saved every day (everyone would lose) and win 4 VHP.
+  const idle = S.playSeason([seasonDay(1, [], { [U1]: P1 }), ...Array.from({ length: 13 }, (_, i) => seasonDay(i + 2, [], {}))]);
+  assert.equal(idle.players[0].outN, 3); assert.equal(idle.players[0].log, "snn");
+  assert.deepEqual(plain(S.prizes(idle.players)), []);
+  // Three idle wallets: all out on day 3, nobody wins.
+  const three = S.playSeason([seasonDay(1, [], { [U1]: P1, [U2]: P2, [U3]: P3 }), seasonDay(2, [], {}), seasonDay(3, [], {})]);
+  assert.ok(three.players.every((x) => x.outN === 3));
+  // Everyone would lose: the out-zone pick is saved, the missing one and the reused one are not.
+  const mix = S.playSeason([seasonDay(1, [P8], { [U1]: P1, [U2]: P2, [U3]: P3 }), seasonDay(2, [P4], { [U1]: P4, [U3]: P3 })]);
+  const by = Object.fromEntries(mix.players.map((x) => [x.a, x]));
+  assert.equal(by[U1].log, "sv"); assert.equal(by[U1].lives, 2);
+  assert.equal(by[U2].log, "sn"); assert.equal(by[U2].lives, 1);
+  assert.equal(by[U3].log, "su"); assert.equal(by[U3].lives, 1);
+});
+
+test("a log letter for every outcome", () => {
+  assert.deepEqual(plain(S.CODE), { safe: "s", out: "o", none: "n", field: "f", used: "u", saved: "v" });
 });
 
 test("only day 1's pickers are in the season", () => {
@@ -115,14 +135,14 @@ test("only day 1's pickers are in the season", () => {
   assert.deepEqual(plain(r.players.map((x) => x.a).sort()), [U1, U2, U3]);
 });
 
-test("safety net: if everyone still in would lose a life the same day, nobody does", () => {
+test("safety net: if everyone still in would land in the out-zone the same day, nobody loses a life for it", () => {
   const r = S.playSeason([
     seasonDay(1, [P1, P2], { [U1]: P1, [U2]: P2, [U3]: P3 }),            // U3 safe: U1, U2 lose
     seasonDay(2, [P4, P5], { [U1]: P4, [U2]: P5, [U3]: P5 }),            // all three in the out-zone: saved
   ]);
   const by = Object.fromEntries(r.players.map((x) => [x.a, x]));
   assert.equal(by[U1].lives, 1); assert.equal(by[U2].lives, 1); assert.equal(by[U3].lives, 2);
-  assert.equal(by[U3].log[1][2], "saved");
+  assert.equal(by[U3].log, "sv");
   assert.deepEqual(plain(by[U3].used), [P3, P5], "a saved pick still uses the producer");
 });
 
@@ -138,11 +158,12 @@ test("the season ends after the day 2 or fewer are left, or after day 14", () =>
   // Started with 2: plays on.
   const two = S.playSeason([seasonDay(1, [], { [U1]: P1, [U2]: P2 }), seasonDay(2, [], { [U1]: P2, [U2]: P3 })]);
   assert.equal(two.over, false); assert.equal(two.endN, 2);
-  // 14 days with nobody out: over after day 14, ranked by total score.
+  // 14 days with nobody out (16 producers, all tied: safe), a new producer each day: over after day 14.
+  const prods = "ABCDEFGHPQRSTWXY".split("").map(A), f16 = prods.map((a) => ({ a, k: 1000, h: 1 }));
   const many = [];
-  const prods = [P1, P2, P3, P4, P5, P6, P7, P8];
-  for (let n = 1; n <= 14; n++) many.push(seasonDay(n, [], { [U1]: prods[(n - 1) % 8], [U2]: prods[n % 8], [U3]: prods[(n + 1) % 8] }));
+  for (let n = 1; n <= 14; n++) many.push({ n, field: f16, counts: prods.map((a) => [a, 100]), picks: [[U1, prods[n - 1]], [U2, prods[n]], [U3, prods[n + 1]]], noVhp: [] });
   const full = S.playSeason(many);
+  assert.ok(full.players.every((x) => x.lives === 2 && x.log === "s".repeat(14)));
   assert.equal(full.over, true); assert.equal(full.endN, 14);
 });
 
@@ -164,6 +185,8 @@ test("prizes: 4 VHP and 2 VHP among wallets that held 1 VHP at every check; ties
   const three = S.prizes([P(U1, 2, 1), P(U2, 2, 1), P(U3, 2, 1)]);
   assert.ok(three.every((x) => x.vhp === 2) && three.reduce((s, x) => s + x.vhp, 0) <= 6, "three tied: 2 each");
   assert.deepEqual(plain(S.prizes([])), []);
+  assert.deepEqual(plain(S.prizes([P(U1, 2, 10), P(U2, 1, 9)])), [], "fewer than 3 players joined: no prizes (default)");
+  assert.equal(S.MIN_PRIZE_PLAYERS, 3);
   assert.deepEqual(plain(S.PRIZES), [4, 2]);
 });
 

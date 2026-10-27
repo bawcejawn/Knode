@@ -11,7 +11,9 @@
  *  3. Seasons (once FIRST_DAY is set and the Picks contract is live, picks-data/deployment.json): for each recorded
  *     season day, the picks for that day from the Picks contract (game 3), read on both nodes (they must agree; the
  *     chain locked them at 23:55 UTC the night before), and which players still in hold 1 VHP or a Knode stake at
- *     this check. The season is played by site/survivor-math.js, the same file the page runs. A season is final 12
+ *     this check (on both nodes: both must say so). Only the picks of players still in are kept (from day 2 on), so a
+ *     season file stays small (audit SV-2). Game 3's settings on the chain are checked first (audit SV-9). A season
+ *     stays on the list until it is final, and the days it still needs are recorded even after a long outage (SV-4). The season is played by site/survivor-math.js, the same file the page runs. A season is final 12
  *     hours after its last day (the correction window); its prizes appear then.
  *  4. Writes games-data/survivor/index.json, days.json, fields.json and S<season>.json; the publish job puts them on
  *     the games-data branch for the website.
@@ -39,7 +41,8 @@ const isAddr = (a: unknown) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{
 type Counts = [string, number][];
 type DayRec = { day: number; heights: [number, number]; blocks: number; checked: number; counts: Counts };
 type Field = { a: string; k: number; h: number }[];
-type SeasonDay = { n: number; day: number; field: Field; counts: Counts; picks: [string, string, number][]; held: string[] };
+// noVhp: the players still in who did NOT hold 1 VHP or a stake at that day's check (usually few; audit SV-2).
+type SeasonDay = { n: number; day: number; field: Field; counts: Counts; picks: [string, string][]; noVhp: string[] };
 type SeasonFile = { v: 1; season: number; startDay: number; days: SeasonDay[]; result: any };
 export type Blocks = { ts: number[]; signers: string[] };
 export type RawPick = { player: string; producer: string; time: number };
@@ -50,7 +53,8 @@ type Opts = {
   blocksOf?: (node: any, from: number, to: number) => Promise<Blocks>;    // for the tests
   timeOf?: (node: any, h: number) => Promise<number>;
   picksOf?: (node: any, day: number) => Promise<RawPick[]>;
-  rankedOf?: (who: string[]) => Promise<Set<string>>;
+  rankedOf?: (node: any, who: string[]) => Promise<Set<string>>;
+  gameOf?: (node: any) => Promise<any>;                                   // game 3's settings on the Picks contract
   head?: { height: number; time: number; lib: number; libTime: number };
 };
 
@@ -79,8 +83,9 @@ function loadSeason(dir: string | undefined, season: number, startDay: number): 
   if (!old || old.v !== 1 || old.season !== season || old.startDay !== startDay || !Array.isArray(old.days)) return fresh;
   // Keep the recorded days in order from day 1, without gaps.
   for (const d of old.days) {
-    if (!d || d.n !== fresh.days.length + 1 || d.day !== startDay + d.n - 1 || !Array.isArray(d.field) || !countsOk(d.counts) || !Array.isArray(d.picks) || !Array.isArray(d.held)) break;
-    fresh.days.push({ n: d.n, day: d.day, field: d.field, counts: d.counts, picks: d.picks, held: d.held });
+    if (!d || d.n !== fresh.days.length + 1 || d.day !== startDay + d.n - 1 || !Array.isArray(d.field) || !countsOk(d.counts) || !Array.isArray(d.picks) || !Array.isArray(d.noVhp)) break;
+    if (!d.picks.every((x: any) => Array.isArray(x) && x.length === 2 && isAddr(x[0]) && isAddr(x[1])) || !d.noVhp.every(isAddr)) break;
+    fresh.days.push({ n: d.n, day: d.day, field: d.field, counts: d.counts, picks: d.picks, noVhp: d.noVhp });
   }
   if (old.result && old.result.final === true && fresh.days.length === old.days.length) fresh.result = old.result;
   return fresh;
@@ -138,10 +143,22 @@ async function readPicks(node: any, contract: string, day: number): Promise<RawP
       const ps = x.pick?.producers;
       if (isAddr(x.player) && Array.isArray(ps) && ps.length === 1 && isAddr(ps[0])) out.push({ player: x.player, producer: ps[0], time: Number(x.pick.time || 0) });
     }
-    if (rows.length < 100) break;
+    if (rows.length < 100) return out;
     after = rows[rows.length - 1].player;
   }
-  return out;
+  throw new Error(`more than 100,000 picks for day ${day}: not read in full (audit SV-9)`);
+}
+/** Game 3's settings must be exactly what site/survivor-math.js assumes (audit SV-9). Returns a problem, or "". */
+export function gameProblem(g: any): string {
+  if (!g) return "game 3 isn't registered on the Picks contract";
+  const want: Record<string, string> = { id: String(S.GAME_ID), kind: "1", lock_mode: "2", round_size: String(S.DAY), round_offset: "0", lead: String(S.LEAD_MS), ahead: String(S.AHEAD_MS), max_changes: String(S.MAX_CHANGES) };
+  for (const [k, v] of Object.entries(want)) if (String(g[k] ?? "0") !== v) return `game 3's ${k} on the chain is ${g[k] ?? "0"}, the Survivor math expects ${v}`;
+  return "";
+}
+async function readGame(node: any, contract: string): Promise<any> {
+  const c = new Contract({ id: contract, abi: PICKS_ABI(), provider: node });
+  const r: any = await withRetry("game 3", () => (c.functions as any).get_game({ game: S.GAME_ID }));
+  return r?.result?.game ?? null;
 }
 const GAME = (() => { try { return JSON.parse(fs.readFileSync(new URL("../../game-data/deployment.json", import.meta.url), "utf8")).contract as string; } catch { return ""; } })();
 const GAME_ABI = () => JSON.parse(fs.readFileSync(new URL("../../game/abi/kpred.koilib.json", import.meta.url), "utf8"));
@@ -196,15 +213,45 @@ export async function run(o: Opts) {
   const rangeP = o.blocksOf ? (a: number, b: number) => o.blocksOf!(o.p, a, b) : (a: number, b: number) => readerP.range(a, b);
   const rangeC = !o.check ? null : o.blocksOf ? (a: number, b: number) => o.blocksOf!(o.check, a, b) : (a: number, b: number) => readerC.range(a, b);
   const picksRead = o.picksOf ?? (contract ? (node: any, d: number) => readPicks(node, contract, d) : null);
-  const rankedRead = o.rankedOf ?? ((who: string[]) => readRanked(o.p, who));
+  const rankedRead = o.rankedOf ?? ((node: any, who: string[]) => readRanked(node, who));
+  const gameRead = o.gameOf ?? (contract ? (node: any) => readGame(node, contract) : null);
   console.log(`head ${head.height} (${new Date(head.time).toISOString()}), irreversible ${head.lib} (${new Date(head.libTime).toISOString()})`);
 
-  // ── 1. days ──
+  // ── the seasons this run looks at (loaded first: they decide which older days are still needed) ──
   const days = loadDays(PREV);
   const today = S.dayIndex(head.time);
   const lastDone = S.dayIndex(head.libTime) - 1;               // the last day whose next day has an irreversible block
+  const idx = readJson(PREV, "index.json");
+  const known = new Set<number>(Array.isArray(idx?.seasons) ? idx.seasons.filter((s: any) => Number.isInteger(s) && s >= 1 && s < 10000) : []);
+  const seasons: SeasonFile[] = [], active: SeasonFile[] = [];
+  let seasonsOn = firstDay !== null && !!picksRead;
+  // Game 3's settings on the chain must match the math (audit SV-9).
+  if (seasonsOn && gameRead) {
+    try { const pr = gameProblem(await gameRead(o.p)); if (pr) { problems.push(`Survivor: ${pr}; seasons not recorded this run`); seasonsOn = false; } }
+    catch (e) { problems.push(`Survivor: game 3's settings: ${(e as Error).message} (tried again next run)`); seasonsOn = false; }
+  }
+  if (firstDay !== null) {
+    // Every known season stays on the list until it is final (audit SV-4), plus the last and the current one.
+    const cur = S.seasonOf(Math.max(firstDay, today), firstDay).season;
+    const list = new Set<number>(known);
+    for (const s of [cur - 1, cur]) if (s >= 1 && S.seasonStartDay(s, firstDay) <= lastDone) list.add(s);
+    for (const s of [...list].sort((x, y) => x - y)) {
+      const sf = loadSeason(PREV, s, S.seasonStartDay(s, firstDay));
+      if (sf.result && sf.result.final) seasons.push(sf); else active.push(sf);
+    }
+  }
+
+  // ── 1. days ──
+  // From the 8 days behind today, or further back for a season that still needs older days after an outage.
+  let from = today - BACK_DAYS;
+  if (seasonsOn) for (const sf of active) {
+    if (sf.days.length >= S.SEASON_DAYS || S.playSeason(sf.days).over) continue;
+    const next = sf.startDay + sf.days.length;
+    if (next <= lastDone) from = Math.min(from, next - (S.FORM_DAYS + S.FORM_GAP - 1));
+  }
+  if (from < today - (KEEP_DAYS - 10)) problems.push(`Survivor: a season needs days from ${S.dayLabel(from)}, near the end of what days.json keeps (${KEEP_DAYS} days)`);
   let n = 0;
-  for (let d = today - BACK_DAYS; d <= lastDone && n < MAX_DAYS_PER_RUN; d++) {
+  for (let d = from; d <= lastDone && n < MAX_DAYS_PER_RUN; d++) {
     if (days.has(d)) continue;
     n++;
     try {
@@ -221,7 +268,9 @@ export async function run(o: Opts) {
       const b = (await heightAt(timeP, S.dayStart(d + 1), a, head.lib)) - 1;
       if (b < a || b >= head.lib) { problems.push(`${S.dayLabel(d)}: its blocks aren't all irreversible yet`); continue; }
       const B = await rangeP(a, b);
-      if (B.ts[0] < S.dayStart(d) || B.ts[B.ts.length - 1] >= S.dayStart(d + 1) || (a > 1 && prevRec === undefined && (await timeP(a - 1)) >= S.dayStart(d))) {
+      // The day's first block is the first at or after 00:00 UTC: the block before it is from the day before. Checked
+      // every time, also when the start comes from the last run's file (audit SV-6).
+      if (B.ts[0] < S.dayStart(d) || B.ts[B.ts.length - 1] >= S.dayStart(d + 1) || (a > 1 && (await timeP(a - 1)) >= S.dayStart(d))) {
         problems.push(`${S.dayLabel(d)}: the blocks found don't fit the day; not recorded this run`); continue;
       }
       let checked = 1;
@@ -247,51 +296,50 @@ export async function run(o: Opts) {
   }
 
   // ── 3. seasons ──
-  const seasons: SeasonFile[] = [];
-  const idx = readJson(PREV, "index.json");
-  const known = new Set<number>(Array.isArray(idx?.seasons) ? idx.seasons.filter((s: any) => Number.isInteger(s) && s >= 1 && s < 10000) : []);
-  if (firstDay !== null && picksRead) {
-    const cur = S.seasonOf(Math.max(firstDay, Math.min(today, lastDone)), firstDay);
-    const list = new Set<number>([...known].filter((s) => s >= cur.season - 1));
-    for (let s = Math.max(1, cur.season - 1); s <= cur.season; s++) if (S.seasonStartDay(s, firstDay) <= lastDone) list.add(s);
-    for (const s of [...list].sort((x, y) => x - y)) {
-      const start = S.seasonStartDay(s, firstDay);
-      const sf = loadSeason(PREV, s, start);
-      if (sf.result && sf.result.final) { seasons.push(sf); continue; }
-      let played = S.playSeason(sf.days);
-      // Record the next days of the season that are done.
-      while (!played.over && sf.days.length < S.SEASON_DAYS) {
-        const nDay = sf.days.length + 1, d = start + nDay - 1, rec = days.get(d);
-        if (!rec) break;
-        const field = S.fieldFor(d, days);
-        if (!field) { problems.push(`season ${s} day ${nDay}: the 7 days behind its handicap aren't all recorded yet`); break; }
-        let raw: RawPick[];
-        try {
-          raw = await picksRead(o.p, d);
-          if (o.check) {
-            const other = await picksRead(o.check, d);
-            const key = (x: RawPick[]) => JSON.stringify([...x].sort((u, v) => (u.player < v.player ? -1 : 1)));
-            if (key(raw) !== key(other)) { problems.push(`season ${s} day ${nDay}: the two nodes disagree about the picks; not recorded this run`); break; }
-          }
-        } catch (e) { problems.push(`season ${s} day ${nDay}: picks: ${(e as Error).message} (tried again next run)`); break; }
-        // Only picks made before the lock count (the chain refuses later ones; checked again here).
-        const picks: [string, string, number][] = raw.filter((x) => x.time < S.lockTime(d)).map((x) => [x.player, x.producer, x.time] as [string, string, number])
-          .sort((u, v) => (u[0] < v[0] ? -1 : 1));
-        // Who is still in before this day: day 1's pickers, or the season so far.
-        const inNow = nDay === 1 ? [...new Set(picks.map((x) => x[0]))] : played.players.filter((x: any) => x.outN === null).map((x: any) => x.a);
-        let held: string[];
-        try { held = [...(await rankedRead(inNow))].filter((a) => inNow.includes(a)).sort(); }
-        catch (e) { problems.push(`season ${s} day ${nDay}: VHP check: ${(e as Error).message} (tried again next run)`); break; }
-        sf.days.push({ n: nDay, day: d, field, counts: rec.counts, picks, held });
-        played = S.playSeason(sf.days);
-        console.log(`season ${s} day ${nDay} (${S.dayLabel(d)}): ${picks.length} picks, ${played.players.filter((x: any) => x.outN === null).length} still in`);
-      }
-      const endDay = start + played.endN;                     // the day after the last played day
-      const final = played.over && head.time >= S.dayStart(endDay) + S.CORRECTION_MS;
-      sf.result = { over: played.over, endN: played.endN, final, players: played.players, prizes: final ? S.prizes(played.players) : [] };
-      seasons.push(sf);
+  /** Who holds 1 VHP or a stake: both nodes must say so (audit SV-7). */
+  const heldOf = async (who: string[]) => {
+    const mine = await rankedRead(o.p, who);
+    if (!o.check) return mine;
+    const theirs = await rankedRead(o.check, who);
+    return new Set([...mine].filter((a) => theirs.has(a)));
+  };
+  for (const sf of active) {
+    const s = sf.season, start = sf.startDay;
+    let played = S.playSeason(sf.days);
+    // Record the next days of the season that are done.
+    while (seasonsOn && !played.over && sf.days.length < S.SEASON_DAYS) {
+      const nDay = sf.days.length + 1, d = start + nDay - 1, rec = days.get(d);
+      if (!rec) break;
+      const field = S.fieldFor(d, days);
+      if (!field) { problems.push(`season ${s} day ${nDay}: the 7 days behind its handicap aren't all recorded yet`); break; }
+      let raw: RawPick[];
+      try {
+        raw = await picksRead!(o.p, d);
+        if (o.check) {
+          const other = await picksRead!(o.check, d);
+          const key = (x: RawPick[]) => JSON.stringify([...x].sort((u, v) => (u.player < v.player ? -1 : 1)));
+          if (key(raw) !== key(other)) { problems.push(`season ${s} day ${nDay}: the two nodes disagree about the picks; not recorded this run`); break; }
+        }
+      } catch (e) { problems.push(`season ${s} day ${nDay}: picks: ${(e as Error).message} (tried again next run)`); break; }
+      // Who is still in before this day: day 1's pickers, or the season so far. Only their picks are kept (audit SV-2).
+      const alive = nDay === 1 ? null : new Set<string>(played.players.filter((x: any) => x.outN === null).map((x: any) => x.a));
+      // Only picks made before the lock count (the chain refuses later ones; checked again here).
+      const picks: [string, string][] = raw.filter((x) => x.time < S.lockTime(d) && (!alive || alive.has(x.player)))
+        .map((x) => [x.player, x.producer] as [string, string]).sort((u, v) => (u[0] < v[0] ? -1 : 1));
+      const inNow = alive ? [...alive] : [...new Set(picks.map((x) => x[0]))];
+      let noVhp: string[];
+      try { const h = await heldOf(inNow); noVhp = inNow.filter((a) => !h.has(a)).sort(); }
+      catch (e) { problems.push(`season ${s} day ${nDay}: VHP check: ${(e as Error).message} (tried again next run)`); break; }
+      sf.days.push({ n: nDay, day: d, field, counts: rec.counts, picks, noVhp });
+      played = S.playSeason(sf.days);
+      console.log(`season ${s} day ${nDay} (${S.dayLabel(d)}): ${picks.length} picks, ${played.players.filter((x: any) => x.outN === null).length} still in`);
     }
+    const endDay = start + played.endN;                       // the day after the last played day
+    const final = played.over && head.time >= S.dayStart(endDay) + S.CORRECTION_MS;
+    sf.result = { over: played.over, endN: played.endN, final, players: played.players, prizes: final ? S.prizes(played.players) : [] };
+    seasons.push(sf);
   }
+  seasons.sort((x, y) => x.season - y.season);
 
   // ── 4. write ──
   fs.mkdirSync(OUT, { recursive: true });

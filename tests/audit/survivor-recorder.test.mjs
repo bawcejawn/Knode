@@ -49,7 +49,9 @@ function picksOf(tamperDay = null) {
     return rows;
   };
 }
-const rankedOf = async (who) => new Set(who.filter((a) => a !== EVE));
+const rankedOf = async (node, who) => new Set(who.filter((a) => a !== EVE));
+const GAME3 = { id: 3, kind: 1, list_size: 0, lock_mode: 2, round_size: String(S.DAY), round_offset: "0", lead: String(S.LEAD_MS), ahead: String(S.AHEAD_MS), max_picks_per_day: 20, max_changes: 5, enabled: true };
+const gameOf = async () => GAME3;
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "survivor-"));
 const quiet = async (f) => { const log = console.log; console.log = () => {}; try { return await f(); } finally { console.log = log; } };
 /** A head at time t: irreversible about 1 minute behind. */
@@ -58,7 +60,7 @@ async function runs(times, opts = {}, prev = "") {
   let out, r;
   for (const t of times) {
     out = tmp();
-    r = await quiet(() => run({ p: "main", check: "check", prev, out, firstDay: FIRST, picksContract: A("P"), blocksOf: blocksOf(), timeOf, picksOf: picksOf(), rankedOf, head: headAt(t), ...opts }));
+    r = await quiet(() => run({ p: "main", check: "check", prev, out, firstDay: FIRST, picksContract: A("P"), blocksOf: blocksOf(), timeOf, picksOf: picksOf(), rankedOf, gameOf, head: headAt(t), ...opts }));
     prev = out;
   }
   return { out, r, read: (f) => JSON.parse(fs.readFileSync(path.join(out, f), "utf8")) };
@@ -108,6 +110,8 @@ test("a season: day-1 pickers only, late picks ignored, lives, the end with 2 le
   assert.equal(by[BOB].outN, 2); assert.equal(by[CAROL].outN, 3);
   assert.equal(by[ALICE].outN, null); assert.equal(by[ALICE].lives, 2); assert.equal(by[EVE].lives, 2);
   assert.equal(by[EVE].eligible, false, "held no VHP at the checks");
+  assert.ok(sf.days.slice(1).every((x) => x.picks.every((p) => p.length === 2)), "picks are [player, producer]");
+  assert.ok(!sf.days[2].picks.some((p) => p[0] === BOB), "audit SV-2: a player who is out keeps no picks in the file");
   assert.equal(sf.result.over, true); assert.equal(sf.result.endN, 3);
   assert.equal(sf.result.final, false, "inside the 12-hour correction window");
   assert.deepEqual(sf.result.prizes, []);
@@ -142,7 +146,7 @@ test("no season before the Picks contract is live or FIRST_DAY is set; FIRST_DAY
 
 test("the files pass the publish job's shape check", async (t) => {
   const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
-  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 - "\$IN\/survivor" <<'PY'\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const m = /if \[ -d "\$IN\/survivor" \] && ! \/usr\/bin\/python3 - "\$IN\/survivor" <<'PY'\n([\s\S]*?)\n\s*PY\n/.exec(yml);
   assert.ok(m, "the survivor check is in the workflow");
   const indent = /^(\s*)/.exec(m[1])[1].length;
   const py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
@@ -161,4 +165,75 @@ test("the files pass the publish job's shape check", async (t) => {
   s.result.prizes[0].vhp = 50;
   fs.writeFileSync(path.join(bad, "S001.json"), JSON.stringify(s));
   assert.throws(() => execFileSync("python3", ["-", bad], { input: py, stdio: "pipe" }));
+});
+
+test("audit SV-7: the 1 VHP check needs both nodes to agree", async () => {
+  const start = S.dayStart(FIRST - 1) + 3600000;
+  const times = [start, start + 60000, start + 120000, start + 180000, S.dayStart(FIRST + 1) + 3600000];
+  const r = await runs(times, { rankedOf: async (node, who) => new Set(who.filter((a) => a !== EVE && !(node === "check" && a === ALICE))) });
+  const by = Object.fromEntries(r.read("S001.json").result.players.map((x) => [x.a, x]));
+  assert.equal(by[ALICE].eligible, false, "the second node says Alice holds no VHP");
+  assert.equal(by[CAROL].eligible, true);
+});
+
+test("audit SV-9: game 3's settings on the chain must match the math, or no season is recorded", async () => {
+  const start = S.dayStart(FIRST - 1) + 3600000;
+  const times = [start, start + 60000, start + 120000, start + 180000, S.dayStart(FIRST + 1) + 3600000];
+  for (const bad of [{ ...GAME3, lead: "600000" }, { ...GAME3, round_offset: "3600000" }, { ...GAME3, lock_mode: 1 }, null]) {
+    const r = await runs(times, { gameOf: async () => bad });
+    assert.ok(!fs.existsSync(path.join(r.out, "S001.json")));
+    assert.ok(r.r.problems.some((p) => /game 3/.test(p)), JSON.stringify(r.r.problems));
+  }
+});
+
+test("audit SV-4: after an outage longer than a week, the season still gets the days it needs", async () => {
+  const start = S.dayStart(FIRST - 1) + 3600000;
+  const before = [start, start + 60000, start + 120000, start + 180000, S.dayStart(FIRST + 1) + 3600000];
+  const r = await runs(before);
+  assert.equal(r.read("S001.json").days.length, 1);
+  // 10 days with no runs, then hourly runs until it catches up.
+  const back = S.dayStart(FIRST + 11) + 3600000, after = Array.from({ length: 10 }, (_, i) => back + i * 3600000);
+  const r2 = await runs(after, {}, r.out);
+  const sf = r2.read("S001.json");
+  assert.deepEqual(sf.days.map((x) => x.n), [1, 2, 3], "days 2 and 3 recorded after the outage; it ended on day 3");
+  assert.equal(sf.result.over, true); assert.equal(sf.result.final, true);
+  assert.deepEqual(sf.result.prizes.map((p) => p[0] ?? p.player), [ALICE, CAROL]);
+});
+
+test("audit SV-6: a wrong day boundary in the last run's days.json is caught, not trusted", async () => {
+  const t = S.dayStart(FIRST - 1) + 3600000;
+  const r = await runs([t]);
+  const j = r.read("days.json");
+  j.days[j.days.length - 1].heights[1] += 500;                 // the last recorded day "ends" 500 blocks too late
+  j.days[j.days.length - 1].blocks += 500;
+  j.days[j.days.length - 1].counts[0][1] += 500;
+  fs.writeFileSync(path.join(r.out, "days.json"), JSON.stringify(j));
+  const r2 = await runs([t + 60000], {}, r.out);
+  const next = j.days[j.days.length - 1].day + 1;
+  assert.ok(!r2.read("days.json").days.some((x) => x.day === next && x.blocks !== 28800), "never recorded short");
+  assert.ok(r2.r.problems.some((p) => p.includes("don't fit the day")));
+});
+
+test("audit SV-2 and SV-3: a 1,000-player season fits under 2 MB, and a 1,000-way tie for the prize passes the check (never over 6 VHP)", async (t) => {
+  const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
+  const m = /if \[ -d "\$IN\/survivor" \] && ! \/usr\/bin\/python3 - "\$IN\/survivor" <<'PY'\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const indent = /^(\s*)/.exec(m[1])[1].length;
+  const py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
+  try { execFileSync("python3", ["--version"]); } catch { t.skip("python3 not installed"); return; }
+  // Worst case for size: nobody ever goes out (every producer ties), 1,000 players, 14 days, real-length addresses.
+  const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const addr = (i) => { let x = "", k = i; do { x = B58[k % 58] + x; k = Math.floor(k / 58); } while (k); return "1" + ("Q".repeat(33) + x).slice(-33); };
+  const prods = Array.from({ length: 17 }, (_, i) => addr(900000 + i)), players = Array.from({ length: 1000 }, (_, i) => addr(i));
+  const field = prods.map((a) => ({ a, k: 40000, h: 1 })), days = [];
+  for (let n = 1; n <= 14; n++) days.push({ n, day: FIRST + n - 1, field, counts: prods.map((a) => [a, 1694]), picks: players.map((p, i) => [p, prods[(i + n) % 17]]), noVhp: [] });
+  const played = S.playSeason(days);
+  const sf = { v: 1, season: 1, startDay: FIRST, days, result: { over: played.over, endN: played.endN, final: true, players: played.players, prizes: S.prizes(played.players) } };
+  assert.equal(new Set(players).size, 1000);
+  assert.equal(sf.result.prizes.length, 1000, "a 1,000-way tie for 1st");
+  assert.ok(sf.result.prizes.reduce((s, p) => s + Math.round(p.vhp * 1e8), 0) <= 6e8, "at most 6 VHP, counted in 1e-8 units");
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, "S001.json"), JSON.stringify(sf) + "\n");
+  const size = fs.statSync(path.join(dir, "S001.json")).size;
+  assert.ok(size < 2 * 1024 * 1024, `S001.json is ${(size / 1048576).toFixed(2)} MB`);
+  assert.match(execFileSync("python3", ["-", dir], { input: py }).toString(), /survivor files ok/);
 });
