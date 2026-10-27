@@ -6,15 +6,14 @@
        encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://koinvault.app; manifest-src 'self'; worker-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Knode</title>
-  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="media/icon-180.png">
-  <link rel="manifest" href="manifest.webmanifest">
-  <meta name="theme-color" content="#14213D">
+  <title>Knode: the daily Koinos prediction game</title>
+  <!-- seo:start (written by tools/site-seo.mjs; edit there) -->
+  <meta name="description" content="A free daily guessing game on the Koinos blockchain. Answer 5 questions a day about block producers, climb the weekly leaderboard, and win VHP.">
+  <link rel="canonical" href="https://bawcejawn.github.io/Knode/site/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Knode">
   <meta property="og:title" content="Knode: call the next blocks">
-  <meta property="og:description" content="A free weekly prediction game on Koinos. Answer daily questions about the next blocks, climb the board, win VHP.">
+  <meta property="og:description" content="A free daily guessing game on the Koinos blockchain. Answer 5 questions a day about block producers, climb the weekly leaderboard, and win VHP.">
   <meta property="og:url" content="https://bawcejawn.github.io/Knode/site/">
   <meta property="og:image" content="https://bawcejawn.github.io/Knode/site/media/og-knode.png">
   <meta property="og:image:width" content="1200">
@@ -22,9 +21,14 @@
   <meta property="og:image:alt" content="Knode: call the next blocks">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Knode: call the next blocks">
-  <meta name="twitter:description" content="A free weekly prediction game on Koinos. Answer daily questions about the next blocks, climb the board, win VHP.">
+  <meta name="twitter:description" content="A free daily guessing game on the Koinos blockchain. Answer 5 questions a day about block producers, climb the weekly leaderboard, and win VHP.">
   <meta name="twitter:image" content="https://bawcejawn.github.io/Knode/site/media/og-knode.png">
-  <meta name="description" content="Call the next blocks on Koinos. Answer a few questions a day, climb the weekly board, win VHP.">
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","name":"Knode","url":"https://bawcejawn.github.io/Knode/site/","description":"A free daily guessing game on the Koinos blockchain. Answer 5 questions a day about block producers, climb the weekly leaderboard, and win VHP."},{"@type":["WebApplication","VideoGame"],"name":"Knode","url":"https://bawcejawn.github.io/Knode/site/","applicationCategory":"GameApplication","genre":"Prediction game","operatingSystem":"Any (web browser; installable)","description":"A free daily guessing game on the Koinos blockchain. Answer 5 questions a day about block producers, climb the weekly leaderboard, and win VHP.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}]}</script>
+  <!-- seo:end -->
+  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="media/icon-180.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#14213D">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Archivo:wdth,wght@62..125,600;62..125,800;62..125,900&display=swap" rel="stylesheet">
@@ -32,6 +36,7 @@
 </head>
 <body>
   <a class="skip" href="#main">Skip to the game</a>
+  <noscript><p class="noscript">Knode is a free daily prediction game on the Koinos blockchain: 5 questions a day about block producers, a weekly leaderboard, and VHP rewards for the top players. It needs JavaScript to read the chain and connect your wallet; please turn JavaScript on. <a href="get.html">How to get started</a> · <a href="terms.html">Terms</a></p></noscript>
 
   <header class="top">
     <div class="wrap top-row">
@@ -82,6 +87,8 @@
           <a class="btn btn-primary btn-big" href="#play" id="welcome-go">Start playing</a>
           <a class="btn btn-ghost btn-big" href="#how">The full rules</a>
         </div>
+        <p class="welcome-app"><a href="install.html">Get the Knode app on your phone</a>: no app store, three taps.</p>
+        <div class="welcome-remind-box"><h2>Never miss a day</h2><div id="welcome-remind"></div></div>
       </div>
     </section>
 
@@ -101,21 +108,27 @@
           <div class="section-head">
             <h2 id="today-title">Today's questions</h2>
             <p class="muted" id="today-note">Answers close when the timer hits zero.</p>
+            <p class="yesterday" id="yesterday" hidden></p>
           </div>
           <p class="schedule" id="schedule"></p>
           <div id="open-questions" class="qlist"></div>
 
           <details class="waiting" id="waiting">
-            <summary><span class="waiting-title">Waiting for results</span> <span class="waiting-count" id="waiting-count"></span></summary>
+            <summary><span class="waiting-title" id="waiting-title">Waiting for results</span> <span class="waiting-count" id="waiting-count"></span></summary>
             <p class="muted">This week's questions whose answers are locked. Each result appears when its blocks are final.</p>
             <div id="locked-questions" class="qlist"></div>
           </details>
+          <div class="ad ad-inline ad-phone" data-ad-slot="in-feed" aria-label="Advertisement"></div>
         </div>
 
         <aside class="col-side">
           <section class="panel" id="panel-claim" hidden>
             <h2>Rewards to collect</h2>
             <div id="claim-body"></div>
+          </section>
+          <section class="panel" id="panel-remind">
+            <h2>Reminders</h2>
+            <div id="remind-body"></div>
           </section>
           <section class="panel" id="panel-you">
             <h2>Your game</h2>
@@ -130,6 +143,7 @@
             <h2>The pool</h2>
             <dl class="facts" id="pool-facts"></dl>
           </section>
+          <div class="ad ad-box ad-desktop" data-ad-slot="sidebar" aria-label="Advertisement"></div>
           <a class="panel kit-card" id="kit-card" target="_blank" rel="noopener" hidden></a>
         </aside>
       </div>
@@ -148,6 +162,7 @@
           <tbody></tbody>
         </table>
       </div>
+      <div class="board-cards" id="board-cards"></div>
     </section>
 
     <!-- ───────────── RESULTS ───────────── -->
@@ -163,12 +178,14 @@
       <div class="rtools">
         <label class="rsearch"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><input type="search" id="res-search" aria-label="Find a question" placeholder="Find a producer or answer" autocomplete="off"></label>
         <button type="button" class="rmine" id="res-mine" aria-pressed="false" hidden>Only mine</button>
+        <button type="button" class="rmine rshare" id="res-share" hidden>Share this week</button>
       </div>
       <div id="results-list" class="results"></div>
       <section class="history" id="history" hidden>
         <h2>Your past weeks</h2>
         <div class="table-wrap"><table class="board"><thead><tr><th scope="col">Week</th><th scope="col" class="num">Points</th><th scope="col">Result</th></tr></thead><tbody id="history-body"></tbody></table></div>
       </section>
+      <div class="ad ad-inline" data-ad-slot="results-inline" aria-label="Advertisement"></div>
       <p class="muted res-foot">Every answer comes straight from the blocks. Each result carries a fingerprint (hash) of the blocks it used, so anyone can check it.</p>
     </section>
 
@@ -176,7 +193,7 @@
     <section class="view" id="view-how" data-view="how" hidden>
       <div class="section-head big">
         <h1>The rules</h1>
-        <p class="muted">A weekly game about the Koinos chain. Your stake keeps producing blocks for the pool the whole time.</p>
+        <p class="muted">A weekly game about the Koinos chain. Your stake keeps producing blocks for the pool the whole time. Playing on a phone? <a href="install.html">Install the Knode app</a>.</p>
       </div>
       <ol class="steps">
         <li><h3>Play free, or stake VHP</h3><p>Anyone can answer and climb the leaderboard for free, and each week the 2 best free players win 1 VHP each (ties share; a free player is one who never held the minimum stake that week; from the October 2026 contract update). To share in the rewards, stake at least 1 VHP (whole numbers only), or KOIN, which is burned into VHP. A stake counts from the next week. You can withdraw any amount at any time, down to the last decimal. Withdraw part during a week and you keep playing with the lower stake; withdraw everything and you're out for that week.</p></li>
@@ -216,13 +233,28 @@
         <div class="eco-grid" id="eco-grid"></div>
       </section>
       <div class="foot-row">
-        <span>Knode runs fully on Koinos. Open source. · <a href="get.html">Get VHP</a> · <a href="swap.html">Swap</a> · <a href="start.html">New to Koinos</a> · <a href="node.html">Producer lookup</a> · <a href="burn.html">Burn KOIN</a> · <a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a></span>
+        <span>Knode runs fully on Koinos. Open source.</span>
+        <span class="foot-links"><a href="start.html">New to Koinos</a> · <a href="node.html">Producer lookup</a> · <a href="burn.html">Burn KOIN</a> · <a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a></span>
         <span id="foot-contract"></span>
       </div>
     </div>
   </footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="share-dialog" aria-labelledby="share-title">
+    <div class="share-box">
+      <h2 id="share-title">Share your week</h2>
+      <canvas id="share-canvas" class="share-canvas" width="1200" height="630" role="img" aria-label="Your week on Knode"></canvas>
+      <label class="share-addr"><input type="checkbox" id="share-addr"> Show my wallet address on the picture</label>
+      <p class="muted fine-print">The picture is made on your device. Nothing is uploaded.</p>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" id="share-close" type="button">Close</button>
+        <button class="btn btn-ghost" id="share-save" type="button">Save picture</button>
+        <button class="btn btn-primary" id="share-go" type="button">Share</button>
+      </div>
+    </div>
+  </dialog>
 
   <dialog id="stake-dialog">
     <form method="dialog" id="stake-form">
@@ -245,6 +277,7 @@
   <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js" integrity="sha384-IAL9o3r4bQJvWhvszkorFINY2ct4LBA/LvyXE9NSOPCyYB25BsFV12JITA7Gxbk6" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js" integrity="sha384-WOeNFfSdOron0s4x9jdzLtA7Ic7RSqZCXZAaeQd6HRL6WezQp0KAtIF2XSa+11TL" crossorigin="anonymous"></script>
   <script src="demo-data.js"></script>
+  <script src="extras.js"></script>
   <script src="wallet.js"></script>
   <script src="app.js"></script>
 </body>

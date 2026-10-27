@@ -63,7 +63,11 @@ test("(guard) nothing on the pages needs what the CSP blocks (inline script, on*
   const bad = [];
   for (const p of pages) {
     const html = read(p);
-    for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) if (!/\bsrc=/.test(m[1]) || m[2].trim()) bad.push(`${p}: inline <script>`);
+    for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+      // A JSON-LD block (search-engine data) is never run, so the CSP doesn't apply; it must still be valid JSON.
+      if (/\btype="application\/ld\+json"/.test(m[1]) && !/\bsrc=/.test(m[1])) { try { JSON.parse(m[2]); } catch { bad.push(`${p}: JSON-LD block is not valid JSON`); } continue; }
+      if (!/\bsrc=/.test(m[1]) || m[2].trim()) bad.push(`${p}: inline <script>`);
+    }
     for (const m of html.matchAll(/<[a-z][^>]*\s(on[a-z]+)\s*=/gi)) bad.push(`${p}: inline handler ${m[1]}`);
     if (/(href|src|action)\s*=\s*"\s*javascript:/i.test(html)) bad.push(`${p}: javascript: URL`);
   }

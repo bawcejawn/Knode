@@ -169,8 +169,9 @@
   function route() {
     const view = (location.hash || "").slice(1);
     const known = ["play", "leaderboard", "results", "how", "welcome"];
-    // First visit with no particular page asked for: the short welcome first.
-    const v = known.includes(view) ? view : !view && !seenWelcome() ? "welcome" : "play";
+    // Opening the site (or the installed app) with no particular page asked for always starts on the short welcome
+    // ("New here?"): the owner's choice, so nobody lands in the game without knowing what it is. One tap to play.
+    const v = known.includes(view) ? view : "welcome";
     if (v !== "welcome") markWelcomed();
     document.querySelectorAll(".view").forEach((s) => (s.hidden = s.dataset.view !== v));
     document.querySelectorAll(".tabs a, .tabbar a").forEach((a) => { if (a.dataset.view === v) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
@@ -590,9 +591,12 @@
   function shuffle(list) { const a = list.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
   let houseQueue = [];
   function nextHouse() { if (!houseQueue.length) houseQueue = shuffle((ADS.ecosystem || []).filter((h) => h && h.name && h.link)); return houseQueue.shift(); }
+  // An unsold slot stays empty and takes no space (CSS hides it); it appears only when ads.json has an entry for it.
+  // Set "emptySlots": "ecosystem" in ads.json to show a Koinos project in unsold slots instead.
   function fillSlot(slot) {
     fillAd(slot);
-    if (!slot.classList.contains("ad-filled")) { const h = nextHouse(); if (h) houseAd(slot, h); }
+    if (slot.classList.contains("ad-filled")) return;
+    if (ADS.emptySlots === "ecosystem") { const h = nextHouse(); if (h) houseAd(slot, h); }
   }
   async function loadAds() {
     try { const r = await fetch("ads.json", { cache: "no-cache" }); if (r.ok) ADS = await r.json(); } catch { ADS = {}; }
@@ -605,7 +609,7 @@
       kit.hidden = false;
     }
     // footer: every project
-    const eco = (ADS.ecosystem || []).concat(f ? [f] : []).filter((h) => h && h.name && httpsUrl(h.link));
+    const eco = (ADS.ecosystem || []).filter((h) => h && h.name && httpsUrl(h.link));
     if (eco.length) {
       $("#eco-grid").replaceChildren(...eco.map((h) => el("a", { href: httpsUrl(h.link), target: "_blank", rel: "noopener", class: "eco-item" }, el("b", {}, h.name), el("span", {}, h.tagline))));
       document.querySelector(".eco").hidden = false;
@@ -721,10 +725,10 @@
   const displayQuestionNumber = (q) => QNO.get(Number(q.chainId))?.n ?? Number(q.chainId) + 1;
   const qTag = (q) => `Q${displayQuestionNumber(q)}`;
   /** "Week 2 · Monday · Q1" */
-  const qWhere = (q) => {
+  const qWhere = (q, withQ = true) => {
     const w = QNO.get(Number(q.chainId))?.week ?? num(q.week);
     const d = num(q.day);
-    return `Week ${w + 1}${d >= 1 && d <= 6 ? ` · ${DAY_NAMES[d]}` : ""} · ${qTag(q)}`;
+    return `Week ${w + 1}${d >= 1 && d <= 6 ? ` · ${DAY_NAMES[d]}` : ""}${withQ ? ` · ${qTag(q)}` : ""}`;
   };
 
   // ═══════════════ live race: count blocks for questions whose answers are closed ═══════════════
@@ -917,14 +921,25 @@
     }));
     const act = oc && oc !== 1000 && (S.demo || q.result?.option + 1 === oc) ? actualText(q) : null;   // only once decided on chain
     const foot = el("div", { class: "q-foot" },
-      el("span", { class: "q-where" }, qWhere(q)),
-      mine !== null ? el("span", { class: "q-done" }, `✓ Answered: ${String.fromCharCode(65 + mine)}`) : mode === "open" ? el("span", { class: "q-cta" }, S.account ? "Tap an answer" : "Connect a wallet to answer") : null);
+      el("span", { class: "q-where" }, qWhere(q, false)),
+      mine !== null ? el("span", { class: `q-done${oc && oc !== 1000 ? (mine + 1 === oc ? " ok" : " miss") : ""}` }, outcomeNote(mine, oc)) : mode === "open" ? el("span", { class: "q-cta" }, S.account ? "Tap an answer" : "Connect a wallet to answer") : null);
     return el("article", { class: `q q-${(q.tier || "Medium")}${mine !== null ? " q-answered" : ""}` }, top,
       el("h3", { title: q.text }, el("span", { class: "qno" }, qTag(q)), " ", ...headline(q)), groupView(q),
       el("div", { class: "q-facts" }, ...windowFacts(q), mode === "open" ? el("span", { class: "fact" }, "Counting starts when answers close") : null),
       mode === "locked" && !oc ? raceView(q) : null,
       opts, act ? el("p", { class: "q-actual" }, ...act) : null, hashNote(q), foot);
   }
+
+  /** What an answered card says: the pick, and once the chain records the outcome, whether it was right. */
+  function outcomeNote(mine, oc) {
+    const L = (i) => String.fromCharCode(65 + i);
+    if (!oc) return `✓ Answered: ${L(mine)}`;
+    if (oc === 1000) return "Void: nobody scores";
+    return mine + 1 === oc ? `✓ Right (${L(mine)})` : `✗ Missed: answer was ${L(oc - 1)} (you: ${L(mine)})`;
+  }
+  /** Final: the chain recorded an outcome and the window's blocks are past (the same test as Results). */
+  const isFinal = (q) => !!outcomeOf(q) && S.height > q.windowEnd;
+  const weekOfQ = (q) => QNO.get(Number(q.chainId))?.week ?? num(q.week);
 
   function hashNote(q) {
     if (S.demo || (q.hashOk === true && wordingHashed(q))) return null;
@@ -967,7 +982,141 @@
       el("div", { class: "band-actions" },
         el("button", { class: "btn btn-tang", type: "button", onclick: () => openStake("deposit") }, "Stake"),
         el("button", { class: "btn btn-onnavy", type: "button", onclick: () => openStake("withdraw") }, "Withdraw"),
-        owed > 0n ? el("button", { class: "btn btn-sun band-collect", type: "button", onclick: () => { const c = $("#panel-claim"); if (c && c.scrollIntoView) c.scrollIntoView({ behavior: "smooth", block: "center" }); } }, `${amount(owed)} VHP to collect`) : null));
+        owed > 0n ? el("button", { class: "btn btn-sun band-collect", type: "button", onclick: () => { const c = $("#panel-claim"); if (c && c.scrollIntoView) c.scrollIntoView({ behavior: "smooth", block: "center" }); } }, `${amount(owed)} VHP to collect`) : null,
+        el("button", { class: "btn btn-onnavy band-share", type: "button", onclick: () => openShare(S.week) }, "Share my week")));
+  }
+
+  /** "Yesterday's results: 3 of 5 right", for the last question day the player answered something on. */
+  function renderYesterday(now) {
+    const box = $("#yesterday");
+    if (!box) return;
+    const past = S.questions.filter((q) => q.lockTime <= now);
+    if (!S.account || !past.length) { box.hidden = true; return; }
+    const last = past.reduce((a, q) => (q.lockTime > a.lockTime ? q : a));
+    const w = weekOfQ(last), d = num(last.day);
+    const day = past.filter((q) => weekOfQ(q) === w && num(q.day) === d);
+    const mine = day.filter((q) => pickOf(q) !== null);
+    if (!mine.length) { box.hidden = true; return; }
+    const decided = mine.filter((q) => isFinal(q) && outcomeOf(q) !== 1000);
+    const right = decided.filter((q) => pickOf(q) + 1 === outcomeOf(q)).length;
+    const waiting = mine.filter((q) => !isFinal(q)).length;
+    const yesterday = (d + 1) % 7 === new Date(now).getUTCDay();
+    const label = `${yesterday ? "Yesterday's" : `${DAY_NAMES[d] || "Last"}'s`} results`;
+    box.hidden = false;
+    box.replaceChildren(el("a", { href: "#results", onclick: () => { RV.week = w; RV.day = d; RV.q = ""; RV.mine = false; } },
+      el("b", {}, `${label}: `), decided.length ? `${right} of ${decided.length} right` : "waiting for the blocks",
+      decided.length && waiting ? ` · ${waiting} still waiting` : "", " →"));
+  }
+
+  /** One week's numbers for the share picture. */
+  function weekStats(week) {
+    const B = S.board[week], me = B?.scored.find((x) => x.address === S.account);
+    const elig = B ? B.scored.filter((x) => x.eligible) : [];
+    const qs = S.questions.filter((q) => weekOfQ(q) === week && isFinal(q) && outcomeOf(q) !== 1000 && pickOf(q) !== null);
+    return {
+      week: week + 1, pts: me ? me.pts : 0,
+      place: me && me.eligible && me.counted > 0 ? elig.indexOf(me) + 1 : 0, of: elig.length,
+      right: qs.filter((q) => pickOf(q) + 1 === outcomeOf(q)).length, decided: qs.length,
+      free: !me || !me.eligible, address: S.account,
+    };
+  }
+  const installUrl = () => { const u = new URL("install.html", location.href); u.hash = ""; u.search = ""; return u.href; };
+  const playUrl = () => { const u = new URL("./", location.href); u.hash = "play"; u.search = ""; return u.href; };
+  function saveBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = el("a", { href: url, download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+  /** Share my week: a picture made on this device (no address unless ticked), shared with the phone's share sheet. */
+  const SH = { week: 0 };
+  async function drawShareNow() {
+    const c = $("#share-canvas"), box = $("#share-addr");
+    if (c && window.KnodeExtras) await window.KnodeExtras.drawShare(c, weekStats(SH.week), { showAddress: !!(box && box.checked) });
+  }
+  async function openShare(week) {
+    const dlg = $("#share-dialog");
+    if (!dlg || !window.KnodeExtras || !S.account) return;
+    SH.week = week;
+    const box = $("#share-addr");
+    if (box) box.checked = false;
+    if (!S.board[week] && !S.demo) { try { S.board[week] = await loadBoard(week); } catch { /* the picture shows what is known */ } }
+    if (dlg.showModal) dlg.showModal();
+    await drawShareNow();
+  }
+  const shareText = () => { const st = weekStats(SH.week); return `I scored ${st.pts} ${st.pts === 1 ? "point" : "points"} on Knode in week ${st.week}${st.place ? ` (#${st.place} of ${st.of})` : ""}. Call the next blocks on Koinos: ${installUrl()}`; };
+  const shareBlob = () => new Promise((res) => { const c = $("#share-canvas"); if (!c || !c.toBlob) res(null); else c.toBlob((b) => res(b), "image/png"); });
+  async function shareGo() {
+    const blob = await shareBlob(), text = shareText(), name = `knode-week-${SH.week + 1}.png`;
+    try {
+      const file = blob && typeof File === "function" ? new File([blob], name, { type: "image/png" }) : null;
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text, title: "Knode" }); return; }
+      if (navigator.share) { await navigator.share({ text, title: "Knode", url: installUrl() }); return; }
+    } catch (e) { if (e && e.name === "AbortError") return; }
+    await shareSave();
+  }
+  async function shareSave() {
+    const blob = await shareBlob();
+    if (blob) saveBlob(blob, `knode-week-${SH.week + 1}.png`);
+    try { await navigator.clipboard.writeText(shareText()); toast("Picture saved, and the text is copied: paste it with the picture."); }
+    catch { toast("Picture saved."); }
+  }
+
+  /** Reminders. A calendar file always works; notifications only while Knode is open (no server sends them). */
+  const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const lsSet = (k, v) => { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* private window */ } };
+  const NOTIFY_KEY = "kn-notify-v1";
+  const canNotify = () => typeof Notification !== "undefined";
+  const notifyOn = () => canNotify() && Notification.permission === "granted" && lsGet(NOTIFY_KEY) === "1";
+  function notify(title, body, tag) {
+    const opts = { body, tag, icon: "media/icon-192.png", data: { url: playUrl() } };
+    const plain = () => { try { new Notification(title, opts); } catch { /* not allowed here */ } };
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) navigator.serviceWorker.getRegistration().then((r) => (r ? r.showNotification(title, opts) : plain())).catch(plain);
+      else plain();
+    } catch { plain(); }
+  }
+  function checkReminders(open, now) {
+    if (S.demo || !notifyOn() || !open.length) return;
+    const newest = Math.max(...open.map((q) => Number(q.chainId)));
+    if (newest > Number(lsGet("kn-notify-q") || -1)) {
+      lsSet("kn-notify-q", String(newest));
+      notify("Today's Knode questions are out", `${open.length} new questions. Answers close in ${duration(open[0].lockTime - now)}.`, "knode-new");
+    }
+    const left = open[0].lockTime - now, todo = open.filter((q) => myAnswer(q) === null).length;
+    if (S.account && todo && left > 0 && left <= 3600000 && lsGet("kn-notify-close") !== String(open[0].lockTime)) {
+      lsSet("kn-notify-close", String(open[0].lockTime));
+      notify("Under an hour left on Knode", `You have ${todo} question${todo === 1 ? "" : "s"} still to answer.`, "knode-close");
+    }
+  }
+  function remindersCard() {
+    const ics = () => {
+      const text = window.KnodeExtras ? window.KnodeExtras.buildIcs(playUrl()) : "";
+      if (text) { saveBlob(new Blob([text], { type: "text/calendar" }), "knode-daily-reminder.ics"); toast("Open the downloaded file to add the reminder to your calendar."); }
+    };
+    const toggle = async () => {
+      if (notifyOn()) { lsSet(NOTIFY_KEY, null); toast("Notifications off."); return renderReminders(); }
+      let p = "denied";
+      try { p = await Notification.requestPermission(); } catch { /* old browsers */ }
+      if (p === "granted") {
+        lsSet(NOTIFY_KEY, "1");
+        const open = S.questions.filter((q) => nowMs() < q.lockTime);
+        if (open.length) lsSet("kn-notify-q", String(Math.max(...open.map((q) => Number(q.chainId)))));
+        toast("Notifications on: you'll hear about new questions while Knode is open.");
+      } else toast("Notifications are blocked in this browser. The calendar reminder still works.");
+      renderReminders();
+    };
+    return el("div", { class: "remind" },
+      el("p", { class: "muted" }, `New questions come out Monday to Saturday at ${localHour(12)} your time.`),
+      el("div", { class: "row-btns" },
+        el("button", { class: "btn btn-primary", type: "button", onclick: ics }, "Add to my calendar"),
+        canNotify() ? el("button", { class: "btn btn-ghost", type: "button", onclick: toggle }, notifyOn() ? "Turn notifications off" : "Notify me while Knode is open") : null),
+      el("p", { class: "fine-print muted" }, canNotify()
+        ? "The calendar reminder works even when Knode is closed. Notifications only appear while Knode is open in a tab or as the installed app (on iPhone, only in the installed app)."
+        : "The calendar reminder works even when Knode is closed. This browser can't show notifications."));
+  }
+  function renderReminders() {
+    for (const id of ["#remind-body", "#welcome-remind"]) { const b = $(id); if (b && b.replaceChildren) b.replaceChildren(remindersCard()); }
   }
 
   function renderPlay() {
@@ -1004,18 +1153,26 @@
 
     const thisWeek = (q) => (QNO.get(q.chainId)?.week ?? num(q.week)) === S.week;
     const open = S.questions.filter((q) => now < q.lockTime).sort((a, b) => a.chainId - b.chainId);
-    const locked = S.questions.filter((q) => thisWeek(q) && now >= q.lockTime && !outcomeOf(q)).sort((a, b) => a.chainId - b.chainId);
+    const lockedAll = S.questions.filter((q) => thisWeek(q) && now >= q.lockTime);
+    const waiting = lockedAll.filter((q) => !outcomeOf(q));
+    // Answered questions decided in the last day stay here too, so the player sees right / missed right away.
+    const recent = lockedAll.filter((q) => outcomeOf(q) && myAnswer(q) !== null && num(q.windowEnd) >= S.height - 28800);
+    const locked = [...waiting, ...recent].sort((a, b) => a.chainId - b.chainId);
     const oq = $("#open-questions");
     oq.replaceChildren(...(open.length ? open.map((q) => questionCard(q, "open")) : [el("div", { class: "empty" }, `No open questions right now. New questions arrive Monday to Saturday at ${localHour(12)} your time.`)]));
     const answeredToday = open.filter((q) => myAnswer(q) !== null).length;
     const tn = $("#today-note");
     if (tn) tn.textContent = !open.length ? "" : S.account ? `${answeredToday} of ${open.length} answered${open.length && open[0] ? ` · answers close in ${duration(open[0].lockTime - now)}` : ""}` : `${open.length} to answer · answers close in ${duration(open[0].lockTime - now)}`;
     const wc = $("#waiting-count");
-    if (wc) wc.textContent = `(${locked.length})`;
+    if (wc) wc.textContent = `(${waiting.length} waiting${recent.length ? ` · ${recent.length} decided` : ""})`;
+    const wtt = $("#waiting-title");
+    if (wtt) wtt.textContent = recent.length ? "Waiting and latest results" : "Waiting for results";
+    renderYesterday(now);
+    checkReminders(open, now);
     const wt = $("#waiting");
     if (wt) wt.hidden = !locked.length;
-    // (In-page ad slots are switched off for now. To bring one back, add an element with data-ad-slot="…" to the page;
-    // loadAds() fills it from site/ads.json. A network (iframe) ad also needs its origin in index.html's CSP frame-src.)
+    // (Ad slots are the elements with data-ad-slot="…"; loadAds() fills them from site/ads.json. A network (iframe) ad
+    // also needs its origin in index.html's CSP frame-src.)
     $("#locked-questions").replaceChildren(...locked.map((q) => questionCard(q, "locked")));
 
     // you
@@ -1073,15 +1230,18 @@
       type: "button", role: "tab", "aria-selected": String(w === week), onclick: () => renderBoard(w),
     }, w === S.week ? `This week (${w + 1})` : `Week ${w + 1}`)));
     const tbody = $("#board tbody");
+    const cards = $("#board-cards");
+    const cardMsg = (t) => { if (cards && cards.replaceChildren) cards.replaceChildren(el("div", { class: "empty" }, t)); };
     if (!S.board[week]) {
       tbody.replaceChildren(el("tr", {}, el("td", { colspan: "5", class: "muted" }, "Loading…")));
-      try { S.board[week] = await loadBoard(week); } catch (e) { tbody.replaceChildren(el("tr", {}, el("td", { colspan: "5", class: "muted" }, `Couldn't load: ${e.message}`))); return; }
+      cardMsg("Loading…");
+      try { S.board[week] = await loadBoard(week); } catch (e) { tbody.replaceChildren(el("tr", {}, el("td", { colspan: "5", class: "muted" }, `Couldn't load: ${e.message}`))); cardMsg(`Couldn't load: ${e.message}`); return; }
     }
     S.boardWeek = week;
     const b = S.board[week];
     // Everyone who answered is listed. Free players (no stake) score points but are never paid.
     const rows = b.scored.filter((s) => s.counted > 0 || s.address === S.account);
-    if (!rows.length) { tbody.replaceChildren(el("tr", {}, el("td", { colspan: "5", class: "muted" }, "No players yet this week. Stake and answer to be the first."))); return; }
+    if (!rows.length) { tbody.replaceChildren(el("tr", {}, el("td", { colspan: "5", class: "muted" }, "No players yet this week. Stake and answer to be the first."))); cardMsg("No players yet this week. Stake and answer to be the first."); return; }
     let lastWinnerIdx = -1;
     rows.forEach((s, i) => { if (s.winner) lastWinnerIdx = i; });
     // Places are counted among eligible staked players only (free players never take a place).
@@ -1093,6 +1253,23 @@
       el("td", { class: "num" }, String(s.pts)),
       el("td", { class: "num" }, s.stake < UNIT ? el("span", { class: "badge badge-free" }, "Free play") : `${amount(s.stake, 0)} VHP`),
       el("td", { class: "num" }, s.winner && s.reward !== undefined && !(b.estimate && s.reward === 0n) ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : "–"))));
+    // Phones: the same standings as cards, your own card pinned on top. Ties: players on the same points as a neighbour.
+    if (cards && cards.replaceChildren) {
+      const elig = rows.filter((s) => s.eligible);
+      const tied = (s) => s.eligible && elig.some((o) => o !== s && o.pts === s.pts);
+      const rewardOf = (s) => (s.winner && s.reward !== undefined && !(b.estimate && s.reward === 0n) ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : null);
+      const card = (s, i, pinned) => el("div", { class: ["lbc", s.address === S.account ? "me" : "", s.winner ? "win" : "", pinned ? "pinned" : ""].join(" ").trim() },
+        el("span", { class: `lbc-place${s.winner ? " lbc-win" : ""}` }, placeOf.get(s) ? `#${placeOf.get(s)}` : "–"),
+        el("div", { class: "lbc-who" },
+          el("b", {}, pinned ? `You: ${placeOf.get(s) ? `#${placeOf.get(s)} of ${elig.length}` : "free play"}` : s.address === S.account ? "You" : short(s.address)),
+          el("span", { class: "muted" }, s.stake < UNIT ? "Free play" : `${amount(s.stake, 0)} VHP staked`, tied(s) ? " · tied" : "", rewardOf(s) ? ` · ${rewardOf(s)}` : "")),
+        el("span", { class: "lbc-pts" }, el("b", {}, String(s.pts)), el("small", {}, " pts")));
+      const meRow = rows.find((s) => s.address === S.account);
+      const list = [];
+      if (meRow) list.push(card(meRow, -1, true));
+      rows.forEach((s, i) => { list.push(card(s, i, false)); if (i === lastWinnerIdx && i < rows.length - 1) list.push(el("div", { class: "lbc-cut" }, "Winners' line: everyone above shares the pool")); });
+      cards.replaceChildren(...list);
+    }
     $("#lb-note").textContent = week === S.week
       ? "Live standings: points count as soon as each question's blocks are final. The top 30% of staked players win (ties too). Rewards shown with ~ are estimates if the week ended now."
       : b.final ? `Final: ${num(b.final.winners)} winner(s) at ${num(b.final.cutoff)}+ points shared ${amount(b.final.pot)} VHP.` : "Final standings.";
@@ -1131,6 +1308,8 @@
     if (dk) dk.replaceChildren(...days.filter((dd) => dd >= 1 && dd <= 6).map((dd) => el("button", { type: "button", "aria-pressed": String(!RV.q && dd === RV.day), onclick: () => { RV.day = dd; RV.q = ""; const i = $("#res-search"); if (i) i.value = ""; renderResults(); } }, SHORT_DAYS[dd - 1])));
     const mineBtn = $("#res-mine");
     if (mineBtn) { mineBtn.hidden = !S.account; mineBtn.setAttribute("aria-pressed", String(!!(S.account && RV.mine))); }
+    const shareBtn = $("#res-share");
+    if (shareBtn) shareBtn.hidden = !S.account;
     if (S.account && !S.demo && RV.week !== S.week && !S.board[RV.week]) loadBoard(RV.week).then((b) => { S.board[RV.week] = b; renderResults(); }).catch(() => {});
 
     const needle = RV.q.trim().toLowerCase();
@@ -1328,6 +1507,17 @@
     if (rs) rs.addEventListener("input", () => { RV.q = rs.value || ""; renderResults(); });
     const rm = $("#res-mine");
     if (rm) rm.addEventListener("click", () => { RV.mine = !RV.mine; renderResults(); });
+    const rsh = $("#res-share");
+    if (rsh) rsh.addEventListener("click", () => openShare(RV.week ?? S.week));
+    const sa = $("#share-addr");
+    if (sa) sa.addEventListener("change", () => drawShareNow());
+    const sg = $("#share-go");
+    if (sg) sg.addEventListener("click", () => shareGo());
+    const ss = $("#share-save");
+    if (ss) ss.addEventListener("click", () => shareSave());
+    const sc = $("#share-close");
+    if (sc) sc.addEventListener("click", () => { const d = $("#share-dialog"); if (d && d.close) d.close(); });
+    renderReminders();
     // Installable app: the service worker keeps only the page shell for offline start-up (never game data or chain reads).
     if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
     $("#connect").addEventListener("click", () => {
