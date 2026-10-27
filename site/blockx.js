@@ -224,8 +224,8 @@
     $("board-box").hidden = false;
     const part = boardMode === "today" ? board.today : boardMode === "last" ? board.lastWeek : boardMode === "all" ? board.allTime : board.week;
     const rows = (part && part.rows) || [], who = me();
-    // Places among ranked wallets only (unranked wallets see their own score below, never a place in the list).
-    const ranked = X.places(rows.filter((r) => r.ranked).map((r) => ({ ...r, player: r.a }))).map((r) => ({ ...r, a: r.player }));
+    // Every wallet is listed (guests can win: owner's decision 2026-10-27).
+    const ranked = rows;
     const medal = ["🥇", "🥈", "🥉"];
     $("board-sub").textContent = boardMode === "week" && board.week ? `week ${board.week.week + 1}, from ${dayTime(board.week.start)}`
       : boardMode === "last" && board.lastWeek ? `week ${board.lastWeek.week + 1}${board.lastWeek.final ? ", final" : ", checking (final 12 hours after the week ends)"}`
@@ -239,9 +239,8 @@
       el("td", { class: "num hide-sm", text: fmt(r.picks) }), el("td", { class: "num hide-sm", text: fmt(r.days) }))));
     if (!ranked.length) $("board-rows").replaceChildren(el("tr", {}, el("td", { colspan: "6", class: "ago", text: "No ranked picks yet." })));
     const mine = who && rows.find((r) => r.a === who);
-    $("board-me").textContent = !who ? "" : !mine ? "You have no recorded picks here yet." : mine.ranked
-      ? `You: #${(ranked.find((r) => r.a === who) || mine).place} with ${pts(mine.pts)} points (${mine.correct} right of ${mine.picks}).`
-      : `Your score (only you see this): ${pts(mine.pts)} points, ${mine.correct} right of ${mine.picks}. To be ranked and win prizes, hold at least 1 VHP or stake in Knode.`;
+    $("board-me").textContent = !who ? "" : !mine ? "You have no recorded picks here yet."
+      : `You: #${mine.place} with ${pts(mine.pts)} points (${mine.correct} right of ${mine.picks}) on ${mine.days} day${mine.days === 1 ? "" : "s"}.${mine.days < X.MIN_PRIZE_DAYS ? ` Pick on ${X.MIN_PRIZE_DAYS} different days a week to win prizes.` : ""}`;
   }
   const setBoard = (m) => { boardMode = m; for (const [id, k] of [["b-today", "today"], ["b-week", "week"], ["b-last", "last"], ["b-all", "all"]]) $(id).setAttribute("aria-pressed", String(m === k)); renderBoard(); };
   $("b-today").onclick = () => setBoard("today"); $("b-week").onclick = () => setBoard("week"); $("b-last").onclick = () => setBoard("last"); $("b-all").onclick = () => setBoard("all");

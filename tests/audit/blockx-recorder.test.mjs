@@ -89,7 +89,7 @@ test("no race card: waits, and a target older than 3 days is recorded void with 
   assert.ok(voided.length >= 1 && voided.every((t) => t.picks.every((p) => p[3] === 0)));
 });
 
-test("last week's prizes appear only after the 12-hour correction window, ranked wallets only", async () => {
+test("last week's prizes appear only after the 12-hour correction window, open to every wallet", async () => {
   // Record the whole of week 3 in runs, then look from Mon of week 4.
   const out = tmp(), rd = raceDir();
   let prev;
@@ -107,8 +107,26 @@ test("last week's prizes appear only after the 12-hour correction window, ranked
   const late = await quiet(() => run({ p: "main", check: null, prev: out, out: tmp(), raceDir: rd, picksContract: "1P", blockOf: blockOf(), picksOf: picksOf(), rankedOf, head: { height: endH + 13 * 1200, time: T(endH + 13 * 1200), lib: endH + 13 * 1200 - 60 } }));
   assert.equal(late.board.lastWeek.final, true);
   const pz = plain(late.board.lastWeek.prizes);
-  // Bob (BIG, ×1 on 2 of 3 targets) vs Alice (MID, ×2 on 1 of 3): equal expected points; both ranked, guest never.
+  // Bob (BIG, ×1 on 2 of 3 targets) vs Alice (MID, ×2 on 1 of 3): equal expected points. The guest always picks SMALL,
+  // which never signs here, so it has no points and can't win; guests aren't excluded otherwise.
   assert.equal(pz.length, 2);
   assert.ok(pz.every((x) => x.player !== GUEST));
   assert.equal(pz.reduce((s, x) => s + x.vhp, 0), 3);
+});
+
+test("guests win prizes like anyone (owner's decision 2026-10-27): an unranked wallet with the most points takes 1st", async () => {
+  const out = tmp(), rd = raceDir();
+  let prev;
+  const startH = H0 - Math.floor(3600000 / 3000), endH = startH + 7 * 28800;
+  // Here the guest picks the signer every time.
+  const picksGuest = async (node, r) => { const t = T(r * X.ROUND) - 3600000 * (1 + (r % 3)); return [{ player: GUEST, producer: signerOf(r * X.ROUND), time: t }, { player: BOB, producer: BIG, time: t }]; };
+  for (let lib = startH + 12 * X.ROUND; lib <= endH + 4 * X.ROUND; lib += 12 * X.ROUND) {
+    const o = tmp();
+    await quiet(() => run({ p: "main", check: null, prev, out: o, raceDir: rd, picksContract: "1P", blockOf: blockOf(), picksOf: picksGuest, rankedOf, head: { height: lib, time: T(lib), lib } }));
+    prev = o;
+  }
+  const r = await quiet(() => run({ p: "main", check: null, prev, out, raceDir: rd, picksContract: "1P", blockOf: blockOf(), picksOf: picksGuest, rankedOf, head: { height: endH + 13 * 1200, time: T(endH + 13 * 1200), lib: endH + 13 * 1200 - 60 } }));
+  const pz = plain(r.board.lastWeek.prizes);
+  assert.deepEqual(pz.map((x) => [x.player, x.vhp]), [[GUEST, 2], [BOB, 1]]);
+  assert.equal(r.board.lastWeek.rows.find((x) => x.a === GUEST).ranked, false, "still marked unranked, but wins");
 });
