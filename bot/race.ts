@@ -2,9 +2,10 @@
  * Producer Race recorder (run every hour by .github/workflows/race.yml; read-only on the chain, holds no key).
  *
  * Each run:
- *  1. Handicap cards. A race has 3 legs of 2 hours (UTC 00-02-04, 06-08-10, ...), and each leg gets a card from every
- *     producer's VHP: the starting card and 2 updates per race. A leg's card is taken by the last run before the leg
- *     starts (within the hour before), or else by the first run during it. A leg no run reached keeps the card before it.
+ *  1. Handicap cards. A race has 6 legs of 1 hour, and each leg gets a card from every producer's VHP: the starting
+ *     card and an update every hour (races recorded before 2026-10-27 have 3 legs of 2 hours and keep them). A leg's
+ *     card is taken by the last run before the leg starts (within the hour before), or else by the first run during it.
+ *     A leg no run reached keeps the card before it.
  *  2. Results. A race is final once its last block is irreversible and every one of its blocks matches on two
  *     independent nodes (RPC and RPC_CHECK, like the game's results). Until then it stays "checking".
  *     Once the race picks contract is live (race-data/deployment.json on main), each final race also records every
@@ -49,7 +50,7 @@ function readPrev(name: string): any {
 }
 function emptyWeek(w: number): WeekFile {
   const start = M.weekStart(w), races: Race[] = [];
-  for (let t = start; t < start + M.WEEK; t += M.RACE) { const i = M.raceIndex(t); races.push({ id: M.raceId(i), start: M.raceStart(i), end: M.raceStart(i) + M.RACE, cards: [null, null, null], result: null }); }
+  for (let t = start; t < start + M.WEEK; t += M.RACE) { const i = M.raceIndex(t); races.push({ id: M.raceId(i), start: M.raceStart(i), end: M.raceStart(i) + M.RACE, cards: new Array(M.LEGS).fill(null), result: null }); }
   return { v: 1, week: w, start, end: start + M.WEEK, races };
 }
 function loadWeek(w: number): WeekFile {
@@ -58,7 +59,9 @@ function loadWeek(w: number): WeekFile {
   for (const r of fresh.races) {
     const o = old.races.find((x: any) => x && x.id === r.id);
     if (!o) continue;
-    if (Array.isArray(o.cards) && o.cards.length === 3) r.cards = o.cards.map((c: any) => (c && Array.isArray(c.field) ? c : null));
+    // A race keeps the format it started with: 3 two-hour cards (before 2026-10-27) once any was taken, else hourly.
+    if (Array.isArray(o.cards) && (o.cards.length === 3 || o.cards.length === 6) && o.cards.some((c: any) => c && Array.isArray(c.field)))
+      r.cards = o.cards.map((c: any) => (c && Array.isArray(c.field) ? c : null));
     if (o.result && typeof o.result === "object") r.result = o.result;
   }
   return fresh;
@@ -180,8 +183,10 @@ export async function run({ p, check, prev, out, vhpOf, raceContract, picksOf, p
   const curLeg = legStart(now), nextLeg = curLeg + M.LEG;
   for (const s of [curLeg, nextLeg]) {
     if (s === nextLeg && s - now > CARD_AHEAD) continue;
-    const ra = M.raceAt(s), race = raceById(ra.id), leg = M.legOf(ra.start, s);
-    if (race && !race.cards[leg]) want.push({ race, leg });
+    const ra = M.raceAt(s), race = raceById(ra.id);
+    if (!race) continue;
+    const leg = M.legOf(ra.start, s, race.cards.length);
+    if (!race.cards[leg] && !want.some((x) => x.race === race && x.leg === leg)) want.push({ race, leg });
   }
   if (want.length) {
     const recent = await readBlocks(p, headId, Math.max(1, headH - 7199), headH);       // about the last 6 hours
