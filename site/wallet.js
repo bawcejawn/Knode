@@ -239,7 +239,14 @@
   // Audit (guest) L-5: on Koinos mainnet a guest only ever names the live Knode sponsor as payer and only answers on the
   // Knode game, whatever deployment.json says (pinned like the chain id).
   const PINNED_SPONSOR = "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8", PINNED_GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr";
+  // The Producer Race picks contract, pinned the same way once it is on mainnet (race-data/deployment.json). Until
+  // then guests can't pick (empty = none).
+  const PINNED_RACE = "";
   const guestGame = () => (W.chainId === MAINNET_CHAIN_ID ? PINNED_GAME : (W.gameContract || null));
+  const guestRace = () => (W.chainId === MAINNET_CHAIN_ID ? (PINNED_RACE || null) : ((W.sponsor && W.sponsor.race) || null));
+  /** A guest may sign only free play: game answers, and picks on the race contract. */
+  const guestOp = (o, game, race) => !!(o && o.call_contract && ((game && o.call_contract.contract_id === game && Number(o.call_contract.entry_point) === ANSWER)
+    || (race && o.call_contract.contract_id === race && Number(o.call_contract.entry_point) === PICK)));
   // Owner switch: guest play is on only when game-data/deployment.json has "sponsor": { ..., "guest": true }. Keep it off
   // until the site has its own domain: on the shared bawcejawn.github.io origin, other pages there could read a guest key.
   const guestOn = () => !!(W.sponsor && W.sponsor.guest === true);
@@ -371,8 +378,9 @@
     const game = guestGame();
     if (W.chainId === MAINNET_CHAIN_ID && (!sp || sp.address !== PINNED_SPONSOR || !Array.isArray(sp.covers) || !sp.covers.includes(PINNED_GAME)))
       throw new Error("Guest play is paused: the page's Mana sponsor settings aren't the live Knode sponsor. Nothing was sent.");
-    const answerOnly = !!game && ops.length > 0 && ops.every((o) => o && o.call_contract && o.call_contract.contract_id === game && Number(o.call_contract.entry_point) === ANSWER);
-    if (!answerOnly) throw guestCant(ops);
+    const race = guestRace();
+    const freeOnly = !!game && ops.length > 0 && ops.every((o) => guestOp(o, game, race));
+    if (!freeOnly) throw guestCant(ops);
     const rcLimit = String(sp.rcLimit || "100000000");
     if (!(await sponsorSaysYes(sp, rcLimit, true))) throw new Error(GUEST_NO_FREE);
     const signer = await window.KGuest.signer();
@@ -381,10 +389,10 @@
     const tx = new lib.Transaction({ signer, provider: W.provider, options: { payer: sp.address, payee: W.address, rcLimit, chainId: W.chainId } });
     for (const op of ops) await tx.pushOperation(op);
     const prepared = await tx.prepare({ payer: sp.address, payee: W.address, rcLimit, chainId: W.chainId });
-    checkGuestTx(prepared, { sponsor: sp.address, payee: W.address, chainId: W.chainId, game, rcLimit });
+    checkGuestTx(prepared, { sponsor: sp.address, payee: W.address, chainId: W.chainId, game, race, rcLimit });
     W.status && W.status(`Sending “${label}” (free: the Mana sponsor pays)…`);
     tx.transaction = await tx.sign();
-    checkGuestTx(tx.transaction, { sponsor: sp.address, payee: W.address, chainId: W.chainId, game, rcLimit });
+    checkGuestTx(tx.transaction, { sponsor: sp.address, payee: W.address, chainId: W.chainId, game, race, rcLimit });
     let receipt;
     try { receipt = await tx.send(); }
     catch (e) {
@@ -421,8 +429,11 @@
     if (want.chainId && hd.chain_id !== want.chainId) throw new Error("The transaction is for another chain. Nothing was sent.");
     if (BigInt(hd.rc_limit || 0) > BigInt(want.rcLimit)) throw new Error("The transaction asks for more Mana than expected. Nothing was sent.");
     const ops = tx.operations || [];
-    if (!ops.length || !ops.every((o) => o.call_contract && o.call_contract.contract_id === want.game && Number(o.call_contract.entry_point) === ANSWER))
-      throw new Error("A guest signs only game answers. Nothing was sent.");
+    // (self-contained: answers on the game, or picks (0x8ce33c6c) on the pinned race contract)
+    const ok = (o) => !!(o && o.call_contract && ((want.game && o.call_contract.contract_id === want.game && Number(o.call_contract.entry_point) === ANSWER)
+      || (want.race && o.call_contract.contract_id === want.race && Number(o.call_contract.entry_point) === 0x8ce33c6c)));
+    if (!ops.length || !ops.every(ok))
+      throw new Error("A guest signs only game answers and race picks. Nothing was sent.");
   }
 
   /** Disconnect: ends the KOIN Vault session and forgets every remembered account on this device. */
@@ -468,7 +479,9 @@
   async function sendKondor(label, ops, opts = {}) {
     const sp = !opts.gamePays ? sponsorFor(ops) : null;
     // A transaction made only of game answers is sponsored for any wallet (free play), within the sponsor's caps.
-    const answerOnly = !!sp && ops.every((o) => o.call_contract && o.call_contract.contract_id === sp.covers[0] && Number(o.call_contract.entry_point) === ANSWER);
+    // Free play (game answers, race picks) is sponsored for any wallet, within the sponsor's caps.
+    const answerOnly = !!sp && ops.every((o) => o.call_contract && ((o.call_contract.contract_id === sp.covers[0] && Number(o.call_contract.entry_point) === ANSWER)
+      || (sp.race && o.call_contract.contract_id === sp.race && Number(o.call_contract.entry_point) === PICK)));
     // Answers are light (rcLimit, 1 Mana); staking, withdrawing, swapping and claiming do much more in one transaction
     // (approve, transfer, burn, stake), so they ask for rcLimitOther (default 3 Mana).
     const rcLimit = sp ? String(answerOnly ? (sp.rcLimit || "100000000") : (sp.rcLimitOther || "300000000")) : null;
@@ -524,7 +537,7 @@
   // "sponsor": { address, covers: [game, desk, vhp, koin], rcLimit (answers), rcLimitOther (everything else) }. The sponsor contract decides on chain; the page
   // only picks it when every operation is one it pays for and its caps (would_pay) say yes, else the player's own Mana.
   // Answers are sponsored for any wallet (free play); everything else only for wallets with VHP or a stake.
-  const APPROVE = 0x74e21680, WOULD_PAY = 0xda1fd8f5, ANSWER = 0x0db52f40, CLAIM = 0xdd1b3c31;
+  const APPROVE = 0x74e21680, WOULD_PAY = 0xda1fd8f5, ANSWER = 0x0db52f40, CLAIM = 0xdd1b3c31, PICK = 0x8ce33c6c;
   /** The sponsor this transaction could use, or null. */
   function sponsorFor(ops) {
     const sp = W.sponsor;
