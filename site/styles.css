@@ -688,6 +688,11 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .also-card > span { width: 44px; height: 44px; border-radius: 50%; background: var(--violet-soft); display: grid; place-items: center; font-size: 1.3rem; }
 .also-card b { font: 700 1.02rem/1.25 var(--display); }
 .also-card p { margin: 2px 0 0; color: var(--muted); font-size: 0.95rem; }
+.also-card.soon { background: transparent; border-style: dashed; }
+.also-card.soon b, .also-card.soon p { color: var(--muted); }
+.also-soon-title { margin: 6px 0 0; font: 700 0.8rem var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.also-more { font-weight: 700; color: var(--violet); }
+.welcome-steps-title { font: 700 1.1rem var(--display); margin: 18px 0 0; }
 .rules .faq details { max-width: none; width: 100%; box-sizing: border-box; }
 .rules .lt-list { color: var(--muted); }
 .rules .faq { max-width: none; }

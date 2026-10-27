@@ -8,7 +8,7 @@
   });
   var standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   var done = document.getElementById("inst-done"), auto = document.getElementById("inst-auto"), btn = document.getElementById("inst-btn");
-  if (standalone) { auto.hidden = false; btn.hidden = true; done.hidden = false; done.textContent = "You're already using the Knode app."; }
+  if (standalone) { auto.hidden = false; btn.hidden = true; done.hidden = false; done.textContent = "You're already using the KnodeGames app."; }
   var deferred = null;
   window.addEventListener("beforeinstallprompt", function (e) { e.preventDefault(); deferred = e; auto.hidden = false; });
   btn.addEventListener("click", function () {
@@ -22,7 +22,7 @@
   // Share
   var url = document.getElementById("share-url").textContent.trim(), sb = document.getElementById("share-btn");
   sb.addEventListener("click", function () {
-    if (navigator.share) navigator.share({ title: "Knode", text: "Play Knode, the daily Koinos prediction game", url: url }).catch(function () {});
+    if (navigator.share) navigator.share({ title: "KnodeGames", text: "Play KnodeGames, the daily Koinos prediction game", url: url }).catch(function () {});
     else if (navigator.clipboard) navigator.clipboard.writeText(url).then(function () { sb.textContent = "Link copied"; setTimeout(function () { sb.textContent = "Share"; }, 1500); }, function () {});
   });
 })();

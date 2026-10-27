@@ -11,8 +11,9 @@
  *     Once the race picks contract is live (race-data/deployment.json on main), each final race also records every
  *     pick (read on both nodes; picks are locked by the chain when a race starts), who picked the winner, and whether
  *     each wallet could be ranked (holds 1 VHP or has a Knode stake) when the race was finalized.
- *  3. Leaderboards (board.json): Today (UTC day), This week (the Knode game's week) and All time, ranked by correct
- *     winner picks; ties: more picks placed, then more Knode questions answered, then a higher Knode score.
+ *  3. Leaderboards (board.json): Today (UTC day), This week (the Knode game's week) and All time, ranked by points:
+ *     a pick on the winner is a win (3 points), a pick on the 2nd or 3rd horse a show (1 point). Ties: more wins, then
+ *     more picks placed, then more Knode questions answered, then a higher Knode score.
  *  4. Writes race-data/index.json, race-data/W<week>.json and race-data/board.json, which the publish job puts on the
  *     race-data branch for the website.
  * The scoring is site/race-math.js, the same file the website runs.
@@ -62,9 +63,15 @@ function loadWeek(w: number): WeekFile {
     // A race keeps the format it started with: 3 two-hour cards (before 2026-10-27) once any was taken, else hourly.
     if (Array.isArray(o.cards) && (o.cards.length === 3 || o.cards.length === 6) && o.cards.some((c: any) => c && Array.isArray(c.field)))
       r.cards = o.cards.map((c: any) => (c && Array.isArray(c.field) ? c : null));
-    if (o.result && typeof o.result === "object") r.result = o.result;
+    if (o.result && typeof o.result === "object") r.result = withShows(o.result);
   }
   return fresh;
+}
+/** Picks recorded before Show existed have 5 fields; add the 6th (show 1/0) from the race's own stored standings. */
+function withShows(result: any): any {
+  if (!Array.isArray(result?.picks) || !Array.isArray(result.standings)) return result;
+  const sh = new Set<string>(M.shows(result.standings));
+  return { ...result, picks: result.picks.map((x: any) => (Array.isArray(x) && x.length === 5 ? [...x, x[3] ? 0 : sh.has(x[1]) ? 1 : 0] : x)) };
 }
 
 // ── chain reads ──
@@ -222,7 +229,7 @@ export async function run({ p, check, prev, out, vhpOf, raceContract, picksOf, p
         checked = 2;
       }
       const st = M.standings(B, race, race.cards);
-      const winner = M.winners(st)[0] || null;
+      const winner = M.winners(st)[0] || null, showSet = new Set<string>(M.shows(st));
       // The picks (locked by the chain since the race started), read on both nodes like the blocks.
       let picks: any[] | undefined;
       if (picksRead) {
@@ -234,8 +241,8 @@ export async function run({ p, check, prev, out, vhpOf, raceContract, picksOf, p
           if (key(mine) !== key(theirs)) { problems.push(`${race.id}: the two nodes disagree about the race's picks; not final this run`); continue; }
         }
         const can = await eligible(mine.map((x) => x[0]));
-        // [player, horse, time, right (1/0), may be ranked (1/0)]
-        picks = mine.map(([who, horse, at]) => [who, horse, at, horse === winner ? 1 : 0, can(who) ? 1 : 0]);
+        // [player, horse, time, won (1/0), may be ranked (1/0), show: 2nd or 3rd (1/0)]
+        picks = mine.map(([who, horse, at]) => [who, horse, at, horse === winner ? 1 : 0, can(who) ? 1 : 0, horse !== winner && showSet.has(horse) ? 1 : 0]);
       }
       race.result = {
         final: true, checked, heights: [a, b], blocks: B.ts.length, line: M.finishLine(race.cards),
@@ -265,19 +272,20 @@ export async function run({ p, check, prev, out, vhpOf, raceContract, picksOf, p
 }
 
 // ── leaderboards ──
-type Row = { a: string; correct: number; picks: number; answers: number; points: number; ranked: boolean };
-/** Sort: correct winner picks, then more picks placed, then more Knode answers, then a higher Knode score. Exported. */
+/** correct = wins (picks on the winner), shows = picks on the 2nd or 3rd horse, pts = 3 per win + 1 per show. */
+type Row = { a: string; pts: number; correct: number; shows: number; picks: number; answers: number; points: number; ranked: boolean };
+/** Sort: points, then more wins, then more picks placed, then more Knode answers, then a higher Knode score. Exported. */
 export function rank(rows: Row[]): Row[] {
-  return [...rows].sort((x, y) => y.correct - x.correct || y.picks - x.picks || y.answers - x.answers || y.points - x.points || (x.a < y.a ? -1 : 1));
+  return [...rows].sort((x, y) => y.pts - x.pts || y.correct - x.correct || y.picks - x.picks || y.answers - x.answers || y.points - x.points || (x.a < y.a ? -1 : 1));
 }
-/** The picks of final races in [from, to): per wallet, right picks and picks placed, and whether it may be ranked. */
+/** The picks of final races in [from, to): per wallet, wins, shows and picks placed, and whether it may be ranked. */
 function tally(weeks: Map<number, WeekFile>, from: number, to: number) {
-  const t = new Map<string, { correct: number; picks: number; ranked: boolean }>();
+  const t = new Map<string, { correct: number; shows: number; picks: number; ranked: boolean }>();
   for (const wf of weeks.values()) for (const r of wf.races) {
     if (r.start < from || r.start >= to || !r.result?.final || !Array.isArray(r.result.picks)) continue;
-    for (const [who, , , right, can] of r.result.picks) {
-      const x = t.get(who) || { correct: 0, picks: 0, ranked: false };
-      x.picks++; x.correct += right ? 1 : 0; x.ranked = x.ranked || !!can;
+    for (const [who, , , right, can, show] of r.result.picks) {
+      const x = t.get(who) || { correct: 0, shows: 0, picks: 0, ranked: false };
+      x.picks++; x.correct += right ? 1 : 0; x.shows += !right && show ? 1 : 0; x.ranked = x.ranked || !!can;
       t.set(who, x);
     }
   }
@@ -303,7 +311,7 @@ async function leaderboards(weeks: Map<number, WeekFile>, now: number, player: (
     for (const [a, x] of tally(all, from, to)) {
       let answers = 0, points = 0;
       for (const w of weeksFor(a)) { const i = await info(a, w); answers += i.answers; points += i.points; }
-      rows.push({ a, correct: x.correct, picks: x.picks, answers, points, ranked: x.ranked });
+      rows.push({ a, pts: x.correct * M.POINTS.win + x.shows * M.POINTS.show, correct: x.correct, shows: x.shows, picks: x.picks, answers, points, ranked: x.ranked });
     }
     return rank(rows);
   };

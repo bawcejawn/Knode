@@ -28,7 +28,7 @@
   const RPC = "https://api.koinos.io";
   const KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK", VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq";
   const EXPLORER = "https://koinosscan.com/address/";
-  const NAMES = { "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "Knode pool", "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR": "Knode Swap" };
+  const NAMES = { "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "KnodeGames pool", "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR": "KnodeGames Swap" };
   const provider = new lib.Provider([RPC]);
   const types = { nested: { t: { nested: { empty: { fields: {} }, supply: { fields: { value: { type: "uint64", id: 1, options: { jstype: "JS_STRING" } } } } } } } };
   const token = (id) => new lib.Contract({ id, provider, abi: { methods: { total_supply: { entry_point: 0xb0da3934, argument: "t.empty", return: "t.supply", read_only: true } }, koilib_types: types } });
