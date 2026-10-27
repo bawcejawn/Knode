@@ -2,8 +2,8 @@
    It only ever keeps the site's own page files. Game data (game-data/), the contract ABI, chain reads (RPC) and
    anything from another site always go straight to the network and are never stored here. Every page file is
    fetched fresh first; the stored copy is only used when the network can't be reached. */
-const CACHE = "knode-shell-v2";
-const SHELL = ["./", "index.html", "styles.css", "app.js", "wallet.js", "demo-data.js", "get.html", "get.js", "manifest.webmanifest", "media/icon.svg", "media/icon-192.png"];
+const CACHE = "knode-shell-v3";
+const SHELL = ["./", "index.html", "styles.css", "app.js", "wallet.js", "extras.js", "demo-data.js", "get.html", "get.js", "manifest.webmanifest", "media/icon.svg", "media/icon-192.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {}).then(() => self.skipWaiting()));
@@ -24,4 +24,16 @@ self.addEventListener("fetch", (e) => {
     if (res.ok && res.type === "basic") { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {}); }
     return res;
   }).catch(() => caches.match(req).then((hit) => hit || (req.mode === "navigate" ? caches.match("./") : Response.error()))));
+});
+
+// A reminder notification (shown only while a Knode page is open): tapping it opens or focuses Knode.
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const scope = new URL(self.registration.scope);
+  let target = new URL("./#play", scope);
+  try { const u = new URL(e.notification.data && e.notification.data.url, scope); if (u.origin === scope.origin) target = u; } catch { /* default */ }
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+    for (const c of list) if (c.url.startsWith(scope.href) && "focus" in c) { if ("navigate" in c) c.navigate(target.href).catch(() => {}); return c.focus(); }
+    return self.clients.openWindow ? self.clients.openWindow(target.href) : undefined;
+  }));
 });

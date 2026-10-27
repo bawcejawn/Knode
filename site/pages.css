@@ -17,3 +17,15 @@
 .checks li { display: flex; gap: 10px; align-items: flex-start; }
 .checks li::before { content: "✓"; flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: var(--mint-soft); color: var(--mint); font-weight: 800; font-size: .8rem; margin-top: 1px; }
 .checks li.pending::before { content: "…"; background: var(--sun-soft); color: #8a5a00; }
+
+/* simple content pages (install) */
+.pg { max-width: 680px; padding-top: 28px; padding-bottom: 40px; }
+.pg h1 { font-family: var(--display); font-size: clamp(28px, 4vw, 38px); line-height: 1.1; margin: 6px 0 8px; }
+.pg .lede { color: var(--muted); margin: 0 0 20px; }
+.pg-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px 20px; margin: 0 0 14px; box-shadow: var(--shadow); }
+.pg-card h2 { font-family: var(--display); font-size: 1.15rem; margin: 0 0 8px; }
+.pg-card ul, .inst-steps { margin: 0; padding-left: 22px; display: grid; gap: 8px; }
+.inst.inst-mine { border-color: var(--moss, var(--ink)); box-shadow: 0 0 0 2px var(--moss, var(--ink)), var(--shadow); }
+.share-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.share-row code { font-size: .85rem; word-break: break-all; }
+.share-row .btn { min-height: 38px; padding: 0 16px; }

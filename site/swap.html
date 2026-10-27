@@ -6,24 +6,27 @@
        encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://koinvault.app; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Knode Swap</title>
-  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="media/icon-180.png">
-  <meta name="theme-color" content="#14213D">
+  <title>Knode Swap · Swap VHP for KOIN on Koinos</title>
+  <!-- seo:start (written by tools/site-seo.mjs; edit there) -->
+  <meta name="description" content="Swap VHP back into KOIN in one step on Koinos. A small 3% fee, paid out from Knode's own node.">
+  <link rel="canonical" href="https://bawcejawn.github.io/Knode/site/swap.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Knode">
-  <meta property="og:title" content="Knode Swap: get your KOIN back today">
-  <meta property="og:description" content="Swap VHP for KOIN instantly, 1:1 minus 3%. No waiting for blocks.">
+  <meta property="og:title" content="Knode Swap">
+  <meta property="og:description" content="Swap VHP back into KOIN in one step on Koinos. A small 3% fee, paid out from Knode's own node.">
   <meta property="og:url" content="https://bawcejawn.github.io/Knode/site/swap.html">
   <meta property="og:image" content="https://bawcejawn.github.io/Knode/site/media/og-swap.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Knode Swap: get your KOIN back today">
+  <meta property="og:image:alt" content="Knode Swap">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Knode Swap: get your KOIN back today">
-  <meta name="twitter:description" content="Swap VHP for KOIN instantly, 1:1 minus 3%. No waiting for blocks.">
+  <meta name="twitter:title" content="Knode Swap">
+  <meta name="twitter:description" content="Swap VHP back into KOIN in one step on Koinos. A small 3% fee, paid out from Knode's own node.">
   <meta name="twitter:image" content="https://bawcejawn.github.io/Knode/site/media/og-swap.png">
-  <meta name="description" content="Swap your VHP back into KOIN instantly. 1:1 minus 3%, paid from KOIN our node produces block by block.">
+  <!-- seo:end -->
+  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="media/icon-180.png">
+  <meta name="theme-color" content="#14213D">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Archivo:wdth,wght@62..125,600;62..125,800;62..125,900&display=swap" rel="stylesheet">
@@ -40,10 +43,13 @@
         <span class="brand-name">Knode</span>
       </a>
       <nav class="tabs" aria-label="Sections">
-        <a href="index.html">Play</a>
+        <a href="index.html#play">Play</a>
+        <a href="index.html#leaderboard">Leaderboard</a>
+        <a href="index.html#results">Results</a>
+        <a href="index.html#how">Rules</a>
+        <a href="get.html">Get VHP</a>
         <a href="swap.html" aria-current="page">Swap</a>
-        <a href="#how">How it works</a>
-        <a href="trust.html">Trust</a>
+        <a href="index.html#welcome" class="tab-start">New here?</a>
       </nav>
       <button class="btn btn-wallet" id="connect" type="button">Connect wallet</button>
     </div>
@@ -120,10 +126,19 @@
     </section>
   </main>
 
+  <nav class="tabbar" aria-label="Main">
+    <a href="index.html#play"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.6 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg>Play</a>
+    <a href="index.html#leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg>Leaders</a>
+    <a href="index.html#results"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg>Results</a>
+    <a href="get.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8M8 12h8"></path></svg>Get VHP</a>
+    <a href="index.html#welcome"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg>Help</a>
+  </nav>
+
   <footer class="foot">
     <div class="wrap">
       <div class="foot-row">
-        <span>Knode Swap runs fully on Koinos. Open source. · <a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a></span>
+        <span>Knode Swap runs fully on Koinos. Open source.</span>
+        <span class="foot-links"><a href="start.html">New to Koinos</a> · <a href="node.html">Producer lookup</a> · <a href="burn.html">Burn KOIN</a> · <a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a></span>
         <span id="foot-contract"></span>
       </div>
     </div>

@@ -2,7 +2,7 @@
 (function () {
   // the same Koinos project list as the game page (site/ads.json)
   fetch("ads.json", { cache: "no-cache" }).then(function (r) { return r.ok ? r.json() : {}; }).then(function (a) {
-    var list = (a.ecosystem || []).concat(a.featured ? [a.featured] : []), grid = document.getElementById("eco-grid");
+    var list = (a.ecosystem || []), grid = document.getElementById("eco-grid");
     list.forEach(function (h) {
       try { var u = new URL(h.link); if (u.protocol !== "https:") return; } catch (e) { return; }
       var x = document.createElement("a"); x.className = "eco-item"; x.href = h.link; x.target = "_blank"; x.rel = "noopener";

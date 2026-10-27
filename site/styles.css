@@ -78,7 +78,7 @@ a { color: var(--violet); }
 .brand-mark i { display: none; }
 .brand-mark i:first-child { display: block; position: absolute; inset: 8px; border-radius: 50%; background: var(--sun); }
 .tabs { display: flex; gap: 4px; margin-left: auto; }
-.tabs a { white-space: nowrap; padding: 8px 14px; border-radius: 999px; text-decoration: none; color: var(--muted); font-weight: 600; }
+.tabs a { white-space: nowrap; padding: 11px 18px; min-height: 44px; display: inline-flex; align-items: center; border-radius: 999px; text-decoration: none; color: var(--muted); font-weight: 600; font-size: 16.5px; }
 .tabs a:hover { color: var(--ink); background: var(--surface); }
 .tabs a[aria-current="page"] { color: var(--ink); background: var(--surface); box-shadow: var(--shadow); }
 
@@ -314,7 +314,7 @@ dialog h2 { margin-bottom: 6px; }
 @media (max-width: 720px) {
   .top-row { flex-wrap: wrap; gap: 10px; padding: 10px 0; }
   .tabs { order: 3; width: 100%; margin: 0; overflow-x: auto; scrollbar-width: none; }
-  .tabs a { padding: 8px 12px; }
+  .tabs a { padding: 10px 14px; font-size: 16px; }
   .btn-wallet { margin-left: auto; padding: 10px 14px; }
   .ad-banner { min-height: 60px; }
   .board th:nth-child(4), .board td:nth-child(4) { display: none; }
@@ -579,3 +579,51 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .waiting-count { color: var(--muted); font-weight: 600; }
 .waiting[open] { padding-bottom: 18px; }
 .waiting > p { margin: 0 0 12px; }
+
+/* ad slots: an unsold slot is hidden and takes no space; it shows only when ads.json fills it. */
+.ad[data-ad-slot]:not(.ad-filled) { display: none !important; }
+.ad-box { min-height: 0; }
+.ad-inline { min-height: 0; margin-top: 24px; }
+.ad-desktop { margin-top: 0; }
+@media (max-width: 760px) { .ad-desktop { display: none !important; } }
+@media (min-width: 761px) { .ad-phone { display: none !important; } }
+/* footer links */
+.foot-links { line-height: 2.2; }
+.foot-links a { display: inline-block; padding: 2px 2px; }
+.welcome-app { margin: 16px 0 0; color: var(--muted); font-size: .95rem; }
+.noscript { max-width: 680px; margin: 20px auto; padding: 14px 16px; border-radius: 12px; background: var(--sun-soft); }
+@media (max-width: 760px) { .pot b { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; font-size: 1.15rem; } }
+
+/* ── Outcome on answered cards, yesterday's line, reminders, phone leaderboard cards, share picture ── */
+.q-done.ok { color: var(--mint); }
+.q-done.miss { color: var(--rose); }
+.yesterday { margin: 6px 0 0; }
+.yesterday a { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 40px; padding: 6px 14px; border-radius: 999px; background: var(--surface); box-shadow: var(--shadow); color: var(--ink); text-decoration: none; font-size: .95rem; }
+.yesterday a:hover { color: var(--violet); }
+.remind .row-btns { flex-wrap: wrap; }
+.remind .fine-print { margin-top: 10px; font-size: .85rem; }
+.welcome-remind-box { margin-top: 22px; padding: 18px; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow); }
+.welcome-remind-box h2 { font-size: 1.15rem; margin-bottom: 4px; }
+.band-share { white-space: nowrap; }
+.board-cards { display: none; }
+@media (max-width: 759px) {
+  #view-leaderboard .table-wrap { display: none; }
+  .board-cards { display: grid; gap: 8px; margin-top: 12px; }
+  .lbc { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px 14px; border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+  .lbc.me { outline: 2px solid var(--navy); }
+  .lbc.pinned { background: var(--navy); color: var(--navy-ink); outline: 0; margin-bottom: 6px; }
+  .lbc.pinned .muted { color: var(--navy-muted); }
+  .lbc-place { font: 800 1.25rem/1 var(--num); text-align: center; color: var(--muted); }
+  .lbc-place.lbc-win { color: var(--violet); }
+  .lbc.pinned .lbc-place { color: var(--tang); }
+  .lbc-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .lbc-who b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lbc-who .muted { font-size: .85rem; }
+  .lbc-pts b { font: 800 1.35rem/1 var(--num); }
+  .lbc-cut { text-align: center; font-size: .82rem; font-weight: 700; color: var(--violet); padding: 4px 0; border-top: 2px dashed var(--violet); margin: 4px 0; }
+}
+#share-dialog { width: min(640px, 100% - 24px); }
+.share-canvas { width: 100%; height: auto; aspect-ratio: 1200 / 630; border-radius: 14px; display: block; margin: 10px 0; background: #F3F1EA; }
+.share-addr { display: flex; gap: 8px; align-items: center; min-height: 44px; font-weight: 600; }
+.share-addr input { width: 20px; height: 20px; }
+#share-dialog .dialog-actions { flex-wrap: wrap; }
