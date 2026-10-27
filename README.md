@@ -70,7 +70,7 @@ Koinos has no transaction fees; it uses **Mana**, which comes from holding KOIN 
   the free Mana option). KOIN Vault users pay their own Mana, which needs a little KOIN in the wallet.
 - A separate **Mana sponsor** wallet (`sponsor/README.md`) can pay the rest, within per-transaction, per-player daily
   and weekly, and everyone-daily limits (a hard 1,000 Mana a day). **Answers are free for any wallet**, even one with
-  no VHP; answers by wallets with no VHP and no stake share at most 500 of the 1,000 a day. Staking, withdrawing,
+  no VHP; answers by wallets with no VHP and no stake share at most 300 of the 1,000 a day. Staking, withdrawing,
   settling, claiming and swapping are sponsored for wallets that hold at least 1 VHP or have a stake. The website uses
   it once `deployment.json` says `"payer": "sponsor"`; until then everyone pays their own Mana as before.
 

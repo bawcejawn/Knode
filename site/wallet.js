@@ -352,14 +352,19 @@
    *  option), or did not hand back a signed transaction (so the page can't see who pays), it is not sent. */
   async function sendKondor(label, ops, opts = {}) {
     const sp = !opts.gamePays ? sponsorFor(ops) : null;
-    const rcLimit = sp ? String(sp.rcLimit || "100000000") : null;
     // A transaction made only of game answers is sponsored for any wallet (free play), within the sponsor's caps.
     const answerOnly = !!sp && ops.every((o) => o.call_contract && o.call_contract.contract_id === sp.covers[0] && Number(o.call_contract.entry_point) === ANSWER);
+    // Answers are light (rcLimit, 1 Mana); staking, withdrawing, swapping and claiming do much more in one transaction
+    // (approve, transfer, burn, stake), so they ask for rcLimitOther (default 3 Mana).
+    const rcLimit = sp ? String(answerOnly ? (sp.rcLimit || "100000000") : (sp.rcLimitOther || "300000000")) : null;
     if (sp && await sponsorSaysYes(sp, rcLimit, answerOnly)) {
       try { return await sendKondorWith(label, ops, { ...opts, sponsor: sp.address, rcLimit }); }
       catch (e) {
-        if (!/SPONSOR/i.test(String(e && e.message || e))) throw e;
-        W.status && W.status("The Mana sponsor couldn't cover this one. Confirm again to use your own Mana.");
+        // The network turned the sponsored transaction down before it was included (nothing happened, nothing was
+        // charged), or the sponsor refused: offer the same action with the player's own Mana. A cancel in Kondor, or a
+        // transaction that was included and then reverted, is never retried.
+        if (!(e && (e.sponsorSend || /SPONSOR/i.test(String(e.message || e))))) throw e;
+        W.status && W.status("The Mana sponsor couldn't cover this one. Confirm again in Kondor to use your own Mana.");
       }
     }
     return sendKondorWith(label, ops, opts);
@@ -389,7 +394,9 @@
         if (payer === opts.sponsor && payee !== W.address) throw new Error("The signed transaction doesn't name your wallet as the one the sponsor pays for, so it was not sent.");
       }
     }
-    const receipt = await tx.send();
+    let receipt;
+    try { receipt = await tx.send(); }
+    catch (e) { if (opts.sponsor) { const err = e instanceof Error ? e : new Error(String(e)); err.sponsorSend = true; throw err; } throw e; }
     if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "the contract refused it"));
     const id = tx.transaction && tx.transaction.id;
     W.status && W.status("Sent. Waiting for the next block…");
@@ -399,7 +406,7 @@
 
   // ── Mana sponsor (sponsor/README.md) ──
   // deployment.json "payer": "sponsor" (the sponsor wallet pays the Mana) or "self" (players' own Mana; also the default).
-  // "sponsor": { address, covers: [game, desk, vhp, koin], rcLimit }. The sponsor contract decides on chain; the page
+  // "sponsor": { address, covers: [game, desk, vhp, koin], rcLimit (answers), rcLimitOther (everything else) }. The sponsor contract decides on chain; the page
   // only picks it when every operation is one it pays for and its caps (would_pay) say yes, else the player's own Mana.
   // Answers are sponsored for any wallet (free play); everything else only for wallets with VHP or a stake.
   const APPROVE = 0x74e21680, WOULD_PAY = 0xda1fd8f5, ANSWER = 0x0db52f40, CLAIM = 0xdd1b3c31;

@@ -13,7 +13,7 @@ From then on, when a transaction names the sponsor as payer, the chain asks this
   the game or Knode Swap and whose owner is the payee (owner, operator, seed and upgrade actions are never paid);
 - **answers are free for everyone** (owner's decision 2026-10-26: free play drives chain activity and traffic): a
   transaction made only of game `answer` calls is paid for any wallet, even an empty one. Answers by wallets that hold
-  no VHP and have no stake also count against a separate daily total for everyone, `max_mana_free_day` (default 500 of
+  no VHP and have no stake also count against a separate daily total for everyone, `max_mana_free_day` (default 300 of
   the 1,000), so free answers can never use up what real players need;
 - **everything else** (approve, deposit, withdraw, settle, claim, close/finalize, swap) is paid only for a **real
   Knode player**: holds at least `min_vhp` VHP (default 1 VHP) or has a stake (active or pending) in the game
@@ -65,7 +65,7 @@ website says: the page then falls back to the player's own Mana.
    other than the audited one, and after uploading it stops with an error if the code or the switches on chain are not
    exactly right (pays for transactions ON, call and upload OFF).
 5. **Set the caps** (dry run first, then `--send`):
-   `npm run sponsor -- config --per-tx 1 --per-player-day 5 --per-player-week 30 --per-day 1000 --free-per-day 500 --min-vhp 1`
+   `npm run sponsor -- config --per-tx 1 --per-player-day 5 --per-player-week 30 --per-day 1000 --free-per-day 300 --min-vhp 1`
    (`--free-per-day 0` turns free answers off; pass it each time you change the caps, because an unset value means 500)
 6. **Switch it on**: `npm run sponsor -- enable --send`.
 7. **Point the website at it**: `npm run sponsor -- payer sponsor --send`, then
