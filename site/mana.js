@@ -28,7 +28,14 @@
   }
   /** About how many game answers this much Mana pays for. */
   const answersFor = (mana) => (mana > 0n ? mana / ANSWER_MANA : 0n);
-  window.KManaMath = { gauge, answersFor, UNIT, MANA_REGEN_MS, ANSWER_MANA };
+  /** Mana planner: Mana a day for a routine, and the KOIN that refills it every day (KOIN ÷ 5 per day). Units. */
+  const COST = { answer: 35000000n, transfer: 30000000n, swap: 140000000n };
+  function plan({ answer = 0, transfer = 0, swap = 0 } = {}) {
+    const n = (x) => BigInt(Math.max(0, Math.floor(Number(x) || 0)));
+    const perDay = n(answer) * COST.answer + n(transfer) * COST.transfer + n(swap) * COST.swap;
+    return { perDay, koin: (perDay * MANA_REGEN_MS) / 86400000n };
+  }
+  window.KManaMath = { gauge, answersFor, plan, COST, UNIT, MANA_REGEN_MS, ANSWER_MANA };
 
   if (typeof document === "undefined" || !document.getElementById("addr")) return;   // loaded by a test
 
@@ -145,6 +152,7 @@
       a.href = EXPLORER + addr; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = addr;
       $("r-addr").append(a, addr === SPONSOR ? " · Knode's Mana sponsor" : "");
       render();
+      if (typeof renderPlan === "function") renderPlan();
       store.set(LAST, addr);
       const url = new URL(location.href); url.searchParams.set("addr", addr); url.hash = "";
       history.replaceState(null, "", url.pathname + url.search);
@@ -211,6 +219,22 @@
     if (W.address) return check(W.address);
     try { await W.connect(); } catch (e) { say(String(e.message || e), true); }
   };
+
+  // ── Mana planner ──
+  function renderPlan() {
+    const p = plan({ answer: $("pl-answer").value, transfer: $("pl-transfer").value, swap: $("pl-swap").value });
+    $("pl-mana").textContent = show(p.perDay);
+    $("pl-koin").textContent = `${show(p.koin)} KOIN`;
+    if (!cur || p.perDay === 0n) { $("pl-fit").textContent = p.perDay === 0n ? "Nothing to plan yet." : "Check a wallet above to see if it can keep up."; return; }
+    const g = gauge({ ...cur, at: Date.now() });
+    if (g.empty) { $("pl-fit").textContent = "The wallet above holds no KOIN, so it can't pay for this itself."; return; }
+    const days = g.perDay >= p.perDay ? null : Number((g.now * 10n) / (p.perDay - g.perDay)) / 10;
+    $("pl-fit").textContent = g.perDay >= p.perDay
+      ? `The wallet above refills ${show(g.perDay)} Mana a day, enough for this every day.`
+      : `The wallet above refills ${show(g.perDay)} Mana a day, short by ${show(p.perDay - g.perDay)}. Its current Mana covers the gap for about ${days < 1 ? "less than a day" : `${days} days`}; holding ${show(p.koin - g.max)} more KOIN would cover it for good.`;
+  }
+  ["pl-answer", "pl-transfer", "pl-swap"].forEach((id) => $(id).addEventListener("input", renderPlan));
+  renderPlan();
 
   // ── start: a shared link first, then a Kondor wallet this site was already allowed to see, then the last check ──
   (async () => {
