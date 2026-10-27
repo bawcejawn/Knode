@@ -470,7 +470,9 @@
     return res;
   }
 
-  // ═══════════════ wallet (Kondor on a computer, KOIN Vault on a phone: see wallet.js) ═══════════════
+  // ═══════════════ wallet (Kondor on a computer, KOIN Vault on a phone, or a guest: see wallet.js, guest.js) ═══════════════
+  const isGuest = () => !S.demo && !!window.KWallet && window.KWallet.kind === "guest";
+  const youLabel = () => (isGuest() ? "You (guest)" : "You");
   async function afterConnect() {
     toast(`Connected ${short(S.account)} with ${window.KWallet.label()}`);
     await loadPlayer().catch(() => {});
@@ -505,7 +507,7 @@
       const ownMana = !opts.ownMana ? "" : window.KWallet.kind === "vault"
         ? " This one must use your own Mana: the page can't check who KOIN Vault charges, so in KOIN Vault make sure your wallet pays (not the game)."
         : " This one uses your own Mana: leave Kondor's free Mana option off.";
-      toast(`Confirm “${label}” in ${window.KWallet.label()}…${ownMana}`, 20000);
+      toast(window.KWallet.kind === "guest" ? `Sending “${label}” from your guest wallet (free)…` : `Confirm “${label}” in ${window.KWallet.label()}…${ownMana}`, 20000);
       const id = await window.KWallet.send(label, ops, opts);
       toast(id ? `Done: ${label}` : `Sent: ${label}. It may take a minute to show; the page refreshes by itself.`, 8000);
       await loadLive().catch(() => {});
@@ -618,6 +620,7 @@
 
   // ═══════════════ stake dialog ═══════════════
   function openStake(mode) {
+    if (isGuest()) return window.KWallet.guestInfo();   // a guest only answers: explain how to stake instead
     const d = $("#stake-dialog");
     $("#stake-title").textContent = mode === "deposit" ? "Stake" : "Withdraw";
     $("#stake-token").hidden = mode !== "deposit";
@@ -1217,7 +1220,7 @@
       el("dt", {}, "Winners get"), el("dd", {}, rewardRule(S.week) ? "95%, minus up to 2 VHP for the top free players" : "95%"),
       el("dt", {}, "Waiting to be collected"), el("dd", {}, `${amount(t.pots_outstanding)} VHP`));
     const btn = $("#connect");
-    btn.textContent = S.account ? short(S.account) : "Connect wallet";
+    btn.textContent = S.account ? (isGuest() ? `Guest ${short(S.account)}` : short(S.account)) : "Connect wallet";
     btn.classList.toggle("connected", !!S.account);
     $("#foot-contract").textContent = S.dep?.contract ? `Contract ${S.dep.contract}` : "";
   }
@@ -1249,7 +1252,7 @@
     const placeOf = new Map(rows.map((s) => [s, s.eligible ? ++place : null]));
     tbody.replaceChildren(...rows.map((s, i) => el("tr", { class: [s.address === S.account ? "me" : "", i === lastWinnerIdx ? "cutline" : ""].join(" ").trim() },
       el("td", {}, el("span", { class: `rank${s.winner ? " top" : ""}` }, placeOf.get(s) ? String(placeOf.get(s)) : "–")),
-      el("td", {}, el("span", { class: "addr" }, s.address === S.account ? "You" : short(s.address)), i === lastWinnerIdx ? el("span", { class: "cut-label" }, "winners' line") : null),
+      el("td", {}, el("span", { class: "addr" }, s.address === S.account ? youLabel() : short(s.address)), i === lastWinnerIdx ? el("span", { class: "cut-label" }, "winners' line") : null),
       el("td", { class: "num" }, String(s.pts)),
       el("td", { class: "num" }, s.stake < UNIT ? el("span", { class: "badge badge-free" }, "Free play") : `${amount(s.stake, 0)} VHP`),
       el("td", { class: "num" }, s.winner && s.reward !== undefined && !(b.estimate && s.reward === 0n) ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : "–"))));
@@ -1261,7 +1264,7 @@
       const card = (s, i, pinned) => el("div", { class: ["lbc", s.address === S.account ? "me" : "", s.winner ? "win" : "", pinned ? "pinned" : ""].join(" ").trim() },
         el("span", { class: `lbc-place${s.winner ? " lbc-win" : ""}` }, placeOf.get(s) ? `#${placeOf.get(s)}` : "–"),
         el("div", { class: "lbc-who" },
-          el("b", {}, pinned ? `You: ${placeOf.get(s) ? `#${placeOf.get(s)} of ${elig.length}` : "free play"}` : s.address === S.account ? "You" : short(s.address)),
+          el("b", {}, pinned ? `${youLabel()}: ${placeOf.get(s) ? `#${placeOf.get(s)} of ${elig.length}` : "free play"}` : s.address === S.account ? youLabel() : short(s.address)),
           el("span", { class: "muted" }, s.stake < UNIT ? "Free play" : `${amount(s.stake, 0)} VHP staked`, tied(s) ? " · tied" : "", rewardOf(s) ? ` · ${rewardOf(s)}` : "")),
         el("span", { class: "lbc-pts" }, el("b", {}, String(s.pts)), el("small", {}, " pts")));
       const meRow = rows.find((s) => s.address === S.account);
@@ -1522,6 +1525,7 @@
     if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
     $("#connect").addEventListener("click", () => {
       if (!S.account) return connect();
+      if (isGuest()) return window.KWallet.manageGuest();
       if (S.demo || Date.now() - armed > 5000) { armed = Date.now(); return toast(`Connected with ${S.demo ? "the demo wallet" : window.KWallet.label()}: ${S.account}. Tap again to disconnect.`, 5000); }
       armed = 0; window.KWallet.disconnect();
     });
