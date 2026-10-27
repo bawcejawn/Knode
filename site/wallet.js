@@ -241,7 +241,7 @@
   const PINNED_SPONSOR = "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8", PINNED_GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr";
   // The Producer Race picks contract, pinned the same way once it is on mainnet (race-data/deployment.json). Until
   // then guests can't pick (empty = none).
-  const PINNED_RACE = "";
+  const PINNED_RACE = "1EN7xU8R9tQXjHvrX79qZvvvGkkKWVnB5K";
   const guestGame = () => (W.chainId === MAINNET_CHAIN_ID ? PINNED_GAME : (W.gameContract || null));
   const guestRace = () => (W.chainId === MAINNET_CHAIN_ID ? (PINNED_RACE || null) : ((W.sponsor && W.sponsor.race) || null));
   /** A guest may sign only free play: game answers, and picks on the race contract. */
