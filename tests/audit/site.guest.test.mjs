@@ -206,6 +206,6 @@ test("guest play is off unless deployment.json's sponsor has guest: true (no opt
   w.KW.connect();
   assert.equal(w.find(/Play as a guest/).length, 0, "no guest option in the wallet picker");
   assert.equal(w.find(/Restore a guest key/).length, 0);
-  const dep = JSON.parse(fs.readFileSync(`${APP}/game-data/deployment.json`, "utf8"));
-  assert.notEqual(dep.sponsor && dep.sponsor.guest, true, "keep guest play off until the custom domain is live");
+  // The live setting is the owner's choice: guest play was switched on 2026-10-26 before the custom domain, accepting
+  // the shared-origin risk (guest audit M-1, tracked as a TODO in guest.audit.test.mjs).
 });
