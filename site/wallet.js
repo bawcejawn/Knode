@@ -257,7 +257,7 @@
     const btn = h("button", { class: "kw-opt", type: "button", ...(ready ? {} : { disabled: "", "aria-disabled": "true" }), onclick: ready ? pick(connectGuest) : () => {} },
       h("span", { class: "kw-ic", "aria-hidden": "true" }, "🎟️"),
       h("div", {}, h("b", {}, "Play as a guest", h("span", { class: "kw-tag" }, "free")),
-        h("span", {}, ready ? "No wallet, no KOIN. Answer the daily questions for free on this device." : "Guest play turns on when the Mana sponsor is live.")));
+        h("span", {}, ready ? "No wallet, no KOIN. Answer the daily questions and pick race horses for free on this device." : "Guest play turns on when the Mana sponsor is live.")));
     if (!ready) return btn;
     return h("div", {}, btn, h("p", {}, "Moving from another phone? ", h("button", { class: "kw-link", type: "button", onclick: pick(restoreGuest) }, "Restore a guest key")));
   }
