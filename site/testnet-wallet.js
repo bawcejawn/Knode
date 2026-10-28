@@ -132,6 +132,9 @@
     get address() { return W.address; }, get kind() { return W.kind; },
     label: () => (W.kind === "test" ? "your Test wallet" : W.kind === "kondor" ? "Kondor" : "your wallet"),
     init, connect, disconnect, forget, send,
+    /** "Play free": make (or reuse) the Test wallet in this browser at once, without the wallet choice. */
+    quick: () => useTest(),
+    hasTestKey: () => !!hexKey(),
     subscribe: (f) => { W.listeners.add(f); return () => W.listeners.delete(f); },
     STORAGE: Object.freeze([KEY, KIND]),
   };

@@ -15,6 +15,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Archivo:wdth,wght@62..125,600;62..125,800;62..125,900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="board.css">
+  <link rel="stylesheet" href="blockx.css">
   <style>
     .pr { max-width: 1000px; margin: 0 auto; padding: 28px 16px 60px; }
     .pr h1 { font-family: var(--display); font-size: clamp(28px, 4vw, 40px); margin: 0 0 6px; }
@@ -107,55 +108,84 @@
   <div class="tn-band" role="note">TESTNET · test KOIN only. Nothing here is real money or counts on Knode Games. <a href="blockx.html">The live game</a></div>
   <header class="tn-top">
     <a class="brand" href="./" aria-label="Knode Games home"><span class="brand-name">Knode Games</span></a>
-    <span class="note">Koinos Foundation testnet</span>
+    <button class="bx-wallet" type="button" id="wallet-btn">Play free</button>
   </header>
 
-  <main class="pr">
-    <h1>Who Signs Block X <small style="color:#8a1c1c">· TESTNET</small></h1>
-    <p class="lede"><span data-bx="every">Every 2,400 blocks (about every 2 hours)</span> is a target. Pick the Koinos producer you think will sign it. A right pick on a smaller producer scores more, up to ×3.<span class="lede-more"> Picks lock 100 blocks (about 5 minutes) before the block. This copy runs on the Koinos testnet for testing: test KOIN, test prizes, nothing real.</span></p>
-    <div class="tn-tabs" id="game-tabs" hidden></div>
-    <nav class="tools" aria-label="On this page"><a href="#targets-box">Pick</a><a href="#results-box">Results</a><a href="#board-box">Leaderboard</a><a href="#mults">Multipliers</a><a href="#how">How it works</a><a href="blockx.html" class="hide-sm">Live page</a></nav>
+  <main class="bx">
+    <div class="bx-intro">
+      <div>
+        <h1>Who Signs Block X</h1>
+        <p><span data-bx="every">Every 2,400 blocks (about every 2 hours)</span> is a target. Guess which producer signs it. Smaller producers score more, up to ×3.</p>
+      </div>
+      <div class="bx-games" id="game-tabs" hidden></div>
+    </div>
+    <p class="status" id="status" role="status">Reading the chain…</p>
 
-    <section class="card" id="targets-box">
-      <p class="status" id="status" role="status">Reading the chain…</p>
-      <div class="head"><h2>Next 12 target blocks</h2><span class="note" id="picks-left" style="margin:0"></span></div>
-      <p class="bx-head" id="head-line">–</p>
-      <p class="note" id="game-rules" style="margin-top:0"></p>
+    <section class="bx-stage" id="stage" aria-label="The next target block">
+      <div class="bx-stage-top"><span>Live from the Koinos testnet · block <b id="head-num">–</b></span><span id="head-line">–</span></div>
+      <div class="bx-chain" aria-hidden="true">
+        <div class="bx-past" id="chain"></div>
+        <div class="bx-gap"><b id="gap-num">–</b><span>blocks to go</span><span class="bx-dots">• • •</span></div>
+        <div class="bx-x"><span>?</span><small id="x-num">–</small></div>
+      </div>
+      <div class="bx-stage-foot">
+        <div class="bx-lock" id="lock-line">Picks lock <b id="lock-clock">–:–</b> before the block</div>
+        <button class="bx-cta" type="button" id="cta">Pick who signs it</button>
+      </div>
+      <div class="bx-bar"><i id="lock-bar"></i></div>
+    </section>
+
+    <div class="bx-you" id="you" hidden>
+      <div><b id="you-left">–</b><span>picks left today</span></div>
+      <div><b id="you-pts">0.00</b><span>points this week</span></div>
+      <div><b id="you-rank">–</b><span>your place this week</span></div>
+      <div><b id="you-mana">–</b><span>test Mana</span></div>
+    </div>
+    <ol class="bx-steps" id="steps">
+      <li><span><b>Press Play free</b>A wallet is made in this browser, with test KOIN to play.</span></li>
+      <li><span><b>Pick who signs a target</b>Up to 12 targets are open. Change your pick until it locks.</span></li>
+      <li><span><b>Score when you're right</b>×1 for the biggest producer, up to ×3 for small ones. Points climb the weekly board.</span></li>
+    </ol>
+
+    <section class="bx-sec" id="targets-box">
+      <div class="bx-sec-head"><h2>Open targets</h2><p id="game-rules"></p></div>
       <p class="note" id="picks-soon" style="margin-top:0">Picks open when the testnet Picks contract is uploaded and the game is applied (testnet/blockx.json). Until then you can watch the targets.</p>
-      <p class="note" style="margin-top:0" id="picks-who"></p>
-      <div class="bx-list" id="targets"></div>
-      <p class="note">Times are "about": Koinos makes a block about every 3 seconds, so a target's time drifts a little. One pick per block; change it until the lock, up to <span data-bx="changes">5</span> times. Up to <span data-bx="perday">30</span> picks a day (changes count). On the testnet your wallet pays its own test Mana: one faucet claim (100 test KOIN) covers thousands of picks.</p>
+      <p class="note" id="picks-who"></p>
+      <span id="picks-left" hidden></span>
+      <div class="bx-grid" id="targets"></div>
     </section>
 
-    <section class="card" id="results-box" hidden>
-      <div class="head"><h2>Results</h2></div>
-      <table class="hist"><thead><tr><th class="num">Block</th><th class="hide-sm">Made (your time)</th><th>Signed by</th><th class="num hide-sm">Right picks</th><th>Your pick</th></tr></thead><tbody id="res-rows"></tbody></table>
-      <p class="note">A result is recorded once its block is irreversible and answers on the testnet node (the testnet has one public node, so results are checked once).</p>
+    <div class="bx-panels bx-sec">
+      <section class="bx-panel" id="results-box" hidden>
+        <h2>Latest results</h2>
+        <div class="bx-res" id="res-rows"></div>
+        <p class="note">Recorded once the block is final on the testnet node.</p>
+      </section>
+      <section class="bx-panel" id="board-box" hidden>
+        <h2>Leaderboard</h2>
+        <div id="bx-board"></div>
+        <p class="note" id="prize-line"></p>
+      </section>
+    </div>
+
+    <section class="bx-sec bx-panel" id="mults">
+      <h2>Who signs most often</h2>
+      <p class="note" id="mult-sub"></p>
+      <div id="mult-rows"></div>
     </section>
 
-    <section class="card" id="board-box" hidden>
-      <div class="head"><h2>Leaderboard</h2></div>
-      <div id="bx-board"></div>
-      <p class="note" id="prize-line"></p>
-      <p class="note">Ranked by points; ties go to more right picks, then the earlier last right pick. Two boards, as in every Knode Games game: Staked (wallets holding at least 1 VHP or staking in Knode Games) and Free play (everyone else, guests too). The weekly free-play prize, 2 VHP for 1st and 1 VHP for 2nd (ties share), goes to the top of the Free play board among wallets that picked on at least 3 different days that week. A week is final 12 hours after it ends.</p>
-    </section>
-
-    <section class="card" id="mults">
-      <h2>Multipliers</h2>
-      <p class="note" style="margin-top:0" id="mult-sub"></p>
-      <table class="hist"><thead><tr><th>Producer</th><th class="num">VHP share</th><th class="num">If right</th><th class="num hide-sm">Points per 100 picks</th></tr></thead><tbody id="mult-rows"></tbody></table>
-      <p class="note">"Points per 100 picks" is what always picking that producer would score on average. Every producer with at least a third of the top producer's VHP is equally good on average; the cap of ×3 keeps a lucky long shot from running away with the week.</p>
-    </section>
-
-    <section class="card explain" id="how">
-      <h2 style="color:var(--ink)">How it works</h2>
-      <p><b>The targets.</b> Every block whose number is a multiple of <span data-bx="round">2,400</span> is a target, <span data-bx="about">about every 2 hours</span>. The next 12 are always open. Nobody chooses them.</p>
-      <p><b>The lock.</b> The Picks contract refuses a pick once the chain reaches 100 blocks before the target, so every pick is in before anyone can know who signs it.</p>
-      <p><b>The score.</b> Koinos picks who signs each block in proportion to VHP, so big producers sign more often. A right pick scores</p>
-      <p><span class="formula">min(3, top producer's VHP ÷ your producer's VHP)</span></p>
-      <p>with the VHP from the hourly handicap card at the lock (on the testnet the Block X recorder takes that card itself, since the testnet has no Producer Race). A wrong pick scores 0.</p>
-      <p><b>Testnet.</b> Same contract code as mainnet except three settings (its owner and 10-minute waits instead of 48 hours), proven by the build script. Its data lives on its own branch (testnet-data), and its wallet never touches your mainnet wallets.</p>
-    </section>
+    <details class="bx-how" id="how">
+      <summary>How it works</summary>
+      <div class="explain">
+        <p><b>The targets.</b> Every block whose number is a multiple of <span data-bx="round">2,400</span> is a target, <span data-bx="about">about every 2 hours</span>. The next 12 are always open. Nobody chooses them.</p>
+        <p><b>The lock.</b> The Picks contract refuses a pick once the chain reaches 100 blocks before the target, so every pick is in before anyone can know who signs it. You can change a pick up to <span data-bx="changes">5</span> times, and make up to <span data-bx="perday">30</span> picks a day (changes count).</p>
+        <p><b>The score.</b> Koinos picks who signs each block in proportion to VHP, so big producers sign more often. A right pick scores</p>
+        <p><span class="formula">min(3, top producer's VHP ÷ your producer's VHP)</span></p>
+        <p>with the VHP from the hourly handicap card at the lock. A wrong pick scores 0. Ties on the board go to more right picks, then the earlier last right pick.</p>
+        <p><b>Prizes.</b> Each week the top 2 of the Free play board (wallets that picked on at least 3 days) win 2 and 1 VHP on mainnet. Here on the testnet, prizes are listed but never paid.</p>
+        <p><b>Testnet.</b> Same contract code as mainnet except three settings (its owner and 10-minute waits instead of 48 hours), proven by the build script. Your Test wallet lives only in this browser and never touches your mainnet wallets.</p>
+      </div>
+    </details>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js" integrity="sha384-IAL9o3r4bQJvWhvszkorFINY2ct4LBA/LvyXE9NSOPCyYB25BsFV12JITA7Gxbk6" crossorigin="anonymous"></script>

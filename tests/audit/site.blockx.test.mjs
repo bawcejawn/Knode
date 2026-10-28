@@ -227,9 +227,9 @@ test("testnet-wallet.js: own storage, refuses mainnet, signs only testnet Picks 
 // ── the local testnet server (tools/testnet-site.mjs): only the page, its settings and the recorder's files ──
 test("local testnet server: serves only the allowlist (never .env.testnet or other project files), on 127.0.0.1", async () => {
   const { allowed, serve } = await import(path.resolve(APP, "tools/testnet-site.mjs"));
-  for (const ok of ["/site/blockx-testnet.html", "/site/blockx.js", "/testnet/blockx.json", "/testnet-data/blockx-92/board.json", "/testnet-data/blockx-2/W003.json"]) assert.ok(allowed(ok), ok);
+  for (const ok of ["/site/blockx-testnet.html", "/site/blockx.js", "/testnet/blockx.json", "/testnet-data/blockx-92/board.json", "/testnet-data/blockx-2/W003.json", "/picks/abi/picks.koilib.json"]) assert.ok(allowed(ok), ok);
   for (const bad of ["/.env.testnet", "/.env", "/site/../.env.testnet", "/site/%2e%2e/.env.testnet", "/%2e%2e/%2e%2e/etc/passwd", "/bot/picks.ts", "/package.json", "/testnet-data/lock-test-92-1.json",
-    "/testnet-data/blockx-92/../../.env.testnet", "/site/.hidden.js", "/picks/build/testnet/manifest.json", "/site\\..\\.env", "/site/x.ts", "/testnet/other.json"]) assert.equal(allowed(bad), null, bad);
+    "/testnet-data/blockx-92/../../.env.testnet", "/site/.hidden.js", "/picks/build/testnet/manifest.json", "/picks/abi/other.json", "/picks/assembly/Picks.ts", "/site\\..\\.env", "/site/x.ts", "/testnet/other.json"]) assert.equal(allowed(bad), null, bad);
   const src = fs.readFileSync(path.resolve(APP, "tools/testnet-site.mjs"), "utf8");
   assert.match(src, /listen\(port, "127\.0\.0\.1"\)/, "listens on this computer only");
   const s = serve(0);
@@ -249,4 +249,25 @@ test("testnet page on localhost reads the recorder's local files; elsewhere the 
   assert.match(js, /new URL\(`testnet-data\/blockx-\$\{game\.id\}\/`, ROOT\)/);
   const i = js.indexOf("if (!TESTNET) {"), j = js.indexOf("const cfg = await fetchJson");
   assert.ok(!/testnet-data/.test(js.slice(i, j)), "the mainnet branch of setupNet never names testnet data");
+});
+
+test("local testnet server: Play free funding only answers this computer's own test page", async () => {
+  const { fundAllowed, serve } = await import(path.resolve(APP, "tools/testnet-site.mjs"));
+  const req = (h, method = "POST") => ({ method, headers: { host: "127.0.0.1:8350", origin: "http://127.0.0.1:8350", "x-kg-testnet": "fund", ...h } });
+  assert.equal(fundAllowed(req({}), 8350), true);
+  assert.equal(fundAllowed(req({ "x-kg-testnet": undefined }), 8350), false, "no custom header (a plain form from another site)");
+  assert.equal(fundAllowed(req({ origin: "https://evil.example" }), 8350), false, "another site");
+  assert.equal(fundAllowed(req({ origin: undefined }), 8350), false, "no Origin");
+  assert.equal(fundAllowed(req({ host: "evil.example:8350" }), 8350), false, "DNS rebinding: wrong Host");
+  assert.equal(fundAllowed(req({}, "GET"), 8350), false);
+  const src = fs.readFileSync(path.resolve(APP, "tools/testnet-site.mjs"), "utf8");
+  assert.match(src, /chainId === MAINNET_CHAIN_ID/, "refuses a mainnet node");
+  assert.match(src, /FUND_SAT = 500000000n/, "5 test KOIN, no more");
+  assert.ok(!/console\.log\([^)]*key/i.test(src), "never prints the key");
+  const s = serve(0); await new Promise((r) => s.once("listening", r));
+  const port = s.address().port;
+  try {
+    const bad = await fetch(`http://127.0.0.1:${port}/api/fund`, { method: "POST", headers: { "Content-Type": "application/json", Origin: "https://evil.example" }, body: "{}" });
+    assert.equal(bad.status, 403);
+  } finally { s.close(); }
 });

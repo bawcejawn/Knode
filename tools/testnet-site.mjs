@@ -6,14 +6,20 @@
 //   npm run testnet-site              the page only
 //   npm run testnet-site -- --record  the page, and the recorder every 5 minutes (stop with Ctrl+C)
 //
-// Safety: it listens on 127.0.0.1 only (not your network), answers only GET/HEAD, and serves only an allowlist:
-// site/ files, testnet/blockx.json and the recorder's testnet-data/blockx-<id>/*.json. Never .env.testnet, keys,
+// "Play free": the page can ask this server to send a new Test wallet 5 test KOIN (POST /api/fund), from the testnet
+// wallet named FAUCET_WIF in .env.testnet (default: the test owner, OWNER_WIF). Testnet only: it checks the node's chain
+// id is not mainnet's, sends only to an address holding under 1 test KOIN, once per address, at most 50 a run, and
+// only to the page on this computer (Origin and Host must be this server; a custom header blocks other sites).
+//
+// Safety: it listens on 127.0.0.1 only (not your network), answers GET/HEAD (and that one POST), and serves only an allowlist:
+// site/ files, testnet/blockx.json, the Picks ABI (picks/abi/picks.koilib.json) and the recorder's testnet-data/blockx-<id>/*.json. Never .env.testnet, keys,
 // or any other file of the project.
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import koilib from "koilib";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.PORT || 8350);
@@ -27,15 +33,71 @@ export function allowed(urlPath) {
   if (p.includes("\0") || p.includes("\\")) return null;
   const rel = path.posix.normalize(p).replace(/^\/+/, "");
   if (rel.split("/").some((s) => s === ".." || s.startsWith("."))) return null;
-  const ok = (/^site\/[A-Za-z0-9._\/-]+$/.test(rel) && TYPES[path.extname(rel)]) || rel === "testnet/blockx.json" || /^testnet-data\/blockx-\d{1,3}\/(index|board|cards|W\d{3})\.json$/.test(rel);
+  const ok = (/^site\/[A-Za-z0-9._\/-]+$/.test(rel) && TYPES[path.extname(rel)]) || rel === "testnet/blockx.json" || rel === "picks/abi/picks.koilib.json" || /^testnet-data\/blockx-\d{1,3}\/(index|board|cards|W\d{3})\.json$/.test(rel);
   if (!ok) return null;
   const abs = path.join(ROOT, rel);
   if (!abs.startsWith(ROOT + path.sep)) return null;
   return abs;
 }
 
+const MAINNET_CHAIN_ID = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";
+const FUND_SAT = 500000000n, MAX_FUNDS = 50;
+const funded = new Set();
+/** The testnet key that pays for "Play free", read from .env.testnet (never printed, never sent to the page). */
+function faucetKey(root = ROOT) {
+  try {
+    const t = fs.readFileSync(path.join(root, ".env.testnet"), "utf8");
+    const get = (k) => (t.match(new RegExp(`^${k}=(.*)$`, "m")) || [])[1]?.trim();
+    return get("FAUCET_WIF") || get("OWNER_WIF") || null;
+  } catch { return null; }
+}
+/** Only the page served by this server may ask (exported for the tests). */
+export function fundAllowed(req, port) {
+  const own = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
+  return req.method === "POST" && req.headers["x-kg-testnet"] === "fund" && own.includes(req.headers.origin) && [`127.0.0.1:${port}`, `localhost:${port}`].includes(req.headers.host);
+}
+async function fund(address, key) {
+  if (!/^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(address || "")) return [400, { error: "Not a Koinos address." }];
+  if (!key) return [503, { error: "No faucet key: add FAUCET_WIF (or OWNER_WIF) to .env.testnet." }];
+  if (funded.has(address)) return [409, { error: "This wallet already got its test KOIN." }];
+  if (funded.size >= MAX_FUNDS) return [429, { error: "This server has funded 50 wallets; restart it to fund more." }];
+  const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, "testnet/blockx.json"), "utf8"));
+  const p = new koilib.Provider([cfg.rpc]);
+  const chainId = await p.getChainId();
+  if (chainId === MAINNET_CHAIN_ID || (cfg.chainId && chainId !== cfg.chainId)) return [500, { error: "The node isn't the testnet. Nothing was sent." }];
+  const signer = koilib.Signer.fromWif(key); signer.provider = p;
+  const koin = new koilib.Contract({ id: cfg.koin, abi: koilib.utils.tokenAbi, provider: p, signer });
+  const bal = BigInt((await koin.functions.balanceOf({ owner: address })).result?.value || "0");
+  if (bal >= 100000000n) { funded.add(address); return [200, { ok: true, already: true }]; }
+  const have = BigInt((await koin.functions.balanceOf({ owner: signer.getAddress() })).result?.value || "0");
+  if (have < FUND_SAT + 100000000n) return [503, { error: `The faucet wallet ${signer.getAddress()} is low on test KOIN. Claim more for it from the faucet bot.` }];
+  const { operation } = await koin.functions.transfer({ from: signer.getAddress(), to: address, value: FUND_SAT.toString() }, { onlyOperation: true });
+  const mana = BigInt(await p.getAccountRc(signer.getAddress()));
+  const tx = new koilib.Transaction({ signer, provider: p, options: { payer: signer.getAddress(), chainId, rcLimit: (mana < 100000000n ? mana : 100000000n).toString() } });
+  await tx.pushOperation(operation);
+  const r = await tx.send();
+  if (r && r.reverted) return [500, { error: "The transfer was refused by the chain." }];
+  funded.add(address);
+  await tx.wait("byBlock", 60000).catch(() => null);
+  console.log(`Play free: sent 5 test KOIN to ${address}`);
+  return [200, { ok: true, koin: 5 }];
+}
+
 export function serve(port = PORT) {
   const server = http.createServer((req, res) => {
+    const listen = server.address() && server.address().port;
+    if (req.method === "POST" && (req.url || "") === "/api/fund") {
+      if (!fundAllowed(req, listen)) { res.writeHead(403, { "Content-Type": "application/json" }).end('{"error":"Only this computer\'s test page may ask."}'); return; }
+      let body = "";
+      req.on("data", (c) => { body += c; if (body.length > 500) req.destroy(); });
+      req.on("end", async () => {
+        let a = null; try { a = JSON.parse(body).address; } catch { /* bad body */ }
+        let out;
+        try { out = await fund(a, faucetKey()); } catch (e) { out = [500, { error: String((e && e.message) || e).slice(0, 200) }]; }
+        res.writeHead(out[0], { "Content-Type": "application/json", "Cache-Control": "no-store" }).end(JSON.stringify(out[1]));
+      });
+      return;
+    }
     if (req.method !== "GET" && req.method !== "HEAD") { res.writeHead(405).end(); return; }
     if ((req.url || "/") === "/") { res.writeHead(302, { Location: "/site/blockx-testnet.html" }).end(); return; }
     const f = allowed(req.url || "/");

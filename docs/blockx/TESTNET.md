@@ -99,12 +99,16 @@ Leave that window open: it records results every 5 minutes. Then open in your br
 - http://127.0.0.1:8350/site/blockx-testnet.html#game-92 (fast game)
 - http://127.0.0.1:8350/site/blockx-testnet.html#game-2 (real settings)
 
-Click **Connect a testnet wallet**, then **Make a Test wallet**, then **Copy my address**. Get test KOIN for it from
-the faucet bot, then pick. (Kondor works too if it's switched to the testnet. If it keeps asking to "Refresh check",
-use the Test wallet.)
+Press **Play free** (top right). It makes a Test wallet in your browser, and the local server sends it 5 test KOIN
+from your test owner wallet (`OWNER_WIF` in `.env.testnet`; set `FAUCET_WIF` there to use another testnet wallet). That
+covers about 100 picks. Then choose a producer on a target and press **Lock in pick**. Click your address at the top
+right to copy it, see your Mana, or disconnect.
+
+If the owner wallet runs low, claim more for it from the faucet bot. Kondor (switched to the testnet) still works
+from the same menu; if it keeps asking to "Refresh check", use Play free.
 
 The server only listens on your own computer (127.0.0.1) and only serves the page, its settings and the results. It
-never serves `.env.testnet`. Stop it with **Ctrl+C**.
+never serves `.env.testnet`, and only the test page on your own computer can ask it for test KOIN. Stop it with **Ctrl+C**.
 
 ## 7. The two measurements
 

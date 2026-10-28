@@ -84,8 +84,31 @@
 
   async function readHead() {
     const h = await provider.getHeadInfo();
-    head = { height: Number(h.head_topology.height), time: Number(h.head_block_time) };
+    const prev = head ? head.height : 0;
+    head = { height: Number(h.head_topology.height), time: Number(h.head_block_time), id: h.head_topology.id, seenAt: Date.now() };
+    if ($("chain") && head.height !== prev) readRecent(prev).catch(() => {});
     return head;
+  }
+  // The chain strip: who signed the latest blocks (one read of up to 24 blocks per new head).
+  let recent = [];   // [{ h, signer }], oldest first
+  async function readRecent(prev) {
+    const n = 24, from = Math.max(1, head.height - n + 1);
+    const r = await provider.call("block_store.get_blocks_by_height", { head_block_id: head.id, ancestor_start_height: String(from), num_blocks: n, return_block: true, return_receipt: false });
+    const got = ((r && r.block_items) || []).map((it) => ({ h: Number(it.block_height), signer: String(it.block && it.block.header && it.block.header.signer || "") })).filter((b) => isAddr(b.signer));
+    if (got.length) { recent = got; renderChain(prev); if (!card) renderTargets(true); }
+  }
+  /** One colour per producer, from its address, the same everywhere on the page. */
+  function colorOf(a) {
+    let x = 2166136261;
+    for (let i = 0; i < (a || "").length; i++) { x ^= a.charCodeAt(i); x = Math.imul(x, 16777619) >>> 0; }
+    const hues = [152, 12, 205, 268, 330, 100, 180, 230, 295, 350];   // none near the sun-yellow target tile
+    return `hsl(${hues[x % hues.length] + ((x >>> 8) % 14) - 7} ${58 + ((x >>> 12) % 18)}% ${46 + ((x >>> 16) % 12)}%)`;
+  }
+  const dot = (a, cls = "bx-dot") => { const d = el("span", { class: cls, "aria-hidden": "true" }); d.style.setProperty("--c", colorOf(a)); return d; };
+  function renderChain(prev) {
+    const box = $("chain");
+    if (!box) return;
+    box.replaceChildren(...recent.map((b) => { const t = dot(b.signer, "bx-blk" + (prev && b.h > prev ? " new" : "")); t.title = `Block ${fmt(b.h)} · ${nameOf(b.signer)}`; return t; }));
   }
   const about = (h) => X.aboutTime(h, head.height, head.time);
 
@@ -108,7 +131,12 @@
     } catch { /* keep the last card */ }
   }
   function producers() {
-    if (!card) return [];
+    if (!card) {
+      // No handicap card yet (the recorder's first run): offer the producers seen signing just now, multiplier unknown.
+      const seen = new Map(); for (const b of recent) seen.set(b.signer, (seen.get(b.signer) || 0) + 1);
+      const tot = recent.length || 1;
+      return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([a, n]) => ({ a, share: n / tot, mult: null }));
+    }
     const { m } = X.vhpOf(card), tot = [...m.values()].reduce((s, v) => s + v, 0);
     return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([a, v]) => ({ a, share: tot ? v / tot : 0, mult: X.multiplier(card, a) }));
   }
@@ -142,56 +170,161 @@
     renderTargets(true);
   }
 
-  // ── the open targets ──
+  // ── the stage (the next target) and the open targets ──
+  const multText = (m) => (m == null ? "×?" : `×${fmt(m, 2)}`);
+  const shareText = (x) => `${fmt(x * 100, x < 0.01 ? 2 : 0)}%`;
+  /** Seconds until a height, from the head and ~3 s a block, counting down between heads. */
+  const secsTo = (h) => Math.max(0, Math.round(((h - head.height) * X.BLOCK_MS - (Date.now() - head.seenAt)) / 1000));
+  const mmss = (t) => { const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), x = t % 60; return h ? `${h}:${String(m).padStart(2, "0")}:${String(x).padStart(2, "0")}` : `${m}:${String(x).padStart(2, "0")}`; };
+  function renderStage() {
+    if (!head || !$("stage")) return;
+    const rounds = G.offerRounds(head.height), r = rounds[0];
+    if (r == null) return;
+    const x = G.target(r), lock = G.lockHeight(r), mine = myPicks.get(r), mineP = mine && mine.producers && mine.producers[0];
+    $("head-num").textContent = fmt(head.height);
+    $("head-line").textContent = `target block ${fmt(x)} · about ${clock(about(x))}`;
+    $("gap-num").textContent = fmt(Math.max(0, x - head.height));
+    $("x-num").textContent = fmt(x);
+    const left = secsTo(lock);
+    $("lock-clock").textContent = mmss(left);
+    const line = $("lock-line");
+    line.replaceChildren(...[el("b", { id: "lock-clock", text: mmss(left) }), `until picks lock for block ${fmt(x)}`,
+      mineP ? el("span", { class: "mine", text: `Your pick: ${nameOf(mineP)}` }) : null].filter(Boolean));
+    const span = G.ROUND, done = Math.min(span, Math.max(0, head.height - (lock - span)));
+    $("lock-bar").style.setProperty("--p", `${(done / span) * 100}%`);
+    $("cta").textContent = mineP ? "Change your pick" : "Pick who signs it";
+  }
   let targetsKey = "";
   function renderTargets(force = false) {
     if (!head) return;
+    renderStage();
     const list = $("targets");
-    if (!force && list.contains(document.activeElement) && document.activeElement.tagName === "SELECT") return;
     const who = me(), rounds = G.offerRounds(head.height), ps = producers();
-    const key = JSON.stringify([who, W && W.kind, rounds[0], sending, !!picksContract, cardAt, usage && usage.picks_today, [...myPicks.keys()]]);
+    const key = JSON.stringify([who, W && W.kind, rounds[0], sending, !!picksContract, cardAt, ps.map((p) => p.a).join(), usage && usage.picks_today, [...myPicks.entries()].map(([r, p]) => [r, p.producers && p.producers[0], p.changes]), [...drafts.entries()]]);
     if (!force && key === targetsKey && list.childElementCount) { updateTimes(); return; }
     targetsKey = key;
-    $("head-line").textContent = `Head block ${fmt(head.height)} · next target block ${fmt(G.target(G.openRounds(head.height)[0]))}`;
     const max = usage ? Number(usage.max_picks_per_day) || G.PICKS_PER_DAY : G.PICKS_PER_DAY, used = usage ? Number(usage.picks_today) || 0 : 0;
     $("picks-left").textContent = usage ? `${Math.max(0, max - used)} of ${max} picks left today` : "";
+    renderYou();
     const whoLine = $("picks-who");
     whoLine.replaceChildren();
-    if (picksContract && who) whoLine.append(`Picking as ${nameOf(who)}${W.kind === "guest" ? " (guest)" : W.kind === "test" ? " (Test wallet)" : ""}. `);
-    if (picksContract && !who) whoLine.append(el("button", { class: "btn", type: "button", onclick: () => W && W.connect() }, TESTNET ? "Connect a testnet wallet" : "Connect wallet"));
-    if (TESTNET && who) {
-      whoLine.append(el("button", { class: "btn ghost", type: "button", onclick: () => copy(who) }, "Copy my address"));
-      if (NET.faucet) whoLine.append(" ", el("a", { href: NET.faucet, target: "_blank", rel: "noopener noreferrer", text: "Get test KOIN (faucet bot: /faucet <your address>)" }));
-    }
-    const rows = [];
-    for (const r of rounds) {
+    if (!card && ps.length) whoLine.append("Showing the producers signing right now. Multipliers appear with the first handicap card (the recorder takes one within the hour).");
+    if (!picksContract || !rounds.length) { list.replaceChildren(el("div", { class: "bx-empty", text: picksContract ? "No target is open right now." : "Picks open soon." })); return; }
+    const cards = rounds.map((r, i) => {
       const h = G.target(r), mine = myPicks.get(r), mineP = mine && mine.producers && mine.producers[0];
-      const when = el("div", { class: "bx-when" },
-        el("b", { text: `Block ${fmt(h)}` }),
-        el("span", { "data-h": String(h), class: "bx-eta", text: `about ${clock(about(h))} · locks in ${dur(about(G.lockHeight(r)) - Date.now())}` }));
-      let pickCell;
-      if (!picksContract) pickCell = el("div", { class: "bx-now", text: "Picks open soon" });
-      else if (!who) pickCell = el("div", { class: "bx-now", text: mineP ? `Your pick: ${nameOf(mineP)}` : "–" });
-      else {
-        const sel = el("select", { "aria-label": `Producer for block ${fmt(h)}` },
-          el("option", { value: "", text: !ps.length ? "Loading producers…" : mineP ? "Change to…" : "Who signs it?" }),
-          ...ps.map((p) => { const o = el("option", { value: p.a, text: `${nameOf(p.a)} · ${fmt(p.share * 100, p.share < 0.01 ? 2 : 1)}% · ×${fmt(p.mult, 2)}` }); if (p.a === (drafts.get(r) || mineP)) o.selected = true; return o; }));
-        if (!ps.length) sel.disabled = true;
-        sel.addEventListener("change", () => { if (sel.value) drafts.set(r, sel.value); else drafts.delete(r); });
-        const btn = el("button", { class: "btn", type: "button", onclick: () => sendPick(r, sel.value) }, mineP ? "Change" : "Pick");
-        if (sending || used >= max || (mine && Number(mine.changes) >= G.MAX_CHANGES)) btn.disabled = true;
-        pickCell = el("div", { class: "bx-pick" }, sel, btn, mineP ? el("div", { class: "bx-now ago", text: `Your pick: ${nameOf(mineP)} (×${fmt(X.multiplier(card, mineP), 2)} if right)` }) : null);
-      }
-      rows.push(el("div", { class: `bx-row${mineP ? " mine" : ""}` }, when, pickCell));
+      const choice = drafts.get(r) || mineP || null;
+      const noChanges = mine && Number(mine.changes) >= G.MAX_CHANGES;
+      const chips = el("div", { class: "bx-chips", role: "radiogroup", "aria-label": `Who signs block ${fmt(h)}` },
+        ...(ps.length ? ps : []).map((p) => el("button", { type: "button", class: "bx-chip" + (p.a === mineP ? " picked" : ""), role: "radio", "aria-checked": String(p.a === choice), disabled: sending || noChanges ? "" : null,
+          onclick: () => choose(r, p.a) },
+          dot(p.a), el("span", { class: "bx-name", text: nameOf(p.a) }), el("span", { class: "bx-share", text: shareText(p.share) }), el("span", { class: "bx-mult", text: multText(p.mult) }))));
+      if (!ps.length) chips.append(el("div", { class: "bx-empty", text: "Loading producers…" }));
+      const changed = choice && choice !== mineP;
+      const btn = el("button", { type: "button", class: "bx-lockin", onclick: () => (who ? sendPick(r, choice) : startPlaying()) },
+        !who ? (TESTNET ? "Play free to pick" : "Connect to pick") : mineP && !changed ? "Picked" : mineP ? "Change pick" : "Lock in pick");
+      if (who && (sending || !changed || used >= max || noChanges)) btn.disabled = true;
+      const foot = el("div", { class: "bx-t-foot" },
+        mineP ? el("span", { class: "bx-yours", text: `Yours: ${nameOf(mineP)}${noChanges ? " (no changes left)" : ""}` }) : el("span", { text: who && used >= max ? "Today's picks are used up" : choice ? `${nameOf(choice)} · ${multText(ps.find((p) => p.a === choice)?.mult)} if right` : "Choose a producer" }), btn);
+      return el("article", { class: "bx-t" + (i === 0 ? " first" : "") + (mineP ? " mine" : ""), id: `t-${r}` },
+        el("div", { class: "bx-t-top" }, el("b", { text: `Block ${fmt(h)}` }), el("span", { "data-h": String(h), class: "bx-eta", text: etaText(r) }), i === 0 ? el("em", { text: "Next up" }) : null),
+        chips, foot);
+    });
+    // The soonest few, then the rest on request (6 on a wide screen, 3 on a phone).
+    const few = matchMedia("(max-width: 760px)").matches ? 3 : 6;
+    if (!showAll && cards.length > few) {
+      cards.length = few;
+      cards.push(el("button", { type: "button", class: "btn ghost bx-more", onclick: () => { showAll = true; renderTargets(true); } }, `Show all ${rounds.length} open targets`));
     }
-    list.replaceChildren(...rows);
+    list.replaceChildren(...cards);
+  }
+  let showAll = false;
+  const etaText = (r) => `about ${clock(about(G.target(r)))} · locks in ${dur(secsTo(G.lockHeight(r)) * 1000)}`;
+  function choose(r, a) {
+    if (!me()) { drafts.set(r, a); startPlaying(); return; }
+    drafts.set(r, a); renderTargets(true);
   }
   function updateTimes() {
     if (!head) return;
-    document.querySelectorAll("#targets [data-h]").forEach((n) => {
-      const h = Number(n.dataset.h);
-      n.textContent = `about ${clock(about(h))} · locks in ${dur(about(h - G.LEAD) - Date.now())}`;
-    });
+    renderStage();
+    document.querySelectorAll("#targets [data-h]").forEach((n) => { const h = Number(n.dataset.h); const r = G.roundOf(h); if (r != null) n.textContent = etaText(r); });
+  }
+  // ── you: picks left, this week's points and place, Mana ──
+  let mana = null;
+  function renderYou() {
+    const box = $("you"), who = me();
+    if ($("steps")) $("steps").hidden = !!who;
+    if (!box) return;
+    box.hidden = !who;
+    if (!who) return;
+    const max = usage ? Number(usage.max_picks_per_day) || G.PICKS_PER_DAY : G.PICKS_PER_DAY, used = usage ? Number(usage.picks_today) || 0 : 0;
+    $("you-left").textContent = usage ? String(Math.max(0, max - used)) : "–";
+    const rows = (board && board.week && board.week.rows) || [], mine = rows.find((x) => x.a === who);
+    $("you-pts").textContent = mine ? fmt(mine.points, 2) : "0.00";
+    $("you-rank").textContent = mine ? `#${mine.place}` : "–";
+    $("you-mana").textContent = mana == null ? "–" : fmt(mana, 2);
+  }
+  async function readMana() {
+    const who = me();
+    if (!who || !provider) { mana = null; return; }
+    try { mana = Number(BigInt(await provider.getAccountRc(who))) / 1e8; } catch { /* keep */ }
+    renderYou(); renderWallet();
+  }
+  // ── the wallet button, and "Play free" ──
+  const isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+  function renderWallet() {
+    const b = $("wallet-btn");
+    if (!b || !W) return;
+    const who = me();
+    b.className = "bx-wallet" + (who ? " on" : "");
+    b.replaceChildren(...(who ? [dot(who), nameOf(who)] : [TESTNET ? "Play free" : "Connect wallet"]));
+  }
+  function walletMenu() {
+    const who = me();
+    if (!who) { startPlaying(); return; }
+    pickModal("info", W.kind === "test" ? "Your Test wallet" : "Your wallet", [
+      el("p", { class: "mono", text: who }),
+      mana != null ? `Test Mana: ${fmt(mana, 2)} (a pick uses about 0.05)` : "",
+      TESTNET && NET.faucet ? el("p", {}, "More test KOIN: send ", el("b", { text: "/faucet <your address>" }), " to ", el("a", { href: NET.faucet, target: "_blank", rel: "noopener noreferrer", text: "the faucet bot" }), ".") : null,
+    ].filter(Boolean), [
+      el("button", { class: "btn", type: "button", onclick: () => copy(who) }, "Copy address"),
+      el("button", { class: "btn ghost", type: "button", onclick: () => { closeModal(); W.disconnect(); } }, "Disconnect"),
+      okBtn("Close")]);
+  }
+  async function startPlaying() {
+    if (!W) return;
+    if (!TESTNET) { W.connect(); return; }
+    if (W.address) return;
+    if (!W.quick) { W.connect(); return; }
+    // Kondor installed: offer it next to Play free (most testers just want Play free).
+    if (window.kondor && !startPlaying.chose) {
+      pickModal("info", "Play on the testnet", ["Play free makes a Test wallet in this browser with test KOIN. Or use Kondor switched to the testnet."],
+        [el("button", { class: "btn", type: "button", onclick: () => { startPlaying.chose = true; closeModal(); startPlaying().finally(() => { startPlaying.chose = false; }); } }, "Play free"),
+         el("button", { class: "btn ghost", type: "button", onclick: () => { closeModal(); W.connect(); } }, "Use Kondor")]);
+      return;
+    }
+    let who;
+    try { who = W.quick(); } catch (e) { pickModal("bad", "Couldn't make a wallet", [String((e && e.message) || e), "Try Kondor instead."], [el("button", { class: "btn", type: "button", onclick: () => { closeModal(); W.connect(); } }, "Use Kondor"), okBtn("OK")]); return; }
+    if (!isLocal) { fundHelp(who); return; }
+    pickModal("busy", "Adding test KOIN…", ["Your wallet is ready. The test server is sending it 5 test KOIN (enough for about 100 picks)."]);
+    try {
+      const r = await fetch("/api/fund", { method: "POST", headers: { "Content-Type": "application/json", "X-KG-Testnet": "fund" }, body: JSON.stringify({ address: who }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `the test server answered ${r.status}`);
+      await readMana();
+      pickModal("ok", "You're in", ["Your Test wallet has test KOIN. Pick who signs the next target."], [el("button", { class: "btn", type: "button", onclick: () => { closeModal(); goPick(); } }, "Pick now")]);
+    } catch (e) { fundHelp(who, String((e && e.message) || e)); }
+  }
+  function fundHelp(who, why) {
+    pickModal("info", "One more step: test KOIN", [
+      why ? `Couldn't add test KOIN automatically: ${why}` : "Your wallet is ready in this browser. It needs free test KOIN to pay for picks.",
+      el("p", {}, "In Telegram, send ", el("b", { text: `/faucet ${who}` }), " to ", NET.faucet ? el("a", { href: NET.faucet, target: "_blank", rel: "noopener noreferrer", text: "@KoinosTestnetFaucetBot" }) : "@KoinosTestnetFaucetBot", "."),
+    ], [el("button", { class: "btn", type: "button", onclick: () => copy(`/faucet ${who}`) }, "Copy the message"), okBtn("Done")]);
+  }
+  function goPick() {
+    const t = document.querySelector("#targets .bx-t");
+    if (!t) return;
+    t.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
+    const c = t.querySelector(".bx-chip:not([disabled])"); if (c) c.focus({ preventScroll: true });
   }
   function copy(text) {
     try { navigator.clipboard.writeText(text).then(() => say("Address copied."), () => say(text)); } catch { say(text); }
@@ -285,19 +418,18 @@
     renderResults(); renderBoard();
   }
   function renderResults() {
-    const all = [...weeks.values()].flatMap((w) => w.targets).filter((t) => t && Number.isInteger(t.height)).sort((a, b) => b.height - a.height).slice(0, 12);
+    const all = [...weeks.values()].flatMap((w) => w.targets).filter((t) => t && Number.isInteger(t.height)).sort((a, b) => b.height - a.height).slice(0, 8);
     $("results-box").hidden = !all.length;
     const who = me();
     $("res-rows").replaceChildren(...all.map((t) => {
       const p = who && Array.isArray(t.picks) ? t.picks.find((x) => x[0] === who) : null;
       const right = p && p[3] > 0;
       const signer = t.signer ? (NET.explorer ? el("a", { href: NET.explorer + t.signer, target: "_blank", rel: "noopener noreferrer", text: nameOf(t.signer) }) : el("span", { text: nameOf(t.signer) })) : el("span", { text: "–" });
-      return el("tr", { class: right ? "me" : null },
-        el("td", { class: "num", text: fmt(t.height) }),
-        el("td", { class: "hide-sm", text: dayTime(t.time) }),
-        el("td", { class: "mono" }, signer),
-        el("td", { class: "num hide-sm", text: t.void ? "void" : String((t.picks || []).filter((x) => x[3] > 0).length) + " / " + String((t.picks || []).length) }),
-        el("td", { text: !p ? "" : right ? `✓ ${nameOf(p[1])} +${pts(p[3])}` : `✗ ${nameOf(p[1])}` }));
+      const crowd = t.void ? "void" : `${(t.picks || []).filter((x) => x[3] > 0).length} of ${(t.picks || []).length} right`;
+      return el("div", { class: "bx-res-row" },
+        el("span", { class: "h", text: fmt(t.height) }),
+        el("span", { class: "who" }, t.signer ? dot(t.signer) : null, signer, el("span", { class: "note", text: crowd })),
+        el("span", { class: "you" + (p ? (right ? " ok" : " no") : ""), text: !p ? "" : right ? `+${pts(p[3])}` : "✗" }));
     }));
   }
   function renderBoard() {
@@ -305,30 +437,37 @@
     $("board-box").hidden = false;
     lb.setMe(me() || "");
     lb.set(board);
+    renderYou();
     const lw = board.lastWeek, prizes = lw && lw.final && Array.isArray(lw.prizes) ? lw.prizes : [];
     $("prize-line").textContent = prizes.length
       ? `${TESTNET ? "Test prizes" : "Prizes"} for week ${lw.week + 1}: ${prizes.map((p) => `${nameOf(p.player)} ${fmt(p.vhp, p.vhp % 1 ? 2 : 0)} VHP`).join(", ")}.${TESTNET ? " Nothing is paid on the testnet." : ""}`
       : NET.prize;
   }
-  if (W && W.subscribe) W.subscribe(() => { loadMine(); renderBoard(); renderResults(); });
+  function onWallet() { renderWallet(); loadMine(); renderBoard(); renderResults(); readMana(); }
 
   function renderMults() {
     const ps = producers();
     $("mult-sub").textContent = card
-      ? `From the ${NET.cards === "self" ? "Block X recorder's" : "Producer Race's"} handicap card of ${dayTime(card.at || cardAt)}. A right pick scores the multiplier: top producer's VHP ÷ yours, at most ×3.`
-      : `Waiting for the ${NET.cards === "self" ? "Block X recorder's first card (it runs every hour)" : "race recorder's card"}…`;
-    $("mult-rows").replaceChildren(...ps.map((p) => el("tr", {},
-      el("td", { class: "mono" }, NET.explorer ? el("a", { href: NET.explorer + p.a, target: "_blank", rel: "noopener noreferrer", text: nameOf(p.a) }) : el("span", { text: nameOf(p.a) })),
-      el("td", { class: "num", text: `${fmt(p.share * 100, p.share < 0.01 ? 2 : 1)}%` }),
-      el("td", { class: "num", text: `×${fmt(p.mult, 2)}` }),
-      el("td", { class: "num hide-sm", text: fmt(p.share * p.mult * 100, 1) }))));
+      ? `Share of blocks each producer should sign, from the handicap card of ${dayTime(card.at || cardAt)}, and what a right pick on it scores.`
+      : `Waiting for the ${NET.cards === "self" ? "recorder's first handicap card (it takes one within the hour)" : "race recorder's card"}.`;
+    const top = Math.max(0.0001, ...ps.map((p) => p.share));
+    $("mult-rows").replaceChildren(...(card ? ps : []).map((p) => {
+      const bar = el("span", { class: "bx-mbar" }, el("i")); bar.style.setProperty("--c", colorOf(p.a)); bar.firstChild.style.setProperty("--w", `${(p.share / top) * 100}%`);
+      return el("div", { class: "bx-mrow" }, dot(p.a),
+        NET.explorer ? el("a", { href: NET.explorer + p.a, target: "_blank", rel: "noopener noreferrer", class: "bx-name", text: nameOf(p.a) }) : el("span", { class: "bx-name", text: nameOf(p.a) }),
+        bar, el("span", { class: "bx-mult", text: `${shareText(p.share)} · ${multText(p.mult)}` }));
+    }));
   }
 
   // ── start ──
   (async () => {
     try { await setupNet(); }
     catch (e) { say(TESTNET ? `Testnet settings problem: ${String((e && e.message) || e)}` : "Couldn't load the game settings."); return; }
-    $("game-rules").textContent = `A target every ${fmt(G.ROUND)} blocks (about ${dur(G.ROUND * X.BLOCK_MS)}). Picks lock ${G.LEAD} blocks before the target and open ${fmt(G.AHEAD)} blocks ahead. Up to ${G.PICKS_PER_DAY} picks a day; each pick can be changed ${G.MAX_CHANGES} times.`;
+    $("game-rules").textContent = `A target every ${fmt(G.ROUND)} blocks (${(() => { const m = Math.round(G.ROUND * X.BLOCK_MS / 60000); return m >= 90 ? `about ${Math.round(m / 60)} hours` : `about ${m} minutes`; })()}). Picks lock ${G.LEAD} blocks before it. ${G.PICKS_PER_DAY} picks a day, ${G.MAX_CHANGES} changes per pick.`;
+    if (W && W.subscribe) W.subscribe(onWallet);
+    if ($("wallet-btn")) $("wallet-btn").addEventListener("click", walletMenu);
+    if ($("cta")) $("cta").addEventListener("click", () => (me() ? goPick() : startPlaying()));
+    renderWallet(); readMana();
     const picksReady = setupPicks().catch(() => {});
     try { await readHead(); say(""); } catch { say("Couldn't reach the Koinos network. Trying again in a moment…"); }
     await loadCard(); renderMults();
@@ -338,6 +477,8 @@
     setInterval(() => { if (!document.hidden) loadCard().then(renderMults); }, 600000);
     setInterval(() => { if (!document.hidden) loadResults(); }, TESTNET ? 120000 : 300000);
     setInterval(() => { if (!document.hidden && picksContract) loadMine(); }, 60000);
+    setInterval(() => { if (!document.hidden) renderStage(); }, 1000);
     setInterval(updateTimes, 15000);
+    setInterval(() => { if (!document.hidden) readMana(); }, 30000);
   })();
 })();
