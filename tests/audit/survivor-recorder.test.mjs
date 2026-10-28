@@ -50,7 +50,7 @@ function picksOf(tamperDay = null) {
   };
 }
 const rankedOf = async (node, who) => new Set(who.filter((a) => a !== EVE));
-const GAME3 = { id: 3, kind: 1, list_size: 0, lock_mode: 2, round_size: String(S.DAY), round_offset: "0", lead: String(S.LEAD_MS), ahead: String(S.AHEAD_MS), max_picks_per_day: 20, max_changes: 5, enabled: true };
+const GAME3 = { id: 3, kind: 1, list_size: 1, lock_mode: 2, round_size: String(S.DAY), round_offset: "0", lead: String(S.LEAD_MS), ahead: String(S.AHEAD_MS), max_picks_per_day: 20, max_changes: 5, enabled: true };
 const gameOf = async () => GAME3;
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "survivor-"));
 const quiet = async (f) => { const log = console.log; console.log = () => {}; try { return await f(); } finally { console.log = log; } };

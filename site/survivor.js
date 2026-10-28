@@ -4,13 +4,16 @@
    The scoring is survivor-math.js, the same file the recorder (bot/games/survivor.ts) uses. */
 (() => {
   "use strict";
-  const S = window.KSurvivor;
+  // TESTNET: the local test server (bot/survivor-test.ts) adds window.KSurvivorNet: the testnet node (through the
+  // server), its recorder's files, its Picks contract and the test clock. The real page never has it.
+  const NET = window.KSurvivorNet || null;
+  const S = window.KSurvivor && (NET ? window.KSurvivor.withConfig(NET.clock) : window.KSurvivor);
   if (!S || typeof document === "undefined" || !document.getElementById("days")) return;
 
   const lib = window.koilib || window.koinos || window;
-  const RPC = "https://api.koinos.io";
-  const DATA = "https://raw.githubusercontent.com/bawcejawn/Knode/games-data/survivor/";
-  const EXPLORER = "https://koinosscan.com/address/";
+  const RPC = NET ? new URL(NET.rpc, location.href).href : "https://api.koinos.io";
+  const DATA = NET ? NET.data : "https://raw.githubusercontent.com/bawcejawn/Knode/games-data/survivor/";
+  const EXPLORER = NET ? null : "https://koinosscan.com/address/";
   // Knode's own two producers are in the field like any other (owner's decision 2026-10-27; disclosed on the page).
   const NAMES = { "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "Knode pool", "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR": "Knode Swap" };
   const ROOT = new URL("../", location.href);
@@ -23,7 +26,12 @@
   const isAddr = (a) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
   const nameOf = (a) => (isAddr(a) ? NAMES[a] || a.slice(0, 5) + "…" + a.slice(-4) : "–");
   const fmt = (n, d = 0) => Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
-  const dayName = (d) => new Date(S.dayStart(d)).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  // A day's name: its UTC date ("Mon, Nov 16"); on the test clock, its start in your time ("Wed 2:00 PM").
+  const dayName = (d) => (S.MAINNET ? new Date(S.dayStart(d)).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })
+    : new Date(S.dayStart(d)).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }));
+  const LOCK_TEXT = S.MAINNET ? "23:55 UTC the night before" : "5 minutes before the round starts";
+  /** A wallet, linked to the explorer (mainnet) or as plain text (testnet: no explorer). */
+  const addrLink = (a) => (EXPLORER ? el("a", { href: EXPLORER + a, target: "_blank", rel: "noopener noreferrer", text: nameOf(a) }) : el("span", { text: nameOf(a) }));
   const localTime = (t) => new Date(t).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
   const dur = (ms) => { const m = Math.max(0, Math.ceil(ms / 60000)); return m >= 1440 ? `${Math.floor(m / 1440)} d ${Math.floor((m % 1440) / 60)} h` : m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min` : `${m} min`; };
   const hearts = (n) => "♥".repeat(Math.max(0, n)) + "♡".repeat(Math.max(0, S.LIVES - n));
@@ -77,10 +85,10 @@
     const sc = S.scoreDay(f.field, counts, n), out = new Set(sc.out);
     const mine = me() ? myPicks.get(d) : null, mineP = mine && mine.producers && mine.producers[0];
     const total = counts.reduce((s, x) => s + x[1], 0);
-    $("today-sub").textContent = `${fmt(total)} blocks so far today (UTC). The bottom ${sc.out.length} of ${sc.rows.length} are in the out-zone right now${sc.line !== null ? `; safe from a score of ${fmt(sc.line, 1)}` : ""}. Live, not final.`;
+    $("today-sub").textContent = `${fmt(total)} blocks so far ${S.MAINNET ? "today (UTC)" : "this round"}. ${sc.out.length === 1 ? "The bottom 1" : `The bottom ${sc.out.length}`} of ${sc.rows.length} ${sc.out.length === 1 ? "is" : "are"} in the out-zone right now${sc.line !== null ? `; safe from a score of ${fmt(sc.line, 1)}` : ""}. Live, not final.`;
     $("today-rows").replaceChildren(...sc.rows.map((r, i) => el("tr", { class: `${out.has(r.a) ? "oz" : ""} ${r.a === mineP ? "me" : ""}` },
       el("td", { class: "num", text: String(i + 1) }),
-      el("td", { class: "mono" }, el("a", { href: EXPLORER + r.a, target: "_blank", rel: "noopener noreferrer", text: nameOf(r.a) }), r.a === mineP ? el("span", { class: "you", text: " your pick" }) : null),
+      el("td", { class: "mono" }, addrLink(r.a), r.a === mineP ? el("span", { class: "you", text: " your pick" }) : null),
       el("td", { class: "num", text: fmt(r.blocks) }),
       el("td", { class: "num hide-sm", text: `×${fmt(r.h, 2)}` }),
       el("td", { class: "num", text: fmt(r.score, 1) }),
@@ -90,9 +98,12 @@
   // ── the picks contract (live once picks-data/deployment.json is on the site) ──
   async function setupPicks() {
     let pdep = null, dep = null;
-    try { pdep = await fetchJson(new URL("picks-data/deployment.json", ROOT)); } catch { return; }
+    if (NET) { pdep = { contract: NET.picks }; dep = { chainId: NET.chainId }; }
+    else {
+      try { pdep = await fetchJson(new URL("picks-data/deployment.json", ROOT)); } catch { return; }
+      try { dep = await fetchJson(new URL("game-data/deployment.json", ROOT)); } catch { /* the wallet keeps its defaults */ }
+    }
     if (!pdep || !isAddr(pdep.contract)) return;
-    try { dep = await fetchJson(new URL("game-data/deployment.json", ROOT)); } catch { /* the wallet keeps its defaults */ }
     const abi = await fetchJson(new URL("picks/abi/picks.koilib.json", ROOT));
     picksContract = new lib.Contract({ id: pdep.contract, abi, provider });
     if (W) W.init({ provider, chainId: dep && dep.chainId, payer: dep && dep.payer, sponsor: dep && dep.sponsor, onChange: () => loadMine() });
@@ -200,8 +211,9 @@
         if (sending || used >= max || (mine && Number(mine.changes) >= S.MAX_CHANGES)) btn.disabled = true;
         const notes = [];
         if (mineP) notes.push(el("div", { class: "bx-now", text: `Your pick: ${nameOf(mineP)}${f && f.exact && !f.field.some((x) => x.a === mineP) ? " (not in this day's field: it would cost a life)" : ""}` }));
-        else if (sd.n > 1) notes.push(el("div", { class: "bx-now warn", text: "No pick yet: a day without a pick costs a life." }));
-        if (f && !f.exact) notes.push(el("div", { class: "bx-now", text: "Handicaps for this day aren't out yet; showing the latest. They're published the day before." }));
+        // The warning only on the next day to lock: the later ones can wait.
+        else if (sd.n > 1 && d === days[0]) notes.push(el("div", { class: "bx-now warn", text: `No pick yet: a ${S.MAINNET ? "day" : "round"} without a pick costs a life.` }));
+        if (f && !f.exact) notes.push(el("div", { class: "bx-now", text: `Handicaps for this ${S.MAINNET ? "day" : "round"} aren't out yet; showing the latest. They're published the ${S.MAINNET ? "day" : "round"} before.` }));
         cell = el("div", { class: "bx-pick" }, sel, btn, ...notes);
       }
       rows.push(el("div", { class: `bx-row${mineP ? " mine" : ""}` }, when, cell));
@@ -255,12 +267,12 @@
       }
       drafts.delete(d);
       if (onChain) pickModal("ok", "Pick confirmed", [el("p", {}, "Your pick: ", el("b", { text: nameOf(producer) }), ` for ${dayName(d)}.`),
-        `It locks at 23:55 UTC the night before (${localTime(S.lockTime(d))} your time). Until then you can change it (up to ${S.MAX_CHANGES} times).`,
+        `It locks ${LOCK_TEXT} (${localTime(S.lockTime(d))} your time). Until then you can change it (up to ${S.MAX_CHANGES} times).`,
         id ? el("p", { class: "ago mono", text: `Transaction ${String(id).slice(0, 18)}…` }) : null].filter(Boolean), [okBtn()]);
       else pickModal("info", "Sent, not seen on the chain yet", ["Your wallet sent it. It usually shows within a minute; this list updates by itself."], [okBtn("OK")]);
     } catch (e) {
       const m = String((e && e.message) || e);
-      const why2 = /locked/i.test(m) ? "That day is locked: picks close at 23:55 UTC the night before."
+      const why2 = /locked/i.test(m) ? `That day is locked: picks close ${LOCK_TEXT}.`
         : /not open yet/i.test(m) ? "That day isn't open yet (picks open 7 days ahead)."
         : /used up/i.test(m) ? "Today's picks are used up (changes count). More after 00:00 UTC."
         : /changed again/i.test(m) ? `That pick has been changed ${S.MAX_CHANGES} times already.`
@@ -283,7 +295,7 @@
     $("prizes").replaceChildren(...(r.final ? r.prizes : []).map((p) => el("div", { class: "champ" }, el("b", { text: `${medal[p.place - 1] || "🥈"} ${fmt(p.vhp, p.vhp % 1 ? 2 : 0)} VHP` }), el("span", { class: "mono", text: nameOf(p.player) }))));
     $("standings-rows").replaceChildren(...r.players.slice(0, 100).map((x) => el("tr", { class: `${x.outN === null ? "" : "gone"} ${x.a === who ? "me" : ""}` },
       el("td", { class: "num", text: String(x.place) }),
-      el("td", { class: "mono" }, el("a", { href: EXPLORER + x.a, target: "_blank", rel: "noopener noreferrer", text: nameOf(x.a) }), x.eligible ? null : el("span", { class: "ago", title: "Didn't hold 1 VHP at every daily check: can't win a prize", text: " · no prize" })),
+      el("td", { class: "mono" }, addrLink(x.a), x.eligible ? null : el("span", { class: "ago", title: "Didn't hold 1 VHP at every daily check: can't win a prize", text: " · no prize" })),
       el("td", { class: "lives", "aria-label": `${x.lives} lives`, text: x.outN === null ? hearts(x.lives) : `out day ${x.outN}` }),
       el("td", { class: "num", text: fmt(x.total, 1) }),
       el("td", { class: "num hide-sm", text: String(x.used.length) }))));
@@ -299,7 +311,7 @@
     $("field-title").textContent = f.day === d ? "Tomorrow's handicaps" : "Today's handicaps";
     $("field-sub").textContent = `${dayName(f.day)}${sd ? `, season ${sd.season} day ${sd.n}` : ""}: ${f.field.length} producers, the bottom ${f.out} are the out-zone. From each producer's blocks over ${dayName(f.day - 8)} to ${dayName(f.day - 2)}.`;
     $("field-rows").replaceChildren(...f.field.map((p) => el("tr", {},
-      el("td", { class: "mono" }, el("a", { href: EXPLORER + p.a, target: "_blank", rel: "noopener noreferrer", text: nameOf(p.a) })),
+      el("td", { class: "mono" }, addrLink(p.a)),
       el("td", { class: "num", text: fmt(p.k) }),
       el("td", { class: "num hide-sm", text: fmt(p.k / S.FORM_DAYS, 0) }),
       el("td", { class: "num", text: `×${fmt(p.h, 2)}` }))));
@@ -307,7 +319,7 @@
 
   // ── start ──
   async function refreshBlocks(first = false) {
-    try { const r = await KBlocks.ensure(provider, { blocks: 30500, onStatus: first ? (t) => t && say(t) : null }); B = r.B; say(""); }
+    try { const r = await KBlocks.ensure(provider, { blocks: NET ? NET.blocks : 30500, onStatus: first ? (t) => t && say(t) : null }); B = r.B; say(""); }
     catch { say("Couldn't reach the Koinos network. Trying again in a moment…"); }
     renderToday();
   }

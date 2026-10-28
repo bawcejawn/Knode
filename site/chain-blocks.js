@@ -8,8 +8,11 @@
  * where B.sig[i] is an index into B.signers for block height B.from + i. Read only: nothing here signs or sends. */
 (() => {
   "use strict";
-  const SNAPSHOT = "https://raw.githubusercontent.com/bawcejawn/Knode/blocks-data/recent-blocks.json";
-  const STORE = "kb-blocks-v1", MAX_BLOCKS = 66000, REORG = 60, WORKERS = 4;
+  // A test page (the Survivor testnet page, served only by the local test server) sets window.KBlocksConfig: no mainnet
+  // snapshot, and its own storage so testnet blocks never mix with mainnet ones. Real pages never set it.
+  const CFG = (typeof window !== "undefined" && window.KBlocksConfig) || {};
+  const SNAPSHOT = "snapshot" in CFG ? CFG.snapshot : "https://raw.githubusercontent.com/bawcejawn/Knode/blocks-data/recent-blocks.json";
+  const STORE = typeof CFG.store === "string" && /^kb-blocks-[a-z0-9-]+$/.test(CFG.store) ? CFG.store : "kb-blocks-v1", MAX_BLOCKS = 66000, REORG = 60, WORKERS = 4;
   const isAddr = (a) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let B = null;                // { from, top, signers, sig, ts, ntx }
@@ -69,6 +72,7 @@
   }
 
   async function snapshot(provider, needFrom, top, headId, onStatus) {
+    if (!SNAPSHOT) return null;
     try {
       onStatus && onStatus("Loading recent blocks…", null);
       const r = await (await fetch(SNAPSHOT, { cache: "no-cache" })).json();

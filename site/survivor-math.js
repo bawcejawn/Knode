@@ -39,167 +39,197 @@
  *   the season, so a farm of empty wallets can't win it. Defaults pending the owner's OK (audit SV-1 and its
  *   fix-check): only in a season with at least 3 players who made at least 2 valid picks, and not for a player who
  *   went out by missing a pick. So wallets that pick on day 1 and never again win nothing. The vault pays them
- *   (Build 1). */
+ *   (Build 1).
+ *
+ * THE CLOCK (testnet only): KSurvivor is the mainnet game, exactly as above. KSurvivor.withConfig({ day, firstDay,
+ * outFloor }) makes the same game with a faster clock for the testnet: a "day" (one round) lasts `day` ms instead of
+ * 24 hours, so a 14-round season can be played in an afternoon. Everything that depends on the day scales with it
+ * (the 7-round opening, the handicap window, the 280-blocks-a-week entry level, the 12-hour correction window), and the
+ * 5-minute lock stays 5 minutes. outFloor (testnet only, default 0) puts at least that many producers in the out-zone
+ * when the testnet's field is small. The mainnet game never reads any of this. */
 (function (root) {
   "use strict";
-  const DAY = 86400000;
-  const GAME_ID = 3;
-  const SEASON_DAYS = 14, LIVES = 2, USES = 1;
-  const FORM_DAYS = 7, FORM_GAP = 2, MIN_FORM = 280;
-  const LEAD_MS = 5 * 60000, AHEAD_MS = 7 * DAY, PICKS_PER_DAY = 20, MAX_CHANGES = 5;
-  const PRIZES = [4, 2];
-  const MIN_PRIZE_PLAYERS = 3;             // a season needs at least this many real players for prizes (default, SV-1)
-  const MIN_VALID_PICKS = 2;               // … where a real player made at least this many valid picks
-  /** One letter a day in a player's log: s safe, o out-zone, n no pick, f not in the field, u already used, v saved. */
-  const CODE = { safe: "s", out: "o", none: "n", field: "f", used: "u", saved: "v" };
-  const CORRECTION_MS = 12 * 3600000;      // a season's result is final 12 hours after it ends
-  /** Season 1's first UTC day (days since 1970), a Monday. null until the owner sets the launch. */
-  const FIRST_DAY = null;
-  const round4 = (x) => Math.round(x * 1e4) / 1e4;
-  const isAddr = (a) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
-  const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  const MAINNET_DAY = 86400000;
+  function make(cfg) {
+    const DAY = cfg.day;
+    const GAME_ID = 3;
+    const SEASON_DAYS = 14, LIVES = 2, USES = 1;
+    // The field's entry level: 280 blocks over 7 days on mainnet (40 a day), scaled to a shorter test day.
+    const FORM_DAYS = 7, FORM_GAP = 2, MIN_FORM = Math.max(1, Math.round((280 * DAY) / MAINNET_DAY));
+    const LEAD_MS = 5 * 60000, AHEAD_MS = 7 * DAY, PICKS_PER_DAY = 20, MAX_CHANGES = 5;
+    const OUT_FLOOR = cfg.outFloor;
+    const PRIZES = [4, 2];
+    const MIN_PRIZE_PLAYERS = 3;             // a season needs at least this many real players for prizes (default, SV-1)
+    const MIN_VALID_PICKS = 2;               // … where a real player made at least this many valid picks
+    /** One letter a day in a player's log: s safe, o out-zone, n no pick, f not in the field, u already used, v saved. */
+    const CODE = { safe: "s", out: "o", none: "n", field: "f", used: "u", saved: "v" };
+    const CORRECTION_MS = DAY / 2;           // a season's result is final 12 hours after it ends (half a test day)
+    /** Season 1's first UTC day (days since 1970), a Monday. null until the owner sets the launch. */
+    const FIRST_DAY = cfg.firstDay;
+    const round4 = (x) => Math.round(x * 1e4) / 1e4;
+    const isAddr = (a) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
+    const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
-  // ── time ──
-  const dayIndex = (t) => Math.floor(t / DAY);
-  const dayStart = (d) => d * DAY;
-  const dayLabel = (d) => new Date(d * DAY).toISOString().slice(0, 10);
-  const isMonday = (d) => new Date(d * DAY).getUTCDay() === 1;
-  /** The time from which the Picks contract refuses a pick for day d (23:55 UTC the night before). */
-  const lockTime = (d) => d * DAY - LEAD_MS;
-  /** Is day d open for a pick in a block made at time t? Exactly the contract's rule (round d, target d × DAY). */
-  const isOpen = (d, t) => d * DAY > LEAD_MS && t < lockTime(d) && d * DAY - t <= AHEAD_MS;
-  /** The days open at time t, soonest first. */
-  function openDays(t) {
-    const out = [];
-    for (let d = dayIndex(t); d * DAY - t <= AHEAD_MS; d++) if (isOpen(d, t)) out.push(d);
-    return out;
-  }
-  /** The season and its day number (1–14) for a UTC day, or null before Season 1 (or with no launch set). */
-  function seasonOf(d, first = FIRST_DAY) {
-    if (!Number.isInteger(first) || !Number.isInteger(d) || d < first) return null;
-    const s = Math.floor((d - first) / SEASON_DAYS);
-    return { season: s + 1, n: d - first - s * SEASON_DAYS + 1, start: first + s * SEASON_DAYS };
-  }
-  const seasonStartDay = (season, first = FIRST_DAY) => (Number.isInteger(first) ? first + (season - 1) * SEASON_DAYS : null);
-
-  // ── the field ──
-  /** The days whose blocks set day d's handicap: d−8 … d−2. */
-  const formDays = (d) => Array.from({ length: FORM_DAYS }, (_, i) => d - FORM_GAP - FORM_DAYS + 1 + i);
-  /** Day d's field from recorded days. days: Map(day → { counts: [[address, blocks], ...] }). null if one is missing.
-   *  Returns [{ a, k, h }] biggest first (ties: address order). */
-  function fieldFor(d, days) {
-    const k = new Map();
-    for (const x of formDays(d)) {
-      const rec = days.get(x);
-      if (!rec || !Array.isArray(rec.counts)) return null;
-      for (const [a, n] of rec.counts) if (isAddr(a) && Number.isInteger(n) && n > 0) k.set(a, (k.get(a) || 0) + n);
+    // ── time ──
+    const dayIndex = (t) => Math.floor(t / DAY);
+    const dayStart = (d) => d * DAY;
+    const dayLabel = (d) => (DAY === MAINNET_DAY ? new Date(d * DAY).toISOString().slice(0, 10) : new Date(d * DAY).toISOString().slice(0, 16).replace("T", " "));
+    const isMonday = (d) => new Date(d * DAY).getUTCDay() === 1;
+    /** Can a season start on day d? On mainnet only a Monday (the game week); a test clock has no weeks. */
+    const isSeasonStart = (d) => Number.isInteger(d) && (DAY !== MAINNET_DAY || isMonday(d));
+    /** The time from which the Picks contract refuses a pick for day d (23:55 UTC the night before). */
+    const lockTime = (d) => d * DAY - LEAD_MS;
+    /** Is day d open for a pick in a block made at time t? Exactly the contract's rule (round d, target d × DAY). */
+    const isOpen = (d, t) => d * DAY > LEAD_MS && t < lockTime(d) && d * DAY - t <= AHEAD_MS;
+    /** The days open at time t, soonest first. */
+    function openDays(t) {
+      const out = [];
+      for (let d = dayIndex(t); d * DAY - t <= AHEAD_MS; d++) if (isOpen(d, t)) out.push(d);
+      return out;
     }
-    const rows = [...k.entries()].filter(([, n]) => n >= MIN_FORM).sort((x, y) => y[1] - x[1] || cmpStr(x[0], y[0]));
-    if (!rows.length) return [];
-    const top = rows[0][1];
-    return rows.map(([a, n]) => ({ a, k: n, h: round4(top / n) }));
-  }
-  /** How many producers are in the out-zone on season day n (1–14) with a field of size m. */
-  const outSize = (m, n) => Math.floor((m * (12 + Math.min(SEASON_DAYS, Math.max(1, n)))) / 52);
+    /** The season and its day number (1–14) for a UTC day, or null before Season 1 (or with no launch set). */
+    function seasonOf(d, first = FIRST_DAY) {
+      if (!Number.isInteger(first) || !Number.isInteger(d) || d < first) return null;
+      const s = Math.floor((d - first) / SEASON_DAYS);
+      return { season: s + 1, n: d - first - s * SEASON_DAYS + 1, start: first + s * SEASON_DAYS };
+    }
+    const seasonStartDay = (season, first = FIRST_DAY) => (Number.isInteger(first) ? first + (season - 1) * SEASON_DAYS : null);
 
-  // ── a day ──
-  /** The day's standings: field [{a, k, h}], counts [[address, blocks]] for that day (or a live partial day), n =
-   *  the season day. Returns { rows: [{ a, blocks, h, score }] best first, out: [addresses], line } where line is the
-   *  score a producer must reach to be safe (ties at the line are safe). */
-  function scoreDay(field, counts, n) {
-    const got = new Map();
-    for (const [a, c] of counts || []) if (isAddr(a) && Number.isInteger(c) && c >= 0) got.set(a, c);
-    const rows = (field || []).map((f) => { const blocks = got.get(f.a) || 0; return { a: f.a, blocks, h: f.h, score: round4(blocks * f.h) }; });
-    rows.sort((x, y) => y.score - x.score || cmpStr(x.a, y.a));
-    const o = outSize(rows.length, n);
-    if (!o) return { rows, out: [], line: null };
-    const asc = rows.map((r) => r.score).sort((x, y) => x - y);
-    const line = asc[o];
-    return { rows, out: rows.filter((r) => r.score < line).map((r) => r.a), line };
-  }
-
-  // ── a season ──
-  /** Play a season from its recorded days, in order. days: [{ n, field, counts, picks: [[player, producer]],
-   *  noVhp: [players still in who did NOT hold 1 VHP or a stake at that day's check] }] for n = 1, 2, … without gaps.
-   *  Returns { players: [...ranked, with place], over, endN }. Each player: { a, lives, outN (the day they went out,
-   *  or null), total (sum of their picks' scores, 4 decimals), used: [producers], log (one letter per day played, see
-   *  CODE), eligible }. */
-  function playSeason(days) {
-    const ps = new Map();
-    const first = days.find((x) => x.n === 1);
-    if (!first) return { players: [], over: false, endN: 0 };
-    for (const [p] of first.picks || []) if (isAddr(p) && !ps.has(p)) ps.set(p, { a: p, lives: LIVES, outN: null, total4: 0, used: [], log: "", eligible: true });
-    const started = ps.size;
-    let over = false, endN = 0;
-    for (let i = 0; i < days.length; i++) {
-      const day = days[i];
-      if (day.n !== i + 1 || over) break;
-      const sc = scoreDay(day.field, day.counts, day.n);
-      const score = new Map(sc.rows.map((r) => [r.a, r.score])), out = new Set(sc.out);
-      const pick = new Map();
-      for (const [p, a] of day.picks || []) if (isAddr(p) && isAddr(a)) pick.set(p, a);
-      const noVhp = new Set(day.noVhp || []);
-      const alive = [...ps.values()].filter((x) => x.outN === null);
-      const fate = alive.map((x) => {
-        const a = pick.get(x.a) || null;
-        const code = !a ? "none" : !score.has(a) ? "field" : x.used.includes(a) ? "used" : out.has(a) ? "out" : "safe";
-        return { x, a, code };
-      });
-      // The safety net: everyone still in would lose a life today. It saves only out-zone losses (audit SV-1).
-      const allLose = fate.length > 0 && fate.every((f) => f.code !== "safe");
-      for (const { x, a, code } of fate) {
-        if (noVhp.has(x.a)) x.eligible = false;
-        const valid = code === "safe" || code === "out";
-        if (valid) { x.used.push(a); x.total4 += Math.round(score.get(a) * 1e4); }
-        if (code === "safe") { x.log += CODE.safe; continue; }
-        if (allLose && code === "out") { x.log += CODE.saved; continue; }
-        x.log += CODE[code];
-        x.lives--;
-        if (x.lives <= 0) x.outN = day.n;
+    // ── the field ──
+    /** The days whose blocks set day d's handicap: d−8 … d−2. */
+    const formDays = (d) => Array.from({ length: FORM_DAYS }, (_, i) => d - FORM_GAP - FORM_DAYS + 1 + i);
+    /** Day d's field from recorded days. days: Map(day → { counts: [[address, blocks], ...] }). null if one is missing.
+     *  Returns [{ a, k, h }] biggest first (ties: address order). */
+    function fieldFor(d, days) {
+      const k = new Map();
+      for (const x of formDays(d)) {
+        const rec = days.get(x);
+        if (!rec || !Array.isArray(rec.counts)) return null;
+        for (const [a, n] of rec.counts) if (isAddr(a) && Number.isInteger(n) && n > 0) k.set(a, (k.get(a) || 0) + n);
       }
-      endN = day.n;
-      const left = [...ps.values()].filter((x) => x.outN === null).length;
-      if ((started > 2 && left <= 2) || day.n >= SEASON_DAYS) over = true;
+      const rows = [...k.entries()].filter(([, n]) => n >= MIN_FORM).sort((x, y) => y[1] - x[1] || cmpStr(x[0], y[0]));
+      if (!rows.length) return [];
+      const top = rows[0][1];
+      return rows.map(([a, n]) => ({ a, k: n, h: round4(top / n) }));
     }
-    const players = rank([...ps.values()].map((x) => ({ a: x.a, lives: Math.max(0, x.lives), outN: x.outN, total: x.total4 / 1e4, used: x.used, log: x.log, eligible: x.eligible })));
-    return { players, over, endN };
-  }
-  /** Ranking: in longest (still in first), then lives, then total score; equal on all three share a place. */
-  function rank(players) {
-    const key = (x) => [x.outN === null ? Infinity : x.outN, x.lives, x.total];
-    const sorted = [...players].sort((x, y) => { const a = key(x), b = key(y); return b[0] - a[0] || b[1] - a[1] || b[2] - a[2] || cmpStr(x.a, y.a); });
-    let place = 0;
-    return sorted.map((x, i) => {
-      const p = sorted[i - 1];
-      if (!p || key(p).some((v, j) => v !== key(x)[j])) place = i + 1;
-      return { ...x, place };
+    /** How many producers are in the out-zone on season day n (1–14) with a field of size m. */
+    const outSize = (m, n) => {
+      const o = Math.floor((m * (12 + Math.min(SEASON_DAYS, Math.max(1, n)))) / 52);
+      return m >= 2 ? Math.max(o, Math.min(OUT_FLOOR, m - 1)) : o;     // testnet floor; never the whole field
+    };
+
+    // ── a day ──
+    /** The day's standings: field [{a, k, h}], counts [[address, blocks]] for that day (or a live partial day), n =
+     *  the season day. Returns { rows: [{ a, blocks, h, score }] best first, out: [addresses], line } where line is the
+     *  score a producer must reach to be safe (ties at the line are safe). */
+    function scoreDay(field, counts, n) {
+      const got = new Map();
+      for (const [a, c] of counts || []) if (isAddr(a) && Number.isInteger(c) && c >= 0) got.set(a, c);
+      const rows = (field || []).map((f) => { const blocks = got.get(f.a) || 0; return { a: f.a, blocks, h: f.h, score: round4(blocks * f.h) }; });
+      rows.sort((x, y) => y.score - x.score || cmpStr(x.a, y.a));
+      const o = outSize(rows.length, n);
+      if (!o) return { rows, out: [], line: null };
+      const asc = rows.map((r) => r.score).sort((x, y) => x - y);
+      const line = asc[o];
+      return { rows, out: rows.filter((r) => r.score < line).map((r) => r.a), line };
+    }
+
+    // ── a season ──
+    /** Play a season from its recorded days, in order. days: [{ n, field, counts, picks: [[player, producer]],
+     *  noVhp: [players still in who did NOT hold 1 VHP or a stake at that day's check] }] for n = 1, 2, … without gaps.
+     *  Returns { players: [...ranked, with place], over, endN }. Each player: { a, lives, outN (the day they went out,
+     *  or null), total (sum of their picks' scores, 4 decimals), used: [producers], log (one letter per day played, see
+     *  CODE), eligible }. */
+    function playSeason(days) {
+      const ps = new Map();
+      const first = days.find((x) => x.n === 1);
+      if (!first) return { players: [], over: false, endN: 0 };
+      for (const [p] of first.picks || []) if (isAddr(p) && !ps.has(p)) ps.set(p, { a: p, lives: LIVES, outN: null, total4: 0, used: [], log: "", eligible: true });
+      const started = ps.size;
+      let over = false, endN = 0;
+      for (let i = 0; i < days.length; i++) {
+        const day = days[i];
+        if (day.n !== i + 1 || over) break;
+        const sc = scoreDay(day.field, day.counts, day.n);
+        const score = new Map(sc.rows.map((r) => [r.a, r.score])), out = new Set(sc.out);
+        const pick = new Map();
+        for (const [p, a] of day.picks || []) if (isAddr(p) && isAddr(a)) pick.set(p, a);
+        const noVhp = new Set(day.noVhp || []);
+        const alive = [...ps.values()].filter((x) => x.outN === null);
+        const fate = alive.map((x) => {
+          const a = pick.get(x.a) || null;
+          const code = !a ? "none" : !score.has(a) ? "field" : x.used.includes(a) ? "used" : out.has(a) ? "out" : "safe";
+          return { x, a, code };
+        });
+        // The safety net: everyone still in would lose a life today. It saves only out-zone losses (audit SV-1).
+        const allLose = fate.length > 0 && fate.every((f) => f.code !== "safe");
+        for (const { x, a, code } of fate) {
+          if (noVhp.has(x.a)) x.eligible = false;
+          const valid = code === "safe" || code === "out";
+          if (valid) { x.used.push(a); x.total4 += Math.round(score.get(a) * 1e4); }
+          if (code === "safe") { x.log += CODE.safe; continue; }
+          if (allLose && code === "out") { x.log += CODE.saved; continue; }
+          x.log += CODE[code];
+          x.lives--;
+          if (x.lives <= 0) x.outN = day.n;
+        }
+        endN = day.n;
+        const left = [...ps.values()].filter((x) => x.outN === null).length;
+        if ((started > 2 && left <= 2) || day.n >= SEASON_DAYS) over = true;
+      }
+      const players = rank([...ps.values()].map((x) => ({ a: x.a, lives: Math.max(0, x.lives), outN: x.outN, total: x.total4 / 1e4, used: x.used, log: x.log, eligible: x.eligible })));
+      return { players, over, endN };
+    }
+    /** Ranking: in longest (still in first), then lives, then total score; equal on all three share a place. */
+    function rank(players) {
+      const key = (x) => [x.outN === null ? Infinity : x.outN, x.lives, x.total];
+      const sorted = [...players].sort((x, y) => { const a = key(x), b = key(y); return b[0] - a[0] || b[1] - a[1] || b[2] - a[2] || cmpStr(x.a, y.a); });
+      let place = 0;
+      return sorted.map((x, i) => {
+        const p = sorted[i - 1];
+        if (!p || key(p).some((v, j) => v !== key(x)[j])) place = i + 1;
+        return { ...x, place };
+      });
+    }
+    /** Season prizes among eligible players (held 1 VHP at every check): 4 VHP for 1st, 2 VHP for 2nd; tied players
+     *  split the prizes of the places they cover. Places are re-counted among the eligible. Returns [{ player, place, vhp }]. */
+    const validPicks = (x) => (String(x.log || "").match(/[sov]/g) || []).length;
+    /** Went out on a day with no pick (not by the out-zone or a wrong pick). */
+    const outByMissing = (x) => x.outN !== null && x.outN !== undefined && String(x.log || "")[x.outN - 1] === CODE.none;
+    function prizes(players, amounts = PRIZES) {
+      if (players.filter((x) => validPicks(x) >= MIN_VALID_PICKS).length < MIN_PRIZE_PLAYERS) return [];
+      const ranked = rank(players.filter((x) => x.eligible && !outByMissing(x)));
+      const out = [];
+      for (let i = 0; i < ranked.length && i < amounts.length; ) {
+        let j = i;
+        while (j + 1 < ranked.length && ranked[j + 1].place === ranked[i].place) j++;
+        let pot = 0;
+        for (let k = i; k <= j && k < amounts.length; k++) pot += amounts[k];
+        const each = Math.floor((pot / (j - i + 1)) * 1e8) / 1e8;   // VHP has 8 decimals; round down
+        for (let k = i; k <= j; k++) out.push({ player: ranked[k].a, place: ranked[k].place, vhp: each });
+        i = j + 1;
+      }
+      return out;
+    }
+
+    return Object.freeze({
+      DAY, GAME_ID, SEASON_DAYS, LIVES, USES, FORM_DAYS, FORM_GAP, MIN_FORM, LEAD_MS, AHEAD_MS, PICKS_PER_DAY, MAX_CHANGES,
+      PRIZES, MIN_PRIZE_PLAYERS, MIN_VALID_PICKS, CODE, CORRECTION_MS, FIRST_DAY, OUT_FLOOR, MAINNET: DAY === MAINNET_DAY && OUT_FLOOR === 0,
+      dayIndex, dayStart, dayLabel, isMonday, isSeasonStart, lockTime, isOpen, openDays, seasonOf, seasonStartDay,
+      formDays, fieldFor, outSize, scoreDay, playSeason, rank, prizes, validPicks, outByMissing,
+      withConfig,
     });
   }
-  /** Season prizes among eligible players (held 1 VHP at every check): 4 VHP for 1st, 2 VHP for 2nd; tied players
-   *  split the prizes of the places they cover. Places are re-counted among the eligible. Returns [{ player, place, vhp }]. */
-  const validPicks = (x) => (String(x.log || "").match(/[sov]/g) || []).length;
-  /** Went out on a day with no pick (not by the out-zone or a wrong pick). */
-  const outByMissing = (x) => x.outN !== null && x.outN !== undefined && String(x.log || "")[x.outN - 1] === CODE.none;
-  function prizes(players, amounts = PRIZES) {
-    if (players.filter((x) => validPicks(x) >= MIN_VALID_PICKS).length < MIN_PRIZE_PLAYERS) return [];
-    const ranked = rank(players.filter((x) => x.eligible && !outByMissing(x)));
-    const out = [];
-    for (let i = 0; i < ranked.length && i < amounts.length; ) {
-      let j = i;
-      while (j + 1 < ranked.length && ranked[j + 1].place === ranked[i].place) j++;
-      let pot = 0;
-      for (let k = i; k <= j && k < amounts.length; k++) pot += amounts[k];
-      const each = Math.floor((pot / (j - i + 1)) * 1e8) / 1e8;   // VHP has 8 decimals; round down
-      for (let k = i; k <= j; k++) out.push({ player: ranked[k].a, place: ranked[k].place, vhp: each });
-      i = j + 1;
-    }
-    return out;
+  /** The mainnet game. Season 1's FIRST_DAY is null until the owner sets the launch. */
+  const MAINNET = { day: MAINNET_DAY, firstDay: null, outFloor: 0 };
+  /** The same game with a test clock (testnet only). day: 10 minutes to 24 hours, in whole minutes, longer than the
+   *  5-minute lock; firstDay: the round Season 1 starts on (or null); outFloor: 0–3. */
+  function withConfig(c) {
+    const cfg = { ...MAINNET, ...(c || {}) };
+    if (!Number.isInteger(cfg.day) || cfg.day < 600000 || cfg.day > MAINNET_DAY || cfg.day % 60000) throw new Error("Survivor: day must be 10 minutes to 24 hours, in whole minutes");
+    if (cfg.firstDay !== null && (!Number.isInteger(cfg.firstDay) || cfg.firstDay < 1)) throw new Error("Survivor: firstDay must be a round number or null");
+    if (!Number.isInteger(cfg.outFloor) || cfg.outFloor < 0 || cfg.outFloor > 3) throw new Error("Survivor: outFloor must be 0 to 3");
+    return make(cfg);
   }
-
-  root.KSurvivor = {
-    DAY, GAME_ID, SEASON_DAYS, LIVES, USES, FORM_DAYS, FORM_GAP, MIN_FORM, LEAD_MS, AHEAD_MS, PICKS_PER_DAY, MAX_CHANGES,
-    PRIZES, MIN_PRIZE_PLAYERS, MIN_VALID_PICKS, CODE, CORRECTION_MS, FIRST_DAY,
-    dayIndex, dayStart, dayLabel, isMonday, lockTime, isOpen, openDays, seasonOf, seasonStartDay,
-    formDays, fieldFor, outSize, scoreDay, playSeason, rank, prizes, validPicks, outByMissing,
-  };
+  root.KSurvivor = make(MAINNET);
 })(typeof window !== "undefined" ? window : globalThis);

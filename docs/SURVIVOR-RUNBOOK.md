@@ -14,6 +14,7 @@ you.
    | id | 3 |
    | name | Survivor |
    | kind | 1 (one producer) |
+   | list_size | 1 |
    | lock_mode | 2 (time) |
    | round_size | 86400000 (one UTC day) |
    | round_offset | 0 |

@@ -27,7 +27,9 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { readVhp, MAINNET_VHP, withRetry } from "../../common.ts";
 await import("../../site/survivor-math.js");
-const S: any = (globalThis as any).KSurvivor;
+/** The mainnet game. A testnet run passes its own clock (o.math, from KSurvivor.withConfig); every helper below reads S. */
+const MAINNET_S: any = (globalThis as any).KSurvivor;
+let S: any = MAINNET_S;
 
 const E = process.env;
 const RPC = E.RPC || "https://api.koinos.io";
@@ -57,6 +59,10 @@ type Opts = {
   rankedOf?: (node: any, who: string[]) => Promise<Set<string>>;
   gameOf?: (node: any) => Promise<any>;                                   // game 3's settings on the Picks contract
   head?: { height: number; time: number; lib: number; libTime: number };
+  // Testnet only (bot/survivor-test.ts): the game with a test clock, and the testnet's own token and contracts.
+  math?: any;                                                             // KSurvivor.withConfig({...}); default mainnet
+  holdToken?: string;                                                     // the token of the "hold 1" rule (default VHP)
+  gameContract?: string | null;                                           // a Knode stake also counts (default game-data)
 };
 
 // ── files ──
@@ -152,7 +158,7 @@ async function readPicks(node: any, contract: string, day: number): Promise<RawP
 /** Game 3's settings must be exactly what site/survivor-math.js assumes (audit SV-9). Returns a problem, or "". */
 export function gameProblem(g: any): string {
   if (!g) return "game 3 isn't registered on the Picks contract";
-  const want: Record<string, string> = { id: String(S.GAME_ID), kind: "1", lock_mode: "2", round_size: String(S.DAY), round_offset: "0", lead: String(S.LEAD_MS), ahead: String(S.AHEAD_MS), max_changes: String(S.MAX_CHANGES) };
+  const want: Record<string, string> = { id: String(S.GAME_ID), kind: "1", list_size: "1", lock_mode: "2", round_size: String(S.DAY), round_offset: "0", lead: String(S.LEAD_MS), ahead: String(S.AHEAD_MS), max_changes: String(S.MAX_CHANGES) };
   for (const [k, v] of Object.entries(want)) if (String(g[k] ?? "0") !== v) return `game 3's ${k} on the chain is ${g[k] ?? "0"}, the Survivor math expects ${v}`;
   return "";
 }
@@ -163,16 +169,17 @@ async function readGame(node: any, contract: string): Promise<any> {
 }
 const GAME = (() => { try { return JSON.parse(fs.readFileSync(new URL("../../game-data/deployment.json", import.meta.url), "utf8")).contract as string; } catch { return ""; } })();
 const GAME_ABI = () => JSON.parse(fs.readFileSync(new URL("../../game/abi/kpred.koilib.json", import.meta.url), "utf8"));
-/** Who may win a prize: at least 1 VHP, or a Knode stake (the owner's 1 VHP rule; a staked player's VHP sits in the vault). */
-async function readRanked(node: any, who: string[]): Promise<Set<string>> {
+/** Who may win a prize: at least 1 VHP, or a Knode stake (the owner's 1 VHP rule; a staked player's VHP sits in the vault).
+ *  The testnet passes its own token (and no game contract). */
+async function readRanked(node: any, who: string[], token = MAINNET_VHP, game: string | null = GAME): Promise<Set<string>> {
   const out = new Set<string>();
   if (!who.length) return out;
-  const vhp = (await readVhp(node, MAINNET_VHP, who)).values;
+  const vhp = (await readVhp(node, token, who)).values;
   for (const a of who) {
     if (BigInt(vhp[a] || "0") >= ONE_VHP) { out.add(a); continue; }
-    if (!GAME) continue;
+    if (!game) continue;
     try {
-      const c = new Contract({ id: GAME, abi: GAME_ABI(), provider: node });
+      const c = new Contract({ id: game, abi: GAME_ABI(), provider: node });
       const r: any = await withRetry(`Knode player ${a}`, () => (c.functions as any).get_player({ player: a, week: "0" }));
       const p = r?.result?.player ?? {};
       if (BigInt(p.stake || "0") + BigInt(p.pending || "0") > 0n) out.add(a);
@@ -195,12 +202,13 @@ const tally = (signers: string[]): Counts => {
 
 /** One run. Exported for the tests, which pass fake nodes. */
 export async function run(o: Opts) {
+  S = o.math ?? MAINNET_S;
   const OUT = o.out ?? E.SURVIVOR_OUT ?? "games-data/survivor";
   const PREV = o.prev ?? E.SURVIVOR_PREV ?? "";
   const firstDay: number | null = o.firstDay === undefined ? S.FIRST_DAY : o.firstDay;
   const contract = o.picksContract === undefined ? defaultPicksContract() : o.picksContract;
   const problems: string[] = [];
-  if (firstDay !== null && (!Number.isInteger(firstDay) || !S.isMonday(firstDay))) throw new Error("FIRST_DAY must be a Monday (a UTC day number)");
+  if (firstDay !== null && !S.isSeasonStart(firstDay)) throw new Error(S.MAINNET ? "FIRST_DAY must be a Monday (a UTC day number)" : "firstDay must be a round number");
 
   // ── the chain ──
   let head = o.head, readerP: any = null, readerC: any = null;
@@ -214,7 +222,8 @@ export async function run(o: Opts) {
   const rangeP = o.blocksOf ? (a: number, b: number) => o.blocksOf!(o.p, a, b) : (a: number, b: number) => readerP.range(a, b);
   const rangeC = !o.check ? null : o.blocksOf ? (a: number, b: number) => o.blocksOf!(o.check, a, b) : (a: number, b: number) => readerC.range(a, b);
   const picksRead = o.picksOf ?? (contract ? (node: any, d: number) => readPicks(node, contract, d) : null);
-  const rankedRead = o.rankedOf ?? ((node: any, who: string[]) => readRanked(node, who));
+  const holdToken = o.holdToken ?? MAINNET_VHP, holdGame = o.gameContract === undefined ? GAME : o.gameContract;
+  const rankedRead = o.rankedOf ?? ((node: any, who: string[]) => readRanked(node, who, holdToken, holdGame));
   const gameRead = o.gameOf ?? (contract ? (node: any) => readGame(node, contract) : null);
   console.log(`head ${head.height} (${new Date(head.time).toISOString()}), irreversible ${head.lib} (${new Date(head.libTime).toISOString()})`);
 
