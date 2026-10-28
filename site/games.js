@@ -129,6 +129,14 @@
       $("g-boards").replaceChildren(el("b", { text: "Leaderboards: " }), ...links);
       $("g-boards").hidden = false;
     }
+    // Every live game's results (the Results page, a tab per game).
+    const res = games.filter((g) => g.status === "live" && (g.id === "questions" || g.results === true));
+    if (res.length && $("g-results")) {
+      const links = [];
+      res.forEach((g, i) => { if (i) links.push(" · "); links.push(el("a", { href: g.id === "questions" ? "index.html#results" : `index.html#results/${g.id}`, text: g.name })); });
+      $("g-results").replaceChildren(el("b", { text: "Results: " }), ...links);
+      $("g-results").hidden = false;
+    }
     $("g-soon").replaceChildren(...games.filter((g) => g.status === "soon").map(card));
     $("soon-box").hidden = !games.some((g) => g.status === "soon");
     refresh();

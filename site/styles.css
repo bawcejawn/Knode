@@ -711,3 +711,22 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .lb-kind button { font: 700 .9rem/1 var(--body); padding: 9px 16px; border: 0; border-radius: 99px; background: transparent; color: var(--ink); cursor: pointer; }
 .lb-kind button[aria-pressed="true"] { background: var(--tang); color: #1b1206; }
 .lb-me:empty { display: none; }
+
+/* Results: one tab per game (results.js). Producer Race result cards. */
+.res-games { margin-top: 18px; }
+.rr-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.rr-head h3 { font-size: 1.12rem; }
+.rr-pill { font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 3px 10px; border-radius: 99px; background: var(--mint-soft); color: var(--mint); }
+.rr-pill.checking, .rr-pill.missed { background: var(--paper); color: var(--muted); }
+.rr-pill.live { background: var(--tang); color: #1b1206; }
+.rr-podium { list-style: none; margin: 12px 0 8px; padding: 0; display: grid; gap: 6px; }
+.rr-podium li { display: flex; align-items: center; gap: 8px; font-size: .98rem; }
+.rr-podium a { color: var(--ink); font-weight: 700; }
+.rr-med { width: 1.4em; text-align: center; }
+.rr-mine { margin-top: 6px; padding: 8px 12px; border-radius: 12px; background: var(--rose-soft); }
+.rr-mine.ok { background: var(--mint-soft); }
+.rr-mine a { color: var(--ink); font-weight: 700; }
+.rr-table tr.me td { font-weight: 800; }
+.res.rr { display: block; }
+.res.rr > * { grid-column: auto; }
+.res.rr .res-line { margin-top: 6px; }

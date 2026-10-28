@@ -3,6 +3,7 @@
   "games": [
     { "id": "race", "name": "Producer Race", "kinds": ["free"], "status": "live", "href": "race.html",
       "line": "Pick the producer that wins each 6-hour race, four a day. A 2nd or 3rd place finish scores a Show.",
+      "results": true,
       "board": { "data": "race-data/board.json", "unranked": "To be ranked, hold at least 1 VHP or stake in Knode Games.",
         "free": { "show": 6, "prize": "1st and 2nd at the end of the week win the free-play prize (paid once the Knode Games vault is live)." },
         "columns": [{ "key": "pts", "label": "Points" }, { "key": "correct", "label": "Wins" }, { "key": "shows", "label": "Shows" }, { "key": "picks", "label": "Picks", "wide": true }] } },
