@@ -12,7 +12,7 @@
     { "id": "blockx", "name": "Who Signs Block X", "kinds": ["free"], "status": "soon", "href": "",
       "line": "Pick the producer for the next 12 milestone blocks, about 2 hours apart." },
     { "id": "survivor", "name": "Survivor", "kinds": ["free"], "status": "soon", "href": "",
-      "line": "One producer a day, two lives, four-week seasons. Last one standing wins." },
+      "line": "One producer a day, two lives, two-week seasons. Last one standing wins." },
     { "id": "fantasy", "name": "Fantasy Producers", "kinds": ["staked"], "status": "soon", "href": "",
       "line": "Draft 5 producers under a salary cap, with a captain who scores double." },
     { "id": "golf", "name": "Block Golf", "kinds": ["staked"], "status": "soon", "href": "",
