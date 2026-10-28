@@ -291,7 +291,7 @@ export async function run(o: Opts) {
     const next = sf.startDay + sf.days.length;
     if (next > lastDone) continue;
     const need = next - (S.FORM_DAYS + S.FORM_GAP - 1);
-    if (need < floor) { problems.push(`Survivor: season ${sf.season} is stuck at day ${sf.days.length + 1} (${S.dayLabel(next)}), more than ${CATCHUP_DAYS} days ago; it needs the owner (see the runbook)`); continue; }
+    if (need < floor) { problems.push(`Survivor: season ${sf.season} is stuck at day ${sf.days.length + 1} (${S.dayLabel(next)}), more than ${CATCHUP_DAYS} days ago; it needs the owner (docs/SURVIVOR-RUNBOOK.md)`); continue; }
     for (let d = need; d <= next; d++) if (!want.includes(d)) want.push(d);
   }
   let n = 0;
