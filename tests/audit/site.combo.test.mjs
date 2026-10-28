@@ -53,14 +53,15 @@ test("race legs lock 5 minutes before the start and open 24 h ahead (time); Bloc
   assert.ok(C.legOpen(leg(C.WIN, R), at(start - 24 * M.HOUR)));
   assert.ok(!C.legOpen(leg(C.WIN, R), at(start - 24 * M.HOUR - 1)), "more than 24 h ahead");
   const t = X.target(B);
-  assert.ok(C.legOpen(leg(C.BLOCK, B), at(NOW, t - 101)));
-  assert.ok(!C.legOpen(leg(C.BLOCK, B), at(NOW, t - 100)), "locked at target − 100, like Block X");
+  assert.ok(C.legOpen(leg(C.BLOCK, B), at(NOW, t - 501)));
+  assert.ok(!C.legOpen(leg(C.BLOCK, B), at(NOW, t - 500)), "locked at target − 500 (earlier than Block X's own 100)");
+  assert.ok(!C.legOpen(leg(C.BLOCK, B), at(NOW, t - 101)), "still locked where a Block X pick would be open");
   assert.ok(C.legOpen(leg(C.BLOCK, B), at(NOW, t - 28800)));
   assert.ok(!C.legOpen(leg(C.BLOCK, B), at(NOW, t - 28801)), "more than 28,800 blocks ahead");
   // The card is refused if any one leg is locked, and its lock is the earliest leg's.
   const legs = [leg(C.SHOW, R), leg(C.BLOCK, B)];
   assert.match(C.cardProblem(legs, at(start - 60000)), /Show leg is locked/);
-  assert.equal(C.cardLockTime(legs, head), Math.min(start - 5 * 60000, X.aboutTime(X.target(B) - 100, H, NOW)));
+  assert.equal(C.cardLockTime(legs, head), Math.min(start - 5 * 60000, X.aboutTime(X.target(B) - 500, H, NOW)));
 });
 
 test("slots: 3 per UTC day", () => {

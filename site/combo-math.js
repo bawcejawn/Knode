@@ -15,7 +15,8 @@
  *
  * LOCKS (the Picks contract enforces them): a card can be made or changed only while EVERY leg is open:
  *   - race legs until 5 minutes before the race starts, at most 24 hours ahead;
- *   - Block X legs until 100 blocks before the target, at most 28,800 blocks (~24 h) ahead.
+ *   - Block X legs until 500 blocks (~25 min) before the target, at most 28,800 blocks (~24 h) ahead (owner,
+ *     2026-10-28: earlier than Block X's own 100-block lock).
  *   3 cards per wallet per UTC day (slots 0, 1, 2: round = UTC day × 3 + slot); each changeable up to 3 times, only
  *   on its own UTC day and only while every leg of the old and the new card is still open.
  *
@@ -51,7 +52,7 @@
   const PREF = 0.5, F_MIN = 0.25, F_MAX = 3;
   const CARDS_PER_DAY = 3, MAX_CHANGES = 3, BEST = 10;
   const RACE_LEAD_MS = 5 * 60000, RACE_AHEAD_MS = 24 * M.HOUR;
-  const BLOCK_LEAD = X.LEAD, BLOCK_AHEAD = 28800;
+  const BLOCK_LEAD = 500, BLOCK_AHEAD = 28800;
   const DAY = M.DAY;
   const round2 = (x) => Math.round(x * 100) / 100;
   const round4 = (x) => Math.round(x * 1e4) / 1e4;
