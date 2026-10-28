@@ -84,15 +84,18 @@ const picksOf = async (_node, round) => {
 };
 
 // ── run hour by hour ──
-const out = fs.mkdtempSync(path.join(os.tmpdir(), "replay-bracket-"));
+const out = process.env.REPLAY_OUT || fs.mkdtempSync(path.join(os.tmpdir(), "replay-bracket-"));
+const UNTIL = process.env.REPLAY_UNTIL ? Date.parse(process.env.REPLAY_UNTIL) : null;   // stop early (page fixtures)
+fs.mkdirSync(out, { recursive: true });
 const log = console.log; console.log = () => {};
 let problems = 0;
-for (let time = B.seedTime(1) - 2 * H; time <= B.weekStart(WEEKS + 1) + 2 * H; time += H) {
+for (let time = B.seedTime(1) - 2 * H; time <= (UNTIL ?? B.weekStart(WEEKS + 1) + 2 * H); time += H) {
   const r = await run({ p: "main", check: "check", prev: out, out, raceDir, picksContract: null, nodeOf: () => node, picksOf, head: headAt(time + 50 * 60000) });
   problems += r.problems.filter((p) => !p.includes("no race card yet")).length;
 }
 console.log = log;
 if (problems) fail(`${problems} problems reported`);
+if (UNTIL) { log(`Stopped at ${new Date(UNTIL).toISOString()}; files in ${out}`); process.exit(process.exitCode || 0); }
 
 for (let w = 1; w <= WEEKS; w++) {
   const wf = JSON.parse(fs.readFileSync(path.join(out, `W${String(w).padStart(3, "0")}.json`), "utf8")), tr = truths.get(w);

@@ -12,6 +12,8 @@
     { "id": "fantasy", "name": "Fantasy Producers", "kinds": ["staked"], "status": "soon", "href": "",
       "line": "Draft 5 producers under a salary cap, with a captain who scores double." },
     { "id": "golf", "name": "Block Golf", "kinds": ["staked"], "status": "soon", "href": "",
-      "line": "Nine holes a day: guess how many blocks until a producer signs its next one." }
+      "line": "Nine holes a day: guess how many blocks until a producer signs its next one." },
+    { "id": "bracket", "name": "Producer Bracket", "kinds": ["staked"], "status": "soon", "href": "",
+      "line": "A weekly knockout bracket of 16 producers, handicapped by VHP. Pick every winner before Monday." }
   ]
 }

@@ -222,6 +222,6 @@ test("workflow shape check: accepts a whole recorded week, refuses tampered file
   assert.equal(bad("W003.json", (j) => { j.seeding.seeds.push("<script>"); }), false, "a non-address");
   assert.equal(bad("W003.json", (j) => { j.extra = 1; }), false, "an unknown field");
   assert.equal(bad("W003.json", (j) => { j.days[0][0].by["1x"] = 1; }), false);
-  assert.equal(bad("board.json", (j) => { j.week.rows.push({ a: P(1), place: 1, pts: 1, champion: "yes", correct: 1 }); }), false);
+  assert.equal(bad("board.json", (j) => { j.week.rows.push({ a: P(1), place: 1, pts: 1, champion: "yes", correct: 1, ranked: true }); }), false);
   assert.equal(bad("index.json", (j) => { j.game = 2; }), false, "the bracket's own game id");
 });

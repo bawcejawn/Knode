@@ -14,6 +14,7 @@
  *     link: (addr) => "https://…",           // optional: each wallet links here
  *     name: (addr) => "1Ab…9xT",             // how a wallet is shown
  *     unranked: "To be ranked, …",           // shown to a player who is listed but not ranked
+ *     hide: ["today"],                       // optional: views this game doesn't have (a weekly game has no Today)
  *   });
  *   lb.set(boardJson); lb.setMe(address);
  */
@@ -44,7 +45,8 @@
   }
 
   function create(host, opt) {
-    const id = "kb" + ++n, o = Object.assign({ columns: [], name: short, scored: () => true, summary: () => "", me: null, link: null, unranked: "" }, opt || {});
+    const id = "kb" + ++n, o = Object.assign({ columns: [], name: short, scored: () => true, summary: () => "", me: null, link: null, unranked: "", hide: [] }, opt || {});
+    const hidden = new Set(Array.isArray(o.hide) ? o.hide.filter((m) => m !== "week") : []);
     let data = null, mode = "week", who = "";
     const btns = MODES.map(([m, label]) => {
       const b = el("button", { type: "button", id: `${id}-${m}`, "aria-pressed": String(m === mode), text: label });
@@ -67,7 +69,8 @@
     function render() {
       const part = partOf(data, mode), rows = (part && Array.isArray(part.rows)) ? part.rows : [];
       const ranked = rows.filter((r) => r && r.ranked), weekly = mode === "week" || mode === "last";
-      btns[2].hidden = !(data && data.lastWeek);
+      btns.forEach((b, i) => { if (hidden.has(MODES[i][0])) b.hidden = true; });
+      btns[2].hidden = hidden.has("last") || !(data && data.lastWeek);
       if (mode === "last" && btns[2].hidden) { mode = "week"; btns.forEach((x, i) => x.setAttribute("aria-pressed", String(MODES[i][0] === mode))); return render(); }
       sub.textContent = weekly && part && part.start ? `Week ${part.week + 1}, from ${day(part.start)} (UTC)` : mode === "today" && part && part.day ? `${part.day} (UTC)` : mode === "all" ? "Every week so far" : "";
       podium.replaceChildren(...(weekly ? ranked.slice(0, 3).filter(o.scored).map((r, i) =>

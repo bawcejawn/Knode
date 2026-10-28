@@ -258,3 +258,34 @@ test("the shared math is read only and has no betting words", () => {
   assert.doesNotMatch(src, /\.send\(|signTransaction|sendTransaction|fetch\(|XMLHttpRequest|localStorage/);
   assert.doesNotMatch(src, /\bodds\b|\bwager|\bbet\b|\bpays\s+\d/i);
 });
+
+// ── the page (site/bracket.html, bracket.js) ──
+const page = read("bracket.html"), js = read("bracket.js");
+test("the page: scripts in order, the shared board, reads only the bracket files, the block snapshot and the site", () => {
+  assert.match(page, /<script src="bracket-math\.js"><\/script>\s*<script src="board\.js"><\/script>\s*<script src="bracket\.js"><\/script>/);
+  assert.match(page, /<link rel="stylesheet" href="board\.css">/);
+  const csp = page.match(/Content-Security-Policy" content="([^"]+)"/)[1];
+  assert.match(csp, /connect-src [^;]*https:\/\/raw\.githubusercontent\.com\/bawcejawn\/Knode\/games-data\//);
+  assert.match(csp, /connect-src [^;]*https:\/\/raw\.githubusercontent\.com\/bawcejawn\/Knode\/blocks-data\//);
+  assert.doesNotMatch(page, /<script>(?!\s*<\/script>)|\son[a-z]+="/i, "no inline scripts or handlers");
+  const urls = [...js.matchAll(/"(https:\/\/[^"]+)"/g)].map((m) => m[1]);
+  for (const u of urls) assert.ok(/^https:\/\/(raw\.githubusercontent\.com\/bawcejawn\/Knode\/(games-data\/bracket\/|blocks-data\/recent-blocks\.json)|api\.koinos\.io|koinosscan\.com\/address\/)/.test(u), u);
+  assert.match(js, /new URL\("picks-data\/deployment\.json", ROOT\)/);
+});
+test("the page builds everything with textContent and sends one thing: a pick of game 9 as one number", () => {
+  assert.doesNotMatch(js, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|localStorage|sessionStorage|indexedDB/);
+  const sends = [...js.matchAll(/W\.send\(/g)]; assert.equal(sends.length, 1, "one send");
+  assert.match(js, /picksContract\.functions\.pick\(\{ player: who, game: BM\.GAME_ID, round: String\(BM\.picksRound\(view\)\), producers: \[\], number: String\(n\) \}, \{ onlyOperation: true \}\)/);
+  const calls = new Set([...js.matchAll(/picksContract\.functions\.([a-z_]+)/g)].map((m) => m[1]));
+  assert.deepEqual([...calls].sort(), ["get_pick", "pick"]);
+  // the number sent is the one shown in the check pop-up, and it is encoded by the shared math
+  assert.match(js, /const draftNumber = \(\) => \{ const s = seeding\(\); try \{ return filled\(\) \? BM\.encode\(draft, s\.size, s\.seeds\.length\) : null;/);
+  assert.match(js, /btn\("Confirm in wallet", \(\) => send\(n\)\)/);
+  assert.match(js, /BM\.lockTime\(view\) - Date\.now\(\) < 120000/, "refuses to send within 2 minutes of the lock");
+});
+test("the page says what the contract and recorder do (sizes, lock, scoring, ties, own nodes)", () => {
+  for (const s of ["Saturday at 12:00 UTC", "Sunday 23:55 UTC", "with 12 to 15 the top seeds get a bye", "from 32 it is a 32-producer bracket", "under 8 there is no bracket", "an exact tie goes to the lower seed", "1 point in the first round, then 2, 4, 8 (and 16 in a 32-bracket), plus 2 for the right champion", "ties go to a right champion, then more right picks"]) assert.ok(page.includes(s), s);
+  assert.match(page, /Disclosure: a KnodeGames node is in this bracket/);
+  assert.match(read("terms.html"), /The Producer Bracket seeds whichever producers are in the race field/);
+  assert.doesNotMatch(page + js, /\bodds\b|\bwager|\bbet\b|\bpays\s+\d/i);
+});

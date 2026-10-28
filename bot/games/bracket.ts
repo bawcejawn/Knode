@@ -15,7 +15,8 @@
  *     later; a day still without any card 3 days after it ended voids the week.
  *  4. Results and points: each round's day index (bracket-math.indexFromHours), the winners, every pick's points.
  *     The week is final 12 hours after the last round's day (the correction window); then nothing changes.
- *  5. Leaderboards (board.json): This week, Last week and All time (final weeks only).
+ *  5. Leaderboards (board.json): Next week (its seeding), This week, Last week and All time (final weeks only). Every
+ *     wallet is listed; who shares the staked bucket is the vault's rule (a stake in the Bracket game).
  *  6. Writes games-data/bracket/index.json, W<week>.json and board.json for the publish job.
  *
  *   RPC, RPC_CHECK ("off" to skip the second node), BRACKET_PREV (last run's files), BRACKET_OUT, RACE_DATA.
@@ -44,7 +45,7 @@ const isAddr = (a: unknown): a is string => typeof a === "string" && /^1[1-9A-HJ
 
 export type RawPick = { player: string; number: number; time: number };
 type Hour = { from: number; to: number; n: number; by: Record<string, number>; share: Record<string, number> | null; checked: number };
-type Seeding = { at: number; cardAt: number; size: number; seeds: string[]; vhp: number[]; out: string[]; hash: string };
+type Seeding = { at: number; cardAt: number; size: number; seeds: string[]; vhp: number[]; totalVhp: number; out: string[]; hash: string };
 /** A recorded pick: [player, number, pick time (ms), valid bracket 1/0]. */
 type Pick = [string, number, number, number];
 /** Points: [player, points, correct champion 1/0, correct winners]. */
@@ -100,8 +101,8 @@ function loadWeek(dir: string | undefined, w: number): WeekFile {
   if (old.status === "final" && f.status === "waiting" && f.seeding && f.picks) { const sc = scoreWeek(f); if (sc.results && sc.results.done) { f.status = "final"; f.results = sc.results; f.points = sc.points; } }
   return f;
 }
-function seedHash(w: number, s: { at: number; cardAt: number; size: number; seeds: string[]; vhp: number[]; out: string[] }) {
-  return crypto.createHash("sha256").update(JSON.stringify({ week: w, at: s.at, cardAt: s.cardAt, size: s.size, seeds: s.seeds, vhp: s.vhp, out: s.out })).digest("hex");
+function seedHash(w: number, s: Omit<Seeding, "hash">) {
+  return crypto.createHash("sha256").update(JSON.stringify({ week: w, at: s.at, cardAt: s.cardAt, size: s.size, seeds: s.seeds, vhp: s.vhp, totalVhp: s.totalVhp, out: s.out })).digest("hex");
 }
 function defaultPicksContract(): string | null {
   try { const d = JSON.parse(fs.readFileSync(new URL("../../picks-data/deployment.json", import.meta.url), "utf8")); return isAddr(d.contract) ? d.contract : null; } catch { return null; }
@@ -234,7 +235,8 @@ export async function run(o: Opts) {
       }
       const s = B.seeding(card);
       const vhpOf = new Map<string, number>(card.field.map((r: any) => [r.a, Number(r.vhp)]));
-      const base = { at, cardAt: Number(card.at) || 0, size: s.size, seeds: [...s.seeds], vhp: s.seeds.map((a: string) => vhpOf.get(a) ?? 0), out: [...s.out] };
+      const totalVhp = [...card.field, ...(card.paddock || [])].reduce((t: number, r: any) => t + (Number.isFinite(r?.vhp) && r.vhp > 0 ? r.vhp : 0), 0);
+      const base = { at, cardAt: Number(card.at) || 0, size: s.size, seeds: [...s.seeds], vhp: s.seeds.map((a: string) => vhpOf.get(a) ?? 0), totalVhp, out: [...s.out] };
       wf.seeding = { ...base, hash: seedHash(w, base) };
       wf.days = emptyDays(s.size);
       if (!s.size) { wf.status = "none"; wf.void = `only ${s.seeds.length + s.out.length} producers in the field (8 needed); no bracket this week`; continue; }
@@ -304,15 +306,15 @@ export async function run(o: Opts) {
   const allW = new Map(weeks);
   for (const w of known) if (!allW.has(w)) allW.set(w, loadWeek(PREV, w));
   const view = (rows: { player: string; points: number; champion: boolean; correct: number }[]) =>
-    B.rank(rows).map((x: any) => ({ a: x.player, place: x.place, pts: x.points, champion: x.champion, correct: x.correct }));
+    B.rank(rows).map((x: any) => ({ a: x.player, place: x.place, pts: x.points, champion: x.champion, correct: x.correct, ranked: true }));
   const weekRows = (wf: WeekFile | undefined) => (wf ? wf.points.map(([player, points, champ, correct]) => ({ player, points, champion: !!champ, correct })) : []);
-  const wv = (w: number) => { const wf = allW.get(w); return { week: w, status: wf ? wf.status : "waiting", final: wf?.status === "final", rows: view(weekRows(wf)) }; };
+  const wv = (w: number) => { const wf = allW.get(w); return { week: w, start: B.weekStart(w), status: wf ? wf.status : "waiting", final: wf?.status === "final", rows: view(weekRows(wf)) }; };
   const tot = new Map<string, { player: string; points: number; champion: boolean; correct: number; champs: number }>();
   for (const wf of allW.values()) if (wf.status === "final") for (const [player, points, champ, correct] of wf.points) {
     const t = tot.get(player) || { player, points: 0, champion: false, correct: 0, champs: 0 };
     t.points += points; t.correct += correct; t.champs += champ; t.champion = t.champs > 0; tot.set(player, t);
   }
-  const allRows = B.rank([...tot.values()]).map((x: any) => ({ a: x.player, place: x.place, pts: x.points, champion: x.champion, correct: x.correct }));
+  const allRows = B.rank([...tot.values()]).map((x: any) => ({ a: x.player, place: x.place, pts: x.points, champion: x.champion, correct: x.correct, ranked: true }));
   const board = { v: 1, updated: new Date(head.time).toISOString(), next: wv(nowW + 1), week: wv(nowW), lastWeek: nowW >= 2 ? wv(nowW - 1) : null, allTime: { rows: allRows } };
 
   // ── 6. write ──

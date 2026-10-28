@@ -160,7 +160,7 @@ jobs:
               if "void" in j and (type(j["void"]) is not str or len(j["void"]) > 200): return False
               s = j.get("seeding")
               if s is not None:
-                  if type(s) is not dict or set(s) != {"at", "cardAt", "size", "seeds", "vhp", "out", "hash"} or s["size"] not in (0, 8, 16, 32): return False
+                  if type(s) is not dict or set(s) != {"at", "cardAt", "size", "seeds", "vhp", "totalVhp", "out", "hash"} or s["size"] not in (0, 8, 16, 32) or not num(s["totalVhp"]): return False
                   if not (nat(s["at"]) and num(s["cardAt"]) and type(s["seeds"]) is list and len(s["seeds"]) <= s["size"] and all(isa(a) for a in s["seeds"])): return False
                   if not (type(s["vhp"]) is list and len(s["vhp"]) == len(s["seeds"]) and all(num(v) for v in s["vhp"]) and type(s["out"]) is list and len(s["out"]) <= 1000 and all(isa(a) for a in s["out"])): return False
                   if type(s["hash"]) is not str or not re.fullmatch(r"[0-9a-f]{64}", s["hash"]): return False
@@ -175,10 +175,10 @@ jobs:
               pts = j.get("points")
               return type(pts) is list and len(pts) <= 100000 and all(type(x) is list and len(x) == 4 and isa(x[0]) and nat(x[1]) and x[1] <= 82 and x[2] in (0, 1) and nat(x[3]) and x[3] <= 31 for x in pts)
           def rows_ok(rows):
-              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "place", "pts", "champion", "correct"} and isa(x["a"])
-                  and nat(x["place"]) and nat(x["pts"]) and type(x["champion"]) is bool and nat(x["correct"]) for x in rows)
+              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "place", "pts", "champion", "correct", "ranked"} and isa(x["a"])
+                  and nat(x["place"]) and nat(x["pts"]) and type(x["champion"]) is bool and nat(x["correct"]) and x["ranked"] is True for x in rows)
           def view_ok(v):
-              return type(v) is dict and set(v) == {"week", "status", "final", "rows"} and nat(v["week"]) and type(v["status"]) is str and len(v["status"]) <= 10 and type(v["final"]) is bool and rows_ok(v["rows"])
+              return type(v) is dict and set(v) == {"week", "start", "status", "final", "rows"} and nat(v["week"]) and nat(v["start"]) and type(v["status"]) is str and len(v["status"]) <= 10 and type(v["final"]) is bool and rows_ok(v["rows"])
           for f in os.listdir(d):
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "board.json":
