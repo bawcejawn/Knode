@@ -50,13 +50,25 @@ export function serve(port = PORT) {
   return server;
 }
 
+/** Start on PORT (default 8090), or the next free port up to +20 if another program already uses it. */
+function start(port, tries = 20) {
+  return new Promise((resolve, reject) => {
+    const s = serve(port);
+    s.once("listening", () => resolve(s));
+    s.once("error", (e) => {
+      if (e.code === "EADDRINUSE" && tries > 0) { console.log(`Port ${port} is already used by another program; trying ${port + 1}.`); resolve(start(port + 1, tries - 1)); }
+      else reject(e);
+    });
+  });
+}
+
 function recordAll() {
   const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, "testnet/blockx.json"), "utf8"));
   const ids = cfg.games.map((g) => g.id).filter((id) => Number.isInteger(id) && id > 0 && id < 128);
   const one = (i) => {
     if (i >= ids.length) return;
-    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-    const c = spawn(npm, ["run", "-s", "blockx", "--", "--testnet", "--game", String(ids[i])], { cwd: ROOT, stdio: "inherit", shell: process.platform === "win32" });
+    // Node itself runs the recorder (no shell, so nothing is pieced together into a command line).
+    const c = spawn(process.execPath, ["--import", "tsx", "bot/games/blockx.ts", "--testnet", "--game", String(ids[i])], { cwd: ROOT, stdio: "inherit" });
     c.on("exit", () => one(i + 1));
   };
   console.log(`\n[${new Date().toISOString()}] recording games ${ids.join(", ")}`);
@@ -64,8 +76,12 @@ function recordAll() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  serve();
-  console.log(`Block X testnet page: http://127.0.0.1:${PORT}/site/blockx-testnet.html   (fast game: #game-92)`);
-  if (process.argv.includes("--record")) { recordAll(); setInterval(recordAll, 5 * 60000); }
-  else console.log("Results: add --record to run the recorder every 5 minutes (or run: npm run blockx -- --testnet --game 92).");
+  start(PORT).then((s) => {
+    const port = s.address().port;
+    console.log(`\nBlock X testnet page:  http://127.0.0.1:${port}/site/blockx-testnet.html#game-92   (fast game)`);
+    console.log(`                       http://127.0.0.1:${port}/site/blockx-testnet.html#game-2    (real settings)`);
+    console.log("Leave this window open. Stop with Ctrl+C.");
+    if (process.argv.includes("--record")) { recordAll(); setInterval(recordAll, 5 * 60000); }
+    else console.log("Results: add --record to run the recorder every 5 minutes (or run: npm run blockx -- --testnet --game 92).");
+  }, (e) => { console.error(`Couldn't start the page: ${e.message}`); process.exit(1); });
 }
