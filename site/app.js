@@ -1195,7 +1195,20 @@
     const recent = lockedAll.filter((q) => outcomeOf(q) && myAnswer(q) !== null && num(q.windowEnd) >= S.height - 28800);
     const locked = [...waiting, ...recent].sort((a, b) => a.chainId - b.chainId);
     const oq = $("#open-questions");
-    oq.replaceChildren(...(open.length ? open.map((q) => questionCard(q, "open")) : [el("div", { class: "empty" }, `No open questions right now. New questions arrive Monday to Saturday at ${localHour(12)} your time.`)]));
+    // Between 12:00 UTC and the day's questions appearing (the bot posts them on chain, then publishes the files):
+    // say they're on their way, not "no questions", so a visitor in those minutes knows nothing is wrong.
+    const dayN = S.genesis && now >= S.genesis ? Math.floor((now - S.genesis) / 86400000) : -1;
+    const dayLock = S.genesis + (dayN + 1) * 86400000;
+    const todayLabel = dayN >= 0 ? `W${String(Math.floor(dayN / 7)).padStart(3, "0")}-D${(dayN % 7) + 1}` : "";
+    const skippedToday = (S.files || []).some(({ d }) => d && d.date === todayLabel && d.skipped);
+    const posting = dayN >= 0 && dayN % 7 < 6 && now >= dayLock - 12 * 3600000 && !skippedToday && !S.questions.some((q) => num(q.lockTime) === dayLock);
+    const late = posting && now >= dayLock - 10 * 3600000; // still not out two hours after 12:00 UTC
+    const emptyText = late
+      ? "Today's questions are running late. They'll show up here as soon as they're posted; this page checks every minute."
+      : posting
+        ? `Today's questions are on their way. They're posted on the Koinos chain at ${localHour(12)} your time and show up here within a few minutes. This page checks every minute, so there's no need to refresh.`
+        : `No open questions right now. New questions arrive Monday to Saturday at ${localHour(12)} your time.`;
+    oq.replaceChildren(...(open.length ? open.map((q) => questionCard(q, "open")) : [el("div", { class: "empty" }, emptyText)]));
     const answeredToday = open.filter((q) => myAnswer(q) !== null).length;
     const tn = $("#today-note");
     if (tn) tn.textContent = !open.length ? "" : S.account ? `${answeredToday} of ${open.length} answered${open.length && open[0] ? ` · answers close in ${duration(open[0].lockTime - now)}` : ""}` : `${open.length} to answer · answers close in ${duration(open[0].lockTime - now)}`;

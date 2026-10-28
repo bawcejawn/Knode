@@ -174,6 +174,9 @@ export type Ctx = {
   /** Things that need a human. A scheduled run with problems ends as "failed", which makes GitHub email you. */
   problems: string[];
   quiet?: boolean;
+  /** Real runs only: when the day's release time is this close (ms), wait for it instead of leaving it to the next
+   *  run, so questions come out on the dot (the release run is started a few minutes early). */
+  releaseWaitMs?: number;
   /** A question window's blocks read fresh from the chain (irreversible blocks only). Without it the bot uses
    *  blocks.csv (simulations and tests). */
   windowBlocks?: (from: number, to: number) => Promise<Blk[]>;
@@ -801,7 +804,18 @@ async function postPass(ctx: Ctx, bs: BotState) {
   if (dd >= QUESTION_DAYS) return; // Sunday: results day, no questions
   const dayStart = st.genesis + d * DAY_MS;
   const releaseAt = dayStart + RELEASE_HOUR * HOUR_MS, lockTime = dayStart + LOCK_HOUR * HOUR_MS;
-  if (time < releaseAt) { if (!ctx.quiet) log(`  today's questions come out at ${utc(releaseAt)}`); return; }
+  if (time < releaseAt) {
+    const wait = releaseAt - time;
+    if (!ctx.dryRun && ctx.releaseWaitMs && wait <= ctx.releaseWaitMs) {
+      log(`  today's questions come out at ${utc(releaseAt)}: waiting ${Math.ceil(wait / 1000)} s for it`);
+      await new Promise((r) => setTimeout(r, wait + 5_000));
+      // The chain's clock can trail by a block or two: one more short wait at most, then leave it to the next run.
+      ctx.releaseWaitMs = ctx.releaseWaitMs > 60_000 ? 60_000 : 0;
+      return postPass(ctx, bs);
+    }
+    if (!ctx.quiet) log(`  today's questions come out at ${utc(releaseAt)}`);
+    return;
+  }
   const label = `W${SPACE(w)}-D${dd + 1}`;
   const file = path.join(ctx.P.questions, `${label}.json`);
   const wEnd = weekEnd(st, w);
@@ -1802,6 +1816,7 @@ function liveCtx(dryRun: boolean): Ctx {
   const pob = new Contract({ id: dep?.pob ?? MAINNET.pob, abi: pobAbi as any, provider: chain.provider });
   return {
     chain, operator, P, dryRun, generator: generatorRunner(P.dir), checkpoint: gitCheckpoint(P.dir), problems: [], noSealKey: !E.OPERATOR_WIF,
+    releaseWaitMs: 12 * 60_000,
     previousOperator: E.PREVIOUS_OPERATOR_WIF ? Signer.fromWif(E.PREVIOUS_OPERATOR_WIF) : undefined,
     // Window blocks are read fresh from the chain for every resolution; the cached blocks.csv is never trusted for that.
     windowBlocks: async (from, to) => {
