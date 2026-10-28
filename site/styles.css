@@ -730,3 +730,27 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .res.rr { display: block; }
 .res.rr > * { grid-column: auto; }
 .res.rr .res-line { margin-top: 6px; }
+
+/* Top menu (tools/site-nav.mjs): links and <details> dropdowns. Not clipped: menus drop below the header. */
+.tabs { overflow: visible; align-items: center; }
+.tabs .dd { position: relative; }
+.tabs .dd > summary { list-style: none; white-space: nowrap; padding: 11px 16px; min-height: 44px; display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; color: var(--muted); font-weight: 600; font-size: 16.5px; cursor: pointer; user-select: none; }
+.tabs .dd > summary::-webkit-details-marker { display: none; }
+.tabs .dd > summary::after { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-2px) rotate(45deg); opacity: .7; }
+.tabs .dd[open] > summary::after { transform: translateY(2px) rotate(-135deg); }
+.tabs .dd > summary:hover, .tabs .dd[open] > summary { color: var(--ink); background: var(--surface); }
+.tabs .dd.on > summary { color: var(--ink); background: var(--surface); box-shadow: var(--shadow); }
+.tabs .dd-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 50; min-width: 220px; display: grid; gap: 2px; padding: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 18px 40px -18px rgba(20, 33, 61, .45); }
+.tabs .dd-menu a { border-radius: 12px; padding: 10px 14px; min-height: 40px; color: var(--ink); font-size: 15.5px; }
+.tabs .dd-menu a:hover { background: var(--paper); }
+.tabs .dd-menu a[aria-current="page"] { background: var(--paper); box-shadow: none; font-weight: 700; }
+.tabs .dd:last-child .dd-menu { left: auto; right: 0; }
+/* Tablets and small laptops: the menu moves to its own row under the logo and wallet button. */
+@media (max-width: 1180px) and (min-width: 761px) {
+  .top-row { flex-wrap: wrap; row-gap: 4px; padding: 8px 0; }
+  .tabs { order: 3; width: 100%; margin: 0; justify-content: center; }
+  .tabs a, .tabs .dd > summary { padding: 9px 12px; font-size: 15.5px; }
+}
+/* Phone More sheet: group headings across the grid. */
+.more-panel .ms-h { grid-column: 1 / -1; margin: 8px 4px 0; font-size: .74rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.more-panel .ms-h:first-child { margin-top: 0; }
