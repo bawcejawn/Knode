@@ -36,8 +36,10 @@
  *   Equal on all three: the same place.
  * PRIZES at season end: 4 VHP for 1st and 2 VHP for 2nd (two weeks of the free-game 2 + 1), ties split the places
  *   they cover. Only for wallets that held at least 1 VHP (or a Knode stake) at every daily check while they were in
- *   the season, so a farm of empty wallets can't win it, and only in a season that at least 3 players joined
- *   (default pending the owner's OK, audit SV-1). The vault pays them (Build 1). */
+ *   the season, so a farm of empty wallets can't win it. Defaults pending the owner's OK (audit SV-1 and its
+ *   fix-check): only in a season with at least 3 players who made at least 2 valid picks, and not for a player who
+ *   went out by missing a pick. So wallets that pick on day 1 and never again win nothing. The vault pays them
+ *   (Build 1). */
 (function (root) {
   "use strict";
   const DAY = 86400000;
@@ -46,7 +48,8 @@
   const FORM_DAYS = 7, FORM_GAP = 2, MIN_FORM = 280;
   const LEAD_MS = 5 * 60000, AHEAD_MS = 7 * DAY, PICKS_PER_DAY = 20, MAX_CHANGES = 5;
   const PRIZES = [4, 2];
-  const MIN_PRIZE_PLAYERS = 3;             // a season needs at least this many players for prizes (default, audit SV-1)
+  const MIN_PRIZE_PLAYERS = 3;             // a season needs at least this many real players for prizes (default, SV-1)
+  const MIN_VALID_PICKS = 2;               // … where a real player made at least this many valid picks
   /** One letter a day in a player's log: s safe, o out-zone, n no pick, f not in the field, u already used, v saved. */
   const CODE = { safe: "s", out: "o", none: "n", field: "f", used: "u", saved: "v" };
   const CORRECTION_MS = 12 * 3600000;      // a season's result is final 12 hours after it ends
@@ -174,9 +177,12 @@
   }
   /** Season prizes among eligible players (held 1 VHP at every check): 4 VHP for 1st, 2 VHP for 2nd; tied players
    *  split the prizes of the places they cover. Places are re-counted among the eligible. Returns [{ player, place, vhp }]. */
+  const validPicks = (x) => (String(x.log || "").match(/[sov]/g) || []).length;
+  /** Went out on a day with no pick (not by the out-zone or a wrong pick). */
+  const outByMissing = (x) => x.outN !== null && x.outN !== undefined && String(x.log || "")[x.outN - 1] === CODE.none;
   function prizes(players, amounts = PRIZES) {
-    if (players.length < MIN_PRIZE_PLAYERS) return [];
-    const ranked = rank(players.filter((x) => x.eligible));
+    if (players.filter((x) => validPicks(x) >= MIN_VALID_PICKS).length < MIN_PRIZE_PLAYERS) return [];
+    const ranked = rank(players.filter((x) => x.eligible && !outByMissing(x)));
     const out = [];
     for (let i = 0; i < ranked.length && i < amounts.length; ) {
       let j = i;
@@ -192,8 +198,8 @@
 
   root.KSurvivor = {
     DAY, GAME_ID, SEASON_DAYS, LIVES, USES, FORM_DAYS, FORM_GAP, MIN_FORM, LEAD_MS, AHEAD_MS, PICKS_PER_DAY, MAX_CHANGES,
-    PRIZES, MIN_PRIZE_PLAYERS, CODE, CORRECTION_MS, FIRST_DAY,
+    PRIZES, MIN_PRIZE_PLAYERS, MIN_VALID_PICKS, CODE, CORRECTION_MS, FIRST_DAY,
     dayIndex, dayStart, dayLabel, isMonday, lockTime, isOpen, openDays, seasonOf, seasonStartDay,
-    formDays, fieldFor, outSize, scoreDay, playSeason, rank, prizes,
+    formDays, fieldFor, outSize, scoreDay, playSeason, rank, prizes, validPicks, outByMissing,
   };
 })(typeof window !== "undefined" ? window : globalThis);

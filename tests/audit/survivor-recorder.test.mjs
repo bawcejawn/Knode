@@ -131,7 +131,7 @@ test("season picks the two nodes disagree on stop the season there until they ag
   const times = [start, start + 60000, start + 120000, start + 180000, S.dayStart(FIRST + 1) + 3600000];
   const r = await runs(times, { picksOf: picksOf(FIRST) });
   assert.ok(r.r.problems.some((p) => p.includes("disagree about the picks")));
-  assert.ok(!fs.existsSync(path.join(r.out, "S001.json")), "nothing recorded for the season yet");
+  assert.deepEqual(r.read("S001.json").days, [], "nothing recorded for the season yet (the file keeps it on the list)");
 });
 
 test("no season before the Picks contract is live or FIRST_DAY is set; FIRST_DAY must be a Monday", async () => {
@@ -200,7 +200,7 @@ test("audit SV-4: after an outage longer than a week, the season still gets the 
   assert.deepEqual(sf.result.prizes.map((p) => p[0] ?? p.player), [ALICE, CAROL]);
 });
 
-test("audit SV-6: a wrong day boundary in the last run's days.json is caught, not trusted", async () => {
+test("audit SV-6 / FC-1: a wrong day boundary in the last run's days.json is caught and searched again", async () => {
   const t = S.dayStart(FIRST - 1) + 3600000;
   const r = await runs([t]);
   const j = r.read("days.json");
@@ -210,8 +210,22 @@ test("audit SV-6: a wrong day boundary in the last run's days.json is caught, no
   fs.writeFileSync(path.join(r.out, "days.json"), JSON.stringify(j));
   const r2 = await runs([t + 60000], {}, r.out);
   const next = j.days[j.days.length - 1].day + 1;
-  assert.ok(!r2.read("days.json").days.some((x) => x.day === next && x.blocks !== 28800), "never recorded short");
-  assert.ok(r2.r.problems.some((p) => p.includes("don't fit the day")));
+  const rec = r2.read("days.json").days.find((x) => x.day === next);
+  assert.ok(rec && rec.blocks === 28800, "the next day is recorded in full in the same run");
+  assert.ok(r2.r.problems.some((p) => p.includes("searched again")));
+});
+
+test("fix-check FC-2: a season that can't progress never stops new days and handicaps", async () => {
+  const start = S.dayStart(FIRST - 1) + 3600000;
+  // Day 1's picks always disagree between the nodes: season 1 can never record a day.
+  const stuck = picksOf(FIRST);
+  const times = [start, start + 60000, start + 120000, start + 180000];
+  for (let k = 1; k <= 70; k++) times.push(S.dayStart(FIRST + k) + 3600000);
+  const r = await runs(times, { picksOf: stuck });
+  const today = FIRST + 70, days = r.read("days.json").days.map((x) => x.day);
+  assert.ok(days.includes(today - 1), "yesterday is recorded");
+  assert.deepEqual(r.read("fields.json").fields.map((x) => x.day), [today, today + 1], "today's and tomorrow's handicaps are out");
+  assert.ok(r.r.problems.some((p) => /season 1 is stuck/.test(p)), "the stuck season is reported for the owner");
 });
 
 test("audit SV-2 and SV-3: a 1,000-player season fits under 2 MB, and a 1,000-way tie for the prize passes the check (never over 6 VHP)", async (t) => {

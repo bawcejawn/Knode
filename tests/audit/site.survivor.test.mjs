@@ -176,7 +176,7 @@ test("ranking: in longest, then lives, then total score; equal on all three shar
 });
 
 test("prizes: 4 VHP and 2 VHP among wallets that held 1 VHP at every check; ties split the places they cover", () => {
-  const P = (a, lives, total, eligible = true) => ({ a, lives, outN: null, total, eligible });
+  const P = (a, lives, total, eligible = true) => ({ a, lives, outN: null, total, eligible, log: "ss" });
   assert.deepEqual(plain(S.prizes([P(U1, 2, 10), P(U2, 1, 10), P(U3, 1, 5)])), [{ player: U1, place: 1, vhp: 4 }, { player: U2, place: 2, vhp: 2 }]);
   assert.deepEqual(plain(S.prizes([P(U1, 2, 10), P(U2, 2, 10), P(U3, 1, 5)])), [{ player: U1, place: 1, vhp: 3 }, { player: U2, place: 1, vhp: 3 }]);
   assert.deepEqual(plain(S.prizes([P(U1, 2, 10), P(U2, 1, 9), P(U3, 1, 9)])), [{ player: U1, place: 1, vhp: 4 }, { player: U2, place: 2, vhp: 1 }, { player: U3, place: 2, vhp: 1 }]);
@@ -186,6 +186,7 @@ test("prizes: 4 VHP and 2 VHP among wallets that held 1 VHP at every check; ties
   assert.ok(three.every((x) => x.vhp === 2) && three.reduce((s, x) => s + x.vhp, 0) <= 6, "three tied: 2 each");
   assert.deepEqual(plain(S.prizes([])), []);
   assert.deepEqual(plain(S.prizes([P(U1, 2, 10), P(U2, 1, 9)])), [], "fewer than 3 players joined: no prizes (default)");
+  assert.deepEqual(plain(S.prizes([P(U1, 2, 10), P(U2, 1, 9), { ...P(U3, 0, 1), outN: 2, log: "sn" }])), [], "the third made only 1 valid pick: not a real player");
   assert.equal(S.MIN_PRIZE_PLAYERS, 3);
   assert.deepEqual(plain(S.PRIZES), [4, 2]);
 });
@@ -225,4 +226,22 @@ test("the page sends only Picks contract picks for game 3, and shows chain text 
 test("the page is listed for search and in the sitemap", () => {
   assert.ok(fs.readFileSync(`${APP}/sitemap.xml`, "utf8").includes("/site/survivor.html"));
   assert.ok(html.includes('<link rel="canonical" href="https://bawcejawn.github.io/Knode/site/survivor.html">'));
+});
+
+test("fix-check SV-1: wallets that pick on day 1 and never again win nothing, whatever real players there are", () => {
+  // n real players pick safely every day (16 producers, all tie: no out-zone), k idle wallets pick day 1 only.
+  const prods = "ABCDEFGHPQRSTWXY".split("").map(A), f16 = prods.map((a) => ({ a, k: 1000, h: 1 }));
+  const real = [U1, U2, U3, U4, U5], idle = ["V", "W", "X", "Y", "Z"].map(A);
+  for (const [nReal, nIdle] of [[0, 3], [0, 5], [1, 2], [1, 3], [2, 3], [3, 3]]) {
+    const days = [];
+    for (let n = 1; n <= 14; n++) {
+      const picks = real.slice(0, nReal).map((p, i) => [p, prods[(n + i) % 16]]);
+      if (n === 1) for (const p of idle.slice(0, nIdle)) picks.push([p, prods[15]]);
+      days.push({ n, field: f16, counts: prods.map((a) => [a, 100]), picks, noVhp: [] });
+    }
+    const r = S.playSeason(days), won = S.prizes(r.players);
+    assert.ok(!won.some((w) => idle.includes(w.player)), `${nReal} real + ${nIdle} idle: an idle wallet won`);
+    if (nReal < 3) assert.deepEqual(plain(won), [], `${nReal} real players: no prizes`);
+    else assert.equal(won.reduce((s, w) => s + w.vhp, 0), 6);
+  }
 });

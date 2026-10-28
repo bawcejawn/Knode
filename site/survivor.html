@@ -172,7 +172,7 @@
       <div id="prizes" class="champs"></div>
       <table class="hist"><thead><tr><th class="num">#</th><th>Wallet</th><th>Lives</th><th class="num">Score</th><th class="num hide-sm">Used</th></tr></thead><tbody id="standings-rows"></tbody></table>
       <p class="note" id="me-line"></p>
-      <p class="note">Ranked by how long you last, then lives left, then the total score of your picks. Prizes at the end: 4 VHP for 1st and 2 VHP for 2nd (ties share), for wallets that held at least 1 VHP (or a Knode stake) at every daily check, in a season at least 3 players joined. Final 12 hours after the season ends.</p>
+      <p class="note">Ranked by how long you last, then lives left, then the total score of your picks. Prizes at the end: 4 VHP for 1st and 2 VHP for 2nd (ties share), for wallets that held at least 1 VHP (or a Knode stake) at every daily check, in a season with at least 3 players who made 2 or more picks, and not to a player knocked out by a missed pick. Final 12 hours after the season ends.</p>
     </section>
 
     <section class="card" id="field-box">
@@ -190,7 +190,7 @@
       <p><b>The out-zone.</b> The lowest scores of the day. It starts at a quarter of the field on day 1 and grows to half by day 14 (with 17 producers: 4 on day 1, 8 on day 14). A tie at the line is safe.</p>
       <p><b>Lives.</b> You have 2. You lose one if your producer lands in the out-zone, or if you have no valid pick that day (no pick, a producer not in the field, or one you already used). Each producer once a season. If everyone still in would land in the out-zone on the same day, nobody loses a life for it, but the producer still counts as used. A missing pick always costs a life.</p>
       <p><b>The end.</b> The season ends when 2 or fewer players are left, or after day 14. Ranking: who lasted longest, then lives left, then the total score of your picks.</p>
-      <p><b>Prizes.</b> 4 VHP for 1st and 2 VHP for 2nd each season, paid from Knode's node rewards, when at least 3 players joined. You need at least 1 VHP in your wallet (or a Knode stake) at every daily check while you're in, so empty wallets can't farm the prize.</p>
+      <p><b>Prizes.</b> 4 VHP for 1st and 2 VHP for 2nd each season, paid from Knode's node rewards, in a season with at least 3 players who made 2 or more picks. A player knocked out by a missed pick can't win a prize. You need at least 1 VHP in your wallet (or a Knode stake) at every daily check while you're in, so empty wallets can't farm the prize.</p>
       <p><b>Knode's own producers.</b> Knode runs two producers (the Knode pool and Knode Swap nodes). They're in the field like any other, so you can pick them. If one of them has a bad day, it lands in the out-zone like anyone else's would.</p>
       <p><b>Fair checks.</b> Results come from irreversible blocks that match on two independent nodes, and the scoring code is public: the page and the recorder run the same file.</p>
     </section>

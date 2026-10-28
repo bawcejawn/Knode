@@ -34,6 +34,7 @@ const RPC = E.RPC || "https://api.koinos.io";
 const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
 const MAX_DAYS_PER_RUN = 3;
 const KEEP_DAYS = 60;                         // days.json keeps the last 60 recorded days
+const CATCHUP_DAYS = 50;                      // after an outage, a season's older days are recorded back to 50 days
 const BACK_DAYS = S.FORM_DAYS + S.FORM_GAP - 1;  // today's field needs days d−8 … d−2; tomorrow's needs d−7 … d−1
 const ONE_VHP = 100000000n;
 const isAddr = (a: unknown) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
@@ -242,48 +243,63 @@ export async function run(o: Opts) {
   }
 
   // ── 1. days ──
-  // From the 8 days behind today, or further back for a season that still needs older days after an outage.
-  let from = today - BACK_DAYS;
-  if (seasonsOn) for (const sf of active) {
-    if (sf.days.length >= S.SEASON_DAYS || S.playSeason(sf.days).over) continue;
-    const next = sf.startDay + sf.days.length;
-    if (next <= lastDone) from = Math.min(from, next - (S.FORM_DAYS + S.FORM_GAP - 1));
-  }
-  if (from < today - (KEEP_DAYS - 10)) problems.push(`Survivor: a season needs days from ${S.dayLabel(from)}, near the end of what days.json keeps (${KEEP_DAYS} days)`);
-  let n = 0;
-  for (let d = from; d <= lastDone && n < MAX_DAYS_PER_RUN; d++) {
-    if (days.has(d)) continue;
-    n++;
-    try {
-      // Heights: from the day before's record when there is one, else search back from the irreversible head.
-      const prevRec = days.get(d - 1);
-      let lo: number;
-      if (prevRec) lo = prevRec.heights[1] + 1;
+  /** Record day d. Its start comes from the day before's record when there is one, and is always checked against the
+   *  block before it (audit SV-6); if that start doesn't fit, it is searched again from scratch (fix-check FC-1).
+   *  Returns true when the day was recorded. */
+  async function recordDay(d: number): Promise<boolean> {
+    const prevRec = days.get(d - 1);
+    for (const usePrev of prevRec ? [true, false] : [false]) {
+      let a: number;
+      if (usePrev) a = prevRec!.heights[1] + 1;
       else {
-        const est = Math.ceil((head.libTime - S.dayStart(d)) / 3000) + 600;
-        lo = Math.max(1, head.lib - est);
+        const est = Math.ceil((head!.libTime - S.dayStart(d)) / 3000) + 600;
+        let lo = Math.max(1, head!.lib - est);
         while (lo > 1 && (await timeP(lo)) >= S.dayStart(d)) lo = Math.max(1, lo - est);
+        a = await heightAt(timeP, S.dayStart(d), lo, head!.lib);
       }
-      const a = prevRec ? lo : await heightAt(timeP, S.dayStart(d), lo, head.lib);
-      const b = (await heightAt(timeP, S.dayStart(d + 1), a, head.lib)) - 1;
-      if (b < a || b >= head.lib) { problems.push(`${S.dayLabel(d)}: its blocks aren't all irreversible yet`); continue; }
+      const b = (await heightAt(timeP, S.dayStart(d + 1), a, head!.lib)) - 1;
+      if (b < a || b >= head!.lib) { problems.push(`${S.dayLabel(d)}: its blocks aren't all irreversible yet`); return false; }
       const B = await rangeP(a, b);
-      // The day's first block is the first at or after 00:00 UTC: the block before it is from the day before. Checked
-      // every time, also when the start comes from the last run's file (audit SV-6).
+      // The day's first block is the first at or after 00:00 UTC: the block before it is from the day before.
       if (B.ts[0] < S.dayStart(d) || B.ts[B.ts.length - 1] >= S.dayStart(d + 1) || (a > 1 && (await timeP(a - 1)) >= S.dayStart(d))) {
-        problems.push(`${S.dayLabel(d)}: the blocks found don't fit the day; not recorded this run`); continue;
+        if (usePrev) { problems.push(`${S.dayLabel(d)}: the day before's recorded end doesn't fit; searched again`); continue; }
+        problems.push(`${S.dayLabel(d)}: the blocks found don't fit the day; not recorded this run`); return false;
       }
       let checked = 1;
       if (rangeC) {
         const C = await rangeC(a, b);
         const same = C.ts.length === B.ts.length && C.ts.every((t, i) => t === B.ts[i] && C.signers[i] === B.signers[i]);
-        if (!same) { problems.push(`${S.dayLabel(d)}: the two nodes disagree about the day's blocks; not recorded this run`); continue; }
+        if (!same) { problems.push(`${S.dayLabel(d)}: the two nodes disagree about the day's blocks; not recorded this run`); return false; }
         checked = 2;
       }
-      if (!B.signers.every(isAddr)) { problems.push(`${S.dayLabel(d)}: a block has no valid signer; not recorded this run`); continue; }
+      if (!B.signers.every(isAddr)) { problems.push(`${S.dayLabel(d)}: a block has no valid signer; not recorded this run`); return false; }
       days.set(d, { day: d, heights: [a, b], blocks: b - a + 1, checked, counts: tally(B.signers) });
       console.log(`${S.dayLabel(d)}: blocks ${a}-${b} (${b - a + 1}), checked on ${checked} node(s)`);
-    } catch (e) { problems.push(`${S.dayLabel(d)}: ${(e as Error).message} (tried again next run)`); }
+      return true;
+    }
+    return false;
+  }
+  // First the 8 days behind today (what today's and tomorrow's handicaps need), so new days always keep coming.
+  // Then, with what is left of this run's budget, older days an unfinished season still needs after an outage, but
+  // never more than CATCHUP_DAYS back: a season stuck longer than that is reported for the owner to handle, not
+  // chased for ever (fix-check FC-2).
+  const want: number[] = [];
+  for (let d = today - BACK_DAYS; d <= lastDone; d++) want.push(d);
+  const floor = today - CATCHUP_DAYS;
+  if (seasonsOn) for (const sf of active) {
+    if (sf.days.length >= S.SEASON_DAYS || S.playSeason(sf.days).over) continue;
+    const next = sf.startDay + sf.days.length;
+    if (next > lastDone) continue;
+    const need = next - (S.FORM_DAYS + S.FORM_GAP - 1);
+    if (need < floor) { problems.push(`Survivor: season ${sf.season} is stuck at day ${sf.days.length + 1} (${S.dayLabel(next)}), more than ${CATCHUP_DAYS} days ago; it needs the owner (see the runbook)`); continue; }
+    for (let d = need; d <= next; d++) if (!want.includes(d)) want.push(d);
+  }
+  let n = 0;
+  for (const d of want) {
+    if (days.has(d)) continue;
+    if (n >= MAX_DAYS_PER_RUN) break;
+    n++;
+    try { await recordDay(d); } catch (e) { problems.push(`${S.dayLabel(d)}: ${(e as Error).message} (tried again next run)`); }
   }
 
   // ── 2. fields for today and tomorrow ──
@@ -347,7 +363,9 @@ export async function run(o: Opts) {
   fs.writeFileSync(path.join(OUT, "days.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), days: keep }) + "\n");
   fs.writeFileSync(path.join(OUT, "fields.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), fields }) + "\n");
   for (const sf of seasons) {
-    if (!sf.days.length) continue;
+    // A season is kept from the day its day 1 is over, even with no day recorded yet, so it can't drop off the list
+    // unnoticed (fix-check FC-2).
+    if (!sf.days.length && (!seasonsOn || sf.startDay > lastDone)) continue;
     known.add(sf.season);
     fs.writeFileSync(path.join(OUT, sName(sf.season)), JSON.stringify(sf) + "\n");
   }
