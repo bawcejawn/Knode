@@ -97,8 +97,12 @@ export async function testnetProvider(c: { rpc: string; chainId?: string } = { r
   try { id = await p.getChainId(); } catch (e) { throw new Error(`The testnet node ${c.rpc} doesn't answer (${(e as Error).message}). Check your internet, or try again in a minute.`); }
   if (id === MAINNET_CHAIN_ID) throw new Error(`${c.rpc} is MAINNET (chain id ${id}). This tool only runs on the testnet.`);
   if (c.chainId && id !== c.chainId) throw new Error(`The testnet's chain id is now ${id}, not ${c.chainId} as when you set up: the testnet was probably reset. Start again: delete the folder ${DIR} and run setup.`);
+  CHECKED_CHAIN = id;
   return p;
 }
+/** The chain id testnetProvider checked. Every transaction is signed for it (review TN-2): a node that changes its
+ *  answer after the check can't get a signature for another chain. */
+let CHECKED_CHAIN: string | null = null;
 
 // ── tokens and producers on the testnet ──
 /** KOIN and VHP from recent blocks' events (each block mints KOIN to its producer and burns VHP from it). */
@@ -143,7 +147,8 @@ async function send(c: Contract, method: string, args: any, signer: Signer, rcKo
   const have = BigInt(await (signer.provider as Provider).getAccountRc(signer.getAddress()));
   const rc = toSat(rcKoin) < have ? toSat(rcKoin) : (have * 95n) / 100n;
   const k = new Contract({ id: c.getId(), abi: c.abi, provider: signer.provider as Provider, signer });
-  const { transaction, receipt } = await (k.functions as any)[method](args, { payer: signer.getAddress(), rcLimit: rc.toString() });
+  if (!CHECKED_CHAIN || CHECKED_CHAIN === MAINNET_CHAIN_ID) throw new Error("Not sending: the network wasn't checked (or is mainnet).");
+  const { transaction, receipt } = await (k.functions as any)[method](args, { payer: signer.getAddress(), rcLimit: rc.toString(), chainId: CHECKED_CHAIN });
   if (receipt?.reverted) throw new Error(`${method} reverted: ${JSON.stringify(receipt.logs)}`);
   await transaction.wait("byBlock", 120_000);
   return transaction.id;
@@ -245,6 +250,10 @@ async function picksBuild() {
   const src = path.join(ROOT, "picks"), dst = PICKS_SRC();
   if (!fs.existsSync(path.join(src, "node_modules"))) throw new Error("First install the contract tools once: cd picks; npm ci; cd ..");
   try { execSync("yarn --version", { stdio: "ignore" }); } catch { throw new Error("The contract builder needs yarn. Install it once: npm install -g yarn"); }
+  // Remove the old copy's link to picks/node_modules first, so deleting the copy never reaches into the real folder
+  // (review TN-4: Windows junctions).
+  const link = path.join(dst, "node_modules");
+  try { if (fs.lstatSync(link).isSymbolicLink() || process.platform === "win32") { try { fs.unlinkSync(link); } catch { fs.rmdirSync(link); } } } catch { /* no old copy */ }
   fs.rmSync(dst, { recursive: true, force: true });
   fs.cpSync(src, dst, { recursive: true, filter: (f) => !/[\\/](node_modules|build|abi)([\\/]|$)/.test(f.slice(src.length)) });
   fs.symlinkSync(path.join(src, "node_modules"), path.join(dst, "node_modules"), "junction");
@@ -444,8 +453,10 @@ export function testPage(html: string): string {
 }
 const RPC_METHODS = new Set(["chain.get_head_info", "chain.get_chain_id", "chain.read_contract", "block_store.get_blocks_by_height", "chain.get_account_rc",
   "chain.get_account_nonce", "chain.get_resource_limits", "contract_meta_store.get_contract_meta"]);
-export function startSite(opts: { port?: number } = {}) {
+export async function startSite(opts: { port?: number } = {}) {
   const c = readConfig(), keys = readKeys(), port = opts.port ?? SITE_PORT;
+  // The same check as every other command, before anything can be signed (review TN-1): testnet only, same chain id.
+  await testnetProvider(c);
   const token = crypto.randomBytes(24).toString("hex");
   const origin = `http://127.0.0.1:${port}`;
   const p = new Provider([c.rpc]);
@@ -465,6 +476,9 @@ export function startSite(opts: { port?: number } = {}) {
   });
   const json = (res: http.ServerResponse, code: number, v: any) => { res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify(v)); };
   const server = http.createServer(async (req, res) => {
+    // No other site may frame the test page (review TN-3).
+    res.setHeader("x-frame-options", "DENY");
+    res.setHeader("content-security-policy", "frame-ancestors 'none'");
     try {
       // Only this PC's browser, on this address: no other host name (DNS rebinding) and no other site (CSRF).
       if (req.headers.host !== `127.0.0.1:${port}`) { res.writeHead(403); res.end("use " + origin); return; }
@@ -483,6 +497,9 @@ export function startSite(opts: { port?: number } = {}) {
           const who = String(b.as || "");
           if (!PLAYERS.includes(who)) { json(res, 400, { error: "unknown test player" }); return; }
           const ops = Array.isArray(b.ops) ? b.ops : [];
+          const cur = readConfig();                     // the current contract (review TN-6: no restart after an upload)
+          if (cur.rpc !== c.rpc || cur.chainId !== c.chainId) { json(res, 409, { error: "the test settings changed: restart the run command" }); return; }
+          c.picks = cur.picks;
           if (ops.length !== 1 || !c.picks) { json(res, 400, { error: "a test wallet sends exactly one Survivor pick" }); return; }
           const op = ops[0]?.call_contract;
           if (!op || op.contract_id !== c.picks.contract || Number(op.entry_point) !== PICK_ENTRY) { json(res, 400, { error: "a test wallet signs only Survivor picks on the testnet Picks contract" }); return; }
@@ -511,8 +528,9 @@ export function startSite(opts: { port?: number } = {}) {
       const m = /^\/testnet-data\/survivor\/(index|days|fields|S\d{3})\.json$/.exec(u);
       if (m) { sendFile(res, path.join(DATA(), `${m[1]}.json`)); return; }
       if (u === "/picks/abi/picks.koilib.json") { sendFile(res, path.join(ROOT, "picks", "abi", "picks.koilib.json")); return; }
-      // The site's own files only (no dot files, nothing outside site/).
-      const sm = /^\/site\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.(?:html|js|css|json|svg|png|webmanifest))$/.exec(u);
+      // The site's own files only (no dot files, nothing outside site/), and no other page: the only page here is the
+      // TESTNET one (review TN-7: the real pages would read mainnet without the TESTNET bar).
+      const sm = /^\/site\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.(?:js|css|json|svg|png|webmanifest))$/.exec(u);
       if (sm) { sendFile(res, path.join(ROOT, "site", ...sm[1].split("/"))); return; }
       res.writeHead(404); res.end("not found");
     } catch (e) { json(res, 500, { error: String((e as Error).message).slice(0, 200) }); }
@@ -523,7 +541,7 @@ export function startSite(opts: { port?: number } = {}) {
 
 async function runAll(withBots: boolean) {
   readConfig(); readKeys();
-  startSite();
+  await startSite();
   const tick = async () => {
     try { const r = await record(); log(`[${new Date().toLocaleTimeString()}] recorded${r.problems.length ? `; ${r.problems.length} note(s): ${r.problems.slice(0, 3).join(" | ")}` : ""}`); }
     catch (e) { log(`[${new Date().toLocaleTimeString()}] recorder: ${(e as Error).message}`); }
@@ -548,7 +566,7 @@ async function main() {
     case "pick": return pick(args[0], args[1], args[2], sendIt);
     case "record": { const r = await record(); log(r.problems.length ? r.problems.join("\n") : "recorded, no problems"); return; }
     case "bots": return bots();
-    case "site": startSite(); return;
+    case "site": await startSite(); return;
     case "run": return runAll(a.includes("--bots"));
     default: throw new Error(`Unknown command "${cmd}". Commands: setup, status, fund, picks-build, picks-upload, game, season, pick, record, run`);
   }

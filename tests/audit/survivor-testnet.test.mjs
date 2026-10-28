@@ -111,7 +111,7 @@ async function withServer(fn) {
   fs.mkdirSync(path.join(DIR, "data"), { recursive: true });
   fs.writeFileSync(path.join(DIR, "data", "fields.json"), "{}");
   const port = 19000 + Math.floor(Math.random() * 900);
-  const server = T.startSite({ port });
+  const server = await T.startSite({ port });
   await new Promise((ok) => server.on("listening", ok));
   const base = `http://127.0.0.1:${port}`;
   try { await fn(base, port, fake); } finally { server.close(); await fake.close(); }
@@ -121,6 +121,10 @@ const quiet = async (f) => { const l = console.log; console.log = () => {}; try 
 test("the test server: this PC only, the site's files and the recorder's data, never a key file", async () => quiet(() => withServer(async (base, port) => {
   const get = (p, headers = {}) => fetch(base + p, { headers, redirect: "manual" });
   assert.equal((await get("/site/survivor-testnet.html")).status, 200);
+  const page = await get("/site/survivor-testnet.html");
+  assert.equal(page.headers.get("x-frame-options"), "DENY", "no framing (review TN-3)");
+  assert.match(page.headers.get("content-security-policy") || "", /frame-ancestors 'none'/);
+  for (const p of ["/site/index.html", "/site/race.html", "/site/blockx.html"]) assert.equal((await get(p)).status, 404, `${p}: only the TESTNET page is served (review TN-7)`);
   assert.equal((await get("/testnet-data/survivor/fields.json")).status, 200);
   for (const p of ["/testnet-data/survivor/keys.env", "/testnet-data/survivor/config.json", "/testnet-data/survivor/../keys.env", "/.env", "/site/../.env", "/site/..%2f.env",
     "/site/.env", "/bot/survivor-test.ts", "/testnet-data/survivor/data/../keys.env", "/site/%2e%2e/testnet-data/survivor/keys.env"]) {
@@ -173,5 +177,16 @@ test("the tool refuses mainnet: by node name and by chain id", async () => {
   await new Promise((ok) => srv.listen(0, "127.0.0.1", ok));
   await assert.rejects(T.testnetProvider({ rpc: `http://127.0.0.1:${srv.address().port}` }), /MAINNET/);
   await assert.rejects(T.testnetProvider({ rpc: `http://127.0.0.1:${srv.address().port}`, chainId: "other" }), /MAINNET/);
+  srv.close();
+});
+
+test("review TN-1: the test server won't start against a node that reports the mainnet chain id", async () => {
+  const http = await import("node:http");
+  const srv = http.createServer((req, res) => { let b = ""; req.on("data", (d) => (b += d)); req.on("end", () => { res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { chain_id: T.MAINNET_CHAIN_ID } })); }); });
+  await new Promise((ok) => srv.listen(0, "127.0.0.1", ok));
+  fs.writeFileSync(path.join(DIR, "keys.env"), keyLines());
+  fs.writeFileSync(path.join(DIR, "config.json"), JSON.stringify({ v: 1, rpc: `http://127.0.0.1:${srv.address().port}`, chainId: "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==", koin: "1FaSvLjQJsCJKq5ybmGsMMQs8RQYyVv8ju", vhp: null, holdToken: null,
+    clock: { day: 3600000, firstDay: null, outFloor: 1 }, picks: null, game: null }));
+  await assert.rejects(T.startSite({ port: 19950 }), /MAINNET/);
   srv.close();
 });

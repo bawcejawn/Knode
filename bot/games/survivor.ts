@@ -32,7 +32,7 @@ const MAINNET_S: any = (globalThis as any).KSurvivor;
 let S: any = MAINNET_S;
 
 const E = process.env;
-const RPC = E.RPC || "https://api.koinos.io";
+const RPC = E.RPC || "https://koinos.armana.io";
 const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
 const MAX_DAYS_PER_RUN = 3;
 const KEEP_DAYS = 60;                         // days.json keeps the last 60 recorded days

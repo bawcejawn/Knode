@@ -124,11 +124,13 @@ async function browser() {
     expect(/blocks so far/.test(today), `live standings: ${today.slice(0, 90)}`);
     await pg.selectOption("#tn-player", "p1");
     await pg.waitForTimeout(3000);
-    const sel = pg.locator("#days select").first();
+    // The first row you can pick in (an hour before Season 1 shows as a practice row without a Pick button).
+    const row = pg.locator("#days .bx-row:has(button)").first();
+    const sel = row.locator("select");
     const opts = await sel.locator("option:not([disabled])").allInnerTexts();
     const choice = opts.find((o) => /×/.test(o));
     await sel.selectOption({ label: choice });
-    await pg.locator("#days .bx-row").first().locator("button").click();
+    await row.locator("button").click();
     await pg.waitForSelector(".pk-box.ok, .pk-box.bad, .pk-box.info", { timeout: 60000 });
     const box = await pg.innerText(".pk-box");
     expect(/Pick confirmed/.test(box), `a pick clicked on the page: ${box.split("\n")[1] || box.slice(0, 60)}`);

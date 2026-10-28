@@ -11,7 +11,7 @@
   if (!S || typeof document === "undefined" || !document.getElementById("days")) return;
 
   const lib = window.koilib || window.koinos || window;
-  const RPC = NET ? new URL(NET.rpc, location.href).href : "https://api.koinos.io";
+  const RPC = NET ? new URL(NET.rpc, location.href).href : "https://koinos.armana.io";
   const DATA = NET ? NET.data : "https://raw.githubusercontent.com/bawcejawn/Knode/games-data/survivor/";
   const EXPLORER = NET ? null : "https://koinosscan.com/address/";
   // Knode's own two producers are in the field like any other (owner's decision 2026-10-27; disclosed on the page).

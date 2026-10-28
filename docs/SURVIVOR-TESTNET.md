@@ -19,7 +19,7 @@ stops if it is mainnet.
 
 ## 1. Get a separate copy of the code
 
-Use a **separate folder**, so your mainnet scheduled tasks (which run from `C:\kprediction`) never see this branch.
+Use a **separate folder**, so your mainnet scheduled tasks (which run from `C:\kprediction`) never see this branch. Keep it out of OneDrive-synced folders such as Desktop and Documents, so the test keys aren't uploaded anywhere.
 In PowerShell:
 
 ```powershell

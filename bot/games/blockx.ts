@@ -32,7 +32,7 @@ const M: any = (globalThis as any).KRaceMath;
 const X: any = (globalThis as any).KBlockX;
 
 const E = process.env;
-const RPC = E.RPC || "https://api.koinos.io";
+const RPC = E.RPC || "https://koinos.armana.io";
 const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
 const LOOKBACK_BLOCKS = 3 * 28800;          // targets older than ~3 days: void if they still can't be recorded
 const MAX_TARGETS_PER_RUN = 48;             // ~4 days of targets, so a long outage catches up over a few runs
