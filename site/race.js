@@ -399,6 +399,7 @@
     name: nameOf, link: (a) => EXPLORER + a,
     me: (r, place) => `${place ? `You: #${place} with` : "Your score (only you see this):"} ${fmt(r.pts ?? 0)} points (${fmt(r.correct)} wins, ${fmt(r.shows ?? 0)} shows) from ${fmt(r.picks)} picks.`,
     unranked: "To be ranked, hold at least 1 VHP or stake in KnodeGames.",
+    free: { show: 6, main: "VHP players", prize: "1st and 2nd at the end of the week win the free-play prize (paid once the KnodeGames vault is live)." },
   }) : null;
   async function loadBoard() {
     try { const b = await fetchJson(DATA + "board.json"); if (b && b.v === 1 && lb) { board = b; $("board-box").hidden = false; renderBoard(); } } catch { /* none yet */ }

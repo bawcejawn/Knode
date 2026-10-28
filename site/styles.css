@@ -706,3 +706,8 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .lb-game-note { margin: 0 0 12px; }
 .g-boards { margin: 14px 0 0; font-size: .95rem; }
 .g-boards a { color: var(--violet); font-weight: 700; }
+/* Staked vs Free play on the question leaderboard */
+.lb-kind { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface); margin: 0 0 12px; }
+.lb-kind button { font: 700 .9rem/1 var(--body); padding: 9px 16px; border: 0; border-radius: 99px; background: transparent; color: var(--ink); cursor: pointer; }
+.lb-kind button[aria-pressed="true"] { background: var(--tang); color: #1b1206; }
+.lb-me:empty { display: none; }

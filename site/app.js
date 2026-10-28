@@ -475,6 +475,7 @@
     return { potA, potB: net + carried - potA };
   }
 
+  const FREE_SHOW = 6;   // the Free play board lists only its top 6 (owner, 2026-10-28)
   const W_SCALE = 10n ** 18n;
   function isqrt(n) { if (n < 2n) return n; let x = n, y = n / 2n + 1n; while (y < x) { x = y; y = (x + n / x) / 2n; } return x; }
   const rankWeight = (r) => isqrt(W_SCALE / BigInt(r));
@@ -1272,29 +1273,43 @@
     }
     S.boardWeek = week;
     const b = S.board[week];
-    // Everyone who answered is listed. Free players (no stake) score points but are never paid.
-    const rows = b.scored.filter((s) => s.counted > 0 || s.address === S.account);
-    if (!rows.length) { tbody.replaceChildren(el("tr", {}, el("td", { colspan: "5", class: "muted" }, "No players yet this week. Stake and answer to be the first."))); cardMsg("No players yet this week. Stake and answer to be the first."); return; }
+    // Two boards. Staked: players with a stake, who share the weekly pool. Free play: wallets with no stake; 1st and
+    // 2nd collect the weekly free-play prize. Free play lists only the top FREE_SHOW; everyone else stays private
+    // (a free player still sees their own place).
+    const kind = S.lbKind === "free" ? "free" : "main";
+    $("#lb-kind").replaceChildren(...[["main", "Staked"], ["free", "Free play"]].map(([k, label]) => el("button", {
+      type: "button", "aria-pressed": String(k === kind), onclick: () => { S.lbKind = k; renderBoard(week); },
+    }, label)));
+    const everyone = b.scored.filter((s) => s.counted > 0 || s.address === S.account);
+    const freeAll = everyone.filter((s) => s.stake < UNIT && s.counted > 0);
+    const myFree = freeAll.findIndex((s) => s.address === S.account);
+    const rows = kind === "main" ? everyone.filter((s) => s.stake >= UNIT) : freeAll.slice(0, FREE_SHOW);
+    $("#lb-me").textContent = kind === "free" && myFree >= FREE_SHOW ? `${youLabel()}: #${myFree + 1} in free play with ${freeAll[myFree].pts} points (only you see this).`
+      : kind === "main" && myFree >= 0 ? `${youLabel()} play free this week: your place is on the Free play board.` : "";
+    const empty = kind === "main" ? "No staked players yet this week. Stake at least 1 VHP and answer to be the first." : "No free-play scores yet this week.";
+    if (!rows.length) { tbody.replaceChildren(el("tr", {}, el("td", { colspan: "5", class: "muted" }, empty))); cardMsg(empty); return; }
     let lastWinnerIdx = -1;
     rows.forEach((s, i) => { if (s.winner) lastWinnerIdx = i; });
-    // Places are counted among eligible staked players only (free players never take a place).
+    // Staked: places among eligible staked players. Free play: places in the free-play order.
     let place = 0;
-    const placeOf = new Map(rows.map((s) => [s, s.eligible ? ++place : null]));
+    const placeOf = new Map(rows.map((s, i) => [s, kind === "free" ? i + 1 : s.eligible ? ++place : null]));
+    const freePrizeRow = (s) => kind === "free" && rows.indexOf(s) < 2;
+    if (kind === "free") lastWinnerIdx = -1;
     tbody.replaceChildren(...rows.map((s, i) => el("tr", { class: [s.address === S.account ? "me" : "", i === lastWinnerIdx ? "cutline" : ""].join(" ").trim() },
-      el("td", {}, el("span", { class: `rank${s.winner ? " top" : ""}` }, placeOf.get(s) ? String(placeOf.get(s)) : "–")),
+      el("td", {}, el("span", { class: `rank${s.winner || freePrizeRow(s) ? " top" : ""}` }, placeOf.get(s) ? String(placeOf.get(s)) : "–")),
       el("td", {}, el("span", { class: "addr" }, s.address === S.account ? youLabel() : short(s.address)), i === lastWinnerIdx ? el("span", { class: "cut-label" }, "winners' line") : null),
       el("td", { class: "num" }, String(s.pts)),
       el("td", { class: "num" }, s.stake < UNIT ? el("span", { class: "badge badge-free" }, "Free play") : `${amount(s.stake, 0)} VHP`),
-      el("td", { class: "num" }, s.winner && s.reward !== undefined && !(b.estimate && s.reward === 0n) ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : "–"))));
+      el("td", { class: "num" }, freePrizeRow(s) ? (rows.indexOf(s) === 0 ? "🥇 Prize" : "🥈 Prize") : s.winner && s.reward !== undefined && !(b.estimate && s.reward === 0n) ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : "–"))));
     // Phones: the same standings as cards, your own card pinned on top. Ties: players on the same points as a neighbour.
     if (cards && cards.replaceChildren) {
       const elig = rows.filter((s) => s.eligible);
       const tied = (s) => s.eligible && elig.some((o) => o !== s && o.pts === s.pts);
-      const rewardOf = (s) => (s.winner && s.reward !== undefined && !(b.estimate && s.reward === 0n) ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : null);
+      const rewardOf = (s) => (freePrizeRow(s) ? "weekly free-play prize" : s.winner && s.reward !== undefined && !(b.estimate && s.reward === 0n) ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : null);
       const card = (s, i, pinned) => el("div", { class: ["lbc", s.address === S.account ? "me" : "", s.winner ? "win" : "", pinned ? "pinned" : ""].join(" ").trim() },
         el("span", { class: `lbc-place${s.winner ? " lbc-win" : ""}` }, placeOf.get(s) ? `#${placeOf.get(s)}` : "–"),
         el("div", { class: "lbc-who" },
-          el("b", {}, pinned ? `${youLabel()}: ${placeOf.get(s) ? `#${placeOf.get(s)} of ${elig.length}` : "free play"}` : s.address === S.account ? youLabel() : short(s.address)),
+          el("b", {}, pinned ? `${youLabel()}: ${placeOf.get(s) ? `#${placeOf.get(s)}${kind === "main" ? ` of ${elig.length}` : " in free play"}` : "free play"}` : s.address === S.account ? youLabel() : short(s.address)),
           el("span", { class: "muted" }, s.stake < UNIT ? "Free play" : `${amount(s.stake, 0)} VHP staked`, tied(s) ? " · tied" : "", rewardOf(s) ? ` · ${rewardOf(s)}` : "")),
         el("span", { class: "lbc-pts" }, el("b", {}, String(s.pts)), el("small", {}, " pts")));
       const meRow = rows.find((s) => s.address === S.account);
@@ -1303,7 +1318,9 @@
       rows.forEach((s, i) => { list.push(card(s, i, false)); if (i === lastWinnerIdx && i < rows.length - 1) list.push(el("div", { class: "lbc-cut" }, "Winners' line: everyone above shares the pool")); });
       cards.replaceChildren(...list);
     }
-    $("#lb-note").textContent = week === S.week
+    $("#lb-note").textContent = kind === "free"
+      ? `Free play: wallets with no stake. 1st and 2nd at the end of the week collect the free-play prize. Only the top ${FREE_SHOW} are shown; everyone else stays private.`
+      : week === S.week
       ? "Live standings: points count as soon as each question's blocks are final. The top 30% of staked players win (ties too). Rewards shown with ~ are estimates if the week ended now."
       : b.final ? `Final: ${num(b.final.winners)} winner(s) at ${num(b.final.cutoff)}+ points shared ${amount(b.final.pot)} VHP.` : "Final standings.";
     if (week === S.week) $("#stat-players").textContent = String(b.scored.length);
