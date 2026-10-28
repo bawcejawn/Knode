@@ -322,12 +322,25 @@ function testnetOnly(net: Net, what: string) { if (!net.testnet) throw new Error
 const pickOp = async (p: Provider, picks: string, player: string, game: number, round: number, producer: string) =>
   (await (new Contract({ id: picks, abi: loadAbi(), provider: p }).functions as any).pick({ player, game, round: String(round), producers: [producer], number: "0" }, { onlyOperation: true })).operation;
 
+/** Where a transaction ended up: the block that holds it and whether it was applied or reverted there. */
+export async function findTx(p: Provider, txId: string): Promise<{ block: number; reverted: boolean; logs: string[] } | null> {
+  const t: any = await p.call("transaction_store.get_transactions_by_id", { transaction_ids: [txId] }).catch(() => null);
+  const bid = t?.transactions?.[0]?.containing_blocks?.[0];
+  if (!bid) return null;
+  const b: any = await p.call("block_store.get_blocks_by_id", { block_ids: [bid], return_block: true, return_receipt: true }).catch(() => null);
+  const it = b?.block_items?.[0];
+  if (!it) return null;
+  const i = (it.block?.transactions ?? []).findIndex((x: any) => x.id === txId);
+  const rec = it.receipt?.transaction_receipts?.[i] ?? {};
+  return { block: Number(it.block_height), reverted: !!rec.reverted, logs: rec.logs ?? [] };
+}
+
 /**
  * lock-test: is the lock exactly where the design says (audit P-5)? Picks the next target X of a game whose lock is at
- * least 40 blocks away, then sends one pick per new block, from about 5 blocks before the lock to 4 after, switching
- * between two producers so each is a change. For each it shows the head when sent, the block it landed in, and what
- * the contract stored as the pick's height. The design: accepted while the contract's height < X − lead, so the last
- * block a pick can land in is X − lead − 1.
+ * least 40 blocks away, then sends one pick per new block, from 6 blocks before the lock to 3 after, rotating between
+ * four producers so each pick is a change even while the node still sees an earlier one. Afterwards it reads, from the
+ * chain itself, the block each pick landed in and whether it was applied there, and the height the contract stored.
+ * The design: accepted while the contract's height < X − lead, so the last block a pick can land in is X − lead − 1.
  */
 async function lockTest(id: number, send: boolean) {
   const net = network();
@@ -339,7 +352,9 @@ async function lockTest(id: number, send: boolean) {
   const G = X.forGame({ id, round: Number(g.round_size), offset: Number(g.round_offset), lead: Number(g.lead), ahead: Number(g.ahead), picksPerDay: g.max_picks_per_day, maxChanges: g.max_changes });
   if (G.MAX_CHANGES < 5) throw new Error("lock-test needs a game that allows at least 5 changes.");
   const player = signerOf("PLAYER_WIF", p), me = player.getAddress();
-  const A = net.owner, B = net.picks;   // two valid addresses to alternate between (who they are doesn't matter)
+  // Four valid addresses to rotate between (who they are doesn't matter; a pick only has to differ from the last).
+  const choices = [net.owner, net.picks, net.cfg?.koin, net.cfg?.vhp].filter((a, i, all) => isAddr(a) && all.indexOf(a) === i) as string[];
+  if (choices.length < 3) throw new Error("lock-test needs testnet/blockx.json to name koin and vhp.");
   const head = async () => Number(((await p.getHeadInfo()) as any).head_topology.height);
   let h = await head();
   const r = G.openRounds(h).find((x: number) => G.lockHeight(x) - h >= 40);
@@ -353,29 +368,30 @@ async function lockTest(id: number, send: boolean) {
   let i = 0;
   for (let at = lock - 6; at <= lock + 3; at++) {
     while ((h = await head()) < at) await sleep(500);
-    const op = await pickOp(p, net.picks, me, id, r, i++ % 2 ? B : A);
+    const op = await pickOp(p, net.picks, me, id, r, choices[i++ % choices.length]);
     const res: any = await sendOps(p, chainId, player, [op], 1, { nonce, wait: false });
-    if (res.txId) nonce++;   // a reverted pick is still in a block and uses its nonce
-    rows.push({ sentAtHead: h, accepted: res.ok, error: res.error, txId: res.txId, tx: res.tx });
-    log(`  sent at head ${h}: ${res.ok ? "accepted by the node" : `refused: ${res.error}`}`);
+    if (res.txId) nonce++;   // sent: it uses its nonce whether it is applied or reverts in its block
+    rows.push({ sentAtHead: h, sent: !!res.txId, error: res.error, txId: res.txId });
+    log(`  sent at head ${h}: ${res.txId ? "taken by the node" : `refused by the node: ${String(res.error).replace(/^.*"error":"([^"]+)".*$/, "$1")}`}`);
   }
-  for (const x of rows) {
-    if (x.tx) { const w: any = await x.tx.wait("byBlock", 120_000).catch(() => null); x.block = w ? Number(w.blockNumber) : null; }
-    delete x.tx;
-  }
+  log("\nReading where each pick landed…");
+  await sleep(12000);
+  for (const x of rows) if (x.txId) Object.assign(x, (await findTx(p, x.txId)) ?? { block: null });
   const stored = (await read(p, net.picks, "get_pick", { game: id, round: String(r), player: me })).pick;
-  const included = rows.filter((x) => x.block);
-  const applied = stored ? Number(stored.changes) + 1 : 0;            // the contract counts every pick it applied
-  const lastApplied = applied ? included[applied - 1] : null;         // picks apply in nonce order
-  log(`\nResult for target ${target} (the contract refuses picks once its height reaches ${lock}):`);
-  log(`  in blocks: ${included.map((x) => x.block).join(", ") || "none"}; the contract applied ${applied} of them (${included.length - applied} failed inside their block)`);
-  if (stored) log(`  the last applied pick landed in block ${lastApplied?.block ?? "–"}; the contract saw height ${stored.height} for it`);
-  if (stored && lastApplied?.block) {
-    const off = lastApplied.block - Number(stored.height);
-    log(off === 0 ? "  ✔ the contract sees the height of the block a pick lands in (as designed)." : `  ⚠ the contract sees the block a pick lands in minus ${off}. Tell Claude: the lead may need +${off} to keep 100 full blocks.`);
-    log(Number(stored.height) <= lock - 1 ? `  ✔ no pick was applied at or after the lock (last applied at height ${stored.height}, lock ${lock}).` : `  ✖ a pick was applied at height ${stored.height}, at or after the lock ${lock}. Stop and tell Claude.`);
-    log(`  So for Block X (lead ${G.LEAD}): the last block a pick can land in is target − ${G.LEAD + 1 - off}.`);
+  const landed = rows.filter((x) => x.block);
+  const ok = landed.filter((x) => !x.reverted), bad = landed.filter((x) => x.reverted);
+  log(`\nResult for target ${target} (picks are refused once the chain reaches block ${lock}):`);
+  for (const x of landed) log(`  block ${x.block} (${x.block < lock ? `lock − ${lock - x.block}` : x.block === lock ? "the lock" : `lock + ${x.block - lock}`}): ${x.reverted ? `refused, ${String(x.logs?.[0] ?? "").replace(/^transaction reverted: /, "")}` : "applied"}`);
+  const last = ok.sort((a, b) => b.block - a.block)[0];
+  if (last && stored) {
+    log(Number(stored.height) === last.block ? `  ✔ the contract stored height ${stored.height} for the last applied pick: the height of the block it landed in (as designed).`
+      : `  ⚠ the last applied pick landed in block ${last.block} but the contract stored height ${stored.height}. Tell Claude.`);
   }
+  if (ok.some((x) => x.block >= lock)) log("  ✖ a pick was applied at or after the lock. Stop and tell Claude.");
+  else log(`  ✔ no pick was applied at or after the lock (block ${lock}).`);
+  if (ok.some((x) => x.block === lock - 1)) log(`  ✔ a pick landing in block ${lock - 1} (target − ${G.LEAD + 1}) was applied: the last block a pick can land in.`);
+  else log(`  · no pick happened to land in block ${lock - 1} this run, so that exact edge wasn't seen (run it again to catch it).`);
+  if (bad.some((x) => x.block === lock && /locked/.test(String(x.logs)))) log(`  ✔ a pick landing in block ${lock} (the lock) was refused: "this round is locked".`);
   writeJson(path.join("testnet-data", `lock-test-${id}-${target}.json`), { game: id, target, lock, rows, stored });
 }
 
