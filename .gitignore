@@ -17,3 +17,7 @@ node/repair.lock
 node/repair-*.log
 node/release-kick.log
 node/release-kick-state.json
+
+# local diagnostics and one-off notes on the owner PC
+node/diag*.txt
+before-upgrade.txt
