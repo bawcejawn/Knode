@@ -388,6 +388,7 @@
     if (!freeOnly) throw guestCant(ops);
     if (W.chainId === MAINNET_CHAIN_ID && (!sp || sp.address !== PINNED_SPONSOR || !Array.isArray(sp.covers) || !sp.covers.includes(PINNED_GAME)))
       throw new Error("Guest play is paused: the page's Mana sponsor settings aren't the live Knode Games sponsor. Nothing was sent.");
+    if (!sp) throw new Error("Guest play works on the game pages. Nothing was sent.");
     const rcLimit = String(sp.rcLimit || "100000000");
     if (!(await sponsorSaysYes(sp, rcLimit, true))) throw new Error(GUEST_NO_FREE);
     const signer = await window.KGuest.signer();
