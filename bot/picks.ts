@@ -281,7 +281,7 @@ async function announce(id: number, send: boolean) {
   const s = ownerKey(net, p);
   const wait = net.testnet ? (readJson(TESTNET_MANIFEST)?.timelockMs ?? 600000) / 60000 + " minutes" : "48 hours";
   log(`Announce game ${id} "${g.name}" on ${net.testnet ? "the testnet" : "MAINNET"} (owner ${s.getAddress()}):`);
-  log(`  one producer per target; a target every ${g.round} blocks; locks ${g.lead} blocks before; opens ${g.ahead} ahead (${Math.floor((g.ahead - g.lead) / g.round) + 1} targets open)`);
+  log(`  one producer per target; a target every ${g.round} blocks; locks ${g.lead} blocks before; opens ${g.ahead} ahead (${X.forGame(g).openRounds(g.ahead * 10).length} targets open at a time)`);
   log(`  ${g.picksPerDay} picks a day per wallet, ${g.maxChanges} changes per pick. It can be applied ${wait} after it is announced (anyone may apply it).`);
   if (!send) { log("\nDry run only. Nothing was sent. Add --send to send it."); return; }
   const r = await sendCall(net, p, chainId, s, "announce_game", { game: cfg });
