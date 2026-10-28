@@ -1,4 +1,4 @@
-/* KnodeGames leaderboard (board.js): the styles it needs, scoped to .kb so any game page can link this file.
+/* Knode Games leaderboard (board.js): the styles it needs, scoped to .kb so any game page can link this file.
    Matches the Race page's look. Colours come from styles.css tokens, so light and dark both work. */
 .kb .tabs2 { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
 .kb .tabs2 button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
@@ -22,3 +22,7 @@
 .kb .hist tr.top td { font-weight: 700; }
 .kb .hist tr.me td { background: var(--violet-soft); }
 @media (max-width: 640px) { .kb .champs { grid-template-columns: 1fr; } .kb .hist .hide-sm { display: none; } .kb .tabs2 { gap: 4px; } .kb .tabs2 button { padding: 6px 9px; } }
+/* Ranked vs Free play: a two-part switch above the period tabs. */
+.kb .kb-kinds { display: inline-flex; gap: 0; padding: 3px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface); margin-bottom: 12px; }
+.kb .kb-kinds button { border: 0; font-weight: 700; font-size: 14px; padding: 8px 16px; }
+.kb .kb-kinds button[aria-pressed="true"] { background: var(--tang); color: #1b1206; border-color: var(--tang); }

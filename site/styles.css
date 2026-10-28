@@ -73,7 +73,7 @@ a { color: var(--violet); }
 .top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: color-mix(in srgb, var(--paper) 86%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
 .top-row { display: flex; align-items: center; gap: 24px; min-height: 68px; }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
-.brand-name { font: 800 1.3rem/1 var(--display); letter-spacing: -0.03em; text-transform: lowercase; }
+.brand-name { font: 800 1.3rem/1 var(--display); letter-spacing: -0.03em; white-space: nowrap; }
 .brand-mark { position: relative; width: 26px; height: 26px; border-radius: 50%; box-shadow: inset 0 0 0 2.6px var(--violet); flex: none; }
 .brand-mark i { display: none; }
 .brand-mark i:first-child { display: block; position: absolute; inset: 8px; border-radius: 50%; background: var(--sun); }
@@ -706,3 +706,8 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .lb-game-note { margin: 0 0 12px; }
 .g-boards { margin: 14px 0 0; font-size: .95rem; }
 .g-boards a { color: var(--violet); font-weight: 700; }
+/* Staked vs Free play on the question leaderboard */
+.lb-kind { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface); margin: 0 0 12px; }
+.lb-kind button { font: 700 .9rem/1 var(--body); padding: 9px 16px; border: 0; border-radius: 99px; background: transparent; color: var(--ink); cursor: pointer; }
+.lb-kind button[aria-pressed="true"] { background: var(--tang); color: #1b1206; }
+.lb-me:empty { display: none; }

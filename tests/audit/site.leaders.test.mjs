@@ -38,3 +38,32 @@ test("the More sheet calls it Leaderboards (every game), not the question leader
   assert.match(read("race.html"), />Leaderboards</);
   assert.doesNotMatch(read("race.html"), /Question leaderboard/);
 });
+
+// Free play (owner, 2026-10-28): wallets without VHP or a stake have their own board in every game. Only the top 6
+// are listed; everyone else stays private, and a free player still sees their own place.
+test("free play boards: the shared board lists only the top N unranked rows and keeps the rest private", async () => {
+  const src = read("board.js");
+  assert.match(src, /function renderFree\(/);
+  assert.match(src, /free\.slice\(0, F\.show\)/, "only the top N free rows are drawn");
+  assert.match(src, /!r\.ranked/, "free play = rows that aren't ranked");
+  const games = JSON.parse(read("games.json")).games;
+  const race = games.find((g) => g.id === "race");
+  assert.equal(race.board.free.show, 6);
+  assert.match(read("race.js"), /free: \{ show: 6,/);
+  assert.match(read("leaders.js"), /b\.free\.show >= 3 && b\.free\.show <= 10/, "games.json can't ask for a long free list");
+});
+
+test("free play boards: the question leaderboard splits Staked / Free play and lists only the top 6 free players", () => {
+  const app = read("app.js");
+  assert.match(app, /const FREE_SHOW = 6;/);
+  assert.match(app, /freeAll\.slice\(0, FREE_SHOW\)/);
+  assert.match(app, /everyone\.filter\(\(s\) => s\.stake >= UNIT\)/, "the staked board holds staked players only");
+  assert.match(read("index.html"), /id="lb-kind"[\s\S]*id="lb-me"/);
+});
+
+test("Staked / Free play: the same two board names in every game, fixed in board.js", () => {
+  assert.match(read("board.js"), /const LABELS = Object\.freeze\(\{ staked: "Staked", free: "Free play" \}\)/);
+  assert.match(read("board.js"), /main: LABELS\.staked, label: LABELS\.free/, "a game can't rename the boards");
+  assert.match(read("app.js"), /\[\["main", L\.staked\], \["free", L\.free\]\]/, "the question table uses the same names");
+  for (const f of ["race.js", "leaders.js", "games.json"]) assert.doesNotMatch(read(f), /main: "|"main":|VHP players/, `${f}: no per-game board names`);
+});

@@ -15,7 +15,7 @@
   const DATA = "https://raw.githubusercontent.com/bawcejawn/Knode/race-data/";
   const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq";
   const EXPLORER = "https://koinosscan.com/address/";
-  const NAMES = { "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "KnodeGames pool", "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR": "KnodeGames Swap" };
+  const NAMES = { "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "Knode Games pool", "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR": "Knode Games Swap" };
   const COLORS = ["#2F6B4F", "#F2B33D", "#B4432F", "#3E6FB0", "#8A4FB0", "#23845E", "#FF8A4C", "#5E6B63", "#C2547F", "#2D8C9E", "#9C7A2B", "#4B5BD6", "#7A9A3A", "#D9693F", "#6C4A3B", "#1F7A7A", "#A23B72", "#557C00", "#CC5500", "#456990"];
   try { localStorage.removeItem("pr-guesses-v1"); } catch { /* the old rolling race's guesses are retired */ }
 
@@ -357,7 +357,7 @@
     if (Date.now() >= M.raceStart(index)) return pickModal("bad", "That race has started", ["Picks lock when a race starts."], [okBtn("OK")]);
     sending = true; renderPicks(true);
     const wallet = W.kind === "guest" ? "your guest wallet" : W.label ? W.label() : "your wallet";
-    pickModal("busy", W.kind === "guest" ? "Sending your pick…" : `Confirm in ${wallet}`, [`${nameOf(horse)} for the race at ${when}.`, W.kind === "guest" ? "Free: the KnodeGames Mana sponsor pays." : "Free: the KnodeGames Mana sponsor pays the Mana. Approve it in your wallet."]);
+    pickModal("busy", W.kind === "guest" ? "Sending your pick…" : `Confirm in ${wallet}`, [`${nameOf(horse)} for the race at ${when}.`, W.kind === "guest" ? "Free: the Knode Games Mana sponsor pays." : "Free: the Knode Games Mana sponsor pays the Mana. Approve it in your wallet."]);
     try {
       const { operation } = await raceContract.functions.pick({ player: who, race: String(index), horse }, { onlyOperation: true });
       const id = await W.send(`pick ${nameOf(horse)} for the race at ${dayTime(M.raceStart(index))}`, [operation]);
@@ -390,7 +390,7 @@
     } finally { sending = false; await loadMine(); renderPicks(true); }
   }
 
-  // ── leaderboard (the recorder's board.json, shown by the shared KnodeGames board in board.js) ──
+  // ── leaderboard (the recorder's board.json, shown by the shared Knode Games board in board.js) ──
   const lb = window.KBoard ? window.KBoard.create($("race-board"), {
     label: "Race leaderboard",
     columns: [{ key: "pts", label: "Points" }, { key: "correct", label: "Wins" }, { key: "shows", label: "Shows" }, { key: "picks", label: "Picks", wide: true }, { key: "answers", label: "Question answers", wide: true }],
@@ -398,7 +398,8 @@
     summary: (r) => `${fmt(r.pts ?? 0)} pts · ${fmt(r.correct)} W ${fmt(r.shows ?? 0)} S`,
     name: nameOf, link: (a) => EXPLORER + a,
     me: (r, place) => `${place ? `You: #${place} with` : "Your score (only you see this):"} ${fmt(r.pts ?? 0)} points (${fmt(r.correct)} wins, ${fmt(r.shows ?? 0)} shows) from ${fmt(r.picks)} picks.`,
-    unranked: "To be ranked, hold at least 1 VHP or stake in KnodeGames.",
+    unranked: "To be ranked, hold at least 1 VHP or stake in Knode Games.",
+    free: { show: 6, prize: "1st and 2nd at the end of the week win the free-play prize (paid once the Knode Games vault is live)." },
   }) : null;
   async function loadBoard() {
     try { const b = await fetchJson(DATA + "board.json"); if (b && b.v === 1 && lb) { board = b; $("board-box").hidden = false; renderBoard(); } } catch { /* none yet */ }

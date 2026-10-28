@@ -1,4 +1,4 @@
-/* KnodeGames service worker: makes the site installable and lets the page shell open without a connection.
+/* Knode Games service worker: makes the site installable and lets the page shell open without a connection.
    It only ever keeps the site's own page files. Game data (game-data/), the contract ABI, chain reads (RPC) and
    anything from another site always go straight to the network and are never stored here. Every page file is
    fetched fresh first; the stored copy is only used when the network can't be reached. */
@@ -26,7 +26,7 @@ self.addEventListener("fetch", (e) => {
   }).catch(() => caches.match(req).then((hit) => hit || (req.mode === "navigate" ? caches.match("./") : Response.error()))));
 });
 
-// A reminder notification (shown only while a KnodeGames page is open): tapping it opens or focuses KnodeGames.
+// A reminder notification (shown only while a Knode Games page is open): tapping it opens or focuses Knode Games.
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
   const scope = new URL(self.registration.scope);

@@ -2,7 +2,7 @@
  * a race scored in the browser and a race recorded by the bot always agree. No network, no page, no wallet.
  *
  * FORMAT
- * - 4 races a day, 6 hours each, on UTC boundaries: 00:00, 06:00, 12:00, 18:00. The week is the KnodeGames week
+ * - 4 races a day, 6 hours each, on UTC boundaries: 00:00, 06:00, 12:00, 18:00. The week is the Knode Games week
  *   (Monday 00:00 UTC, counted from the game's start on 2026-10-19), so a week holds exactly 28 races.
  * - Every block a producer signs during a race moves its horse forward by that producer's handicap. Each race starts
  *   from 0. The winner is the horse with the most steps when the 6 hours are up.
@@ -28,7 +28,7 @@
 (function (root) {
   "use strict";
   const HOUR = 3600000, RACE = 6 * HOUR, LEG = HOUR, LEGS = 6, DAY = 24 * HOUR, WEEK = 7 * DAY;
-  const GENESIS = 1792368000000;    // the KnodeGames week 0: Monday 2026-10-19 00:00 UTC (game-data/deployment.json genesisTime)
+  const GENESIS = 1792368000000;    // the Knode Games week 0: Monday 2026-10-19 00:00 UTC (game-data/deployment.json genesisTime)
   const MIN_K = 10;                 // expected blocks in a race to enter (fewer: too few blocks for any handicap to be fair)
   const C_GRID = Array.from({ length: 26 }, (_, i) => i / 10);
   const SEED = 20261027, TRIALS = 4000;
@@ -46,7 +46,7 @@
   const legOf = (start, t, n = LEGS) => Math.min(n - 1, Math.max(0, Math.floor((t - start) / (RACE / n))));
   /** How many legs (cards) a race has: its cards array, else the current format. */
   const legsOf = (cards) => (Array.isArray(cards) && (cards.length === 3 || cards.length === 6) ? cards.length : LEGS);
-  /** The KnodeGames week of a time (same as the game contract's week_of: weeks before the start count as 0). */
+  /** The Knode Games week of a time (same as the game contract's week_of: weeks before the start count as 0). */
   const weekOf = (t) => (t <= GENESIS ? 0 : Math.floor((t - GENESIS) / WEEK));
   const weekStart = (w) => GENESIS + w * WEEK;
   const dayOf = (t) => new Date(t).toISOString().slice(0, 10);   // UTC day
