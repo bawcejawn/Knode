@@ -3,8 +3,8 @@
 // - TOP: the menu at the top (computers and tablets): Games ▾ · Leaderboards · Results · Tools ▾ · Rules ·
 //   New to Koinos? · Info ▾ (owner, 2026-10-28). Dropdowns are <details> menus (they work without JavaScript;
 //   nav.js closes them on an outside tap or Escape).
-// - TABS + MORE: the phone tab bar (Games · Play · Race · Swap · More, owner 2026-10-27) and the "More" sheet, grouped
-//   like the top menu.
+// - TABS + MORE: the phone tab bar (Games · Leaders · Results · Swap · More, owner 2026-10-28) and the "More" sheet,
+//   grouped like the top menu (Play, Tools, Learn, About).
 // - FOOT: the footer's links: only the few that belong at the bottom of every site (the rest is in the menus).
 // On index.html the question-game views are links to "#view" with data-view (app.js switches views in place);
 // on every other page they link to "index.html#view".
@@ -33,10 +33,10 @@ const I = {
 };
 
 // [label, link, icon]. A link starting with "#" is a question-game view on index.html.
-export const TABS = [["Games", "games.html", "games"], ["Play", "#play", "play"], ["Race", "race.html", "race"], ["Swap", "swap.html", "swap"]];
+export const TABS = [["Games", "games.html", "games"], ["Leaders", "#leaderboard", "leaders"], ["Results", "#results", "results"], ["Swap", "swap.html", "swap"]];
 // The More sheet, in groups (each group a heading, then its links).
 export const MORE_GROUPS = [
-  ["Scores", [["Leaderboards", "#leaderboard", "leaders"], ["Results", "#results", "results"], ["Rules", "#how", "rules"]]],
+  ["Play", [["Daily Questions", "#play", "play"], ["Producer Race", "race.html", "race"], ["Rules", "#how", "rules"]]],
   ["Tools", [["Burn KOIN", "burn.html", "burn"], ["Mana levels", "mana.html", "mana"], ["Producer lookup", "node.html", "lookup"], ["Network pulse", "pulse.html", "pulse"]]],
   ["Learn", [["New to Koinos?", "start.html", "welcome"], ["New here? Quick tour", "#welcome", "welcome"], ["Get VHP", "get.html", "get"]]],
   ["About", [["Install app", "install.html", "install"], ["Trust", "trust.html", "trust"], ["Terms &amp; risks", "terms.html", "terms"]]],
