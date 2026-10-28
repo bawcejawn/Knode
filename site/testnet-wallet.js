@@ -20,7 +20,9 @@
   }
   const MAINNET_CHAIN_ID = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";
   const KEY = "kg-testnet-wallet-v1", KIND = "kg-testnet-kind-v1";
-  const MANA_CAP = 300000000n;   // at most 3 test Mana per transaction (a pick uses far less)
+  // At most 0.3 test Mana per transaction. A pick uses about 0.05, and the network holds the whole limit aside until the
+  // transaction settles, so a big limit would block the next pick (5 test KOIN then allows ~15 picks in a few minutes).
+  const MANA_CAP = 30000000n;
   const lib = root.koilib || root.koinos || root;
   const W = { address: null, kind: null, provider: null, chainId: null, picks: null, listeners: new Set() };
 
@@ -107,7 +109,7 @@
     for (const o of ops) if (!o || !o.call_contract || o.call_contract.contract_id !== W.picks) throw new Error("The testnet wallet signs only picks on the testnet Picks contract. Nothing was sent.");
     await checkChain();
     const mana = BigInt(await W.provider.getAccountRc(W.address));
-    if (mana < 1000000n) throw new Error("This wallet has no test Mana yet. Get test KOIN from the faucet bot (see “Get test KOIN”), then try again.");
+    if (mana < 6000000n) throw new Error("This wallet has no test Mana yet. Get test KOIN from the faucet bot (see “Get test KOIN”), then try again.");
     const limit = mana * 9n / 10n < MANA_CAP ? mana * 9n / 10n : MANA_CAP;
     const signer = W.kind === "test" ? signerFromHex(hexKey()) : root.kondor.getSigner(W.address);
     try { signer.provider = W.provider; } catch { /* Kondor's signer */ }

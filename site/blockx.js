@@ -385,6 +385,8 @@
         : /changed again/i.test(m) ? `That pick has been changed ${G.MAX_CHANGES} times already.`
         : /already your pick/i.test(m) ? "That is already your pick."
         : /closed/i.test(m) ? "This game is switched off right now."
+        : /pending account resources|insufficient.*(rc|mana|resources)/i.test(m) ? "Your Mana is still held by your last pick. It frees up within a few minutes of each pick; try again in a minute."
+        : /no test Mana yet/i.test(m) ? m
         : /reject|denied|cancel/i.test(m) ? "Cancelled in your wallet. Nothing was sent."
         : `Not sent: ${m.slice(0, 200)}`;
       pickModal(/Cancelled/.test(why) ? "info" : "bad", /Cancelled/.test(why) ? "Cancelled" : "Pick not sent", [why], [okBtn("OK")]);
