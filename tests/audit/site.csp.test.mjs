@@ -84,7 +84,7 @@ test("(guard) nothing on the pages needs what the CSP blocks (inline script, on*
 });
 
 test("(guard) every origin the pages fetch or load from is allowed (connect-src incl. each deployment rpc, scripts, fonts)", () => {
-  const rpcs = new Set(["https://api.koinos.io"]);
+  const rpcs = new Set(["https://koinos.armana.io", "https://api.koinos.io"]);
   for (const p of ["game-data/deployment.json", "game-data/game.json", "desk-data/deployment.json"]) { const j = json(p); if (j && j.rpc) rpcs.add(j.rpc); }
   const missing = [];
   for (const p of pages) {

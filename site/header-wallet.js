@@ -102,7 +102,7 @@
   W.subscribe(() => paint());
   // Pages that set the wallet up themselves (game, swap, burn, Mana) call init with their own settings; init may run
   // more than once, so set it up here too for every other page.
-  W.init({ provider: lib && lib.Provider ? new lib.Provider(["https://api.koinos.io"]) : null, toast });
+  W.init({ provider: lib && lib.Provider ? new lib.Provider(["https://koinos.armana.io"]) : null, toast });
   // Guest play is offered on every page: read the owner's switch (game-data/deployment.json, this site's own file).
   if (W.setGuestConfig && window.KGuest) {
     const base = location.pathname.includes("/site/") ? "../" : "./";
