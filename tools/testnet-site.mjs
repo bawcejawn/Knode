@@ -1,5 +1,5 @@
 // Who Signs Block X on the Koinos TESTNET, on your own computer: serves the testnet page at
-//   http://127.0.0.1:8090/site/blockx-testnet.html
+//   http://127.0.0.1:8350/site/blockx-testnet.html
 // and (with --record) runs the Block X recorder for every testnet game every 5 minutes, so the page shows results
 // without GitHub. Nothing is pushed or published; mainnet is never touched.
 //
@@ -16,7 +16,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const PORT = Number(process.env.PORT || 8090);
+const PORT = Number(process.env.PORT || 8350);
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json", ".woff2": "font/woff2" };
 
@@ -50,7 +50,7 @@ export function serve(port = PORT) {
   return server;
 }
 
-/** Start on PORT (default 8090), or the next free port up to +20 if another program already uses it. */
+/** Start on PORT (default 8350: 8090 is the personal node, 8080 the game node, 8100 the desk node), or the next free port up to +20 if another program already uses it. */
 function start(port, tries = 20) {
   return new Promise((resolve, reject) => {
     const s = serve(port);

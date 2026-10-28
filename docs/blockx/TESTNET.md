@@ -96,8 +96,8 @@ npm run testnet-site -- --record
 
 Leave that window open: it records results every 5 minutes. Then open in your browser:
 
-- http://127.0.0.1:8090/site/blockx-testnet.html#game-92 (fast game)
-- http://127.0.0.1:8090/site/blockx-testnet.html#game-2 (real settings)
+- http://127.0.0.1:8350/site/blockx-testnet.html#game-92 (fast game)
+- http://127.0.0.1:8350/site/blockx-testnet.html#game-2 (real settings)
 
 Click **Connect a testnet wallet**, then **Make a Test wallet**, then **Copy my address**. Get test KOIN for it from
 the faucet bot, then pick. (Kondor works too if it's switched to the testnet. If it keeps asking to "Refresh check",
