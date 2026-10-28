@@ -191,6 +191,8 @@
 
     <!-- ───────────── RESULTS ───────────── -->
     <section class="view" id="view-results" data-view="results" hidden>
+      <div class="lb-games res-games" role="group" aria-label="Game" id="res-games"><button type="button" aria-pressed="true">Daily Questions</button></div>
+      <div id="res-q">
       <div class="rband">
         <div class="rband-top">
           <h1>Results</h1>
@@ -211,6 +213,8 @@
       </section>
       <div class="ad ad-inline" data-ad-slot="results-inline" aria-label="Advertisement"></div>
       <p class="muted res-foot">Every answer comes straight from the blocks. Each result carries a fingerprint (hash) of the blocks it used, so anyone can check it.</p>
+      </div>
+      <div id="res-g" hidden></div>
     </section>
 
     <!-- ───────────── HOW IT WORKS ───────────── -->
@@ -396,5 +400,7 @@
   <script src="app.js"></script>
   <script src="board.js"></script>
   <script src="leaders.js"></script>
+  <script src="race-math.js"></script>
+  <script src="results.js"></script>
 </body>
 </html>
