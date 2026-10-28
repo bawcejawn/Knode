@@ -42,7 +42,7 @@ const STATE = path.join(DIR, "heal-state.json");
 const DRY = process.argv.includes("--dry-run");
 const TEST_ALERT = process.argv.includes("--test-alert");
 
-const NETWORK_RPC = process.env.RPC || "https://api.koinos.io";
+const NETWORK_RPC = process.env.RPC || "https://koinos.armana.io";
 const GITHUB_API = process.env.HEAL_GITHUB_API || "https://api.github.com";
 const REPO = process.env.HEAL_REPO || "bawcejawn/Knode";
 const BEHIND = 200;                    // blocks (~10 minutes at ~3 s per block)

@@ -1153,7 +1153,7 @@ function nextMonday(): number {
 }
 
 async function deploy(send: boolean) {
-  const rpc = E.RPC ?? "https://api.koinos.io";
+  const rpc = E.RPC ?? "https://koinos.armana.io";
   const mainnet = isMainnet(rpc);
   if (send && mainnet && E.CONFIRM_MAINNET !== "yes") throw new Error(`RPC is ${rpc} (MAINNET, real KOIN). Add CONFIRM_MAINNET=yes to .env if you really mean it.`);
   const need = (k: string) => { if (!E[k]) throw new Error(`${k} is missing from .env`); return E[k]!; };
@@ -1391,10 +1391,10 @@ async function verifyResults(days: number, rpcArg?: string) {
   const P = paths(E.GEN_DIR ?? "game-data");
   const dep = readJson(P.deployment, null);
   if (!dep?.contract) throw new Error(`${P.deployment} not found.`);
-  pinDeployment("game", dep, dep.rpc ?? "https://api.koinos.io", P.deployment);
+  pinDeployment("game", dep, dep.rpc ?? "https://koinos.armana.io", P.deployment);
   // Which chain is mainnet: deployment.json's pinned id, else the public node's (one read), else the known value.
   let expect: string | null = dep.chainId ?? null;
-  if (!expect) { try { expect = await withTimeout(new Provider([dep.rpc ?? "https://api.koinos.io"]).getChainId(), 5000); } catch { expect = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA=="; } }
+  if (!expect) { try { expect = await withTimeout(new Provider([dep.rpc ?? "https://koinos.armana.io"]).getChainId(), 5000); } catch { expect = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA=="; } }
   let node: { rpc: string; lib: number; headId: string } | null;
   if (rpcArg) {
     if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(rpcArg)) throw new Error("--rpc must be a node on this computer (http://127.0.0.1:<port>).");
@@ -1407,7 +1407,7 @@ async function verifyResults(days: number, rpcArg?: string) {
     node = await findLocalNode(expect);
     if (!node) throw new Error(`No mainnet node answered on this computer (ports ${LOCAL_PORTS.join(", ")}). Is Docker running? If your node uses another port, add --rpc http://127.0.0.1:<port>.`);
   }
-  const pubLib = await withTimeout(new Provider([dep.rpc ?? "https://api.koinos.io"]).getHeadInfo(), 5000).then((h: any) => Number(h.last_irreversible_block)).catch(() => 0);
+  const pubLib = await withTimeout(new Provider([dep.rpc ?? "https://koinos.armana.io"]).getHeadInfo(), 5000).then((h: any) => Number(h.last_irreversible_block)).catch(() => 0);
   log(`Using your node at ${node.rpc} (final block ${node.lib.toLocaleString()})${pubLib && pubLib - node.lib > 200 ? ` — it is ${(pubLib - node.lib).toLocaleString()} blocks behind the network, so the newest windows are skipped` : ""}.\n`);
   const provider = new Provider([node.rpc]);
   const local = new KoinosChain(node.rpc, dep.contract);   // the contract's records, read through YOUR node too
@@ -1457,7 +1457,7 @@ async function chainCheck() {
   const P = paths(E.GEN_DIR ?? "game-data");
   const dep = readJson(P.deployment, null), deskDep = readJson(path.join("desk-data", "deployment.json"), null);
   if (!dep?.contract) throw new Error(`${P.deployment} not found.`);
-  const rpc = E.RPC ?? dep.rpc ?? "https://api.koinos.io";
+  const rpc = E.RPC ?? dep.rpc ?? "https://koinos.armana.io";
   pinDeployment("game", dep, rpc, P.deployment);
   if (deskDep?.contract) pinDeployment("desk", deskDep, rpc, path.join("desk-data", "deployment.json"));
   const provider = new Provider([rpc]);
@@ -1672,7 +1672,7 @@ async function nodeStatus(personal = false) {
   }
   const localRpc = personal ? "http://127.0.0.1:8090" : (E.NODE_RPC ?? "http://127.0.0.1:8080");
   const local = new Provider([localRpc]);
-  const pub = new Provider([E.RPC ?? "https://api.koinos.io"]);
+  const pub = new Provider([E.RPC ?? "https://koinos.armana.io"]);
   const p: any = await pub.getHeadInfo();
   const ph = Number(p.head_topology.height);
   let lh = 0;
@@ -1694,7 +1694,7 @@ function keys() {
   const has = (k: string) => new RegExp(`^${k}=`, "m").test(text);
   const add = (k: string, v: string) => { text = (text.trim() ? text.replace(/\s*$/, "\n") : "") + `${k}=${v}\n`; E[k] = v; };
   const added: string[] = [];
-  if (!TESTNET && !has("RPC")) add("RPC", "https://api.koinos.io");
+  if (!TESTNET && !has("RPC")) add("RPC", "https://koinos.armana.io");
   if (!TESTNET && !has("CONFIRM_MAINNET")) add("CONFIRM_MAINNET", "yes");
   for (const k of ["OPERATOR_WIF", "PLAYER_WIF", "CONTRACT_WIF", "OWNER_WIF"]) {
     if (has(k)) continue;
@@ -1813,7 +1813,7 @@ function liveCtx(dryRun: boolean): Ctx {
   const dep = readJson(P.deployment, null);
   const contract = E.CONTRACT_ADDRESS ?? dep?.contract;
   if (!contract) throw new Error(`No contract yet: ${P.deployment} is missing (run deploy) or set CONTRACT_ADDRESS.`);
-  const rpc = E.RPC ?? dep?.rpc ?? "https://api.koinos.io";
+  const rpc = E.RPC ?? dep?.rpc ?? "https://koinos.armana.io";
   if (isMainnet(rpc) && !E.CONTRACT_ADDRESS && contract !== PINNED_MAINNET.game)
     throw new Error(`${P.deployment} names the game contract ${contract}, not ${PINNED_MAINNET.game}. If that change is intended, set CONTRACT_ADDRESS (and update PINNED_MAINNET in bot/bot.ts).`);
   if (dep) pinDeployment("game", { ...dep, contract }, rpc, P.deployment);

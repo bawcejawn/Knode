@@ -67,7 +67,7 @@ function loadGame(): Game {
   const file = path.join(DIR, "game.json");
   if (!fs.existsSync(file)) {
     const g: Game = {
-      rpc: "https://api.koinos.io",
+      rpc: "https://koinos.armana.io",
       weekOneStart: nextMonday(),
       lockBlocks: 14400,
       // Monday..Sunday. 30 questions a week: 5 a day Monday to Saturday; Sunday is results day.
@@ -369,7 +369,7 @@ async function run() {
 
   // The node to read from comes from the environment (the workflow sets RPC), never from game.json, which anyone who
   // can commit could edit (audit M-11). game.json's value is only a fallback on your own PC.
-  const provider = new Provider([process.env.RPC || (process.env.GITHUB_ACTIONS ? "https://api.koinos.io" : g.rpc)]);
+  const provider = new Provider([process.env.RPC || (process.env.GITHUB_ACTIONS ? "https://koinos.armana.io" : g.rpc)]);
   // History: 2-day rates + 7 days of calibration + 14 days of reliability record, plus a margin.
   const need = g.model.rateDays + g.model.calibDays + (g.model.reliabilityDays ?? 14) + 2;
   const { blocks, lib } = args.offline

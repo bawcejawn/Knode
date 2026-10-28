@@ -1,5 +1,5 @@
 {
-  "rpc": "https://api.koinos.io",
+  "rpc": "https://koinos.armana.io",
   "maxUsesPerWeek": 4,
   "weekOneStart": "2026-10-26",
   "lockBlocks": 14400,
