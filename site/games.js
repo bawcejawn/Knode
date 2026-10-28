@@ -121,6 +121,14 @@
     const free = games.filter((g) => g.status === "live" && g.kinds.includes("free"));
     const stakedOnly = games.filter((g) => g.status === "live" && !g.kinds.includes("free"));
     $("g-live").replaceChildren(...free.map(card), ...stakedOnly.map(card));
+    // Every live game's own leaderboard, one tap away (the Leaderboards page, a tab per game).
+    const boards = games.filter((g) => g.status === "live" && (g.id === "questions" || (g.board && typeof g.board === "object")));
+    if (boards.length) {
+      const links = [];
+      boards.forEach((g, i) => { if (i) links.push(" · "); links.push(el("a", { href: g.id === "questions" ? "index.html#leaderboard" : `index.html#leaderboard/${g.id}`, text: g.name })); });
+      $("g-boards").replaceChildren(el("b", { text: "Leaderboards: " }), ...links);
+      $("g-boards").hidden = false;
+    }
     $("g-soon").replaceChildren(...games.filter((g) => g.status === "soon").map(card));
     $("soon-box").hidden = !games.some((g) => g.status === "soon");
     refresh();

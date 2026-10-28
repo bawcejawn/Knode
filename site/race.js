@@ -126,10 +126,8 @@
     if (!st || !st.length) {
       track.replaceChildren(el("p", { class: "note", text: race.result && race.result.missed ? "This race wasn't recorded." : !ended && !live ? "The horses are in the stalls. The race starts on time, from 0." : "Loading the race…" }));
     } else {
-      const rows = M.track(st, line, ended);
-      // While the race runs, horses at the line are listed by name: their order is revealed at the end.
-      const atLine = rows.filter((r) => r.atLine && !ended).sort((a, b) => (a.a < b.a ? -1 : 1)), rest = rows.filter((r) => !(r.atLine && !ended));
-      const ordered = [...atLine, ...rest];
+      // The live order, all the way to the finish: nobody waits at the line (see KRaceMath.track).
+      const rows = M.track(st, line, ended), ordered = rows;
       const existing = new Map([...track.querySelectorAll(".pr-lane")].map((c) => [c.dataset.addr, c]));
       // Who moved since the last refresh (only while watching the live race; a new race or view starts clean).
       const fresh = seen.race !== race.id;
@@ -148,7 +146,7 @@
           lane.querySelector(".pr-trail").style.background = colour(r.a);
         }
         const h = card && card.field.find((x) => x.a === r.a), share = card ? h ? h.vhp / card.field.concat(card.paddock).reduce((s, x) => s + x.vhp, 0) : 0 : 0;
-        lane.querySelector(".pr-rank").textContent = !ended && r.atLine ? "🏁" : String(i + 1);
+        lane.querySelector(".pr-rank").textContent = String(i + 1);
         lane.querySelector(".pr-name").textContent = nameOf(r.a);
         const plus = lane.querySelector(".pr-plus"), g = gained.get(r.a);
         if (g) {
@@ -158,25 +156,24 @@
         } else { plus.classList.remove("on"); lane.classList.remove("moved"); if (!live) plus.textContent = ""; }
         lane.querySelector(".pr-meta").textContent = `${h ? `×${h.h.toFixed(2)} per block` : "no handicap this leg"} · ${fmt(r.blocks)} blocks${share ? ` · ${fmt(share * 100, share < 0.01 ? 2 : 1)}% VHP` : ""}`;
         const x = r.x * 100;
-        lane.querySelector(".pr-horse").style.left = `calc(${x}% - ${x > 4 ? 30 : 0}px)`;   // stops at the line, never past it
+        lane.querySelector(".pr-horse").style.left = `calc(${x}% - ${x > 4 ? 30 : 0}px)`;   // never past the line; only the winner reaches it, at the end
         lane.querySelector(".pr-trail").style.width = `${x}%`;
         const gap = lane.querySelector(".pr-gap");
         if (ended) gap.replaceChildren(i === 0 ? el("b", { text: "Winner" }) : `${fmt(r.behind, 1)} behind`, el("br"), el("span", { class: "ago", text: `${fmt(r.steps, 1)} steps` }));
-        else if (r.atLine) gap.replaceChildren("🏁 At the line");
-        else if (r.behind === 0 && !atLine.length) gap.replaceChildren(el("b", { text: "Leading" }), el("br"), el("span", { class: "ago", text: `${fmt(r.steps, 1)} steps` }));
+        else if (i === 0) gap.replaceChildren(el("b", { text: "Leading" }), el("br"), el("span", { class: "ago", text: `${fmt(r.steps, 1)} steps` }));
         else gap.replaceChildren(`${fmt(r.behind, 1)} behind`, el("br"), el("span", { class: "ago", text: `${fmt(r.steps, 1)} steps` }));
-        lane.classList.toggle("lead", !ended && (r.atLine || (i === 0 && !atLine.length)));
-        lane.classList.toggle("line", !ended && r.atLine);
+        lane.classList.toggle("lead", !ended && i === 0);
         lane.classList.toggle("win", ended && i === 0);
         lane.classList.toggle("mine", myPicks.get(race.index) === r.a);
-        lane.setAttribute("aria-label", `${nameOf(r.a)}: ${ended ? `place ${i + 1}, ` : r.atLine ? "at the finish line, " : ""}${fmt(r.steps, 1)} steps`);
+        lane.setAttribute("aria-label", `${nameOf(r.a)}: ${ended ? "place" : "running"} ${i + 1}, ${fmt(r.steps, 1)} steps`);
         keep.push(lane);
       });
       track.replaceChildren(...keep);
       if (live && B.top !== lastTop && lastTop) { const lane = existing.get(B.signers[B.sig[B.sig.length - 1]]); if (lane) { lane.classList.remove("pr-step"); void lane.offsetWidth; lane.classList.add("pr-step"); } }
       lastTop = B.top;
     }
-    const lineNote = line ? `The finish line is ${fmt(line, 0)} steps: how far every horse is expected to get in 6 hours.` : "";
+    const stretch = live && race.end - Date.now() <= 30 * 60000;
+    const lineNote = ended ? "" : `${stretch ? "Final stretch: the order shown is live. " : ""}The flag is the 6-hour finish; the order shown is the real live order, and the winner crosses the line when time runs out.`;
     $("track-note").textContent = [
       race.provisional && !ended ? "Provisional handicap: made in your browser from VHP right now, until the race recorder publishes the official card." : "",
       lineNote, ended ? "" : "Steps behind are counted with the handicap.",

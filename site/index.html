@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <!-- Only these sources may run scripts, load data or be framed. 'unsafe-eval' is needed by koilib (its protobuf
        encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://koinvault.app; manifest-src 'self'; worker-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://koinvault.app https://raw.githubusercontent.com/bawcejawn/Knode/race-data/; manifest-src 'self'; worker-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KnodeGames: the daily Koinos prediction game</title>
   <!-- seo:start (written by tools/site-seo.mjs; edit there) -->
@@ -33,6 +33,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Archivo:wdth,wght@62..125,600;62..125,800;62..125,900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="board.css">
 </head>
 <body>
   <a class="skip" href="#main">Skip to the game</a>
@@ -168,17 +169,22 @@
     <!-- ───────────── LEADERBOARD ───────────── -->
     <section class="view" id="view-leaderboard" data-view="leaderboard" hidden>
       <div class="section-head big">
-        <h1>Leaderboard</h1>
+        <h1 id="lb-title">Leaderboard · Daily Questions</h1>
+        <p class="muted">Every game has its own leaderboard: its own players, and points from its own correct picks.</p>
+      </div>
+      <div class="lb-games" role="group" aria-label="Game" id="lb-games"><button type="button" aria-pressed="true">Daily Questions</button></div>
+      <div id="lb-q">
         <p class="muted" id="lb-note">Points count as soon as each question's blocks are final. The top 30% of staked players win, and ties at the line win too.</p>
+        <div class="lb-switch" role="tablist" id="lb-weeks"></div>
+        <div class="table-wrap">
+          <table class="board" id="board">
+            <thead><tr><th scope="col">Rank</th><th scope="col">Player</th><th scope="col" class="num">Points</th><th scope="col" class="num">Stake</th><th scope="col" class="num">Reward</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="board-cards" id="board-cards"></div>
       </div>
-      <div class="lb-switch" role="tablist" id="lb-weeks"></div>
-      <div class="table-wrap">
-        <table class="board" id="board">
-          <thead><tr><th scope="col">Rank</th><th scope="col">Player</th><th scope="col" class="num">Points</th><th scope="col" class="num">Stake</th><th scope="col" class="num">Reward</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div class="board-cards" id="board-cards"></div>
+      <div class="lb-game" id="lb-game" hidden></div>
     </section>
 
     <!-- ───────────── RESULTS ───────────── -->
@@ -314,7 +320,7 @@
   </nav>
   <div class="more-sheet" id="more-sheet" hidden>
     <nav class="more-panel" aria-label="More pages">
-      <a href="#leaderboard" data-view="leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg><span>Question leaderboard</span></a>
+      <a href="#leaderboard" data-view="leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg><span>Leaderboards</span></a>
       <a href="#results" data-view="results"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg><span>Results</span></a>
       <a href="#how" data-view="how"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"></path><path d="M9 9h6M9 13h6"></path></svg><span>Rules</span></a>
       <a href="get.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8M8 12h8"></path></svg><span>Get VHP</span></a>
@@ -386,5 +392,7 @@
   <script src="header-wallet.js"></script>
   <script src="nav.js"></script>
   <script src="app.js"></script>
+  <script src="board.js"></script>
+  <script src="leaders.js"></script>
 </body>
 </html>
