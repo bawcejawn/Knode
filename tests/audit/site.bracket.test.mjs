@@ -289,3 +289,38 @@ test("the page says what the contract and recorder do (sizes, lock, scoring, tie
   assert.match(read("terms.html"), /The Producer Bracket seeds whichever producers are in the race field/);
   assert.doesNotMatch(page + js, /\bodds\b|\bwager|\bbet\b|\bpays\s+\d/i);
 });
+
+// ── audit 2026-10-27 F-1 / F-2: a seed's share never counts below its seeding share ──
+test("F-2: moving VHP away for each card's reading doesn't lower what a seed is expected to sign", () => {
+  const fav = "1Fav", dog = "1Dog";
+  const floor = M.seedShares({ seeds: [fav, dog], vhp: [100000, 20000], totalVhp: 1000000 });
+  assert.ok(Math.abs(floor[dog] - 0.02) < 1e-12);
+  const hours = (dogCardVhp, dogBlocks = 24) => Array.from({ length: 24 }, (_, h) => ({ n: 1200, by: { [fav]: 120, [dog]: dogBlocks },
+    share: { [fav]: 100000 / (980000 + dogCardVhp(h)), [dog]: dogCardVhp(h) / (980000 + dogCardVhp(h)) } }));
+  const gamed = M.indexFromHours(hours((h) => (h === 0 ? 20000 : 200)), floor);
+  assert.ok(gamed.get(dog).index <= 1.0001, `dog index ${gamed.get(dog).index}`);
+  const half = M.indexFromHours(hours((h) => (h === 0 ? 20000 : 200), 12), floor);
+  assert.equal(M.otherWins(half, fav, dog), false, "signing half its share loses, gamed cards or not");
+  // without the floor the same trick wins (what the audit showed)
+  assert.ok(M.indexFromHours(hours((h) => (h === 0 ? 20000 : 200), 12)).get(dog).index > 5);
+  // VHP really added mid-week still raises what it is expected to sign (no gain from burning KOIN either)
+  const burned = M.indexFromHours(hours(() => 200000, 24 * 10 / 1.2), floor);
+  assert.ok(Math.abs(burned.get(dog).index - 1) < 0.05);
+});
+test("F-1: a seed missing from an hour's card is expected to sign its seeding share, not nothing", () => {
+  const fav = "1Fav", dog = "1Dog", floor = { [fav]: 0.1, [dog]: 0.02 };
+  // offline 22 hours and off the cards, then 48 blocks in the last 2 hours
+  const hours = Array.from({ length: 24 }, (_, h) => ({ n: 1200, by: { [fav]: 120, [dog]: h >= 22 ? 24 : 0 }, share: h === 23 ? { [fav]: 0.1, [dog]: 0.02 } : { [fav]: 0.1 } }));   // back on the card only at 23:00
+  const idx = M.indexFromHours(hours, floor);
+  assert.ok(idx.get(dog).index < 0.1, `dog index ${idx.get(dog).index}`);
+  assert.equal(M.otherWins(idx, fav, dog), false);
+  assert.ok(M.indexFromHours(hours).get(dog).index > 1.5, "without the floor it would have won");
+  // a day with no card at all is still scored on the seeding shares
+  const none = M.indexFromHours(hours.map((h) => ({ ...h, share: null })), floor);
+  assert.ok(none && Math.abs(none.get(fav).index - 1) < 1e-9);
+  assert.equal(M.indexFromHours(hours.map((h) => ({ ...h, share: null }))), null, "no floor, no card: can't score");
+});
+test("the page and the recorder both score with the seeding floor", () => {
+  assert.match(js, /BM\.indexFromHours\(w\.days\[r\]\.map\(\(h\) => h \|\| null\), BM\.seedShares\(w\.seeding\)\)/);
+  assert.match(fs.readFileSync(`${APP}/bot/games/bracket.ts`, "utf8"), /const floor = B\.seedShares\(wf\.seeding\);\n\s+const days = wf\.days\.map\(\(d\) => \(d\.every\(Boolean\) \? B\.indexFromHours\(d, floor\) : null\)\);/);
+});

@@ -225,3 +225,68 @@ test("workflow shape check: accepts a whole recorded week, refuses tampered file
   assert.equal(bad("board.json", (j) => { j.week.rows.push({ a: P(1), place: 1, pts: 1, champion: "yes", correct: 1, ranked: true }); }), false);
   assert.equal(bad("index.json", (j) => { j.game = 2; }), false, "the bracket's own game id");
 });
+
+// ── audit 2026-10-27 F-3 … F-7 ──
+const { gameProblem } = await import(path.resolve(APP, "bot/games/bracket.ts"));
+async function lockedWeek(o) {
+  const dir = tmp();
+  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + H), ...o }));
+  return dir;
+}
+test("F-3: a last-run file that went missing stops the run instead of wiping history", async () => {
+  const field = fieldOf(17), o = { raceDir: raceDir(field), picksContract: addr(60), nodeOf: nodeOf(signerFn(field)), picksOf: picksOf([]) };
+  const dir = await lockedWeek(o);
+  fs.rmSync(path.join(dir, "W003.json"));
+  await assert.rejects(quiet(() => run({ p: "main", check: "check", prev: dir, out: tmp(), head: headAt(B.seedTime(W) + 2 * H), ...o })), /missing; refusing to write/);
+  const d2 = await lockedWeek(o); fs.rmSync(path.join(d2, "index.json"));
+  await assert.rejects(quiet(() => run({ p: "main", check: "check", prev: d2, out: tmp(), head: headAt(B.seedTime(W) + 2 * H), ...o })), /index\.json is missing/);
+  const wfy = fs.readFileSync(path.resolve(APP, ".github/workflows/games.yml"), "utf8");
+  assert.match(wfy, /git ls-remote --exit-code --heads "\$url" "\$1"/);
+  assert.match(wfy, /if \[ "\$rc" -eq 2 \]; then return 1; fi\n\s+echo "::error::Couldn't read the \$1 branch/);
+  assert.doesNotMatch(wfy, /git fetch -q --depth 1 [^\n]*2>\/dev\/null; then/, "a failed fetch is never read as 'no branch'");
+});
+test("F-4: decisions use the irreversible block's time; a node far ahead can't void a week; the nodes must agree on it", async () => {
+  const field = fieldOf(17), race = raceDir(field, { skip: (t) => t >= B.seedTime(W) - 6 * H && t < B.seedTime(W) + 12 * H });
+  const o = { raceDir: race, picksContract: addr(60), nodeOf: nodeOf(signerFn(field)), picksOf: picksOf([]) };
+  const dir = tmp();
+  const h = headAt(B.seedTime(W) + H); h.time += 10 * H;   // the head claims to be 10 hours ahead
+  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: h, ...o }));
+  assert.notEqual(fs.existsSync(path.join(dir, "W003.json")) && readW(dir).status, "void");
+  // the second node reports another time for the irreversible block: nothing is written
+  const skew = (name) => { const n = nodeOf(signerFn(field))(name); return name === "check" ? { ...n, blockTime: async (x) => T(x) + 3000 } : n; };
+  const d2 = tmp();
+  const r = await quiet(() => run({ p: "main", check: "check", prev: d2, out: d2, head: headAt(B.seedTime(W) + H), ...o, raceDir: raceDir(field), nodeOf: skew }));
+  assert.ok(r.problems.some((p) => p.includes("disagree about block")));
+  assert.equal(fs.readdirSync(d2).length, 0);
+});
+test("F-5: the Picks game must have the bracket's shape; picks timed at or after the lock never count", async () => {
+  const good = { kind: 3, lock_mode: 2, round_size: String(B.WEEK), round_offset: String(B.ROUND_OFFSET), lead: String(B.LOCK_BEFORE), ahead: String(B.SEED_BEFORE), number_min: "0", number_max: String(B.NUMBER_MAX) };
+  assert.equal(gameProblem(good), null);
+  for (const [k, v] of [["kind", 2], ["round_offset", "0"], ["round_size", String(B.DAY)], ["lead", "300001"], ["number_max", "32767"]]) assert.match(gameProblem({ ...good, [k]: v }), new RegExp(k));
+  assert.match(gameProblem(null), /no bracket game/);
+  const field = fieldOf(17), race = raceDir(field);
+  const rows = [{ player: P(1), number: 0, time: B.lockTime(W) - 1 }, { player: P(2), number: 1, time: B.lockTime(W) }, { player: P(3), number: 2, time: B.lockTime(W) + 9e5 }];
+  const base = { raceDir: race, picksContract: addr(60), nodeOf: nodeOf(signerFn(field)), picksOf: picksOf(rows) };
+  const dir = await lockedWeek(base);
+  const r = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.lockTime(W) + 60000), ...base, gameOf: async () => good }));
+  assert.deepEqual(readW(dir).picks.rows.map((x) => x[0]), [P(1)]);
+  assert.ok(r.problems.some((p) => p.includes("2 pick(s) timed at or after the lock")));
+  const d2 = await lockedWeek(base);
+  const r2 = await quiet(() => run({ p: "main", check: "check", prev: d2, out: d2, head: headAt(B.lockTime(W) + 60000), ...base, gameOf: async () => ({ ...good, round_offset: "0" }) }));
+  assert.equal(readW(d2).picks, null); assert.ok(r2.problems.some((p) => p.includes("round_offset")));
+});
+test("F-6 / F-7: each recorder step can fail alone; leaderboards are capped at 1,000 rows", async () => {
+  const wfy = fs.readFileSync(path.resolve(APP, ".github/workflows/games.yml"), "utf8");
+  assert.match(wfy, /- name: Record Who Signs Block X\n\s+continue-on-error: true/);
+  assert.match(wfy, /- name: Record the Producer Bracket\n\s+continue-on-error: true/);
+  assert.match(wfy, /if not os\.path\.isdir\(d\): print\("no blockx files"\); sys\.exit\(0\)/);
+  assert.match(wfy, /for g in blockx bracket; do\n\s+\[ -d "\$IN\/\$g" \] \|\| continue/);
+  const field = fieldOf(17), race = raceDir(field);
+  const many = Array.from({ length: 1500 }, (_, i) => ({ player: ("1Many" + [0, 1, 2].map((k) => B58[Math.floor(i / 58 ** k) % 58]).join("")).padEnd(34, "x"), number: i % 3, time: 5 }));
+  const o = { raceDir: race, picksContract: addr(60), nodeOf: nodeOf(signerFn(field)), picksOf: picksOf(many) };
+  const dir = await lockedWeek(o);
+  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.lockTime(W) + 60000), ...o }));
+  const r = await runUntil(B.roundDay(W, 0) + 25 * H, o, dir, 2);
+  assert.equal(r.board.week.rows.length, 1000); assert.equal(readW(dir).points.length, 1500, "every score stays in the week file");
+  assert.ok(shapeOk(dir));
+});

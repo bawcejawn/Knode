@@ -12,12 +12,15 @@
  *  3. Hours. Every UTC hour of each round's day, once irreversible: its first and last height, how many blocks it had,
  *     how many each bracket producer signed (on both nodes; they must agree), and each bracket producer's VHP share
  *     on that hour's race card. An hour whose card isn't in race-data yet is stored without a share and filled in
- *     later; a day still without any card 3 days after it ended voids the week.
+ *     later. A seed's share never counts below its seeding share (audit F-1, F-2), so every day can be scored.
  *  4. Results and points: each round's day index (bracket-math.indexFromHours), the winners, every pick's points.
  *     The week is final 12 hours after the last round's day (the correction window); then nothing changes.
  *  5. Leaderboards (board.json): Next week (its seeding), This week, Last week and All time (final weeks only). Every
  *     wallet is listed; who shares the staked bucket is the vault's rule (a stake in the Bracket game).
  *  6. Writes games-data/bracket/index.json, W<week>.json and board.json for the publish job.
+ *
+ * Every time decision uses the irreversible block's time, read on both nodes (audit F-4). The run refuses to write when
+ * the last run's files are incomplete (audit F-3): a failed read must never wipe the history.
  *
  *   RPC, RPC_CHECK ("off" to skip the second node), BRACKET_PREV (last run's files), BRACKET_OUT, RACE_DATA.
  *   npm run bracket         (or: npx tsx bot/games/bracket.ts)
@@ -38,9 +41,9 @@ const RPC = E.RPC || "https://api.koinos.io";
 const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
 const HOUR = 3600000, DAY = 24 * HOUR;
 const SEED_GRACE = 6 * HOUR;               // no seeding card this long after Saturday 12:00 → the week is void
-const CARD_GRACE = 3 * DAY;                // a round's day with no card this long after it ended → the week is void
 const CORRECTION = 12 * HOUR;              // final 12 hours after the last round's day
 const MAX_HOURS_PER_RUN = 30;              // a long outage catches up over a few runs
+const MAX_BOARD_ROWS = 1000;               // per leaderboard view (the page shows 50; your own score is in W<week>.json)
 const isAddr = (a: unknown): a is string => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
 
 export type RawPick = { player: string; number: number; time: number };
@@ -69,6 +72,7 @@ type Opts = {
   p: any; check: any | null; prev?: string; out?: string; raceDir?: string;
   picksContract?: string | null;
   picksOf?: (node: any, round: number) => Promise<RawPick[]>;   // for the tests
+  gameOf?: (node: any) => Promise<any>;                          // the Picks game's settings (for the tests)
   nodeOf?: (node: any) => Node;                                  // for the tests and the replay
   head?: Head;
 };
@@ -185,11 +189,25 @@ async function readPicks(node: any, contract: string, round: number): Promise<Ra
   return out;
 }
 
+async function readGame(node: any, contract: string): Promise<any> {
+  const c = new Contract({ id: contract, abi: PICKS_ABI(), provider: node });
+  const r: any = await withRetry("the bracket's Picks game", () => (c.functions as any).get_game({ game: B.GAME_ID }));
+  return r?.result?.game ?? null;
+}
+/** The Picks game must have exactly the shape bracket-math expects (audit F-5), or no picks are recorded. */
+export function gameProblem(g: any): string | null {
+  if (!g) return "the Picks contract has no bracket game";
+  const want: [string, number][] = [["kind", 3], ["lock_mode", 2], ["round_size", B.WEEK], ["round_offset", B.ROUND_OFFSET], ["lead", B.LOCK_BEFORE], ["ahead", B.SEED_BEFORE], ["number_min", 0], ["number_max", B.NUMBER_MAX]];
+  for (const [k, v] of want) if (Number(g[k] ?? 0) !== v) return `the Picks bracket game has ${k} ${g[k] ?? 0}, expected ${v}`;
+  return null;
+}
+
 /** Score a week from what is recorded (live during the week, final after). */
 export function scoreWeek(wf: WeekFile) {
   if (!wf.seeding || !wf.seeding.size || !wf.picks) return { results: null, points: [] as Points[] };
   const { size, seeds } = wf.seeding;
-  const days = wf.days.map((d) => (d.every(Boolean) ? B.indexFromHours(d) : null));
+  const floor = B.seedShares(wf.seeding);
+  const days = wf.days.map((d) => (d.every(Boolean) ? B.indexFromHours(d, floor) : null));
   const res = B.results(seeds, size, days);
   // During a round's day: the winners so far are not known, so only finished rounds score.
   const points: Points[] = wf.picks.rows.map(([player, number]) => {
@@ -210,12 +228,21 @@ export async function run(o: Opts) {
   const nodeC: Node | null = o.check ? (o.nodeOf ? o.nodeOf(o.check) : chainNode(o.check)) : null;
   const head: Head = o.head ?? (await nodeP.head());
   if (!o.head && nodeC) await nodeC.head();
+  // The clock for every decision: the irreversible block's time, the same on both nodes (audit F-4).
+  if (nodeC) {
+    const t2 = await nodeC.blockTime(head.lib);
+    if (t2 !== head.libTime) { const pr = `the two nodes disagree about block ${head.lib}'s time; nothing written this run`; console.log(`::warning::${pr}`); return { problems: [pr], weeks: new Map(), board: null }; }
+  }
+  const now = head.libTime;
   const picksRead = o.picksOf ?? (contract ? (node: any, r: number) => readPicks(node, contract, r) : null);
   console.log(`head ${head.height} (${new Date(head.time).toISOString()}), irreversible ${head.lib} (${new Date(head.libTime).toISOString()})`);
 
   const idx = readJson(PREV, "index.json");
   const known = new Set<number>(Array.isArray(idx?.weeks) ? idx.weeks.filter((w: any) => Number.isInteger(w) && w >= 0 && w < 10000) : []);
-  const nowW = B.weekOf(head.time);
+  const nowW = B.weekOf(now);
+  // A week the last run published must still be there: a missing file means the read failed (audit F-3).
+  for (const w of known) if (w >= nowW - 1 && !readJson(PREV, wName(w))) throw new Error(`last run's ${wName(w)} is missing; refusing to write (it would wipe that week)`);
+  if (PREV && fs.existsSync(path.join(PREV, "board.json")) && !idx) throw new Error("last run's index.json is missing or unreadable; refusing to write");
   const weeks = new Map<number, WeekFile>();
   // Last week only if it was already being recorded (a first run doesn't void weeks from before it existed).
   for (const w of [nowW - 1, nowW, nowW + 1]) if (w >= 1 && (w >= nowW || known.has(w))) weeks.set(w, loadWeek(PREV, w));
@@ -226,10 +253,10 @@ export async function run(o: Opts) {
     // ── 1. seeding ──
     if (!wf.seeding) {
       const at = B.seedTime(w);
-      if (head.time < at) continue;
+      if (now < at) continue;
       const card = cardAt(RACE, at);
       if (!card) {
-        if (head.time >= at + SEED_GRACE) { wf.status = "void"; wf.void = "no race card was recorded at the seeding time; no bracket this week"; }
+        if (now >= at + SEED_GRACE) { wf.status = "void"; wf.void = "no race card was recorded at the seeding time; no bracket this week"; }
         else problems.push(`week ${w}: no race card yet for the seeding time; tried again next run`);
         continue;
       }
@@ -250,6 +277,10 @@ export async function run(o: Opts) {
       if (!picksRead) wf.picks = { checked: nodeC ? 2 : 1, rows: [] };
       else {
         try {
+          if (!o.picksOf || o.gameOf) {
+            const gp = gameProblem(o.gameOf ? await o.gameOf(o.p) : await readGame(o.p, contract!));
+            if (gp) { problems.push(`week ${w}: ${gp}; picks not recorded`); continue; }
+          }
           const round = B.picksRound(w), raw = await picksRead(o.p, round);
           if (o.check) {
             const other = await picksRead(o.check, round);
@@ -258,7 +289,13 @@ export async function run(o: Opts) {
           }
           const seen = new Set<string>();
           const rows: Pick[] = [];
-          for (const x of raw) { if (seen.has(x.player)) continue; seen.add(x.player); rows.push([x.player, x.number, x.time, B.decode(x.number, size, seeds.length) ? 1 : 0]); }
+          let late = 0;
+          for (const x of raw) {
+            if (seen.has(x.player)) continue;
+            if (!(x.time < B.lockTime(w))) { late++; continue; }   // the chain should refuse these; never count one (audit F-5)
+            seen.add(x.player); rows.push([x.player, x.number, x.time, B.decode(x.number, size, seeds.length) ? 1 : 0]);
+          }
+          if (late) problems.push(`week ${w}: ${late} pick(s) timed at or after the lock were left out`);
           rows.sort((a, b) => (a[0] < b[0] ? -1 : 1));
           wf.picks = { checked: o.check ? 2 : 1, rows };
           console.log(`week ${w}: ${rows.length} brackets locked (${rows.filter((r) => r[3]).length} valid)`);
@@ -289,24 +326,20 @@ export async function run(o: Opts) {
           wf.days[r][h] = { ...a, checked };
         } catch (e) { problems.push(`week ${w} round ${r + 1} hour ${h}: ${(e as Error).message} (tried again next run)`); }
       }
-      // a whole day recorded but with no card at all
-      if (wf.days[r].every(Boolean) && !wf.days[r].some((x) => x!.share) && head.time >= day + DAY + CARD_GRACE) {
-        wf.status = "void"; wf.void = `no race card was recorded for round ${r + 1}'s day; no points this week`;
-      }
     }
     if (wf.status === "void") continue;
     // ── 4. results and points ──
     const sc = scoreWeek(wf);
     wf.results = sc.results; wf.points = sc.points;
     const lastDayEnd = B.roundDay(w, wf.days.length - 1) + DAY;
-    if (sc.results && sc.results.done && head.time >= lastDayEnd + CORRECTION) { wf.status = "final"; console.log(`week ${w}: final`); }
+    if (sc.results && sc.results.done && now >= lastDayEnd + CORRECTION) { wf.status = "final"; console.log(`week ${w}: final`); }
   }
 
   // ── 5. leaderboards ──
   const allW = new Map(weeks);
   for (const w of known) if (!allW.has(w)) allW.set(w, loadWeek(PREV, w));
   const view = (rows: { player: string; points: number; champion: boolean; correct: number }[]) =>
-    B.rank(rows).map((x: any) => ({ a: x.player, place: x.place, pts: x.points, champion: x.champion, correct: x.correct, ranked: true }));
+    B.rank(rows).slice(0, MAX_BOARD_ROWS).map((x: any) => ({ a: x.player, place: x.place, pts: x.points, champion: x.champion, correct: x.correct, ranked: true }));
   const weekRows = (wf: WeekFile | undefined) => (wf ? wf.points.map(([player, points, champ, correct]) => ({ player, points, champion: !!champ, correct })) : []);
   const wv = (w: number) => { const wf = allW.get(w); return { week: w, start: B.weekStart(w), status: wf ? wf.status : "waiting", final: wf?.status === "final", rows: view(weekRows(wf)) }; };
   const tot = new Map<string, { player: string; points: number; champion: boolean; correct: number; champs: number }>();
@@ -314,8 +347,8 @@ export async function run(o: Opts) {
     const t = tot.get(player) || { player, points: 0, champion: false, correct: 0, champs: 0 };
     t.points += points; t.correct += correct; t.champs += champ; t.champion = t.champs > 0; tot.set(player, t);
   }
-  const allRows = B.rank([...tot.values()]).map((x: any) => ({ a: x.player, place: x.place, pts: x.points, champion: x.champion, correct: x.correct, ranked: true }));
-  const board = { v: 1, updated: new Date(head.time).toISOString(), next: wv(nowW + 1), week: wv(nowW), lastWeek: nowW >= 2 ? wv(nowW - 1) : null, allTime: { rows: allRows } };
+  const allRows = B.rank([...tot.values()]).slice(0, MAX_BOARD_ROWS).map((x: any) => ({ a: x.player, place: x.place, pts: x.points, champion: x.champion, correct: x.correct, ranked: true }));
+  const board = { v: 1, updated: new Date(now).toISOString(), next: wv(nowW + 1), week: wv(nowW), lastWeek: nowW >= 2 ? wv(nowW - 1) : null, allTime: { rows: allRows } };
 
   // ── 6. write ──
   fs.mkdirSync(OUT, { recursive: true });
@@ -324,7 +357,7 @@ export async function run(o: Opts) {
     known.add(w);
     fs.writeFileSync(path.join(OUT, wName(w)), JSON.stringify(wf) + "\n");
   }
-  fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), weeks: [...known].sort((a, b) => a - b), contract: contract || null, game: B.GAME_ID }) + "\n");
+  fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), weeks: [...known].sort((a, b) => a - b), contract: contract || null, game: B.GAME_ID }) + "\n");
   fs.writeFileSync(path.join(OUT, "board.json"), JSON.stringify(board) + "\n");
   for (const pr of problems) console.log(`::warning::${pr}`);
   return { problems, weeks, board };

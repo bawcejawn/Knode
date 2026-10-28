@@ -56,11 +56,13 @@ for (let w = 0; w <= WEEKS + 1; w++) {
 
 // ── the truth, straight from the blocks with the shared math ──
 function truthOf(w) {
-  const s = B.seeding(cardFor(B.seedTime(w))); if (!s.size) return { s, res: null };
+  const sc = cardFor(B.seedTime(w)), s = B.seeding(sc); if (!s.size) return { s, res: null };
+  const vhpOf = new Map(sc.field.map((r) => [r.a, r.vhp]));
+  const floor = B.seedShares({ seeds: s.seeds, vhp: s.seeds.map((a) => vhpOf.get(a)), totalVhp: [...sc.field, ...sc.paddock].reduce((t, r) => t + r.vhp, 0) });
   const days = Array.from({ length: B.roundsOf(s.size) }, (_, r) => {
     const d = B.roundDay(w, r), a = lb(d), b = lb(d + DAY);
     const blk = { ts: Array.from(ts.subarray(a, b)), sig: Array.from(sg.subarray(a, b)), signers: names };
-    return B.dayIndex(blk, d, Array.from({ length: 24 }, (_, h) => cardFor(d + h * H)));
+    return B.dayIndex(blk, d, Array.from({ length: 24 }, (_, h) => cardFor(d + h * H)), floor);
   });
   return { s, res: B.results(s.seeds, s.size, days) };
 }
