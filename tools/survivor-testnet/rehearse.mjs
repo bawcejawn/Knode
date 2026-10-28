@@ -42,14 +42,15 @@ try {
   const { Signer } = await import("koilib");
   const addr = Object.fromEntries(Object.entries(keys()).map(([k, w]) => [k.toLowerCase(), Signer.fromWif(w).getAddress()]));
   fake.picks.owner = addr.owner;
-  // p1, p2, p3 and p5 hold test VHP (they can win a prize); p4 and p6 hold none (they can't).
-  for (const w of ["p1", "p2", "p3", "p5"]) fake.setVhp(addr[w], 2);
+
   expect(!/discovered|null/.test(JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8")).vhp ?? "null") || true, "config written");
   let out = await tool("fund", "--send");
   expect(/Not enough/.test(out), "fund refuses before the faucet");
-  fake.faucet(addr.owner, 150);
+  fake.faucet(addr.owner, 100);   // one real faucet claim
   await tool("fund", "--send");
-  expect(fake.balanceOf(addr.picks) >= 30n * 100000000n - 10000000n, "the Picks wallet got its test KOIN");
+  expect(fake.balanceOf(addr.picks) >= 50n * 100000000n - 10000000n, "the Picks wallet got its test KOIN");
+  // The testnet's "hold 1" rule checks test KOIN: p4 and p6 keep less than 1 (they can still pick, but can't win).
+  for (const w of ["p4", "p6"]) fake.setKoin(addr[w], 0.9);
   out = await tool("picks-build");
   expect(/testnet Picks build/.test(out), "testnet Picks contract built (test owner, 10-minute wait)");
   await tool("picks-upload", "--send");
@@ -92,7 +93,7 @@ try {
   expect(sf.result.players.some((p) => /[o]/.test(p.log) || p.outN !== null), "someone landed in the out-zone");
   console.log("\nFinal standings:\n" + sf.result.players.map((p) => `  #${p.place} ${Object.entries(addr).find(([, a]) => a === p.a)?.[0]} lives ${p.lives} out ${p.outN} log ${p.log} score ${p.total} eligible ${p.eligible}`).join("\n"));
   const won = sf.result.prizes.map((x) => Object.entries(addr).find(([, a]) => a === x.player)?.[0]);
-  expect(!won.includes("p4") && !won.includes("p6"), "wallets with no VHP win nothing");
+  expect(!won.includes("p4") && !won.includes("p6"), "wallets holding under 1 (test KOIN) win nothing");
   console.log("Prizes: " + JSON.stringify(sf.result.prizes.map((x) => [Object.entries(addr).find(([, a]) => a === x.player)?.[0], x.vhp])));
 } catch (e) { failures++; console.error(e); }
 finally { await fake.close(); }
@@ -104,7 +105,10 @@ async function browser() {
   let log = ""; site.stdout.on("data", (d) => (log += d)); site.stderr.on("data", (d) => (log += d));
   await new Promise((ok) => setTimeout(ok, 4000));
   try {
-    const pw = await import(process.env.PLAYWRIGHT_MODULE || "playwright"), chromium = pw.chromium ?? pw.default.chromium;
+    let pw;
+    try { pw = await import(process.env.PLAYWRIGHT_MODULE || "playwright"); }
+    catch { console.log("  (browser step skipped: Playwright isn't installed here; the rest of the rehearsal still runs)"); return; }
+    const chromium = pw.chromium ?? pw.default.chromium;
     const b = await chromium.launch();
     const pg = await b.newPage({ viewport: { width: 390, height: 844 } });
     const errs = [];

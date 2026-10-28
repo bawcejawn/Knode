@@ -163,12 +163,14 @@ async function setup() {
   }
   fs.writeFileSync(KEYS(), lines.join("\n") + "\n", { mode: 0o600 });
   const vhp = await discoverVhp(p);
-  writeConfig({ v: 1, rpc: TESTNET.rpc, chainId, koin: TESTNET.koin, vhp, holdToken: vhp, clock: { day: TEST_DAY_MS, firstDay: null, outFloor: 1 }, picks: null, game: null });
+  // The "hold 1 VHP" rule checks test KOIN on the testnet: the test wallets have no VHP, and the check runs the same way.
+  writeConfig({ v: 1, rpc: TESTNET.rpc, chainId, koin: TESTNET.koin, vhp, holdToken: TESTNET.koin, clock: { day: TEST_DAY_MS, firstDay: null, outFloor: 1 }, picks: null, game: null });
   const keys = readKeys();
   log(`✔ Test wallets made (keys in ${KEYS()}, git-ignored).`);
-  log(`\nNext: get free test KOIN for the test OWNER wallet from the faucet bot (${TESTNET.faucet}): send it`);
-  log(`   /claim ${addressOf(keys, "owner")}`);
-  log(`(100 test KOIN per claim, once a day per address. Then run: npm run survivor-test -- fund --send)`);
+  log(`\nNext: get free test KOIN for the test OWNER wallet from the faucet bot on Telegram (${TESTNET.faucet}).`);
+  log(`Send it /start, then this line:`);
+  log(`   /faucet ${addressOf(keys, "owner")}`);
+  log(`(100 test KOIN per claim; one claim a day. Then run: npm run survivor-test -- fund --send)`);
 }
 
 async function status() {
@@ -212,10 +214,11 @@ async function fund(sendIt: boolean) {
   const p = await testnetProvider(c);
   const owner = signerOf(keys, "owner", p);
   const have = await balance(p, c.koin, owner.getAddress());
-  const plan: [string, number][] = [["picks", 30], ...PLAYERS.map((w) => [w, 8] as [string, number])];
+  // One faucet claim (100) covers it all: 50 for the contract upload, 6 for each player, ~14 left for the owner's Mana.
+  const plan: [string, number][] = [["picks", 50], ...PLAYERS.map((w) => [w, 6] as [string, number])];
   const need = plan.reduce((s, [, k]) => s + k, 0);
-  log(`Test owner ${owner.getAddress()} has ${koin(have)} test KOIN; this sends ${need} (30 to the Picks wallet for the upload, 8 to each player for Mana).`);
-  if (have < toSat(need + 2)) throw new Error(`Not enough: claim test KOIN for the owner from ${TESTNET.faucet} (/claim ${owner.getAddress()}), once a day, then run fund again.`);
+  log(`Test owner ${owner.getAddress()} has ${koin(have)} test KOIN; this sends ${need} (50 to the Picks wallet for the upload, 6 to each player for Mana).`);
+  if (have < toSat(need + 2)) throw new Error(`Not enough: claim test KOIN for the owner from the Telegram faucet bot ${TESTNET.faucet} (send /faucet ${owner.getAddress()}), then run fund again.`);
   if (!sendIt) { for (const [w, k] of plan) log(`  ${k} → ${w} ${addressOf(keys, w)}`); log("\nDry run. Add --send to send."); return; }
   const k = new Contract({ id: c.koin, abi: tokenAbi as any, provider: p });
   for (const [w, amt] of plan) {
@@ -277,7 +280,9 @@ async function picksUpload(sendIt: boolean) {
   const rc = BigInt(await p.getAccountRc(A));
   log(`Testnet Picks wallet ${A}: Mana ${koin(rc)}; code ${(wasm.length / 1024).toFixed(1)} KB, sha256 ${sha256hex(wasm)}`);
   log("Overrides ON (as on mainnet): the contract itself refuses moving anything, paying Mana, and any upgrade except the owner's announced one.");
-  if (rc < toSat(20)) throw new Error("The Picks wallet needs ~20 test KOIN of Mana: npm run survivor-test -- fund --send");
+  const needRc = toSat(Math.ceil((wasm.length / 1024) * 1.2 + 10));     // the race tool's estimate for an upload
+  log(`Mana needed: about ${koin(needRc)}`);
+  if (rc < needRc) throw new Error(`The Picks wallet needs about ${koin(needRc)} test KOIN of Mana: npm run survivor-test -- fund --send`);
   if (!sendIt) { log("\nDry run. Add --send to upload."); return; }
   const k = new Contract({ id: A, abi, provider: p, signer: s, bytecode: new Uint8Array(wasm) });
   const { transaction, receipt } = await k.deploy({ abi: JSON.stringify(abi), authorizesCallContract: true, authorizesTransactionApplication: true, authorizesUploadContract: true,

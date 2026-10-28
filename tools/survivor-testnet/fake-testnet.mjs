@@ -185,6 +185,7 @@ export async function startFakeTestnet({ abiFile, owner = null, producers, koin 
     advance: (ms) => { offset += ms; },
     faucet: (addr, koinAmount) => bal.set(`${koin}|${addr}`, getBal(koin, addr) + BigInt(Math.round(koinAmount * 1e8))),
     setVhp: (addr, v) => bal.set(`${vhp}|${addr}`, BigInt(Math.round(v * 1e8))),
+    setKoin: (addr, v) => bal.set(`${koin}|${addr}`, BigInt(Math.round(v * 1e8))),
     picks, balanceOf: (addr) => getBal(koin, addr),
     close: () => new Promise((ok) => server.close(ok)),
   };
