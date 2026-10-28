@@ -21,9 +21,15 @@ if (-not ((Test-Path $envFile) -and (Select-String -Path $envFile -Pattern '^\s*
   throw "GITHUB_ALERT_TOKEN isn't in $envFile. It's the same token the self-heal emails use."
 }
 
-# Hidden PowerShell window that runs: node bot\release-kick.mjs
-$arg = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "& ''{0}'' ''{1}''"' -f $node, $script
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg -WorkingDirectory $root
+# Runs node with no window at all: "conhost --headless" gives it a console that is never shown (a hidden PowerShell
+# window still flashes on screen for a moment). Windows older than 10 version 1809 has no --headless: hidden PowerShell.
+$conhost = Join-Path $env:SystemRoot "System32\conhost.exe"
+if ([Environment]::OSVersion.Version.Build -ge 17763 -and (Test-Path $conhost)) {
+  $action = New-ScheduledTaskAction -Execute $conhost -Argument ('--headless "{0}" "{1}"' -f $node, $script) -WorkingDirectory $root
+} else {
+  $arg = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "& ''{0}'' ''{1}''"' -f $node, $script
+  $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg -WorkingDirectory $root
+}
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 4) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName "Knode question release" -Action $action -Trigger $trigger -Settings $settings -Description "Every 5 minutes: around 12:00 UTC Mon-Sat, start the Knode bot on GitHub so the day's questions come out on time, and email if they don't. See C:\kprediction\bot\release-kick.mjs" -Force | Out-Null
