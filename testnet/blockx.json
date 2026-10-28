@@ -1,0 +1,36 @@
+{
+  "v": 1,
+  "network": "koinos-foundation-testnet",
+  "note": "Koinos TESTNET (Koinos Foundation testnet, the one SwarmTales uses) settings for Who Signs Block X. Test KOIN only; nothing here touches mainnet. Written by npm run picks -- <command> --testnet; read by the testnet page (site/blockx-testnet.html) and the testnet recorder.",
+  "rpc": "https://testnet.koinosfoundation.org",
+  "chainId": "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==",
+  "koin": "1FaSvLjQJsCJKq5ybmGsMMQs8RQYyVv8ju",
+  "vhp": "17n12ktwN79sR6ia9DDgCfmw77EgpbTyBi",
+  "picks": null,
+  "picksSha256": null,
+  "prizesFromWeek": 0,
+  "data": "https://raw.githubusercontent.com/bawcejawn/Knode/testnet-data/",
+  "faucet": "https://t.me/KoinosTestnetFaucetBot",
+  "games": [
+    {
+      "id": 2,
+      "name": "Who Signs Block X",
+      "round": 2400,
+      "offset": 0,
+      "lead": 100,
+      "ahead": 28900,
+      "picksPerDay": 30,
+      "maxChanges": 5
+    },
+    {
+      "id": 92,
+      "name": "Block X fast test (every 300 blocks)",
+      "round": 300,
+      "offset": 0,
+      "lead": 100,
+      "ahead": 3700,
+      "picksPerDay": 50,
+      "maxChanges": 5
+    }
+  ]
+}

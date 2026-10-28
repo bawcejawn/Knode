@@ -79,7 +79,7 @@ test("not recorded when the two nodes disagree about the block or the picks", as
 test("no race card: waits, and a target older than 3 days is recorded void with no points", async () => {
   const lib = H0 + 3 * X.ROUND + 50;
   const r = await quiet(() => run({ p: "main", check: null, out: tmp(), raceDir: raceDir({ withCards: false }), picksContract: "1P", blockOf: blockOf(), picksOf: picksOf(), rankedOf, head: { height: lib, time: T(lib), lib } }));
-  assert.ok(r.problems.some((p) => p.includes("no race card yet")));
+  assert.ok(r.problems.some((p) => p.includes("no handicap card yet")));
   assert.equal((r.weeks.get(3)?.targets || []).length, 0);
   // 3 days later the old ones are void
   const later = lib + 3 * 28800 - X.ROUND;
@@ -89,44 +89,146 @@ test("no race card: waits, and a target older than 3 days is recorded void with 
   assert.ok(voided.length >= 1 && voided.every((t) => t.picks.every((p) => p[3] === 0)));
 });
 
-test("last week's prizes appear only after the 12-hour correction window, open to every wallet", async () => {
-  // Record the whole of week 3 in runs, then look from Mon of week 4.
-  const out = tmp(), rd = raceDir();
+/** Record the whole of week 3, then one run from Monday of week 4 at `hoursAfter`. */
+async function weekThenLook(picks, hoursAfter, extra = {}) {
+  const rd = raceDir();
   let prev;
-  const startH = H0 - Math.floor(3600000 / 3000);               // W3 00:00
-  const endH = startH + 7 * 28800;                               // W4 00:00
+  const startH = H0 - Math.floor(3600000 / 3000), endH = startH + 7 * 28800;   // W3 00:00, W4 00:00
   for (let lib = startH + 12 * X.ROUND; lib <= endH + 4 * X.ROUND; lib += 12 * X.ROUND) {
     const o = tmp();
-    await quiet(() => run({ p: "main", check: null, prev, out: o, raceDir: rd, picksContract: "1P", blockOf: blockOf(), picksOf: picksOf(), rankedOf, head: { height: lib, time: T(lib), lib } }));
+    await quiet(() => run({ p: "main", check: null, prev, out: o, raceDir: rd, picksContract: "1P", blockOf: blockOf(), picksOf: picks, rankedOf, head: { height: lib, time: T(lib), lib }, ...extra }));
     prev = o;
   }
-  const early = await quiet(() => run({ p: "main", check: null, prev, out, raceDir: rd, picksContract: "1P", blockOf: blockOf(), picksOf: picksOf(), rankedOf, head: { height: endH + 6 * 1200, time: T(endH + 6 * 1200), lib: endH + 6 * 1200 - 60 } }));
+  const at = endH + hoursAfter * 1200;
+  return quiet(() => run({ p: "main", check: null, prev, out: tmp(), raceDir: rd, picksContract: "1P", blockOf: blockOf(), picksOf: picks, rankedOf, head: { height: at, time: T(at), lib: at - 60 }, ...extra }));
+}
+// Here the guest (Free play) picks the signer every time; Bob (Staked) always picks BIG.
+const picksGuest = async (node, r) => { const t = T(r * X.ROUND) - 3600000 * (1 + (r % 3)); return [{ player: GUEST, producer: signerOf(r * X.ROUND), time: t }, { player: BOB, producer: BIG, time: t }]; };
+
+test("no prizes are listed until PRIZES_FROM_WEEK (prizes start with the vault, owner 2026-10-28)", async () => {
+  const r = await weekThenLook(picksGuest, 13);
+  assert.equal(r.board.lastWeek.final, true);
+  assert.deepEqual(r.board.lastWeek.prizes, [], "no prize week set: nothing listed, nothing owed");
+  const later = await weekThenLook(picksGuest, 13, { prizesFromWeek: 4 });
+  assert.deepEqual(later.board.lastWeek.prizes, [], "week 3 is before the first prize week 4");
+});
+
+test("prizes, from the first prize week: only after the 12-hour correction window, and only the Free play board's top 2", async () => {
+  const early = await weekThenLook(picksGuest, 6, { prizesFromWeek: 3 });
   assert.equal(early.board.lastWeek.week, 3);
   assert.equal(early.board.lastWeek.final, false, "6 h after the week: still in the correction window");
   assert.deepEqual(early.board.lastWeek.prizes, []);
-  const late = await quiet(() => run({ p: "main", check: null, prev: out, out: tmp(), raceDir: rd, picksContract: "1P", blockOf: blockOf(), picksOf: picksOf(), rankedOf, head: { height: endH + 13 * 1200, time: T(endH + 13 * 1200), lib: endH + 13 * 1200 - 60 } }));
+  const late = await weekThenLook(picksGuest, 13, { prizesFromWeek: 3 });
   assert.equal(late.board.lastWeek.final, true);
-  const pz = plain(late.board.lastWeek.prizes);
-  // Bob (BIG, ×1 on 2 of 3 targets) vs Alice (MID, ×2 on 1 of 3): equal expected points. The guest always picks SMALL,
-  // which never signs here, so it has no points and can't win; guests aren't excluded otherwise.
-  assert.equal(pz.length, 2);
-  assert.ok(pz.every((x) => x.player !== GUEST));
-  assert.equal(pz.reduce((s, x) => s + x.vhp, 0), 3);
+  // The guest is Free play and right every time: 1st, the whole 2 + 1 VHP? No: a lone winner takes 1st (2 VHP); Bob is
+  // Staked, so the Free play board has nobody else and 2nd stays unpaid.
+  assert.deepEqual(plain(late.board.lastWeek.prizes).map((x) => [x.player, x.vhp]), [[GUEST, 2]]);
+  const rows = late.board.lastWeek.rows;
+  assert.equal(rows.find((x) => x.a === GUEST).ranked, false, "Free play board");
+  assert.equal(rows.find((x) => x.a === BOB).ranked, true, "Staked board");
 });
 
-test("guests win prizes like anyone (owner's decision 2026-10-27): an unranked wallet with the most points takes 1st", async () => {
-  const out = tmp(), rd = raceDir();
-  let prev;
-  const startH = H0 - Math.floor(3600000 / 3000), endH = startH + 7 * 28800;
-  // Here the guest picks the signer every time.
-  const picksGuest = async (node, r) => { const t = T(r * X.ROUND) - 3600000 * (1 + (r % 3)); return [{ player: GUEST, producer: signerOf(r * X.ROUND), time: t }, { player: BOB, producer: BIG, time: t }]; };
-  for (let lib = startH + 12 * X.ROUND; lib <= endH + 4 * X.ROUND; lib += 12 * X.ROUND) {
-    const o = tmp();
-    await quiet(() => run({ p: "main", check: null, prev, out: o, raceDir: rd, picksContract: "1P", blockOf: blockOf(), picksOf: picksGuest, rankedOf, head: { height: lib, time: T(lib), lib } }));
-    prev = o;
-  }
-  const r = await quiet(() => run({ p: "main", check: null, prev, out, raceDir: rd, picksContract: "1P", blockOf: blockOf(), picksOf: picksGuest, rankedOf, head: { height: endH + 13 * 1200, time: T(endH + 13 * 1200), lib: endH + 13 * 1200 - 60 } }));
-  const pz = plain(r.board.lastWeek.prizes);
-  assert.deepEqual(pz.map((x) => [x.player, x.vhp]), [[GUEST, 2], [BOB, 1]]);
-  assert.equal(r.board.lastWeek.rows.find((x) => x.a === GUEST).ranked, false, "still marked unranked, but wins");
+test("the Free play prize needs picks on 3 different days and at least one point", async () => {
+  // Two free wallets: CAROL is right but picks on one day only; DAVE picks on 3 days.
+  const CAROL = "1GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG", DAVE = "1HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH";
+  const picks = async (node, r) => {
+    const h = r * X.ROUND, t = T(h);
+    return [{ player: CAROL, producer: signerOf(h), time: M.weekStart(3) + 1000 }, { player: DAVE, producer: signerOf(h), time: t - 3600000 }];
+  };
+  const r = await weekThenLook(picks, 13, { prizesFromWeek: 0, rankedOf: async () => new Set() });   // both Free play
+  const pz = plain(r.board.lastWeek.prizes).map((x) => x.player);
+  assert.ok(pz.includes(DAVE) && !pz.includes(CAROL), "one-day wallet can't win");
+});
+
+// ── the testnet way: its own hourly cards, a fast game, its own config ──
+test("testnet: the recorder takes its own hourly card (no Producer Race there) and scores a fast game with it", async () => {
+  const FAST = { id: 92, round: 300, offset: 0, lead: 100, ahead: 3700, picksPerDay: 50, maxChanges: 5 };
+  const lib = H0 + 10 * 300 + 50;
+  const signersOf = async () => ({ signers: [BIG, MID, SMALL], first: T(lib - 7199), last: T(lib), n: 7200 });
+  const vhpOf = async () => ({ [BIG]: "200000000000", [MID]: "100000000000", [SMALL]: "1000000000" });
+  const fastPicks = async (node, r) => [{ player: ALICE, producer: MID, time: T(r * 300) - 600000 }];
+  // The lock of each target here comes after the card is taken? No: the card is taken at the run (head time), and a
+  // lock before the first card uses the first card taken within the hour after it.
+  const out = tmp();
+  const r1 = await quiet(() => run({ p: "main", check: null, out, game: FAST, cards: "self", picksContract: "1P", blockOf: blockOf(), picksOf: fastPicks, rankedOf, signersOf, vhpOf,
+    head: { height: lib + 60, time: T(lib + 60), lib } }));
+  assert.equal(r1.cards.length, 1, "one card taken this hour");
+  const cards = JSON.parse(fs.readFileSync(path.join(out, "cards.json"), "utf8"));
+  assert.equal(cards.v, 1); assert.equal(cards.cards.length, 1);
+  const wf = JSON.parse(fs.readFileSync(path.join(out, "W003.json"), "utf8"));
+  assert.equal(wf.game, 92);
+  assert.ok(wf.targets.every((t) => t.height % 300 === 0 && t.lockTime === T(t.height - 100)));
+  const recent = wf.targets.filter((t) => T(lib + 60) - t.lockTime <= 3600000);
+  assert.ok(recent.length >= 1 && recent.every((t) => !t.void && t.card), "targets whose lock is within the hour before the card are scored");
+  assert.ok(wf.targets.every((t) => !t.void), "no void rows for the days before the recorder first ran");
+  assert.equal(cards.startHeight, lib + 60, "it remembers where it started");
+  const t = recent.find((x) => x.signer === MID);
+  if (t) assert.equal(t.picks[0][3], 200, "MID has half the top's VHP: ×2");
+  // A second run in the same hour doesn't take another card.
+  const r2 = await quiet(() => run({ p: "main", check: null, prev: out, out: tmp(), game: FAST, cards: "self", picksContract: "1P", blockOf: blockOf(), picksOf: fastPicks, rankedOf, signersOf, vhpOf,
+    head: { height: lib + 70, time: T(lib + 70), lib: lib + 10 } }));
+  assert.equal(r2.cards.length, 1);
+});
+
+test("testnet: testnet/blockx.json is a valid config the Picks contract would accept", async () => {
+  const { readNetConfig } = await import(path.resolve(APP, "bot/games/blockx.ts"));
+  const c = readNetConfig(path.resolve(APP, "testnet/blockx.json"));
+  assert.equal(c.network, "koinos-foundation-testnet");
+  assert.equal(c.rpc, "https://testnet.koinosfoundation.org");
+  assert.notEqual(c.chainId, "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==");
+  assert.ok(c.games.some((g) => g.id === 2 && g.round === 2400 && g.lead === 100 && g.ahead === 28900), "game 2 with the real mainnet settings");
+  for (const g of c.games) { const G = X.forGame(g); assert.equal(G.openRounds(48_000_000).length, 12, `game ${g.id}: 12 targets open`); assert.ok(g.id < 128); }
+  assert.match(c.data, /^https:\/\/raw\.githubusercontent\.com\/bawcejawn\/Knode\/testnet-data\/$/, "its own data branch, never games-data");
+});
+
+// ── the testnet workflow (.github/workflows/games-testnet.yml): its publish check takes the recorder's real output ──
+import { execFileSync, spawnSync } from "node:child_process";
+test("testnet workflow: publishes only to testnet-data, off by default, and its shape check takes the real output", async () => {
+  const wf = fs.readFileSync(path.resolve(APP, ".github/workflows/games-testnet.yml"), "utf8");
+  assert.match(wf, /vars\.TESTNET_GAMES_ENABLED == 'true'/, "off until the owner turns it on");
+  assert.ok(!/secrets\./.test(wf), "no secrets");
+  const pushes = [...wf.matchAll(/git push[^\n]*/g)].map((m) => m[0]);
+  assert.deepEqual(pushes, ['git push -q "$remote" "$commit:refs/heads/testnet-data"'], "it pushes testnet-data and nothing else");
+  assert.ok(!/games-data|race-data|refs\/heads\/main"/.test(wf.replace(/never main, never games-data/g, "")), "never names a mainnet branch");
+  assert.match(wf, /--testnet --game/);
+  // The shape check, exactly as the workflow runs it.
+  // The Python exactly as the runner gets it: YAML parsed, then the heredoc body of the publish step (review #1).
+  const runs = JSON.parse(execFileSync("python3", ["-c", "import yaml,json,sys; w=yaml.safe_load(open(sys.argv[1])); print(json.dumps([s.get('run','') for j in w['jobs'].values() for s in j['steps']]))", path.resolve(APP, ".github/workflows/games-testnet.yml")], { encoding: "utf8" }));
+  const sh = runs.find((r) => r.includes("<<'PY'"));
+  const py = sh.slice(sh.indexOf("<<'PY'\n") + 7, sh.indexOf("\nPY\n") + 1);
+  assert.ok(py.length > 500 && /^import json/.test(py), "the heredoc body, with the shell's own indentation removed");
+  const FAST = { id: 92, round: 300, offset: 0, lead: 100, ahead: 3700, picksPerDay: 50, maxChanges: 5 };
+  const lib = H0 + 10 * 300 + 50;
+  const signersOf = async () => ({ signers: [BIG, MID, SMALL], first: T(lib - 7199), last: T(lib), n: 7200 });
+  const vhpOf = async () => ({ [BIG]: "200000000000", [MID]: "100000000000", [SMALL]: "1000000000" });
+  const fastPicks = async (node, r) => [{ player: ALICE, producer: MID, time: T(r * 300) - 600000 }];
+  const out = tmp();
+  await quiet(() => run({ p: "main", check: null, out, game: FAST, cards: "self", picksContract: "1" + "P".repeat(33), blockOf: blockOf(), picksOf: fastPicks, rankedOf, signersOf, vhpOf,
+    head: { height: lib + 60, time: T(lib + 60), lib } }));
+  const check = (dir, id) => spawnSync("python3", ["-I", "-", dir, String(id)], { input: py, encoding: "utf8" });
+  const ok = check(out, 92);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /testnet games files ok/);
+  assert.notEqual(check(out, 2).status, 0, "files for game 92 can't be published as game 2");
+  const bad = tmp(); for (const f of fs.readdirSync(out)) fs.copyFileSync(path.join(out, f), path.join(bad, f));
+  const c = JSON.parse(fs.readFileSync(path.join(bad, "cards.json"), "utf8")); c.cards[0].field[0].a = "<script>"; fs.writeFileSync(path.join(bad, "cards.json"), JSON.stringify(c));
+  assert.notEqual(check(bad, 92).status, 0, "a card with a bad address is refused");
+  void execFileSync;
+});
+
+test("every workflow's embedded Python compiles exactly as the runner gets it", () => {
+  const out = execFileSync("python3", ["-c", `
+import yaml, sys, glob, re
+n = 0
+for f in sorted(glob.glob(sys.argv[1] + "/.github/workflows/*.yml")):
+    w = yaml.safe_load(open(f))
+    for j in w["jobs"].values():
+        for st in j.get("steps", []):
+            r = st.get("run", "")
+            for m in re.finditer(r"<<'PY'\\n(.*?)\\n[ ]*PY\\n", r, re.S):
+                body = m.group(1)
+                # inside a loop the shell keeps the heredoc lines as written; python must still compile them
+                compile(body + "\\n", f, "exec"); n += 1
+print(n)`, path.resolve(APP)], { encoding: "utf8" });
+  assert.ok(Number(out) >= 2, `compiled ${out.trim()} blocks`);
 });

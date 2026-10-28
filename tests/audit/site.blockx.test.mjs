@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
+import path from "node:path";
 
 const APP = process.env.APP || ".";
 const read = (f) => fs.readFileSync(`${APP}/site/${f}`, "utf8");
@@ -148,8 +149,104 @@ test("blockx.html: strict CSP with the games-data and race-data branches, script
   assert.ok(order.every((x, i) => x > 0 && (i === 0 || x > order[i - 1])), "script order");
   assert.doesNotMatch(js, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/);
   // The pick it builds: game 2, one producer, number 0, for the wallet that is connected.
-  assert.match(js, /functions\.pick\(\{ player: who, game: X\.GAME_ID, round: String\(r\), producers: \[producer\], number: "0" \}, \{ onlyOperation: true \}\)/);
+  assert.match(js, /functions\.pick\(\{ player: who, game: G\.GAME_ID, round: String\(r\), producers: \[producer\], number: "0" \}, \{ onlyOperation: true \}\)/);
   // It never offers a target within 20 blocks of its lock, and checks again right before sending.
-  assert.match(js, /X\.offerRounds\(head\.height\)/);
-  assert.match(js, /if \(!\(X\.lockHeight\(r\) - head\.height > 20\)\)/);
+  assert.match(js, /G\.offerRounds\(head\.height\)/);
+  assert.match(js, /if \(!\(G\.lockHeight\(r\) - head\.height > 20\)\)/);
+  // The live page uses the shared Knode Games board (Staked / Free play) and says prizes wait for the vault.
+  assert.match(h, /<script src="board\.js"><\/script>/);
+  assert.match(js, /free: \{ show: 6/);
+  assert.match(js, /paid once the Knode Games vault is live/);
+});
+
+// ── the testnet page: its own page, its own wallet, nothing of mainnet ──
+test("blockx-testnet.html: testnet only — its node and data branch, no mainnet wallet scripts, not indexed, clearly marked", () => {
+  const h = read("blockx-testnet.html");
+  const csp = h.match(/http-equiv="Content-Security-Policy" content="([^"]*)"/)[1];
+  const conn = csp.match(/connect-src ([^;]*)/)[1].trim().split(/\s+/);
+  assert.deepEqual(conn, ["'self'", "https://testnet.koinosfoundation.org", "https://raw.githubusercontent.com/bawcejawn/Knode/testnet-data/"]);
+  assert.match(h, /<meta name="kg-network" content="testnet">/);
+  assert.match(h, /<meta name="robots" content="noindex, nofollow">/);
+  assert.match(h, /TESTNET · test KOIN only/);
+  for (const f of ["wallet.js", "guest.js", "header-wallet.js", "nav.js"]) assert.ok(!h.includes(`<script src="${f}">`), `never loads ${f}`);
+  const order = ["testnet-wallet.js", "race-math.js", "blockx-math.js", "board.js", "blockx.js"].map((f) => h.indexOf(`<script src="${f}"></script>`));
+  assert.ok(order.every((x, i) => x > 0 && (i === 0 || x > order[i - 1])), "testnet-wallet.js (with its frame-buster) first");
+  assert.doesNotMatch(h, /<script>(?!<\/script>)|\son[a-z]+="/, "no inline scripts or handlers");
+  // Not linked from any mainnet page's menus, and not in the sitemap.
+  for (const f of fs.readdirSync(`${APP}/site`).filter((x) => x.endsWith(".html") && x !== "blockx-testnet.html" && x !== "blockx.html"))
+    assert.ok(!read(f).includes("blockx-testnet.html"), `${f} doesn't link the testnet page`);
+  assert.ok(!fs.readFileSync(`${APP}/sitemap.xml`, "utf8").includes("blockx-testnet"));
+});
+
+test("testnet-wallet.js: own storage, refuses mainnet, signs only testnet Picks calls for the testnet chain", async () => {
+  const js = read("testnet-wallet.js");
+  assert.doesNotMatch(js, /kn-guest|knode-guest|kw-kind|kw-acc|innerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/, "no mainnet wallet storage, no HTML sinks");
+  const store = new Map();
+  const calls = [];
+  const fakeProvider = (chain) => ({ getChainId: async () => chain, getAccountRc: async () => "1000000000", wait: async () => ({}) });
+  const MAIN = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==", TEST = "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==";
+  class Signer { constructor({ privateKey }) { this.k = privateKey; } getAddress() { return "1Test" + this.k.slice(0, 4); } }
+  let tamper = null;   // a wallet that changes what it signs
+  class Transaction { constructor(o) { this.o = o; this.ops = []; } async pushOperation(op) { this.ops.push(op); }
+    async sign() { calls.push(this.o.options); const t = { header: { chain_id: this.o.options.chainId, payer: this.o.options.payer, rc_limit: this.o.options.rcLimit }, operations: this.ops, id: "0xabc" }; return tamper ? tamper(t) : t; } async send() { return {}; } }
+  const win = { localStorage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) },
+    crypto: { getRandomValues: (b) => { for (let i = 0; i < b.length; i++) b[i] = i + 1; return b; } }, koilib: { Signer, Transaction } };
+  win.top = win; win.self = win; win.window = win;
+  const box = { window: win, document: { createElement: () => ({ setAttribute() {}, addEventListener() {}, append() {}, replaceChildren() {}, querySelector: () => null }), body: { append() {} }, documentElement: { style: {} } } };
+  vm.runInNewContext(js, box);
+  const T = win.KTestWallet;
+  assert.ok(T, "loaded");
+  assert.throws(() => T.init({ provider: fakeProvider(MAIN), chainId: MAIN, picks: "1Picks" }), /testnet chain id/, "refuses the mainnet chain id");
+  T.init({ provider: fakeProvider(TEST), chainId: TEST, picks: "1PicksContractAAAAAAAAAAAAAAAAAAA" });
+  assert.deepEqual([...T.STORAGE], ["kg-testnet-wallet-v1", "kg-testnet-kind-v1"]);
+  // Not connected: nothing is signed.
+  await assert.rejects(T.send("x", [{ call_contract: { contract_id: "1PicksContractAAAAAAAAAAAAAAAAAAA", entry_point: 1 } }]), /Connect a testnet wallet/);
+  // A test key kept from last time comes back by itself (only under the testnet storage names).
+  store.set("kg-testnet-wallet-v1", "ab".repeat(32)); store.set("kg-testnet-kind-v1", "test");
+  T.init({ provider: fakeProvider(TEST), chainId: TEST, picks: "1PicksContractAAAAAAAAAAAAAAAAAAA" });
+  assert.equal(T.kind, "test");
+  const pick = { call_contract: { contract_id: "1PicksContractAAAAAAAAAAAAAAAAAAA", entry_point: 0x8ce33c6c } };
+  await assert.rejects(T.send("x", [{ call_contract: { contract_id: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", entry_point: 1 } }]), /only picks on the testnet Picks contract/);
+  assert.equal(await T.send("pick", [pick]), "0xabc");
+  assert.equal(calls.at(-1).chainId, TEST, "signed for the testnet chain");
+  assert.equal(calls.at(-1).payer, T.address, "the player pays its own test Mana");
+  assert.ok(BigInt(calls.at(-1).rcLimit) <= 300000000n, "at most 3 test Mana");
+  // A wallet that raises the Mana limit or swaps the operation: refused before sending (review #7).
+  tamper = (t) => ({ ...t, header: { ...t.header, rc_limit: "100000000000" } });
+  await assert.rejects(T.send("pick", [pick]), /raised the Mana limit/);
+  tamper = (t) => ({ ...t, operations: [{ call_contract: { contract_id: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", entry_point: 1 } }] });
+  await assert.rejects(T.send("pick", [pick]), /changed what is signed/);
+  tamper = null;
+  // If the node turns out to be on mainnet, nothing is signed.
+  T.init({ provider: fakeProvider(MAIN), chainId: TEST, picks: "1PicksContractAAAAAAAAAAAAAAAAAAA" });
+  const n = calls.length;
+  await assert.rejects(T.send("pick", [pick]), /MAINNET/);
+  assert.equal(calls.length, n, "nothing signed");
+});
+
+// ── the local testnet server (tools/testnet-site.mjs): only the page, its settings and the recorder's files ──
+test("local testnet server: serves only the allowlist (never .env.testnet or other project files), on 127.0.0.1", async () => {
+  const { allowed, serve } = await import(path.resolve(APP, "tools/testnet-site.mjs"));
+  for (const ok of ["/site/blockx-testnet.html", "/site/blockx.js", "/testnet/blockx.json", "/testnet-data/blockx-92/board.json", "/testnet-data/blockx-2/W003.json"]) assert.ok(allowed(ok), ok);
+  for (const bad of ["/.env.testnet", "/.env", "/site/../.env.testnet", "/site/%2e%2e/.env.testnet", "/%2e%2e/%2e%2e/etc/passwd", "/bot/picks.ts", "/package.json", "/testnet-data/lock-test-92-1.json",
+    "/testnet-data/blockx-92/../../.env.testnet", "/site/.hidden.js", "/picks/build/testnet/manifest.json", "/site\\..\\.env", "/site/x.ts", "/testnet/other.json"]) assert.equal(allowed(bad), null, bad);
+  const src = fs.readFileSync(path.resolve(APP, "tools/testnet-site.mjs"), "utf8");
+  assert.match(src, /listen\(port, "127\.0\.0\.1"\)/, "listens on this computer only");
+  const s = serve(0);
+  await new Promise((r) => s.once("listening", r));
+  const port = s.address().port, get = (u, m = "GET") => fetch(`http://127.0.0.1:${port}${u}`, { method: m, redirect: "manual" });
+  try {
+    assert.equal((await get("/site/blockx-testnet.html")).status, 200);
+    assert.equal((await get("/.env.testnet")).status, 404);
+    assert.equal((await get("/package.json")).status, 404);
+    assert.equal((await get("/site/blockx-testnet.html", "POST")).status, 405);
+  } finally { s.close(); }
+});
+
+test("testnet page on localhost reads the recorder's local files; elsewhere the testnet-data branch", () => {
+  const js = fs.readFileSync(path.resolve(APP, "site/blockx.js"), "utf8");
+  assert.match(js, /location\.hostname === "localhost" \|\| location\.hostname === "127\.0\.0\.1"/);
+  assert.match(js, /new URL\(`testnet-data\/blockx-\$\{game\.id\}\/`, ROOT\)/);
+  const i = js.indexOf("if (!TESTNET) {"), j = js.indexOf("const cfg = await fetchJson");
+  assert.ok(!/testnet-data/.test(js.slice(i, j)), "the mainnet branch of setupNet never names testnet data");
 });

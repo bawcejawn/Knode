@@ -122,10 +122,11 @@ jobs:
                       and all(type(p) is dict and set(p) == {"player", "place", "vhp"} and addr.fullmatch(str(p["player"])) and nat(p["place"]) and num(p["vhp"]) and 0 < p["vhp"] <= 2 for p in lw["prizes"])), f
                   continue
               if f == "index.json":
-                  assert set(j) == {"v", "updated", "weeks", "contract"} and j["v"] == 1 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
+                  assert set(j) == {"v", "updated", "weeks", "contract", "game", "prizesFromWeek"} and j["v"] == 1 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
+                  assert j["game"] == 2 and (j["prizesFromWeek"] is None or nat(j["prizesFromWeek"])), f
                   assert j["contract"] is None or addr.fullmatch(str(j["contract"])), f
                   continue
-              assert set(j) == {"v", "week", "start", "end", "targets"} and j["v"] == 1 and f == "W%03d.json" % j["week"], f
+              assert set(j) == {"v", "week", "start", "end", "game", "targets"} and j["v"] == 1 and j["game"] == 2 and f == "W%03d.json" % j["week"], f
               assert type(j["targets"]) is list and len(j["targets"]) <= 100 and all(target_ok(t) for t in j["targets"]), f
           print("games files ok")
           PY

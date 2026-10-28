@@ -7,11 +7,14 @@
  * - A pick is one producer for one target. The Picks contract locks it 100 blocks (~5 min) before the target: the last
  *   block a pick can land in is target − 101. Picks open 28,900 blocks ahead, so 12 targets are always open.
  * - A pick can be changed until the lock (at most 5 times), up to 30 picks and changes a day per wallet.
+ * - Those are the mainnet settings (Picks game 2). forGame() gives the same rules for other settings, such as the
+ *   Koinos testnet's fast game (targets every 300 blocks, about 15 minutes); each network's config names its games.
  *
  * SCORING
  *   a correct pick scores min(3, top producer's VHP ÷ picked producer's VHP), to 2 decimals; a wrong pick scores 0.
  * - The VHP comes from the Producer Race card in force at the lock block's time (site/race-math.js: the hourly card of
- *   that race leg), field and paddock together, so every producer that can sign counts.
+ *   that race leg), field and paddock together, so every producer that can sign counts. On a network with no Producer
+ *   Race (the testnet), the recorder takes the same hourly card itself (bot/games/blockx.ts, CARDS=self).
  * - Koinos picks signers in proportion to VHP, so a pick's expected score is min(3 × its share, the top's share): every
  *   producer with at least a third of the top's VHP is an equally good pick on average, and the cap of 3 keeps a
  *   lucky long shot from running away with a week (simulated 2026-10-27: thoughtful players win ~96% of weeks; with
@@ -21,33 +24,50 @@
  *
  * LEADERBOARD: Today (the target block's UTC day), This week (the Knode game week of the target block) and All time.
  *   Ranked by points; ties: more correct picks, then the earlier last correct pick (lower height), then address.
- * PRIZE ELIGIBILITY (weekly 2 VHP / 1 VHP): any wallet, guests included (owner's decision 2026-10-27), with at least
- *   one point and picks made on at least 3 different UTC days that week (so a wallet can't win from one visit). */
+ *   Two boards, as in every Knode Games game (site/board.js): Staked (wallets holding 1 VHP or with a Knode stake) and
+ *   Free play (everyone else, guests included).
+ * PRIZES (weekly 2 VHP / 1 VHP, owner's decisions 2026-10-27/28): the top 2 of the Free play board, each with at least
+ *   one point and picks on at least 3 different UTC days that week (so a wallet can't win from one visit). Ties share.
+ *   None until the Knode Games vault (v6) is live: the recorder lists prizes only from its PRIZES_FROM_WEEK, and nothing
+ *   is owed for earlier weeks. The vault pays them. */
 (function (root) {
   "use strict";
-  const ROUND = 2400, LEAD = 100, AHEAD = 28900, CAP = 3, OPEN = 12, MAX_CHANGES = 5, PICKS_PER_DAY = 30;
-  const MIN_PRIZE_DAYS = 3;
-  const GAME_ID = 2;
+  // The mainnet game (Picks game 2). Another network can run Block X with other settings (the testnet's fast game):
+  // forGame(settings) gives the same functions for those settings, read from the network's config.
+  const MAINNET_GAME = Object.freeze({ id: 2, round: 2400, offset: 0, lead: 100, ahead: 28900, picksPerDay: 30, maxChanges: 5 });
+  const CAP = 3, OPEN = 12, MIN_PRIZE_DAYS = 3;
   const BLOCK_MS = 3000;            // ~3 s a block (an estimate for showing times as "about")
   const DAY = 86400000, WEEK = 7 * DAY;
   const GENESIS = 1792368000000;    // the Knode game's week 0: Monday 2026-10-19 00:00 UTC (as site/race-math.js)
   const round2 = (x) => Math.round(x * 100) / 100;
 
-  // ── targets ──
-  const target = (r) => r * ROUND;
-  /** The first height at which the contract refuses a pick for round r. */
-  const lockHeight = (r) => r * ROUND - LEAD;
-  /** Is round r open for a pick that lands in block `height`? Exactly the contract's rule. */
-  const isOpen = (r, height) => r >= 1 && height < lockHeight(r) && target(r) - height <= AHEAD;
-  /** The rounds open for a pick landing in block `height` (always 12), soonest first. */
-  function openRounds(height) {
-    const out = [];
-    for (let r = Math.max(1, Math.floor(height / ROUND)); out.length < OPEN + 1 && target(r) <= height + AHEAD; r++) if (isOpen(r, height)) out.push(r);
-    return out;
+  // ── targets (per game) ──
+  /** The target functions for one game's settings: exactly the Picks contract's rules for a height-locked game. */
+  function forGame(g) {
+    const s = Object.assign({}, MAINNET_GAME, g || {});
+    for (const k of ["id", "round", "offset", "lead", "ahead", "picksPerDay", "maxChanges"])
+      if (!Number.isInteger(s[k]) || s[k] < 0) throw new Error(`Block X settings: ${k} must be a whole number`);
+    if (s.round < 1 || s.offset >= s.round || s.lead < 100 || s.ahead <= s.lead) throw new Error("Block X settings are outside the Picks contract's limits");
+    const target = (r) => r * s.round + s.offset;
+    /** The first height at which the contract refuses a pick for round r. */
+    const lockHeight = (r) => target(r) - s.lead;
+    /** Is round r open for a pick that lands in block `height`? Exactly the contract's rule. */
+    const isOpen = (r, height) => r >= 1 && target(r) > s.lead && height < lockHeight(r) && target(r) - height <= s.ahead;
+    /** The rounds open for a pick landing in block `height`, soonest first. */
+    function openRounds(height) {
+      const out = [];
+      for (let r = Math.max(1, Math.floor((height - s.offset) / s.round)); target(r) <= height + s.ahead; r++) if (isOpen(r, height)) out.push(r);
+      return out;
+    }
+    /** What the page offers: open rounds whose lock is more than `margin` blocks away (so a pick sent now doesn't land
+     *  after the lock), soonest first. */
+    const offerRounds = (height, margin = 20) => openRounds(height).filter((r) => lockHeight(r) - height > margin);
+    /** The round whose target is block h, or null. */
+    const roundOf = (h) => (Number.isInteger(h) && h >= s.offset && (h - s.offset) % s.round === 0 && h > s.offset ? (h - s.offset) / s.round : null);
+    return Object.freeze({ GAME_ID: s.id, ROUND: s.round, OFFSET: s.offset, LEAD: s.lead, AHEAD: s.ahead, PICKS_PER_DAY: s.picksPerDay, MAX_CHANGES: s.maxChanges,
+      settings: Object.freeze(s), target, lockHeight, isOpen, openRounds, offerRounds, roundOf });
   }
-  /** What the page offers: open rounds whose lock is more than `margin` blocks away (so a pick sent now doesn't land
-   *  after the lock), soonest first. */
-  const offerRounds = (height, margin = 20) => openRounds(height).filter((r) => lockHeight(r) - height > margin);
+  const MAIN = forGame(MAINNET_GAME);
   /** About when block h will be made, from the head block's height and time. */
   const aboutTime = (h, headHeight, headTime) => headTime + (h - headHeight) * BLOCK_MS;
 
@@ -120,7 +140,9 @@
   }
 
   root.KBlockX = {
-    ROUND, LEAD, AHEAD, CAP, OPEN, MAX_CHANGES, PICKS_PER_DAY, MIN_PRIZE_DAYS, GAME_ID, BLOCK_MS, DAY, WEEK, GENESIS,
-    target, lockHeight, isOpen, openRounds, offerRounds, aboutTime, vhpOf, multiplier, pointsOf, dayOf, weekOf, board, places, prizes,
+    // the mainnet game's settings and target functions (game 2), and forGame for any other settings
+    ...MAIN, MAINNET_GAME, forGame,
+    CAP, OPEN, MIN_PRIZE_DAYS, BLOCK_MS, DAY, WEEK, GENESIS,
+    aboutTime, vhpOf, multiplier, pointsOf, dayOf, weekOf, board, places, prizes,
   };
 })(typeof window !== "undefined" ? window : globalThis);
