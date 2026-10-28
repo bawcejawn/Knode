@@ -107,7 +107,7 @@ async function status() {
 
 // ═══════════════════════════════ deploy ═══════════════════════════════
 async function deploy(send: boolean) {
-  const rpc = E.RPC ?? "https://api.koinos.io";
+  const rpc = E.RPC ?? "https://koinos.armana.io";
   const mainnet = isMainnet(rpc);
   if (send && mainnet && E.CONFIRM_MAINNET !== "yes") throw new Error(`RPC is ${rpc} (MAINNET, real KOIN). Add CONFIRM_MAINNET=yes to .env if you really mean it.`);
   const contractKey = Signer.fromWif(need("DESK_CONTRACT_WIF"));
@@ -405,7 +405,7 @@ async function main() {
     case "chain-rate": return chainRate(Number(a[0] && !a[0].startsWith("--") ? a[0] : 3000));
     case "node-status": {
       const rpc = E.DESK_NODE_RPC ?? "http://127.0.0.1:8100";
-      const pub: any = await new Provider([E.RPC ?? "https://api.koinos.io"]).getHeadInfo();
+      const pub: any = await new Provider([E.RPC ?? "https://koinos.armana.io"]).getHeadInfo();
       const ph = Number(pub.head_topology.height);
       let lh = 0;
       try { lh = Number(((await new Provider([rpc]).getHeadInfo()) as any).head_topology.height); }

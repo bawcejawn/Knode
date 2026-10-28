@@ -31,7 +31,7 @@ await import("../site/race-math.js");
 const M: any = (globalThis as any).KRaceMath;
 
 const E = process.env;
-const RPC = E.RPC || "https://api.koinos.io";
+const RPC = E.RPC || "https://koinos.armana.io";
 const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
 let PREV = E.RACE_PREV || "";
 let OUT = E.RACE_OUT || "race-data";
