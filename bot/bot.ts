@@ -123,6 +123,8 @@ type BotState = {
   lastProduced: number; producedByDay: Record<string, number>; producerScannedTo: number;
   /** Owner-only changes already emailed about (so each one fails a run, and emails you, once — not every hour). */
   notified?: string[];
+  /** Mana the bot wallet spent per UTC day ("YYYY-MM-DD" → units), last 60 days: for the platform's daily Mana budget. */
+  manaByDay?: Record<string, string>;
   /** Block-producer keys first seen on record for the game and the desk (used when deployment.json names none). */
   producerKey?: string; deskProducerKey?: string;
   /** The owner-only settings seen on the last run (to report a change). */
@@ -173,6 +175,8 @@ export type Ctx = {
   recentSigners?: (lib: number, maxBlocks: number) => Promise<{ blocks: SignedBlock[]; from: number; to: number }>;
   /** Things that need a human. A scheduled run with problems ends as "failed", which makes GitHub email you. */
   problems: string[];
+  /** Mana (units) this run's bot-paid transactions used, from their receipts. */
+  manaUsed?: bigint;
   quiet?: boolean;
   /** Real runs only: when the day's release time is this close (ms), wait for it instead of leaving it to the next
    *  run, so questions come out on the dot (the release run is started a few minutes early). */
@@ -237,12 +241,13 @@ export const BOT_MANA_FLOOR = toSat(Number(E.BOT_MANA_FLOOR ?? 2));
 async function sendOp(ctx: Ctx, what: string, calls: Call[], opts: { sponsored?: boolean } = {}): Promise<boolean> {
   if (ctx.dryRun) { log(`  [dry run] would send: ${what}`); return true; }
   let r = await ctx.chain.send(calls, [ctx.operator], opts);
+  const contractPaid = !!opts.sponsored && r.ok;
   if (!r.ok && opts.sponsored) {
     // The contract only sponsors what it can verify is valid; if it declines, the bot pays instead, a few per run.
     ctx.botPaid = (ctx.botPaid ?? 0) + 1;
     if (!ctx.botPaidUncapped && ctx.botPaid > MAX_BOT_PAID_SETTLES) {
       if (ctx.botPaid === MAX_BOT_PAID_SETTLES + 1) {
-        ctx.problems.push(`The contract declined to pay for more than ${MAX_BOT_PAID_SETTLES} settles this run. The bot paid for ${MAX_BOT_PAID_SETTLES} and left the rest for later runs (anyone can settle any player).`);
+        ctx.problems.push(`More than ${MAX_BOT_PAID_SETTLES} players needed settling this run. The game contract no longer pays Mana for anyone, so the bot paid for ${MAX_BOT_PAID_SETTLES} itself and left the rest for later runs (anyone can settle any player).`);
       }
       return false;
     }
@@ -255,6 +260,8 @@ async function sendOp(ctx: Ctx, what: string, calls: Call[], opts: { sponsored?:
     }
     r = await ctx.chain.send(calls, [ctx.operator], {});
   }
+  // Count what the bot wallet paid (a reverted transaction is paid too; one the contract paid for is not).
+  if (!contractPaid && r.rcUsed) { try { ctx.manaUsed = (ctx.manaUsed ?? 0n) + BigInt(r.rcUsed); } catch { /* not a number: not counted */ } }
   if (r.ok) { if (!ctx.quiet) log(`  ✔ ${what}${r.rcUsed && r.rcUsed !== "0" ? `  (Mana ${showKoin(r.rcUsed)})` : ""}`); }
   else { log(`  ✖ ${what}: ${r.error}`); ctx.problems.push(`A transaction failed: ${what} — ${String(r.error).slice(0, 200)}`); }
   return r.ok;
@@ -311,6 +318,13 @@ export async function tick(ctx: Ctx) {
   await step("health check", () => healthPass(ctx, bs));
   await step("settling players", () => settlePass(ctx));
   await step("compounding", () => compoundPass(ctx, bs));
+  if (!ctx.dryRun && ctx.manaUsed) {
+    const day = new Date().toISOString().slice(0, 10), m = { ...(bs.manaByDay ?? {}) };
+    m[day] = String(big(m[day]) + ctx.manaUsed);
+    bs.manaByDay = Object.fromEntries(Object.entries(m).sort().slice(-60));
+    ctx.manaUsed = 0n;
+    save();
+  }
   if (!ctx.dryRun) writeIndex(P);
   ctx.checkpoint("bot: tick");
 }

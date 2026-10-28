@@ -557,15 +557,16 @@
   function friendlyError(msg) {
     const m = msg.match(/"([^"]{6,140})"/);
     const text = m ? m[1] : msg;
-    if (/insufficient\s*(rc|mana|resources?)|\bmana\b|\brc[_ ]?limit\b|out of rc/i.test(text)) return `not enough Mana. In Kondor, tick the free Mana option; in KOIN Vault, hold a little KOIN; or wait for Mana to refill. (${text.slice(0, 90)})`;
+    if (/insufficient\s*(rc|mana|resources?)|\bmana\b|\brc[_ ]?limit\b|out of rc/i.test(text)) return `not enough Mana. Today's free Mana may be used up, so this one needs your own: hold a little KOIN in your wallet (its Mana refills by itself), or try again after 00:00 UTC. (${text.slice(0, 90)})`;
     return text.slice(0, 160);
   }
 
-  // Staked players' answers are paid by the game contract (Kondor's free Mana option), so they don't use up the Mana
-  // sponsor; everything else can use the sponsor when deployment.json turns it on (site/wallet.js).
+  // Every player action, answers included, asks the Mana sponsor first (site/wallet.js); when its caps are used up the
+  // player's own Mana pays. The game contract no longer pays for anyone (owner, 2026-10-28): its Mana is kept for
+  // burning block rewards back into VHP.
   const answer = (q, option) => send(`answer ${String.fromCharCode(65 + option)}`, async () => [
     await opOf(writer(), "answer", { player: S.account, question_id: q.chainId, option }),
-  ], { gamePays: (S.activeStake ?? 0n) >= UNIT });
+  ]);
 
   const claim = (week) => send(`collect week ${week + 1} reward`, async () => [
     await opOf(writer(), "claim", { player: S.account, week: String(week) }),

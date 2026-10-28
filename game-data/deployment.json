@@ -18,7 +18,7 @@
   "settleLength": 86400000,
   "timelockLength": 172800000,
   "minStake": "100000000",
-  "maxSponsorRc": "200000000",
+  "maxSponsorRc": "0",
   "deployedAt": "2026-10-16T02:03:38.621Z",
   "upgradedAt": "2026-10-19T00:39:33.713Z",
   "producerKey": "Ak0vGklNyfkjroA5_nT04sfBy_IkloaNbXYiOClcjMm3",
