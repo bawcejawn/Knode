@@ -47,8 +47,8 @@ const MAX_BOARD_ROWS = 1000;               // per leaderboard view (the page sho
 const isAddr = (a: unknown): a is string => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
 
 export type RawPick = { player: string; number: number; time: number };
-type Hour = { from: number; to: number; n: number; by: Record<string, number>; share: Record<string, number> | null; checked: number };
-type Seeding = { at: number; cardAt: number; size: number; seeds: string[]; vhp: number[]; totalVhp: number; out: string[]; hash: string };
+type Hour = { from: number; to: number; n: number; by: Record<string, number>; share: Record<string, number> | null; tot: number | null; checked: number };
+type Seeding = { at: number; cardAt: number; size: number; seeds: string[]; vhp: number[]; totalVhp: number; proven: (number | null)[]; out: string[]; hash: string };
 /** A recorded pick: [player, number, pick time (ms), valid bracket 1/0]. */
 type Pick = [string, number, number, number];
 /** Points: [player, points, correct champion 1/0, correct winners]. */
@@ -67,6 +67,7 @@ export type Node = {
   head(): Promise<{ height: number; time: number; lib: number; libTime: number; id: string }>;
   blockTime(h: number): Promise<number>;
   blocks(from: number, to: number): Promise<BlockRange>;
+  blockId?(h: number): Promise<string>;
 };
 type Opts = {
   p: any; check: any | null; prev?: string; out?: string; raceDir?: string;
@@ -89,13 +90,13 @@ function freshWeek(w: number): WeekFile {
   return { v: 1, week: w, start: B.weekStart(w), end: B.weekStart(w + 1), status: "waiting", seeding: null, picks: null, days: [], results: null, points: [] };
 }
 const hourOk = (h: any) => h && Number.isInteger(h.from) && Number.isInteger(h.to) && h.to >= h.from - 1 && Number.isInteger(h.n) && h.n >= 0
-  && h.by && typeof h.by === "object" && (h.share === null || typeof h.share === "object") && (h.checked === 1 || h.checked === 2);
+  && h.by && typeof h.by === "object" && (h.share === null || typeof h.share === "object") && (h.tot === null || (Number.isFinite(h.tot) && h.tot > 0)) && (h.checked === 1 || h.checked === 2);
 function loadWeek(dir: string | undefined, w: number): WeekFile {
   const f = freshWeek(w), old = readJson(dir, wName(w));
   if (!old || old.v !== 1 || old.week !== w) return f;
   const s = old.seeding;
   if (s && Number.isInteger(s.size) && [0, 8, 16, 32].includes(s.size) && Array.isArray(s.seeds) && s.seeds.every(isAddr) && s.seeds.length <= s.size
-      && typeof s.hash === "string" && s.hash === seedHash(w, s)) f.seeding = s;
+      && Array.isArray(s.proven) && s.proven.length === s.seeds.length && typeof s.hash === "string" && s.hash === seedHash(w, s)) f.seeding = s;
   if (old.status === "void") { f.status = "void"; f.void = typeof old.void === "string" ? old.void.slice(0, 200) : "void"; }
   else if (old.status === "none" && f.seeding && f.seeding.size === 0) { f.status = "none"; f.void = typeof old.void === "string" ? old.void.slice(0, 200) : "no bracket this week"; }
   if (f.seeding && old.picks && Array.isArray(old.picks.rows)) f.picks = { checked: old.picks.checked === 2 ? 2 : 1, rows: old.picks.rows.filter((x: any) => Array.isArray(x) && isAddr(x[0]) && Number.isSafeInteger(x[1]) && x[1] >= 0).map((x: any) => [x[0], x[1], Number(x[2]) || 0, x[3] ? 1 : 0] as Pick) };
@@ -106,7 +107,7 @@ function loadWeek(dir: string | undefined, w: number): WeekFile {
   return f;
 }
 function seedHash(w: number, s: Omit<Seeding, "hash">) {
-  return crypto.createHash("sha256").update(JSON.stringify({ week: w, at: s.at, cardAt: s.cardAt, size: s.size, seeds: s.seeds, vhp: s.vhp, totalVhp: s.totalVhp, out: s.out })).digest("hex");
+  return crypto.createHash("sha256").update(JSON.stringify({ week: w, at: s.at, cardAt: s.cardAt, size: s.size, seeds: s.seeds, vhp: s.vhp, totalVhp: s.totalVhp, proven: s.proven, out: s.out })).digest("hex");
 }
 function defaultPicksContract(): string | null {
   try { const d = JSON.parse(fs.readFileSync(new URL("../../picks-data/deployment.json", import.meta.url), "utf8")); return isAddr(d.contract) ? d.contract : null; } catch { return null; }
@@ -121,6 +122,20 @@ function cardAt(raceDir: string | undefined, t: number): any | null {
   const n = M.legsOf(race.cards);
   const c = M.cardForLeg(race.cards, M.legOf(ra.start, t, n));
   return c && Array.isArray(c.field) && c.field.length ? c : null;
+}
+
+/** The race recorder's final results, counted on two nodes, of the races inside [from, to). */
+function raceResults(raceDir: string | undefined, from: number, to: number): any[] {
+  const out: any[] = [];
+  for (let w = M.weekOf(from); w <= M.weekOf(to - 1); w++) {
+    const wf = readJson(raceDir, wName(w));
+    if (!wf || !Array.isArray(wf.races)) continue;
+    for (const r of wf.races) {
+      const res = r && r.result;
+      if (r.start >= from && r.end <= to && res && res.final === true && res.checked === 2 && !res.missed && Number.isFinite(res.blocks) && res.blocks > 0 && Array.isArray(res.standings)) out.push(res);
+    }
+  }
+  return out;
 }
 
 // ── chain reads ──
@@ -140,6 +155,7 @@ function chainNode(p: any): Node {
       return { id: headId, height: Number(h.head_topology.height), time: Number(h.head_block_time), lib, libTime: Number((await blockAt(lib)).block.header.timestamp) };
     },
     async blockTime(h) { return Number((await blockAt(h)).block.header.timestamp); },
+    async blockId(h) { return String((await blockAt(h)).block_id); },
     async blocks(from, to) {
       const ts: number[] = [], who: string[] = [];
       let k = from;
@@ -169,7 +185,7 @@ async function readHour(n: Node, head: Head, start: number, card: any, seeds: st
   const from = await heightAt(n, head, start), next = await heightAt(n, head, start + HOUR), to = next - 1;
   const blocks = to >= from ? await n.blocks(from, to) : { ts: [], sig: [], signers: [] };
   const h = B.hourOf(blocks, start, card, seeds);
-  return { from, to, n: h.n, by: h.by as Record<string, number>, share: h.share as Record<string, number> | null };
+  return { from, to, n: h.n, by: h.by as Record<string, number>, share: h.share as Record<string, number> | null, tot: h.tot as number | null };
 }
 const PICKS_ABI = () => JSON.parse(fs.readFileSync(new URL("../../picks/abi/picks.koilib.json", import.meta.url), "utf8"));
 async function readPicks(node: any, contract: string, round: number): Promise<RawPick[]> {
@@ -197,8 +213,11 @@ async function readGame(node: any, contract: string): Promise<any> {
 /** The Picks game must have exactly the shape bracket-math expects (audit F-5), or no picks are recorded. */
 export function gameProblem(g: any): string | null {
   if (!g) return "the Picks contract has no bracket game";
-  const want: [string, number][] = [["kind", 3], ["lock_mode", 2], ["round_size", B.WEEK], ["round_offset", B.ROUND_OFFSET], ["lead", B.LOCK_BEFORE], ["ahead", B.SEED_BEFORE], ["number_min", 0], ["number_max", B.NUMBER_MAX]];
+  const want: [string, number][] = [["kind", 3], ["lock_mode", 2], ["round_size", B.WEEK], ["round_offset", B.ROUND_OFFSET], ["number_min", 0], ["number_max", B.NUMBER_MAX]];
   for (const [k, v] of want) if (Number(g[k] ?? 0) !== v) return `the Picks bracket game has ${k} ${g[k] ?? 0}, expected ${v}`;
+  // tighten_game may lock earlier (a longer lead) or open later (a shorter ahead) at once; looser is never accepted (R-4)
+  if (!(Number(g.lead ?? 0) >= B.LOCK_BEFORE)) return `the Picks bracket game has lead ${g.lead ?? 0}, expected at least ${B.LOCK_BEFORE}`;
+  if (!(Number(g.ahead ?? 0) > 0 && Number(g.ahead) <= B.SEED_BEFORE)) return `the Picks bracket game has ahead ${g.ahead ?? 0}, expected at most ${B.SEED_BEFORE}`;
   return null;
 }
 
@@ -206,7 +225,7 @@ export function gameProblem(g: any): string | null {
 export function scoreWeek(wf: WeekFile) {
   if (!wf.seeding || !wf.seeding.size || !wf.picks) return { results: null, points: [] as Points[] };
   const { size, seeds } = wf.seeding;
-  const floor = B.seedShares(wf.seeding);
+  const floor = B.floorOf(wf.seeding);
   const days = wf.days.map((d) => (d.every(Boolean) ? B.indexFromHours(d, floor) : null));
   const res = B.results(seeds, size, days);
   // During a round's day: the winners so far are not known, so only finished rounds score.
@@ -231,7 +250,8 @@ export async function run(o: Opts) {
   // The clock for every decision: the irreversible block's time, the same on both nodes (audit F-4).
   if (nodeC) {
     const t2 = await nodeC.blockTime(head.lib);
-    if (t2 !== head.libTime) { const pr = `the two nodes disagree about block ${head.lib}'s time; nothing written this run`; console.log(`::warning::${pr}`); return { problems: [pr], weeks: new Map(), board: null }; }
+    const sameId = nodeP.blockId && nodeC.blockId ? (await nodeP.blockId(head.lib)) === (await nodeC.blockId(head.lib)) : true;
+    if (t2 !== head.libTime || !sameId) { const pr = `the two nodes disagree about block ${head.lib}'s time; nothing written this run`; console.log(`::warning::${pr}`); return { problems: [pr], weeks: new Map(), board: null }; }
   }
   const now = head.libTime;
   const picksRead = o.picksOf ?? (contract ? (node: any, r: number) => readPicks(node, contract, r) : null);
@@ -263,7 +283,8 @@ export async function run(o: Opts) {
       const s = B.seeding(card);
       const vhpOf = new Map<string, number>(card.field.map((r: any) => [r.a, Number(r.vhp)]));
       const totalVhp = [...card.field, ...(card.paddock || [])].reduce((t: number, r: any) => t + (Number.isFinite(r?.vhp) && r.vhp > 0 ? r.vhp : 0), 0);
-      const base = { at, cardAt: Number(card.at) || 0, size: s.size, seeds: [...s.seeds], vhp: s.seeds.map((a: string) => vhpOf.get(a) ?? 0), totalVhp, out: [...s.out] };
+      const proven = B.provenOf(raceResults(RACE, at - B.FLOOR_DAYS * DAY, at), s.seeds, totalVhp) as (number | null)[];
+      const base = { at, cardAt: Number(card.at) || 0, size: s.size, seeds: [...s.seeds], vhp: s.seeds.map((a: string) => vhpOf.get(a) ?? 0), totalVhp, proven, out: [...s.out] };
       wf.seeding = { ...base, hash: seedHash(w, base) };
       wf.days = emptyDays(s.size);
       if (!s.size) { wf.status = "none"; wf.void = `only ${s.seeds.length + s.out.length} producers in the field (8 needed); no bracket this week`; continue; }
@@ -278,8 +299,13 @@ export async function run(o: Opts) {
       else {
         try {
           if (!o.picksOf || o.gameOf) {
-            const gp = gameProblem(o.gameOf ? await o.gameOf(o.p) : await readGame(o.p, contract!));
+            const g1 = o.gameOf ? await o.gameOf(o.p) : await readGame(o.p, contract!);
+            const gp = gameProblem(g1);
             if (gp) { problems.push(`week ${w}: ${gp}; picks not recorded`); continue; }
+            if (o.check) {
+              const g2 = o.gameOf ? await o.gameOf(o.check) : await readGame(o.check, contract!);
+              if (JSON.stringify(g1) !== JSON.stringify(g2)) { problems.push(`week ${w}: the two nodes disagree about the Picks game; picks not recorded this run`); continue; }
+            }
           }
           const round = B.picksRound(w), raw = await picksRead(o.p, round);
           if (o.check) {
@@ -309,7 +335,7 @@ export async function run(o: Opts) {
       for (let h = 0; h < 24; h++) {
         const start = day + h * HOUR, rec = wf.days[r][h];
         if (rec) {   // fill in a share that was missing when the hour was recorded
-          if (!rec.share) { const c = cardAt(RACE, start); if (c) rec.share = B.hourOf({ ts: [], sig: [], signers: [] }, start, c, seeds).share; }
+          if (!rec.share) { const c = cardAt(RACE, start); if (c) { const x = B.hourOf({ ts: [], sig: [], signers: [] }, start, c, seeds); rec.share = x.share; rec.tot = x.tot; } }
           continue;
         }
         if (start + HOUR > head.libTime || hoursLeft <= 0) continue;

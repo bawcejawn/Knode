@@ -40,12 +40,12 @@ function nodeOf(signer, tamper = null) {
   });
 }
 const headAt = (t) => ({ height: hAt(t) + 20, time: t + 60000, lib: hAt(t), libTime: T(hAt(t)) });
-function raceDir(field, { skip = () => false } = {}) {
+function raceDir(field, { skip = () => false, results = null } = {}) {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "race-"));
   const card = (at) => ({ at, c: 0, blocksPerRace: 7200, fairness: null, field: field.map((r) => ({ ...r, k: 7200 * r.vhp / field.reduce((s, x) => s + x.vhp, 0), h: 1 })), paddock: [] });
   for (const w of [W - 1, W, W + 1]) {
     const races = [];
-    for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) { const i = M.raceIndex(t); races.push({ id: M.raceId(i), start: t, end: t + M.RACE, cards: Array.from({ length: 6 }, (_, l) => (skip(t + l * H) ? null : card(t + l * H))), result: null }); }
+    for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) { const i = M.raceIndex(t); races.push({ id: M.raceId(i), start: t, end: t + M.RACE, cards: Array.from({ length: 6 }, (_, l) => (skip(t + l * H) ? null : card(t + l * H))), result: results ? results(t) : null }); }
     fs.writeFileSync(path.join(d, `W${String(w).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), races }));
   }
   return d;
@@ -262,7 +262,9 @@ test("F-4: decisions use the irreversible block's time; a node far ahead can't v
 test("F-5: the Picks game must have the bracket's shape; picks timed at or after the lock never count", async () => {
   const good = { kind: 3, lock_mode: 2, round_size: String(B.WEEK), round_offset: String(B.ROUND_OFFSET), lead: String(B.LOCK_BEFORE), ahead: String(B.SEED_BEFORE), number_min: "0", number_max: String(B.NUMBER_MAX) };
   assert.equal(gameProblem(good), null);
-  for (const [k, v] of [["kind", 2], ["round_offset", "0"], ["round_size", String(B.DAY)], ["lead", "300001"], ["number_max", "32767"]]) assert.match(gameProblem({ ...good, [k]: v }), new RegExp(k));
+  for (const [k, v] of [["kind", 2], ["round_offset", "0"], ["round_size", String(B.DAY)], ["lead", "299999"], ["ahead", String(B.SEED_BEFORE + 1)], ["ahead", "0"], ["number_max", "32767"]]) assert.match(gameProblem({ ...good, [k]: v }), new RegExp(k));
+  // R-4: the owner's tighten_game (earlier lock, later opening) is still a valid bracket game
+  assert.equal(gameProblem({ ...good, lead: String(B.LOCK_BEFORE * 3), ahead: String(B.SEED_BEFORE / 2) }), null);
   assert.match(gameProblem(null), /no bracket game/);
   const field = fieldOf(17), race = raceDir(field);
   const rows = [{ player: P(1), number: 0, time: B.lockTime(W) - 1 }, { player: P(2), number: 1, time: B.lockTime(W) }, { player: P(3), number: 2, time: B.lockTime(W) + 9e5 }];
@@ -289,4 +291,45 @@ test("F-6 / F-7: each recorder step can fail alone; leaderboards are capped at 1
   const r = await runUntil(B.roundDay(W, 0) + 25 * H, o, dir, 2);
   assert.equal(r.board.week.rows.length, 1000); assert.equal(readW(dir).points.length, 1500, "every score stays in the week file");
   assert.ok(shapeOk(dir));
+});
+
+test("R-1 at the recorder: the floor comes from the race results of the 7 days before the seeding, and a seed off the cards all day loses", async () => {
+  const field = fieldOf(17), gamer = field[3].a;
+  // race results: everyone signed exactly its VHP share of 7,200 blocks a race
+  const tot = field.reduce((t, r) => t + r.vhp, 0);
+  const results = () => ({ final: true, checked: 2, blocks: 7200, standings: field.map((r) => ({ a: r.a, steps: 1, blocks: Math.round(7200 * r.vhp / tot) })) });
+  // the gamer shows only 1,000 VHP on every card from the seeding on (its VHP sits elsewhere at each reading)
+  const shown = field.map((r) => (r.a === gamer ? { ...r, vhp: 1000 } : r));
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "race-"));
+  for (const w of [W - 1, W, W + 1]) {
+    const races = [];
+    for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) {
+      const f = t + M.RACE <= B.seedTime(W) ? field : shown, ft = f.reduce((x, r) => x + r.vhp, 0);
+      const card = (at) => ({ at, c: 0, blocksPerRace: 7200, fairness: null, field: f.map((r) => ({ ...r, k: 7200 * r.vhp / ft, h: 1 })), paddock: [] });
+      races.push({ id: M.raceId(M.raceIndex(t)), start: t, end: t + M.RACE, cards: Array.from({ length: 6 }, (_, l) => card(t + l * H)), result: t + M.RACE <= B.seedTime(W) ? results() : null });
+    }
+    fs.writeFileSync(path.join(d, `W${String(w).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), races }));
+  }
+  const signer = signerFn(field), dir = tmp();
+  const o = { raceDir: d, picksContract: addr(60), nodeOf: nodeOf(signer), picksOf: picksOf([]) };
+  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + H), ...o }));
+  let wf = readW(dir);
+  const i = wf.seeding.seeds.indexOf(gamer);
+  assert.ok(i >= 0 && wf.seeding.proven[i] > 0, "its blocks prove more than it shows");
+  assert.ok(wf.seeding.proven[i] > 10 * wf.seeding.vhp[i], "about 14× what the card shows, less the 10% margin");
+  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.lockTime(W) + 60000), ...o }));
+  await runUntil(B.roundDay(W, 0) + 25 * H, o, dir);
+  wf = readW(dir);
+  const idx = B.indexFromHours(wf.days[0], B.floorOf(wf.seeding));
+  assert.ok(idx.get(gamer).index < 1.2, `gamer index ${idx.get(gamer).index}`);
+  const noFloor = B.indexFromHours(wf.days[0]);
+  assert.ok(noFloor.get(gamer).index > 10, "it would have won every matchup");
+});
+
+test("R-4: the two nodes must agree about the Picks game", async () => {
+  const field = fieldOf(17), base = { raceDir: raceDir(field), picksContract: addr(60), nodeOf: nodeOf(signerFn(field)), picksOf: picksOf([{ player: P(1), number: 0, time: 1 }]) };
+  const good = { kind: 3, lock_mode: 2, round_size: String(B.WEEK), round_offset: String(B.ROUND_OFFSET), lead: String(B.LOCK_BEFORE), ahead: String(B.SEED_BEFORE), number_min: "0", number_max: String(B.NUMBER_MAX) };
+  const dir = await lockedWeek(base);
+  const r = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.lockTime(W) + 60000), ...base, gameOf: async (n) => (n === "check" ? { ...good, enabled: false } : good) }));
+  assert.equal(readW(dir).picks, null); assert.ok(r.problems.some((p) => p.includes("disagree about the Picks game")));
 });
