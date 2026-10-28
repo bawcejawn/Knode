@@ -1718,7 +1718,7 @@ The private keys are ONLY in: ${file}
   • Never paste a private key in a chat, email or GitHub. Only OPERATOR_WIF ever goes into GitHub (as a secret).
   • Open the file with:  notepad ${TESTNET ? ".env.testnet" : ".env"}${TESTNET ? `
 
-TESTNET: get free test KOIN for each wallet in the Koinos Discord (#faucet):  !faucet <address>
+TESTNET: get free test KOIN for each wallet from the Telegram bot @KoinosTestnetFaucetBot:  /faucet <address>
   At least the bot, admin and player wallets. Never send real KOIN to these addresses.` : ""}`);
 }
 // ═══════════════════════════════ wiring ═══════════════════════════════
