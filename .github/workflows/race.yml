@@ -89,27 +89,38 @@ jobs:
           /usr/bin/python3 - "$IN" <<'PY'
           import json, os, re, sys
           d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          isaddr = lambda v: type(v) is str and addr.fullmatch(v) is not None
           num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
           def card_ok(c):
               if c is None: return True
               if type(c) is not dict or not num(c.get("at")) or not num(c.get("c")) or not num(c.get("blocksPerRace")): return False
               if type(c.get("field")) is not list or type(c.get("paddock")) is not list or len(c["field"]) + len(c["paddock"]) > 500: return False
-              return all(type(r) is dict and addr.fullmatch(str(r.get("a"))) and num(r.get("vhp")) and num(r.get("k")) and ("h" not in r or num(r["h"])) for r in c["field"] + c["paddock"]) and all(num(r.get("h")) and r["h"] > 0 for r in c["field"])
+              return all(type(r) is dict and isaddr(r.get("a")) and num(r.get("vhp")) and num(r.get("k")) and ("h" not in r or num(r["h"])) for r in c["field"] + c["paddock"]) and all(num(r.get("h")) and r["h"] > 0 for r in c["field"])
           def result_ok(r):
               if r is None: return True
               if type(r) is not dict or r.get("final") is not True: return False
               if r.get("missed"): return set(r) <= {"final", "missed", "note"} and len(str(r.get("note", ""))) < 200
               st = r.get("standings")
               if not set(r) <= {"final", "checked", "heights", "blocks", "line", "winner", "standings", "picks"}: return False
+              # Standings: real addresses, each once, in finishing order (most steps first), at most 500.
+              if type(st) is not list or len(st) > 500 or not all(type(x) is dict and type(x.get("a")) is str and addr.fullmatch(x["a"]) and num(x.get("steps"))
+                  and type(x.get("blocks")) is int for x in st): return False
+              if len({x["a"] for x in st}) != len(st) or any(st[i]["steps"] < st[i + 1]["steps"] for i in range(len(st) - 1)): return False
+              # The winner and the win and show flags must follow from the standings (site/race-math.js: winners, shows).
+              won = bool(st) and st[0]["steps"] > 0
+              if r.get("winner") != (st[0]["a"] if won else None): return False
+              shows = {x.get("a") for x in st[1:3] if num(x.get("steps")) and x["steps"] > 0} if won else set()
+              flag = lambda v: type(v) is int and v in (0, 1)
               pk = r.get("picks", [])
-              if type(pk) is not list or len(pk) > 100000 or not all(type(x) is list and len(x) == 5 and addr.fullmatch(str(x[0])) and addr.fullmatch(str(x[1]))
-                  and type(x[2]) is int and x[3] in (0, 1) and x[4] in (0, 1) for x in pk): return False
-              return (r.get("winner") is None or addr.fullmatch(str(r["winner"]))) and r.get("checked") in (1, 2) and type(st) is list and len(st) <= 500 \
-                  and all(type(x) is dict and addr.fullmatch(str(x.get("a"))) and num(x.get("steps")) and type(x.get("blocks")) is int for x in st)
+              if type(pk) is not list or len(pk) > 100000 or not all(type(x) is list and len(x) in (5, 6) and isaddr(x[0]) and isaddr(x[1])
+                  and type(x[2]) is int and flag(x[3]) and flag(x[4]) and x[3] == (1 if x[1] == r.get("winner") else 0)
+                  and (len(x) == 5 or (flag(x[5]) and x[5] == (1 if x[1] != r.get("winner") and x[1] in shows else 0))) for x in pk): return False
+              return type(r.get("checked")) is int and r["checked"] in (1, 2)
           def rows_ok(b):
               rows = b.get("rows") if type(b) is dict else None
-              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "correct", "picks", "answers", "points", "ranked"}
-                  and addr.fullmatch(str(x["a"])) and all(type(x[k]) is int and 0 <= x[k] < 10**9 for k in ("correct", "picks", "answers", "points")) and type(x["ranked"]) is bool for x in rows)
+              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "pts", "correct", "shows", "picks", "answers", "points", "ranked"}
+                  and isaddr(x["a"]) and all(type(x[k]) is int and 0 <= x[k] < 10**9 for k in ("pts", "correct", "shows", "picks", "answers", "points"))
+                  and x["correct"] + x["shows"] <= x["picks"] and x["pts"] == 3 * x["correct"] + x["shows"] and type(x["ranked"]) is bool for x in rows)
           for f in os.listdir(d):
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "board.json":

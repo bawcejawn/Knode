@@ -73,7 +73,7 @@ a { color: var(--violet); }
 .top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: color-mix(in srgb, var(--paper) 86%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
 .top-row { display: flex; align-items: center; gap: 24px; min-height: 68px; }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
-.brand-name { font: 800 1.3rem/1 var(--display); letter-spacing: -0.03em; text-transform: lowercase; }
+.brand-name { font: 800 1.3rem/1 var(--display); letter-spacing: -0.03em; white-space: nowrap; }
 .brand-mark { position: relative; width: 26px; height: 26px; border-radius: 50%; box-shadow: inset 0 0 0 2.6px var(--violet); flex: none; }
 .brand-mark i { display: none; }
 .brand-mark i:first-child { display: block; position: absolute; inset: 8px; border-radius: 50%; background: var(--sun); }
@@ -688,6 +688,69 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .also-card > span { width: 44px; height: 44px; border-radius: 50%; background: var(--violet-soft); display: grid; place-items: center; font-size: 1.3rem; }
 .also-card b { font: 700 1.02rem/1.25 var(--display); }
 .also-card p { margin: 2px 0 0; color: var(--muted); font-size: 0.95rem; }
+.also-card.soon { background: transparent; border-style: dashed; }
+.also-card.soon b, .also-card.soon p { color: var(--muted); }
+.also-soon-title { margin: 6px 0 0; font: 700 0.8rem var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.also-more { font-weight: 700; color: var(--violet); }
+.welcome-steps-title { font: 700 1.1rem var(--display); margin: 18px 0 0; }
 .rules .faq details { max-width: none; width: 100%; box-sizing: border-box; }
 .rules .lt-list { color: var(--muted); }
 .rules .faq { max-width: none; }
+
+/* Leaderboards: one tab per game (leaders.js). Scrolls sideways on a phone when there are many games. */
+.lb-games { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; margin: 0 0 18px; padding: 2px 0 4px; }
+.lb-games::-webkit-scrollbar { display: none; }
+.lb-games button { flex: none; font: 700 .95rem/1 var(--body); padding: 11px 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.lb-games button[aria-pressed="true"] { background: var(--tang); border-color: var(--tang); color: #1b1206; }
+.lb-game { margin-top: 4px; }
+.lb-game-note { margin: 0 0 12px; }
+.g-boards { margin: 14px 0 0; font-size: .95rem; }
+.g-boards a { color: var(--violet); font-weight: 700; }
+/* Staked vs Free play on the question leaderboard */
+.lb-kind { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface); margin: 0 0 12px; }
+.lb-kind button { font: 700 .9rem/1 var(--body); padding: 9px 16px; border: 0; border-radius: 99px; background: transparent; color: var(--ink); cursor: pointer; }
+.lb-kind button[aria-pressed="true"] { background: var(--tang); color: #1b1206; }
+.lb-me:empty { display: none; }
+
+/* Results: one tab per game (results.js). Producer Race result cards. */
+.res-games { margin-top: 18px; }
+.rr-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.rr-head h3 { font-size: 1.12rem; }
+.rr-pill { font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 3px 10px; border-radius: 99px; background: var(--mint-soft); color: var(--mint); }
+.rr-pill.checking, .rr-pill.missed { background: var(--paper); color: var(--muted); }
+.rr-pill.live { background: var(--tang); color: #1b1206; }
+.rr-podium { list-style: none; margin: 12px 0 8px; padding: 0; display: grid; gap: 6px; }
+.rr-podium li { display: flex; align-items: center; gap: 8px; font-size: .98rem; }
+.rr-podium a { color: var(--ink); font-weight: 700; }
+.rr-med { width: 1.4em; text-align: center; }
+.rr-mine { margin-top: 6px; padding: 8px 12px; border-radius: 12px; background: var(--rose-soft); }
+.rr-mine.ok { background: var(--mint-soft); }
+.rr-mine a { color: var(--ink); font-weight: 700; }
+.rr-table tr.me td { font-weight: 800; }
+.res.rr { display: block; }
+.res.rr > * { grid-column: auto; }
+.res.rr .res-line { margin-top: 6px; }
+
+/* Top menu (tools/site-nav.mjs): links and <details> dropdowns. Not clipped: menus drop below the header. */
+.tabs { overflow: visible; align-items: center; }
+.tabs .dd { position: relative; }
+.tabs .dd > summary { list-style: none; white-space: nowrap; padding: 11px 16px; min-height: 44px; display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; color: var(--muted); font-weight: 600; font-size: 16.5px; cursor: pointer; user-select: none; }
+.tabs .dd > summary::-webkit-details-marker { display: none; }
+.tabs .dd > summary::after { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-2px) rotate(45deg); opacity: .7; }
+.tabs .dd[open] > summary::after { transform: translateY(2px) rotate(-135deg); }
+.tabs .dd > summary:hover, .tabs .dd[open] > summary { color: var(--ink); background: var(--surface); }
+.tabs .dd.on > summary { color: var(--ink); background: var(--surface); box-shadow: var(--shadow); }
+.tabs .dd-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 50; min-width: 220px; display: grid; gap: 2px; padding: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 18px 40px -18px rgba(20, 33, 61, .45); }
+.tabs .dd-menu a { border-radius: 12px; padding: 10px 14px; min-height: 40px; color: var(--ink); font-size: 15.5px; }
+.tabs .dd-menu a:hover { background: var(--paper); }
+.tabs .dd-menu a[aria-current="page"] { background: var(--paper); box-shadow: none; font-weight: 700; }
+.tabs .dd:last-child .dd-menu { left: auto; right: 0; }
+/* Tablets and small laptops: the menu moves to its own row under the logo and wallet button. */
+@media (max-width: 1180px) and (min-width: 761px) {
+  .top-row { flex-wrap: wrap; row-gap: 4px; padding: 8px 0; }
+  .tabs { order: 3; width: 100%; margin: 0; justify-content: center; }
+  .tabs a, .tabs .dd > summary { padding: 9px 12px; font-size: 15.5px; }
+}
+/* Phone More sheet: group headings across the grid. */
+.more-panel .ms-h { grid-column: 1 / -1; margin: 8px 4px 0; font-size: .74rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.more-panel .ms-h:first-child { margin-top: 0; }

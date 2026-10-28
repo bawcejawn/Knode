@@ -1,4 +1,4 @@
-/* Phone navigation: the bottom tab bar (Play · Race · Swap · Leaders · More) and the "More" sheet with every other page.
+/* Phone navigation: the bottom tab bar (Games · Leaders · Results · Swap · More, written by tools/site-nav.mjs) and the "More" sheet with every other page.
    Marks the tab for the page you're on, and opens/closes the sheet. No data, no storage, no network. */
 (function () {
   "use strict";
@@ -18,12 +18,14 @@
   function mark() {
     const here = place(location);
     let inSheet = false;
-    document.querySelectorAll(".tabbar a, .more-panel a").forEach((a) => {
+    document.querySelectorAll(".tabbar a, .more-panel a, .tabs a").forEach((a) => {
       const on = place(new URL(a.getAttribute("href"), location.href)) === here;
       if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
       if (on && a.closest(".more-panel")) inSheet = true;
     });
     if (btn) btn.classList.toggle("on", inSheet);
+    // A dropdown is lit when the page you're on is inside it.
+    document.querySelectorAll(".tabs .dd").forEach((d) => d.classList.toggle("on", !!d.querySelector('a[aria-current="page"]')));
   }
 
   function open(yes) {
@@ -41,6 +43,16 @@
     // Turning the phone or widening the window past the phone layout closes it too.
     window.addEventListener("resize", () => { if (!sheet.hidden && window.innerWidth > 760) open(false); });
   }
+
+  // Top-menu dropdowns (<details>): one open at a time; an outside tap, Escape or picking a link closes them.
+  const dds = [...document.querySelectorAll(".tabs .dd")];
+  const closeAll = (except) => dds.forEach((d) => { if (d !== except) d.open = false; });
+  dds.forEach((d) => {
+    d.addEventListener("toggle", () => { if (d.open) closeAll(d); });
+    d.querySelectorAll("a").forEach((a) => a.addEventListener("click", () => { d.open = false; }));
+  });
+  document.addEventListener("click", (e) => { if (!e.target.closest(".tabs .dd")) closeAll(null); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && dds.some((d) => d.open)) { const o = dds.find((d) => d.open); closeAll(null); o.querySelector("summary").focus(); } });
 
   // Index switches views by hash; app.js also marks its own tabs, this runs after it so both agree.
   window.addEventListener("hashchange", () => setTimeout(mark, 0));

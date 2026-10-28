@@ -1,4 +1,4 @@
-/* Knode Swap — swap VHP for the desk's KOIN, 1:1 minus the fee.
+/* Knode Games Swap — swap VHP for the desk's KOIN, 1:1 minus the fee.
    A static page: it reads the desk contract on the Koinos chain, and the swap is signed by the visitor's own wallet (Kondor or KOIN Vault, see wallet.js)
    wallet as ONE transaction (approve the VHP + swap). With no desk deployed yet (or ?demo), it runs a preview. */
 (() => {

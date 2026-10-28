@@ -1,4 +1,4 @@
-/* Knode Trust page — everything here is read live from the Koinos chain (and the public deployment files in the
+/* Knode Games Trust page — everything here is read live from the Koinos chain (and the public deployment files in the
    repo), so visitors can check the numbers themselves. Read-only: no wallet, no transactions. */
 (() => {
   "use strict";
@@ -62,7 +62,7 @@
     fact(dl, "Fee", `${Number(c.fee_bps ?? 0) / 100}%${c.paused ? " (paused)" : ""}`);
     fact(dl, "Swaps so far", `${t.swaps ?? 0} · ${amount(t.vhp_in)} VHP in, ${amount(t.koin_out)} KOIN out`);
     $("#desk-card").replaceChildren(
-      el("h2", {}, "Knode Swap desk"),
+      el("h2", {}, "Knode Games Swap desk"),
       el("div", { class: "solv" }, el("b", {}, "Owes no one"), el("span", { class: "ok-pill" }, "settles instantly")),
       dl,
       el("p", { class: "muted small" }, "Every swap pays out in the same transaction it takes your VHP, so the desk never holds anyone else's money. Withdrawals can only go to the treasury address below."));
@@ -126,7 +126,7 @@
       const abi = await fetchJson(BASE + "desk/abi/desk.koilib.json");
       desk = await read(new lib.Contract({ id: deskDep.contract, abi, provider }), "get_state");
       deskCard(desk);
-    } catch (e) { $("#desk-card").replaceChildren(el("h2", {}, "Knode Swap desk"), el("p", { class: "muted" }, `Couldn't read the swap desk right now (${e.message}).`)); }
+    } catch (e) { $("#desk-card").replaceChildren(el("h2", {}, "Knode Games Swap desk"), el("p", { class: "muted" }, `Couldn't read the swap desk right now (${e.message}).`)); }
     changes(game, desk);
     addresses(gameDep, deskDep, game, desk);
     const t = game?.time || desk?.time;

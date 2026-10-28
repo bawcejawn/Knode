@@ -82,10 +82,15 @@ test("own Mana: a transaction the wallet re-pointed to the contract (free Mana o
   assert.equal(w.log.sent, 0);
 });
 
-test("every other transaction is sent as before (the wallet decides who pays)", async () => {
-  const w = kondorWorld("1MpmfKpredContract");
-  await w.send({});
-  assert.equal(w.log.options, undefined);
-  assert.equal(w.log.signed, 0);
-  assert.equal(w.log.sent, 1);
+// Owner, 2026-10-28: the game contract pays for no one. A transaction the sponsor doesn't cover names the player as
+// payer and is checked like an own-Mana claim; one the wallet re-points to the game contract is never sent.
+test("every other transaction names the player as payer and is checked before it is sent", async () => {
+  const ok = kondorWorld("1Player");
+  await ok.send({});
+  assert.equal(ok.log.options?.payer, "1Player");
+  assert.equal(ok.log.signed, 1);
+  assert.equal(ok.log.sent, 1);
+  const repointed = kondorWorld("1MpmfKpredContract");
+  await assert.rejects(repointed.send({}), /own Mana/);
+  assert.equal(repointed.log.sent, 0);
 });

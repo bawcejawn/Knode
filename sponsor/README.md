@@ -39,8 +39,9 @@ of the player actions are built in (`npm run check` confirms they match the game
   `would_pay` (on/off and caps). On yes it names the sponsor as payer and the player as payee, with the Mana limit in
   `"sponsor": { "rcLimit" }`; on no, or if the sponsor refuses when it is sent, the player's own Mana is used (one more
   confirmation in the wallet).
-- Staked players' **answers** keep the existing path (the game contract pays when Kondor's free Mana option is on), so
-  they don't use up the sponsor. Burning KOIN into VHP is not a Knode call: players pay their own Mana for it.
+- Every player transaction, staked players' **answers** included, asks the sponsor first (owner, 2026-10-28). The game
+  contract pays for nobody (`max_sponsor_rc` 0); when the sponsor says no, the page names the player's own wallet as
+  payer. Burning KOIN into VHP is not a Knode call: players pay their own Mana for it.
 - **KOIN Vault** picks its own payer, so KOIN Vault users never use this sponsor.
 
 Switch it from the admin page ("Mana paid by") or with `npm run sponsor -- payer sponsor|self --send`; then commit and
