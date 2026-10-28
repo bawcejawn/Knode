@@ -1,4 +1,4 @@
-/* KnodeGames website — a static page: everything is read from the Koinos chain and the bot's public
+/* Knode Games website — a static page: everything is read from the Koinos chain and the bot's public
    question files (game-data/), and every action is signed by the player's own wallet (Kondor or KOIN Vault).
    With no deployment yet (or ?demo in the address), it runs a preview on sample data. */
 (() => {
@@ -95,7 +95,7 @@
   const fmtN = (n) => Number(n).toLocaleString();
   /** A producer as a small coloured chip; opens it in Producer lookup (blocks, share, what to expect). */
   const pchip = (a) => el("a", { class: "pchip", href: `node.html?a=${a}&w=28800`, target: "_blank", rel: "noopener", title: `${a}\nOpen in Producer lookup`, style: `--c: hsl(${hue(a)} 65% 52%)` },
-    el("i", { "aria-hidden": "true" }), a === S.dep?.contract ? "KnodeGames pool" : short(a));
+    el("i", { "aria-hidden": "true" }), a === S.dep?.contract ? "Knode Games pool" : short(a));
   const chipify = (text) => {
     const out = []; let last = 0;
     for (const m of String(text).matchAll(ADDR_RE)) { out.push(text.slice(last, m.index)); out.push(pchip(m[0])); last = m.index + m[0].length; }
@@ -183,7 +183,7 @@
     window.scrollTo({ top: 0 });
   }
 
-  // ═══════════════ Rules: one tab per part of KnodeGames (game, Producer Race, Swap) ═══════════════
+  // ═══════════════ Rules: one tab per part of Knode Games (game, Producer Race, Swap) ═══════════════
   const RULE_TABS = ["game", "race", "swap"];
   function showRulesTab(name) {
     const t = RULE_TABS.includes(name) ? name : "game";
@@ -1080,14 +1080,14 @@
     if (dlg.showModal) dlg.showModal();
     await drawShareNow();
   }
-  const shareText = () => { const st = weekStats(SH.week); return `I scored ${st.pts} ${st.pts === 1 ? "point" : "points"} on KnodeGames in week ${st.week}${st.place ? ` (#${st.place} of ${st.of})` : ""}. Call the next blocks on Koinos: ${installUrl()}`; };
+  const shareText = () => { const st = weekStats(SH.week); return `I scored ${st.pts} ${st.pts === 1 ? "point" : "points"} on Knode Games in week ${st.week}${st.place ? ` (#${st.place} of ${st.of})` : ""}. Call the next blocks on Koinos: ${installUrl()}`; };
   const shareBlob = () => new Promise((res) => { const c = $("#share-canvas"); if (!c || !c.toBlob) res(null); else c.toBlob((b) => res(b), "image/png"); });
   async function shareGo() {
     const blob = await shareBlob(), text = shareText(), name = `knode-week-${SH.week + 1}.png`;
     try {
       const file = blob && typeof File === "function" ? new File([blob], name, { type: "image/png" }) : null;
-      if (file && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text, title: "KnodeGames" }); return; }
-      if (navigator.share) { await navigator.share({ text, title: "KnodeGames", url: installUrl() }); return; }
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text, title: "Knode Games" }); return; }
+      if (navigator.share) { await navigator.share({ text, title: "Knode Games", url: installUrl() }); return; }
     } catch (e) { if (e && e.name === "AbortError") return; }
     await shareSave();
   }
@@ -1098,7 +1098,7 @@
     catch { toast("Picture saved."); }
   }
 
-  /** Reminders. A calendar file always works; notifications only while KnodeGames is open (no server sends them). */
+  /** Reminders. A calendar file always works; notifications only while Knode Games is open (no server sends them). */
   const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
   const lsSet = (k, v) => { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* private window */ } };
   const NOTIFY_KEY = "kn-notify-v1";
@@ -1117,12 +1117,12 @@
     const newest = Math.max(...open.map((q) => Number(q.chainId)));
     if (newest > Number(lsGet("kn-notify-q") || -1)) {
       lsSet("kn-notify-q", String(newest));
-      notify("Today's KnodeGames questions are out", `${open.length} new questions. Answers close in ${duration(open[0].lockTime - now)}.`, "knode-new");
+      notify("Today's Knode Games questions are out", `${open.length} new questions. Answers close in ${duration(open[0].lockTime - now)}.`, "knode-new");
     }
     const left = open[0].lockTime - now, todo = open.filter((q) => myAnswer(q) === null).length;
     if (S.account && todo && left > 0 && left <= 3600000 && lsGet("kn-notify-close") !== String(open[0].lockTime)) {
       lsSet("kn-notify-close", String(open[0].lockTime));
-      notify("Under an hour left on KnodeGames", `You have ${todo} question${todo === 1 ? "" : "s"} still to answer.`, "knode-close");
+      notify("Under an hour left on Knode Games", `You have ${todo} question${todo === 1 ? "" : "s"} still to answer.`, "knode-close");
     }
   }
   function remindersCard() {
@@ -1138,7 +1138,7 @@
         lsSet(NOTIFY_KEY, "1");
         const open = S.questions.filter((q) => nowMs() < q.lockTime);
         if (open.length) lsSet("kn-notify-q", String(Math.max(...open.map((q) => Number(q.chainId)))));
-        toast("Notifications on: you'll hear about new questions while KnodeGames is open.");
+        toast("Notifications on: you'll hear about new questions while Knode Games is open.");
       } else toast("Notifications are blocked in this browser. The calendar reminder still works.");
       renderReminders();
     };
@@ -1146,10 +1146,10 @@
       el("p", { class: "muted" }, `New questions come out Monday to Saturday at ${localHour(12)} your time.`),
       el("div", { class: "row-btns" },
         el("button", { class: "btn btn-primary", type: "button", onclick: ics }, "Add to my calendar"),
-        canNotify() ? el("button", { class: "btn btn-ghost", type: "button", onclick: toggle }, notifyOn() ? "Turn notifications off" : "Notify me while KnodeGames is open") : null),
+        canNotify() ? el("button", { class: "btn btn-ghost", type: "button", onclick: toggle }, notifyOn() ? "Turn notifications off" : "Notify me while Knode Games is open") : null),
       el("p", { class: "fine-print muted" }, canNotify()
-        ? "The calendar reminder works even when KnodeGames is closed. Notifications only appear while KnodeGames is open in a tab or as the installed app (on iPhone, only in the installed app)."
-        : "The calendar reminder works even when KnodeGames is closed. This browser can't show notifications."));
+        ? "The calendar reminder works even when Knode Games is closed. Notifications only appear while Knode Games is open in a tab or as the installed app (on iPhone, only in the installed app)."
+        : "The calendar reminder works even when Knode Games is closed. This browser can't show notifications."));
   }
   function renderReminders() {
     for (const id of ["#remind-body", "#welcome-remind"]) { const b = $(id); if (b && b.replaceChildren) b.replaceChildren(remindersCard()); }
@@ -1277,7 +1277,8 @@
     // 2nd collect the weekly free-play prize. Free play lists only the top FREE_SHOW; everyone else stays private
     // (a free player still sees their own place).
     const kind = S.lbKind === "free" ? "free" : "main";
-    $("#lb-kind").replaceChildren(...[["main", "Staked"], ["free", "Free play"]].map(([k, label]) => el("button", {
+    const L = (window.KBoard && window.KBoard.LABELS) || { staked: "Staked", free: "Free play" };   // same names in every game
+    $("#lb-kind").replaceChildren(...[["main", L.staked], ["free", L.free]].map(([k, label]) => el("button", {
       type: "button", "aria-pressed": String(k === kind), onclick: () => { S.lbKind = k; renderBoard(week); },
     }, label)));
     const everyone = b.scored.filter((s) => s.counted > 0 || s.address === S.account);
@@ -1466,7 +1467,7 @@
     const isNew = (b) => b.h > tickerTop && tickerTop !== 0;
     list.replaceChildren(...blocks.slice(0, 7).map((b) => el("li", {
       class: `blk${b.signer === S.dep?.contract ? " ours" : ""}${isNew(b) ? " new" : ""}`, style: `--c: hsl(${hue(b.signer)} 70% 58%)`,
-    }, el("span", { class: "cube", "aria-hidden": "true" }), el("span", { class: "who" }, b.signer === S.dep?.contract ? "KnodeGames pool" : short(b.signer)), el("span", { class: "h" }, `#${b.h.toLocaleString()}`))));
+    }, el("span", { class: "cube", "aria-hidden": "true" }), el("span", { class: "who" }, b.signer === S.dep?.contract ? "Knode Games pool" : short(b.signer)), el("span", { class: "h" }, `#${b.h.toLocaleString()}`))));
     tickerTop = blocks[0].h;
   }
 

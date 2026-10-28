@@ -125,7 +125,7 @@
     if (g.empty) {
       $("r-status").textContent = "This wallet holds no KOIN, so it has no Mana of its own.";
       $("r-full").textContent = "–"; $("r-full-in").textContent = "";
-      $("r-uses").textContent = "KnodeGames' sponsor (below) can still pay for its game answers.";
+      $("r-uses").textContent = "Knode Games' sponsor (below) can still pay for its game answers.";
       return;
     }
     if (g.full) { $("r-full").textContent = "Now"; $("r-full-in").textContent = "The tank is full"; $("r-status").textContent = "Full tank."; }
@@ -150,7 +150,7 @@
       $("r-addr").textContent = "";
       const a = document.createElement("a");
       a.href = EXPLORER + addr; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = addr;
-      $("r-addr").append(a, addr === SPONSOR ? " · KnodeGames' Mana sponsor" : "");
+      $("r-addr").append(a, addr === SPONSOR ? " · Knode Games' Mana sponsor" : "");
       render();
       if (typeof renderPlan === "function") renderPlan();
       store.set(LAST, addr);

@@ -1,4 +1,4 @@
-/* KnodeGames leaderboard: one box shared by every game page. Today / This week / All time, the week's top 3 on a
+/* Knode Games leaderboard: one box shared by every game page. Today / This week / All time, the week's top 3 on a
  * podium, the player's own row marked, and a line telling the player where they stand.
  *
  * A game page links board.css and board.js, then passes its board data (the recorder's board.json shape: { today, week, lastWeek, allTime }, each with
@@ -14,7 +14,7 @@
  *     link: (addr) => "https://…",           // optional: each wallet links here
  *     name: (addr) => "1Ab…9xT",             // how a wallet is shown
  *     unranked: "To be ranked, …",           // shown to a player who is listed but not ranked
- *     free: { show: 6, main: "VHP players", prize: "1st and 2nd collect the weekly free-play prize." },
+ *     free: { show: 6, prize: "1st and 2nd collect the weekly free-play prize." },
  *                                            // optional: a second board for wallets without VHP or a stake (rows with
  *                                            // ranked: false). Only its top `show` are listed; everyone else stays
  *                                            // hidden, and a free player sees their own place privately.
@@ -24,6 +24,7 @@
 (function (root) {
   "use strict";
   const MEDAL = ["🥇", "🥈", "🥉"], ORD = ["1st", "2nd", "3rd"];
+  const LABELS = Object.freeze({ staked: "Staked", free: "Free play" });   // the same in every game
   // "Last week" appears only when the data has it, so the week that just ended stays visible on Monday.
   const MODES = [["today", "Today"], ["week", "This week"], ["last", "Last week"], ["all", "All time"]];
   let n = 0;
@@ -50,7 +51,8 @@
   function create(host, opt) {
     const id = "kb" + ++n, o = Object.assign({ columns: [], name: short, scored: () => true, summary: () => "", me: null, link: null, unranked: "" }, opt || {});
     let data = null, mode = "week", who = "", kind = "main";
-    const F = o.free ? Object.assign({ show: 6, main: "Ranked", label: "Free play", prize: "" }, o.free) : null;
+    // The two boards have the same names in every game (owner, 2026-10-28): KBoard.LABELS, never set per game.
+    const F = o.free ? { show: Number.isInteger(o.free.show) ? o.free.show : 6, prize: typeof o.free.prize === "string" ? o.free.prize : "", main: LABELS.staked, label: LABELS.free } : null;
     const kinds = F ? [["main", F.main], ["free", F.label]].map(([k, label]) => {
       const b = el("button", { type: "button", "aria-pressed": String(k === kind), text: label });
       b.addEventListener("click", () => { kind = k; kinds.forEach((x) => x.setAttribute("aria-pressed", String(x === b))); render(); });
@@ -125,5 +127,5 @@
     };
   }
 
-  root.KBoard = { create, partOf };
+  root.KBoard = { create, partOf, LABELS };
 })(typeof window !== "undefined" ? window : globalThis);

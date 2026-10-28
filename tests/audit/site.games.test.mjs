@@ -1,4 +1,4 @@
-// The KnodeGames hub (site/games.html, games.js, games.json) and the welcome page's games list: plain data, no HTML
+// The Knode Games hub (site/games.html, games.js, games.json) and the welcome page's games list: plain data, no HTML
 // from data, the same strict page rules as every other page, and every game listed on the welcome page.
 import { test } from "node:test";
 import assert from "node:assert/strict";

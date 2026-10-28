@@ -1,4 +1,4 @@
-/* games.html: the KnodeGames hub. One card per game from games.json (the site's own file), with the player's status
+/* games.html: the Knode Games hub. One card per game from games.json (the site's own file), with the player's status
    on the live games: their place on the Race board and how many daily questions are open now.
    Read-only: no transaction, no storage. It reads only games.json, the question files (game-data/) and the race
    recorder's board (race-data branch), and builds everything with textContent. */

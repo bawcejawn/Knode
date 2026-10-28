@@ -60,3 +60,10 @@ test("free play boards: the question leaderboard splits Staked / Free play and l
   assert.match(app, /everyone\.filter\(\(s\) => s\.stake >= UNIT\)/, "the staked board holds staked players only");
   assert.match(read("index.html"), /id="lb-kind"[\s\S]*id="lb-me"/);
 });
+
+test("Staked / Free play: the same two board names in every game, fixed in board.js", () => {
+  assert.match(read("board.js"), /const LABELS = Object\.freeze\(\{ staked: "Staked", free: "Free play" \}\)/);
+  assert.match(read("board.js"), /main: LABELS\.staked, label: LABELS\.free/, "a game can't rename the boards");
+  assert.match(read("app.js"), /\[\["main", L\.staked\], \["free", L\.free\]\]/, "the question table uses the same names");
+  for (const f of ["race.js", "leaders.js", "games.json"]) assert.doesNotMatch(read(f), /main: "|"main":|VHP players/, `${f}: no per-game board names`);
+});

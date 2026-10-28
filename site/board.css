@@ -1,4 +1,4 @@
-/* KnodeGames leaderboard (board.js): the styles it needs, scoped to .kb so any game page can link this file.
+/* Knode Games leaderboard (board.js): the styles it needs, scoped to .kb so any game page can link this file.
    Matches the Race page's look. Colours come from styles.css tokens, so light and dark both work. */
 .kb .tabs2 { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
 .kb .tabs2 button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }

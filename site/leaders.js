@@ -1,6 +1,6 @@
 /* The Leaderboards page (index.html#leaderboard): one tab per game, each with its own players and points.
    "Daily Questions" is the question game's own table (drawn by app.js from the chain). Every other live game in
-   games.json that names a `board` gets the shared KnodeGames leaderboard (board.js) fed with that game's recorder
+   games.json that names a `board` gets the shared Knode Games leaderboard (board.js) fed with that game's recorder
    file (its board.json on the race-data or games-data branch). A new game shows up here by adding `board` to its
    games.json entry, plus its data branch in index.html's connect-src (race-data is there; games-data is added by
    the first game that publishes to it).
@@ -39,9 +39,9 @@
       unit: typeof b.unit === "string" && b.unit.length <= 12 ? b.unit : "pts",
       unranked: typeof b.unranked === "string" && b.unranked.length <= 160 ? b.unranked : "",
       // Free play: wallets without VHP or a stake get their own board, top `show` listed (3 to 10), the rest private.
+      // The board names (Staked / Free play) are fixed in board.js for every game; games.json can't change them.
       free: b.free && typeof b.free === "object" ? {
         show: Number.isInteger(b.free.show) && b.free.show >= 3 && b.free.show <= 10 ? b.free.show : 6,
-        main: typeof b.free.main === "string" && b.free.main.length <= 20 ? b.free.main : "Ranked",
         prize: typeof b.free.prize === "string" && b.free.prize.length <= 160 ? b.free.prize : "",
       } : null,
       main: cols[0].key,
