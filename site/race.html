@@ -74,7 +74,6 @@
     .pr-gap { font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
     .pr-gap b { color: var(--ink); }
     .pr-lane.lead .pr-run { border-color: var(--sun); box-shadow: 0 0 0 1px var(--sun) inset; }
-    .pr-lane.line .pr-gap { color: var(--mint); font-weight: 700; }
     .pr-lane.win { background: var(--sun-soft); }
     .pr-step .pr-horse { animation: hop .5s ease; }
     /* Horses that moved since the last refresh: a "+steps" badge by the name and a glow on the lane, fading out. */
@@ -252,7 +251,7 @@
       <p><code>steps per block = (biggest VHP ÷ your VHP) × (1 − c ÷ √k) ÷ (1 − c ÷ √k of the biggest)</code></p>
       <p>Here <i>k</i> is how many blocks a producer is expected to sign in a 6-hour race (luck in <i>k</i> blocks is about √<i>k</i>). <i>c</i> is re-tuned on every card by thousands of simulated races (the same ones for everyone) to the value where each horse's chance of winning is as equal as it gets.</p>
       <p><b>Six cards per race.</b> The handicap is set from VHP at the start and updated every hour. Each card applies to the blocks signed in its hour, so moving VHP around during a race buys at most an hour. Cards are recorded publicly by the race recorder.</p>
-      <p><b>The finish line</b> is how far every horse is expected to get in 6 hours. A horse that reaches it waits there, and the order among horses at the line is revealed when the race ends. The winner is the horse with the most steps at the 6-hour mark.</p>
+      <p><b>The finish line</b> is the 6-hour mark. You see the real live order all the way to the end: the track is drawn so the leader gets close to the line, and only the winner crosses it when the 6 hours are up. The winner is the horse with the most steps at the 6-hour mark.</p>
     </section>
   </main>
 
@@ -265,7 +264,7 @@
   </nav>
   <div class="more-sheet" id="more-sheet" hidden>
     <nav class="more-panel" aria-label="More pages">
-      <a href="index.html#leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg><span>Question leaderboard</span></a>
+      <a href="index.html#leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg><span>Leaderboards</span></a>
       <a href="index.html#results"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg><span>Results</span></a>
       <a href="index.html#how"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"></path><path d="M9 9h6M9 13h6"></path></svg><span>Rules</span></a>
       <a href="get.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8M8 12h8"></path></svg><span>Get VHP</span></a>

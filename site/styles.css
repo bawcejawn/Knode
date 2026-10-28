@@ -696,3 +696,13 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .rules .faq details { max-width: none; width: 100%; box-sizing: border-box; }
 .rules .lt-list { color: var(--muted); }
 .rules .faq { max-width: none; }
+
+/* Leaderboards: one tab per game (leaders.js). Scrolls sideways on a phone when there are many games. */
+.lb-games { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; margin: 0 0 18px; padding: 2px 0 4px; }
+.lb-games::-webkit-scrollbar { display: none; }
+.lb-games button { flex: none; font: 700 .95rem/1 var(--body); padding: 11px 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.lb-games button[aria-pressed="true"] { background: var(--tang); border-color: var(--tang); color: #1b1206; }
+.lb-game { margin-top: 4px; }
+.lb-game-note { margin: 0 0 12px; }
+.g-boards { margin: 14px 0 0; font-size: .95rem; }
+.g-boards a { color: var(--violet); font-weight: 700; }

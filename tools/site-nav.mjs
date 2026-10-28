@@ -31,7 +31,7 @@ const I = {
 // [label, link, icon]. A link starting with "#" is a question-game view on index.html.
 export const TABS = [["Games", "games.html", "games"], ["Play", "#play", "play"], ["Race", "race.html", "race"], ["Swap", "swap.html", "swap"]];
 export const MORE = [
-  ["Question leaderboard", "#leaderboard", "leaders"], ["Results", "#results", "results"], ["Rules", "#how", "rules"],
+  ["Leaderboards", "#leaderboard", "leaders"], ["Results", "#results", "results"], ["Rules", "#how", "rules"],
   ["Get VHP", "get.html", "get"], ["Mana levels", "mana.html", "mana"], ["Network pulse", "pulse.html", "pulse"],
   ["Producer lookup", "node.html", "lookup"], ["Burn KOIN", "burn.html", "burn"], ["New here?", "#welcome", "welcome"],
   ["Install app", "install.html", "install"], ["Trust", "trust.html", "trust"], ["Terms &amp; risks", "terms.html", "terms"],

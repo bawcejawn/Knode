@@ -155,18 +155,21 @@
   function shows(st) { return winners(st).length ? st.slice(1, 3).filter((r) => r.steps > 0).map((r) => r.a) : []; }
   /** What the track shows during a race: a horse never passes the finish line, and the order among horses at the line
    *  stays hidden until the race ends. behind = steps behind the leader as drawn (capped at the line). */
+  /** Where to draw each horse (x: 0 = start, 1 = the finish line) and how far it is behind the leader, with the handicap.
+   *  The real order always shows. While the race runs, the track is the finish line or a little longer than the leader
+   *  has gone (the leader is drawn at most LIVE_MAX of the way), so nobody reaches the line before the 6 hours are up and
+   *  a leader running ahead of pace never piles up at the line with others. When the race ends, the winner sits on it. */
+  const LIVE_MAX = 0.96;
   function track(st, line, ended) {
-    const leadDrawn = st.length ? Math.min(st[0].steps, line) : 0;
-    return st.map((r) => {
-      const atLine = r.steps >= line;
-      return { ...r, x: line > 0 ? Math.min(1, r.steps / line) : 0, atLine, behind: ended ? round(st[0].steps - r.steps, 1) : (atLine ? 0 : round(leadDrawn - r.steps, 1)) };
-    });
+    const lead = st.length ? Math.max(0, st[0].steps) : 0;
+    const scale = ended ? lead : Math.max(line > 0 ? line : 0, lead / LIVE_MAX);
+    return st.map((r) => ({ ...r, x: scale > 0 ? Math.min(1, Math.max(0, r.steps) / scale) : 0, behind: round(lead - r.steps, 1) }));
   }
   function lowerBound(ts, t) { let lo = 0, hi = ts.length; while (lo < hi) { const m = (lo + hi) >> 1; if (ts[m] < t) lo = m + 1; else hi = m; } return lo; }
 
   root.KRaceMath = {
     HOUR, RACE, LEG, LEGS, DAY, WEEK, GENESIS, MIN_K, SEED, TRIALS,
     raceIndex, raceStart, raceId, parseRaceId, raceAt, legOf, legsOf, weekOf, weekStart, dayOf,
-    rng, handicapOf, winChances, calibrate, makeCard, cardForLeg, finishLine, standings, winners, shows, POINTS, track, lowerBound,
+    rng, handicapOf, winChances, calibrate, makeCard, cardForLeg, finishLine, standings, winners, shows, POINTS, track, LIVE_MAX, lowerBound,
   };
 })(typeof window !== "undefined" ? window : globalThis);
