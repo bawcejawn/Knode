@@ -3,7 +3,7 @@
   "orphans": [],
   "lastCompound": 40573279,
   "warnings": [],
-  "lastProduced": 40588689,
+  "lastProduced": 40590069,
   "producedByDay": {
     "1401": 63,
     "1402": 62,
@@ -13,16 +13,16 @@
     "1406": 51,
     "1407": 62,
     "1408": 52,
-    "1409": 25
+    "1409": 26
   },
-  "producerScannedTo": 40589637,
+  "producerScannedTo": 40590793,
   "settings": "{\"min_stake\":\"100000000\",\"min_stake_next\":\"0\",\"min_stake_next_week\":\"0\",\"max_sponsor_rc\":\"200000000\",\"min_sponsor_rc\":\"0\",\"paused\":false}",
-  "sealedAt": 40589636,
+  "sealedAt": 40590758,
   "desk": {
     "settings": "{\"fee_bps\":300,\"min_swap\":\"100000000\",\"max_swap\":\"0\",\"paused\":false,\"timelock\":\"172800000\"}",
-    "koin": "39756635910",
+    "koin": "41453663104",
     "koinOut": "291097000000",
-    "at": 1793180752870
+    "at": 1793184236930
   },
   "deskProducerKey": "AzCYCDLDa49PPVHKk60xQbOErS6XY1TcEA8bkSo8Sk6E",
   "notified": [
@@ -39,8 +39,8 @@
       "last": 40589696
     },
     "d95519164e1a7e7b5348ea4e9f8ffc97589cfcd705091768c70a6533d6df7810": {
-      "n": 6,
-      "last": 40589696
+      "n": 7,
+      "last": 40590818
     },
     "04ef4a90fe61a174ba9afad99f81f6fa019b2dd7ae38dcb733c3ca3f50c5e3bf": {
       "n": 6,
@@ -51,5 +51,5 @@
       "last": 40589696
     }
   },
-  "seal": "85043b919a8a4ca3b6e101231cc082b736a434e966d0ebd9bf803c585b3a8a47"
+  "seal": "5f054eef7ef1bc3763267468dd5f46e20f54248d7db07df820d76cfe81076551"
 }
