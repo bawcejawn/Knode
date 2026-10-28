@@ -503,7 +503,9 @@
         W.status && W.status("The Mana sponsor couldn't cover this one. Confirm again in Kondor to use your own Mana.");
       }
     }
-    return sendKondorWith(label, ops, opts);
+    // Not sponsored: the player's own Mana, always named as payer (owner, 2026-10-28: the game contract pays for no one,
+    // so Kondor's free Mana option, which names the game, would only be refused).
+    return sendKondorWith(label, ops, { ...opts, ownMana: true });
   }
 
   async function sendKondorWith(label, ops, opts = {}) {
