@@ -6,7 +6,7 @@
        encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://raw.githubusercontent.com/bawcejawn/Knode/blocks-data/ https://raw.githubusercontent.com/bawcejawn/Knode/race-data/ https://raw.githubusercontent.com/bawcejawn/Knode/games-data/ https://koinvault.app; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fantasy Producers · Draft five Koinos block producers</title>
+  <title>Fantasy Producers</title>
   <!-- Not in the sitemap or the menus until Fantasy launches (claude/launch-order.md). -->
   <meta name="robots" content="noindex">
   <meta name="description" content="Draft five Koinos block producers under a salary cap, pick a captain, and score on how reliably they sign their blocks. Weekly league and Weekly Rival.">
@@ -65,92 +65,140 @@
   </header>
 
   <main class="fx">
-    <div class="fx-intro">
-      <h1>Fantasy Producers</h1>
-      <p>Draft five Koinos block producers under a salary cap and pick a captain. Every day they score on how reliably they sign their share of blocks. One change a day. Weekly league, and a Weekly Rival to beat.</p>
-    </div>
-    <p class="status" id="status" role="status">Loading…</p>
-
-    <p class="fx-remind" id="fx-remind" role="status" hidden></p>
-
-    <section class="fx-sheet" id="sheet" aria-label="Your team">
-      <div class="fx-sheet-top">
-        <span id="fx-for">Your team</span>
-        <span class="fx-lock" id="fx-lock"></span>
+    <section class="fx-hero" aria-labelledby="fx-title">
+      <div class="fx-hero-in">
+        <div class="fx-hero-copy">
+          <p class="fx-kicker" id="fx-weekline">Fantasy Producers</p>
+          <h1 id="fx-title">Pick five. Captain one. Beat the league.</h1>
+          <p class="fx-lede">Draft Koinos block producers under a salary cap of 100. Every day they score on how reliably they sign their share of blocks. One change a day, a weekly league and a Weekly Rival.</p>
+        </div>
+        <div class="fx-clock" aria-live="polite">
+          <span class="fx-clock-l" id="fx-kick-l">Next lineup lock</span>
+          <b class="fx-clock-n" id="fx-kick">–</b>
+          <span class="fx-clock-s" id="fx-kick-s"></span>
+        </div>
       </div>
-      <div class="fx-plan" id="fx-plan" role="group" aria-label="Which day to plan" hidden></div>
-      <div class="fx-slots" id="fx-slots"></div>
-      <div class="fx-budget"><span>Spent <b id="fx-spent">0</b> of <b id="fx-budget">100</b></span><div class="fx-bar" id="fx-bar"><i></i></div><span id="fx-left"></span></div>
-      <p class="fx-check" id="fx-check" aria-live="polite"></p>
-      <div class="fx-sheet-foot">
-        <span class="fx-saved" id="fx-saved"></span>
-        <span><button type="button" class="fx-ghost" id="fx-reset">Undo changes</button> <button type="button" class="fx-save" id="fx-save">Save team</button></span>
+      <div class="fx-board" id="you" hidden>
+        <div><b id="you-pts">0</b><span>points this week</span></div>
+        <div><b id="you-rank">–</b><span>your place</span></div>
+        <div><b id="you-today">–</b><span>today so far</span></div>
+        <div><b id="you-rival">–</b><span>this week's rival</span></div>
       </div>
+      <div class="fx-next" id="fx-next" role="status"></div>
     </section>
 
-    <div class="fx-you" id="you" hidden>
-      <div><b id="you-pts">0</b><span>points this week</span></div>
-      <div><b id="you-rank">–</b><span>your place this week</span></div>
-      <div><b id="you-today">–</b><span>today so far</span></div>
-      <div><b id="you-rival">–</b><span>this week's rival</span></div>
+    <nav class="fx-nav" aria-label="Fantasy sections">
+      <a href="#sheet" aria-current="true">My team</a>
+      <a href="#pool-box">Players</a>
+      <a href="#week-box">My week</a>
+      <a href="#rival-box">Rival</a>
+      <a href="#league-box">League</a>
+      <a href="#how">Rules</a>
+    </nav>
+
+    <p class="status" id="status" role="status">Loading…</p>
+    <p class="fx-remind" id="fx-remind" role="status" hidden></p>
+
+    <div class="fx-grid">
+      <section class="fx-sheet" id="sheet" aria-label="Your team">
+        <div class="fx-sheet-top">
+          <div><h2 id="fx-for">Your team</h2></div>
+          <span class="fx-lock" id="fx-lock"></span>
+        </div>
+        <div class="fx-plan" id="fx-plan" role="group" aria-label="Which day to set" hidden></div>
+        <div class="fx-pitch">
+          <div class="fx-lines" aria-hidden="true"><i class="box"></i><i class="arc"></i><i class="half"></i><i class="circle"></i></div>
+          <div class="fx-slots" id="fx-slots"></div>
+        </div>
+        <div class="fx-cap">
+          <div class="fx-budget"><span class="fx-budget-l">Salary cap</span><span class="fx-budget-n"><b id="fx-spent">0</b> / <b id="fx-budget">100</b></span><span class="fx-left" id="fx-left"></span></div>
+          <div class="fx-bar" id="fx-bar"><i></i></div>
+        </div>
+        <p class="fx-check" id="fx-check" aria-live="polite"></p>
+        <div class="fx-sheet-foot">
+          <span class="fx-saved" id="fx-saved"></span>
+          <span class="fx-btns"><button type="button" class="fx-ghost" id="fx-reset">Undo changes</button><button type="button" class="fx-save" id="fx-save">Save team</button></span>
+        </div>
+      </section>
+
+      <aside class="fx-side">
+        <section class="fx-card fx-match-card" id="rival-box" aria-labelledby="rival-h">
+          <div class="fx-head"><h2 id="rival-h">Weekly Rival</h2><p>Bragging rights, no prize money</p></div>
+          <div id="fx-match"></div>
+          <div class="fx-rec" id="fx-rec"></div>
+          <h3 id="ch-title">Challenge someone for next week</h3>
+          <div class="fx-challenge">
+            <select id="fx-rival-pick" aria-label="Choose a rival"></select>
+            <input id="fx-rival-addr" placeholder="or paste a wallet address" aria-label="Rival wallet address" autocomplete="off" spellcheck="false">
+            <button type="button" class="fx-go" id="fx-rival-send">Challenge</button>
+          </div>
+          <p class="note" id="rival-note"></p>
+        </section>
+
+        <section class="fx-card" id="week-box" aria-labelledby="week-h">
+          <div class="fx-head"><h2 id="week-h">My week</h2><p id="week-sub"></p></div>
+          <div class="fx-days" id="fx-days"></div>
+          <p class="note" id="week-note"></p>
+        </section>
+      </aside>
     </div>
 
-    <section class="fx-panel fx-sec" id="pool-box">
-      <div class="fx-head"><h2>Price list</h2><p id="pool-sub"></p></div>
-      <div class="fx-filter" role="group" aria-label="Sort the price list">
-        <button type="button" data-sort="price" aria-pressed="true">Price</button>
-        <button type="button" data-sort="form" aria-pressed="false">Form</button>
-        <button type="button" data-sort="today" aria-pressed="false">Today</button>
-        <button type="button" data-sort="vhp" aria-pressed="false">Size</button>
+    <section class="fx-card fx-draft" id="pool-box" aria-labelledby="pool-h">
+      <div class="fx-head"><h2 id="pool-h">Players</h2><p id="pool-sub"></p></div>
+      <div class="fx-tools">
+        <label class="fx-search"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg><input id="fx-q" type="search" placeholder="Find a producer" aria-label="Find a producer" autocomplete="off" spellcheck="false"></label>
+        <div class="fx-filter" role="group" aria-label="Sort the players">
+          <span class="fx-filter-l">Sort</span>
+          <button type="button" data-sort="price" aria-pressed="true">Price</button>
+          <button type="button" data-sort="value" aria-pressed="false">Value</button>
+          <button type="button" data-sort="form" aria-pressed="false">Form</button>
+          <button type="button" data-sort="today" aria-pressed="false">Today</button>
+          <button type="button" data-sort="vhp" aria-pressed="false">Size</button>
+        </div>
       </div>
-      <table class="fx-t" id="fx-pool">
-        <thead><tr><th>Producer</th><th class="num">Form</th><th class="num hide-sm">Yesterday</th><th class="num hide-sm">Today</th><th class="num">Price</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <div class="fx-scroll">
+        <table class="fx-t fx-pool" id="fx-pool">
+          <thead><tr><th>Producer</th><th class="fx-th-form">Form</th><th class="num hide-sm">Yesterday</th><th class="num hide-sm">Today</th><th class="num">Price</th><th><span class="sr">Add or remove</span></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
       <p class="note" id="pool-note"></p>
       <p class="fx-disclose" id="fx-disclose">Two producers in the pool are Knode's own nodes (marked <span class="fx-own">Knode</span>). They are drafted and scored like any other: their blocks come from the chain, not from us.</p>
     </section>
 
-    <section class="fx-panel fx-sec" id="week-box">
-      <div class="fx-head"><h2>Your week</h2><p id="week-sub"></p></div>
-      <div class="fx-days" id="fx-days"></div>
-      <p class="note" id="week-note"></p>
-    </section>
-
     <div class="fx-cols">
-      <section class="fx-panel" id="league-box">
-        <div class="fx-head"><h2>League</h2><p id="league-sub"></p></div>
-        <div class="fx-filter" role="group" aria-label="Which week">
+      <section class="fx-card" id="league-box" aria-labelledby="league-h">
+        <div class="fx-head"><h2 id="league-h">League</h2><p id="league-sub"></p></div>
+        <div class="fx-filter fx-seg" role="group" aria-label="Which week">
           <button type="button" data-week="now" aria-pressed="true">This week</button>
           <button type="button" data-week="last" aria-pressed="false">Last week</button>
           <button type="button" data-week="all" aria-pressed="false">All time</button>
         </div>
-        <table class="fx-t" id="fx-league"><thead><tr><th class="num">#</th><th>Player</th><th class="num">Points</th><th class="num hide-sm" id="league-col4">Vault</th></tr></thead><tbody></tbody></table>
+        <table class="fx-t fx-league" id="fx-league"><thead><tr><th class="num">#</th><th>Player</th><th class="num">Points</th><th class="num hide-sm" id="league-col4">Vault</th></tr></thead><tbody></tbody></table>
         <p class="note" id="league-note"></p>
       </section>
 
-      <section class="fx-panel" id="rival-box">
-        <div class="fx-head"><h2>Weekly Rival</h2><p>Bragging rights, no prize money.</p></div>
-        <div id="fx-match"></div>
-        <h3>Your record</h3>
-        <div class="fx-rec" id="fx-rec"></div>
-        <h3 id="ch-title">Challenge someone for next week</h3>
-        <div class="fx-challenge">
-          <select id="fx-rival-pick" aria-label="Choose a rival"></select>
-          <input id="fx-rival-addr" placeholder="or paste a wallet address" aria-label="Rival wallet address" autocomplete="off" spellcheck="false">
-          <button type="button" class="btn btn-tang" id="fx-rival-send">Challenge</button>
-        </div>
-        <p class="note" id="rival-note"></p>
-        <h3 class="fx-gap">Best rival records</h3>
+      <section class="fx-card" aria-labelledby="rivals-h">
+        <div class="fx-head"><h2 id="rivals-h">Best rival records</h2><p>At least 4 matches</p></div>
         <table class="fx-t" id="fx-rivals"><thead><tr><th>Player</th><th class="num">W–L–D</th><th class="num">Win %</th></tr></thead><tbody></tbody></table>
         <p class="note" id="rivals-note"></p>
       </section>
     </div>
 
+    <section class="fx-steps" aria-labelledby="steps-h">
+      <h2 id="steps-h">How to play</h2>
+      <ol>
+        <li><b>Draft five producers</b><span>Any five from the price list, costing 100 or less. Prices follow each node's recent form.</span></li>
+        <li><b>Name a captain</b><span>Your captain scores double. Move the armband any day, as your one change.</span></li>
+        <li><b>Save before the lock</b><span>Teams lock 5 minutes before each <span data-fx="day">day</span>. Plan days ahead whenever you like.</span></li>
+        <li><b>Score every <span data-fx="day">day</span></b><span>100 points for a producer that signs exactly its fair share of blocks, up to 130.</span></li>
+      </ol>
+    </section>
+
     <details class="fx-how" id="how">
-      <summary>How it works</summary>
+      <summary>Full rules</summary>
       <div class="explain" id="how-text">
-        <p><b>Your team.</b> Five different producers from the week's price list, within a budget of 100. The first one is your captain and scores double. Save a team for the next <span data-fx="day">day</span>; it carries on until you change it.</p>
+        <p><b>Your team.</b> Five different producers from the week's price list, within a budget of 100 (the salary cap). The first one is your captain and scores double. Save a team for the next <span data-fx="day">day</span>; it carries on until you change it.</p>
         <p><b>A fresh start every week.</b> New prices come out before each week, and Monday's team can be any team that fits them. Last week's team carries into Monday only if it still fits (all five on the list, within 100).</p>
         <p><b>Then one change a <span data-fx="day">day</span>.</b> From one <span data-fx="day">day</span> to the next you may swap one producer, or move the captain's armband. A new producer can take the armband of the one it replaces as part of that one swap. A team with more changes, over the budget, or with a producer not on the list is ignored, and yesterday's team plays.</p>
         <p><b>Points.</b> Koinos picks who signs each block in proportion to VHP, so every producer has a fair share of blocks. Each <span data-fx="day">day</span> a producer scores</p>

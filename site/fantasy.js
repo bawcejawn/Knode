@@ -36,7 +36,27 @@
     return `hsl(${hues[x % hues.length] + ((x >>> 8) % 14) - 7} ${58 + ((x >>> 12) % 18)}% ${46 + ((x >>> 16) % 12)}%)`;
   }
   const dot = (a) => { const d = el("span", { class: "fx-dot", "aria-hidden": "true" }); d.style.setProperty("--c", colorOf(a)); return d; };
-  const nameCell = (a) => el("span", { class: "fx-name" }, dot(a), el("span", { text: nameOf(a) }), NAMES[a] ? el("span", { class: "fx-own", title: "One of Knode's own nodes", text: "Knode" }) : null);
+  /** A producer's kit: a shirt in its own colour with a two-letter monogram (SVG built node by node, no HTML strings). */
+  const SVG = "http://www.w3.org/2000/svg";
+  const sv = (tag, attrs) => { const e = document.createElementNS(SVG, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+  function initials(a) {
+    if (!isAddr(a)) return "?";
+    if (NAMES[a]) return NAMES[a].split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+    if (players.has(a)) return String(players.get(a)).slice(0, 2).toUpperCase();
+    return a.slice(1, 3).toUpperCase();
+  }
+  function kit(a, cls = "") {
+    const box = el("span", { class: `fx-kit ${cls}`.trim(), "aria-hidden": "true" });
+    box.style.setProperty("--c", colorOf(a));
+    const s = sv("svg", { viewBox: "0 0 64 60", focusable: "false" });
+    s.append(sv("path", { class: "body", d: "M21 3 9 9 2 24l10 5 3-6v34h34V23l3 6 10-5-7-15-12-6c-2 5-6 8-11 8s-9-3-11-8Z" }),
+      sv("path", { class: "trim", d: "M21 3c2 5 6 8 11 8s9-3 11-8l-3-1c-1 4-4 6-8 6s-7-2-8-6Z" }),
+      sv("path", { class: "sleeve", d: "M2 24l10 5 1.6-3.2L4 21Zm60 0-10 5-1.6-3.2L60 21Z" }));
+    const t = sv("text", { x: "32", y: "42", "text-anchor": "middle" }); t.textContent = initials(a);
+    s.append(t); box.append(s);
+    return box;
+  }
+  const nameCell = (a) => el("span", { class: "fx-name" }, kit(a, "sm"), el("span", { class: "nm", text: nameOf(a) }), NAMES[a] ? el("span", { class: "fx-own", title: "One of Knode's own nodes", text: "Knode" }) : null);
 
   // ── the network ──
   let F = FR, G = FR.GAMES, NET = null, provider = null, W = null, picks = null;
@@ -188,7 +208,9 @@
     box.hidden = !mine.open || mine.open.length < 2;
     box.replaceChildren(el("span", { class: "lbl", text: "Plan:" }), ...(mine.open || []).map((d) => el("button", { type: "button", "aria-pressed": String(d === mine.sd),
       title: d === mine.td ? "the next day you can change" : "plan ahead: you can still change it until its own lock",
-      onclick: () => { selDay = d === mine.td ? null : d; draftFor = null; refreshMine(); } }, dayLabel(d), mine.planned && mine.planned.has(d) ? el("i", { class: "fx-dotsaved", "aria-label": "saved" }) : null)));
+      onclick: () => { selDay = d === mine.td ? null : d; draftFor = null; refreshMine(); } },
+      el("span", { class: "d", text: dayLabel(d) }), el("span", { class: "s", text: mine.planned && mine.planned.has(d) ? "saved" : d === mine.td ? "next" : "open" }),
+      mine.planned && mine.planned.has(d) ? el("i", { class: "fx-dotsaved", "aria-label": "saved" }) : null)));
   }
 
   // ── the team sheet ──
@@ -226,19 +248,20 @@
   function renderSheet() {
     const s = sheetOf(mine.tw), now = Date.now(), lock = mine.sd != null ? F.lockOfDay(mine.sd) : null;
     renderPlan();
-    $("fx-for").replaceChildren(el("b", { text: `Team for ${when(F.dayStart(mine.sd))}` }), ` · week ${mine.tw + 1}${TESTNET ? " (test)" : ""}${mine.sd !== mine.td ? " · planning ahead" : ""}`);
-    $("fx-lock").replaceChildren(lock ? "Locks in " : "", lock ? el("b", { text: dur(lock - now) }) : "");
+    $("fx-for").replaceChildren(`Team for ${when(F.dayStart(mine.sd))}`, el("span", { class: "fx-for-s", text: `Week ${mine.tw + 1}${TESTNET ? " (test)" : ""}${mine.sd !== mine.td ? " · planning ahead" : ""}` }));
+    $("fx-lock").replaceChildren(lock ? el("span", { text: "Locks in" }) : "", lock ? el("b", { text: dur(lock - now) }) : "");
     const price = priceMap(s);
     $("fx-slots").replaceChildren(...Array.from({ length: FR.TEAM }, (_, i) => {
       const a = draft[i];
-      if (!a) return el("div", { class: "fx-slot" }, el("span", { class: "n", text: String(i + 1) }), el("span", { class: "fx-empty-slot", text: i === 0 ? "Captain (×2)" : "Empty" }));
-      const slot = el("div", { class: "fx-slot filled" + (i === 0 ? " cap" : "") },
-        el("span", { class: "n", text: String(i + 1) }), i === 0 ? el("span", { class: "fx-band", text: "C ×2" }) : null,
+      if (!a) return el("div", { class: `fx-slot p${i}` }, el("button", { type: "button", class: "fx-open", disabled: s ? null : "", onclick: pickFromList },
+        el("span", { class: "fx-kit ghost", "aria-hidden": "true", text: "+" }), el("span", { class: "who", text: i === 0 ? "Add your captain" : "Add a producer" }), el("span", { class: "meta", text: i === 0 ? "scores ×2" : "from the players list" })));
+      const slot = el("div", { class: `fx-slot p${i} filled` + (i === 0 ? " cap" : "") },
+        el("span", { class: "fx-kitwrap" }, kit(a), i === 0 ? el("span", { class: "fx-band", title: "Captain: scores double", text: "C" }) : null),
         el("span", { class: "who", text: nameOf(a) }),
-        el("span", { class: "meta", text: `price ${price.has(a) ? price.get(a) : "–"} · form ${fmt(s && (s.pool.find((p) => p.a === a) || {}).form, 1)}` }),
+        el("span", { class: "meta" }, el("b", { text: price.has(a) ? String(price.get(a)) : "–" }), ` · form ${fmt(s && (s.pool.find((p) => p.a === a) || {}).form, 1)}`),
         el("span", { class: "acts" },
-          el("button", { type: "button", "aria-pressed": String(i === 0), "aria-label": `Make ${nameOf(a)} captain`, onclick: () => captain(a) }, i === 0 ? "Captain" : "Make C"),
-          el("button", { type: "button", "aria-label": `Remove ${nameOf(a)}`, onclick: () => remove(a) }, "Remove")));
+          i === 0 ? el("span", { class: "fx-capt", text: "Captain ×2" }) : el("button", { type: "button", "aria-pressed": "false", "aria-label": `Make ${nameOf(a)} captain`, onclick: () => captain(a) }, "Make C"),
+          el("button", { type: "button", class: "x", "aria-label": `Remove ${nameOf(a)}`, onclick: () => remove(a) }, "✕")));
       slot.style.setProperty("--c", colorOf(a));
       return slot;
     }));
@@ -259,6 +282,11 @@
       : mine.monday && mine.inForce && !mine.carriedFits ? [el("b", { text: "Last week's team doesn't fit this week's prices." }), " Save a new team, or you score nothing until you do."]
       : mine.inForce ? [mine.monday ? "No new team saved: last week's team carries on." : "No new team saved: today's carries on."] : me() ? ["You have no team yet."] : []));
   }
+  function pickFromList() {
+    const q = $("fx-q"), box = $("pool-box");
+    if (box) box.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+    if (q) setTimeout(() => q.focus({ preventScroll: true }), 350);
+  }
   function sheetWait() {
     const t = F.sheetTime(mine.tw);
     return Date.now() < t ? `The price list for week ${mine.tw + 1} comes out ${when(t)}. Teams can be saved from then.` : "Waiting for the recorder to publish the price list (every run checks).";
@@ -273,19 +301,23 @@
     const y = lastFinalDay(), lv = liveRec(), vhp = new Map();
     for (const rec of [y, lv]) if (rec && rec.producers) for (const [a, x] of Object.entries(rec.producers)) vhp.set(a, Math.max(vhp.get(a) || 0, x[1]));
     const rows = s.pool.map((p) => ({ ...p, y: ixOf(y, p.a), t: ixOf(lv, p.a), size: vhp.get(p.a) || 0 }));
-    const key = { price: (r) => -r.price, form: (r) => -(r.form ?? -1), today: (r) => -(r.t ?? -1), vhp: (r) => -r.size }[sortBy];
+    const key = { price: (r) => -r.price, value: (r) => -((r.form ?? 0) / r.price), form: (r) => -(r.form ?? -1), today: (r) => -(r.t ?? -1), vhp: (r) => -r.size }[sortBy];
     rows.sort((a, b) => key(a) - key(b) || (a.a < b.a ? -1 : 1));
+    const q = ($("fx-q") && $("fx-q").value.trim().toLowerCase()) || "";
+    const shown = q ? rows.filter((r) => r.a.toLowerCase().includes(q) || nameOf(r.a).toLowerCase().includes(q)) : rows;
     const full = draft.length >= FR.TEAM, price = priceMap(s), spent = draft.reduce((t, a) => t + (price.get(a) || 0), 0);
     const ixCell = (v) => { const c = el("span", { class: "fx-form" + (v == null ? "" : v >= 103 ? " hi" : v < 90 ? " lo" : ""), text: v == null ? "–" : fmt(v, 1) }); return c; };
-    tbody.replaceChildren(...rows.map((r) => {
+    const meter = (v) => { const m = el("span", { class: "fx-meter" + (v == null ? "" : v >= 103 ? " hi" : v < 90 ? " lo" : "") }, el("i"), el("b", { text: v == null ? "–" : fmt(v, 1) })); m.firstChild.style.setProperty("--p", `${v == null ? 0 : Math.max(4, Math.min(100, (v / 130) * 100))}%`); return m; };
+    tbody.replaceChildren(...shown.map((r) => {
       const on = draft.includes(r.a), fits = spent + r.price <= s.budget;
       const btn = on ? el("button", { type: "button", class: "rm", "aria-label": `Remove ${nameOf(r.a)}`, onclick: () => remove(r.a) }, "Remove")
-        : el("button", { type: "button", "aria-label": `Add ${nameOf(r.a)}`, onclick: () => add(r.a), disabled: full || s !== sheetOf(mine.tw) ? "" : null,
+        : el("button", { type: "button", class: fits ? null : "over", "aria-label": `Add ${nameOf(r.a)}`, onclick: () => add(r.a), disabled: full || s !== sheetOf(mine.tw) ? "" : null,
             title: full ? "Your team has 5: remove one first" : fits ? null : "Over the budget with your other picks" }, full || fits ? "Add" : "Add (over)");
-      return el("tr", { class: on ? "on" : null }, el("td", {}, nameCell(r.a)), el("td", { class: "num" }, ixCell(r.form)), el("td", { class: "num hide-sm" }, ixCell(r.y)),
+      return el("tr", { class: on ? "on" : null }, el("td", {}, nameCell(r.a)), el("td", { class: "fx-td-form" }, meter(r.form)), el("td", { class: "num hide-sm" }, ixCell(r.y)),
         el("td", { class: "num hide-sm" }, ixCell(r.t)), el("td", { class: "num" }, el("span", { class: "fx-price", text: String(r.price) })), el("td", { class: "num" }, btn));
     }));
-    $("pool-sub").textContent = `${s.pool.length} producers · median form ${fmt(s.median, 1)} · budget ${s.budget}${s.late ? " · made late" : ""}`;
+    if (!shown.length) tbody.replaceChildren(el("tr", {}, el("td", { colspan: "6", class: "fx-none", text: `No producer matches "${q}".` })));
+    $("pool-sub").textContent = `${s.pool.length} producers, median form ${fmt(s.median, 1)}${s.late ? ", made late" : ""}. ${full ? "Your team is full." : `${Math.max(0, s.budget - spent)} left to spend.`}`;
     const wf = files.weeks.get(s.week);
     $("pool-note").replaceChildren(`Form = blocks signed ÷ expected over the 7 ${TESTNET ? "test days" : "days"} before the list (100 = its fair share). Today = so far, provisional. `,
       wf && wf.sha256 ? el("span", { class: "mono", title: "sha256 of this price list", text: `Fingerprint ${wf.sha256.slice(0, 16)}…` }) : "",
@@ -296,7 +328,7 @@
   function renderWeek() {
     const now = Date.now(), wNow = F.weekOf(now), days = F.weekDays(wNow), today = F.dayNo(now), who = me();
     const wf = files.weeks.get(wNow), row = who && wf ? (wf.players || []).find((x) => x.a === who) : null;
-    $("week-sub").textContent = `Week ${wNow + 1}${TESTNET ? " (test)" : " · days are UTC days"} · ${when(F.weekStart(wNow))} to ${when(F.weekStart(wNow + 1))} your time`;
+    $("week-sub").textContent = `Week ${wNow + 1}${TESTNET ? " (test)" : ", UTC days"}: ${when(F.weekStart(wNow))} to ${when(F.weekStart(wNow + 1))}`;
     const lv = liveRec();
     let total = 0;
     $("fx-days").replaceChildren(...days.map((d, i) => {
@@ -307,11 +339,14 @@
       else if (team && rec && rec.final) score = F.dayScore(team, rec);
       else if (team && d === today && lv && lv.day === d) { score = F.dayScore(team, lv); live = true; }
       if (score != null && !live) total += score;          // today so far is shown on its own, not in the week's points
-      const label = new Date(F.dayStart(d)).toLocaleString(undefined, TESTNET ? { hour: "numeric", minute: "2-digit" } : { weekday: "short", timeZone: "UTC" });   // game days are UTC days
-      return el("div", { class: "fx-day" + (d === today ? " now" : "") + (live ? " live" : ""), title: team ? team.map(nameOf).join(", ") : "" },
-        el("span", { text: label }), el("b", { text: score == null ? (d > today ? "·" : "–") : fmt(score, 0) }),
-        el("span", { class: "cap", text: team ? `C ${nameOf(team[0])}` : d > today ? "to come" : "no team" }),
+      const label = new Date(F.dayStart(d)).toLocaleString(undefined, TESTNET ? { hour: "numeric" } : { weekday: "short", timeZone: "UTC" });   // game days are UTC days
+      const tile = el("div", { class: "fx-day" + (d === today ? " now" : "") + (live ? " live" : "") + (d > today ? " later" : ""), title: team ? team.map(nameOf).join(", ") : "" },
+        el("span", { class: "dl", text: label }), el("span", { class: "bar", "aria-hidden": "true" }, el("i")),
+        el("b", { text: score == null ? (d > today ? "" : "–") : fmt(score, 0) }),
+        el("span", { class: "cap", text: live ? "live" : team ? `C ${nameOf(team[0])}` : d > today ? "to come" : "no team" }),
         t && t.note ? el("span", { class: "warn", text: t.note }) : null);
+      tile.querySelector(".bar i").style.setProperty("--p", `${score == null ? 0 : Math.max(3, Math.min(100, (score / 780) * 100))}%`);
+      return tile;
     }));
     const lb = files.board && files.board.week && files.board.week.week === wNow ? files.board.week.rows : [];
     const mineRow = who ? lb.find((x) => x.a === who) : null;
@@ -321,7 +356,7 @@
     const tToday = mine.weekTeams[days.indexOf(today)];
     $("you-today").textContent = tToday && tToday.team && lv && lv.day === today ? fmt(F.dayScore(tToday.team, lv), 0) : "–";
     $("you-rival").textContent = mine.rivalNow ? nameOf(mine.rivalNow) : "none";
-    $("week-note").textContent = !who ? "Connect a wallet to see your week." : `Recorded ${TESTNET ? "test days" : "days"} count once their blocks are irreversible and match on two nodes; today (·) is provisional. Points are the recorder's when it has them.`;
+    $("week-note").textContent = !who ? "Connect a wallet to see your week." : `A ${TESTNET ? "test day" : "day"} counts once its blocks are irreversible and match on two nodes; today is provisional. A full day for 5 producers at their fair share is 600 (captain double).`;
   }
 
   // ── the league ──
@@ -331,8 +366,8 @@
     $("league-col4").textContent = leagueWeek === "all" ? "Weeks" : "Vault";
     if (leagueWeek === "all") {
       const rows = files.board && Array.isArray(files.board.allTime) ? files.board.allTime : [];
-      $("fx-league").tBodies[0].replaceChildren(...rows.slice(0, 50).map((r) => el("tr", { class: r.a === who ? "me" : null, title: `Best week ${fmt(r.best, 0)}` },
-        el("td", { class: "num", text: String(r.place) }), el("td", {}, el("span", { class: "fx-name" }, dot(r.a), el("span", { text: nameOf(r.a) }))),
+      $("fx-league").tBodies[0].replaceChildren(...rows.slice(0, 50).map((r) => el("tr", { class: [r.a === who ? "me" : "", r.place <= 3 ? `pod pod${r.place}` : ""].join(" ").trim() || null, title: `Best week ${fmt(r.best, 0)}` },
+        el("td", { class: "num", text: String(r.place) }), el("td", {}, el("span", { class: "fx-name" }, kit(r.a, "sm"), el("span", { class: "nm", text: nameOf(r.a) }))),
         el("td", { class: "num", text: fmt(r.points, 0) }), el("td", { class: "num hide-sm", text: String(r.weeks) }))));
       const mine = who ? rows.find((x) => x.a === who) : null;
       $("league-sub").textContent = "All finished weeks";
@@ -342,12 +377,12 @@
     const b = files.board, part = b ? (leagueWeek === "now" ? b.week : b.lastWeek) : null;
     const wf = part ? files.weeks.get(part.week) : null, vault = new Map(((wf && wf.players) || []).map((x) => [x.a, x.vault]));
     const rows = part && Array.isArray(part.rows) ? part.rows : [];
-    $("fx-league").tBodies[0].replaceChildren(...rows.slice(0, 50).map((r) => el("tr", { class: r.a === who ? "me" : null },
-      el("td", { class: "num", text: String(r.place) }), el("td", {}, el("span", { class: "fx-name" }, dot(r.a), el("span", { text: nameOf(r.a) }), r.full ? null : el("span", { class: "fx-pill", title: "Didn't have a team all 7 days", text: "part week" }))),
+    $("fx-league").tBodies[0].replaceChildren(...rows.slice(0, 50).map((r) => el("tr", { class: [r.a === who ? "me" : "", r.place <= 3 ? `pod pod${r.place}` : ""].join(" ").trim() || null },
+      el("td", { class: "num", text: String(r.place) }), el("td", {}, el("span", { class: "fx-name" }, kit(r.a, "sm"), el("span", { class: "nm", text: nameOf(r.a) }), r.full ? null : el("span", { class: "fx-pill", title: "Didn't have a team all 7 days", text: "part week" }))),
       el("td", { class: "num", text: fmt(r.points, 0) }), el("td", { class: "num hide-sm", text: vault.has(r.a) && part.final ? String(vault.get(r.a)) : "–" }))));
     $("league-sub").textContent = part ? `Week ${part.week + 1}${part.final ? " · final" : " · still counting"}` : "";
     const meRow = who ? rows.find((x) => x.a === who) : null;
-    $("league-note").textContent = !rows.length ? "No teams recorded yet." : `${rows.length} player${rows.length > 1 ? "s" : ""}.${meRow && rows.length > 50 && meRow.place > 50 ? ` You: #${meRow.place}.` : ""} Vault = the points posted to the vault: 255 for the best week, one less for each lower score (only the order counts).`;
+    $("league-note").textContent = !rows.length ? "No teams recorded yet." : `${rows.length} player${rows.length > 1 ? "s" : ""}.${meRow && rows.length > 50 && meRow.place > 50 ? ` You: #${meRow.place}.` : ""} Vault is what goes to the vault for the prize: 255 for the best week, one less for each lower score.`;
   }
 
   // ── Weekly Rival ──
@@ -358,20 +393,21 @@
     if (!who) match.replaceChildren(el("p", { class: "note", text: "Connect a wallet to see your rival." }));
     else if (mine.rivalNow) {
       const a = pts.get(who), z = pts.get(mine.rivalNow);
-      match.replaceChildren(el("div", { class: "fx-vs" },
-        el("div", { class: "side" }, el("span", { text: "You" }), el("b", { text: fmt(a ? a.points : 0, 0) })),
+      const pa = a ? a.points : 0, pz = z ? z.points : 0;
+      match.replaceChildren(el("div", { class: "fx-vs" + (pa > pz ? " lead" : pa < pz ? " trail" : "") },
+        el("div", { class: "side" }, kit(who), el("span", { class: "nm", text: "You" }), el("b", { text: fmt(pa, 0) })),
         el("span", { class: "mid", text: "vs" }),
-        el("div", { class: "side r" }, el("span", { text: nameOf(mine.rivalNow) }), el("b", { text: fmt(z ? z.points : 0, 0) }))),
-        el("p", { class: "note", text: "This week's challenge. It counts if you both hold a Knode Games stake and have a team all 7 days." }));
-    } else match.replaceChildren(el("p", { class: "note", text: `No rival this week.` }));
+        el("div", { class: "side r" }, kit(mine.rivalNow), el("span", { class: "nm", text: nameOf(mine.rivalNow) }), el("b", { text: fmt(pz, 0) }))),
+        el("p", { class: "note", text: pa === pz ? "Level so far this week." : `${pa > pz ? "You lead" : "You trail"} by ${fmt(Math.abs(pa - pz), 0)}. It counts if you both hold a Knode Games stake and have a team all 7 days.` }));
+    } else match.replaceChildren(el("div", { class: "fx-vs empty" }, el("p", { text: "No rival this week. Challenge someone below for next week." })));
     const against = wf && Array.isArray(wf.rivals) ? wf.rivals.filter((x) => x[1] === who).map((x) => x[0]) : [];
     if (who && against.length) match.append(el("p", { class: "note", text: `Challenged by ${against.length}: ${against.slice(0, 6).map(nameOf).join(", ")}${against.length > 6 ? "…" : ""}` }));
     // Your record.
     const rec = who && files.rivals && files.rivals.records ? files.rivals.records[who] : null;
     const line = (x) => (x ? `${x[0]}–${x[1]}–${x[2]}` : "0–0–0");
     const all = rec ? F.recordLine(rec) : null;
-    $("fx-rec").replaceChildren(el("div", {}, el("b", { text: line(rec && rec.made) }), "challenges made"), el("div", {}, el("b", { text: line(rec && rec.received) }), "challenges received"),
-      el("div", {}, el("b", { text: all ? `${Math.round(all.pct * 100)}%` : "–" }), all ? `of ${all.n} matches won` : "no matches yet"));
+    $("fx-rec").replaceChildren(el("div", {}, el("b", { text: line(rec && rec.made) }), "you challenged"), el("div", {}, el("b", { text: line(rec && rec.received) }), "challenged you"),
+      el("div", {}, el("b", { text: all ? `${Math.round(all.pct * 100)}%` : "–" }), all ? `won of ${all.n}` : "no matches yet"));
     // Challenge for next week.
     $("ch-title").textContent = `Challenge someone for week ${mine.rw + 1}`;
     const sel = $("fx-rival-pick"), opts = new Map();
@@ -470,10 +506,46 @@
     if (r) box.replaceChildren(el("b", { text: `Week ${r.week + 1}'s prices are out. ` }), r.had ? "Your team doesn't fit them, so it won't play on Monday. " : "You have no team for it yet. ",
       `Save one before ${when(r.lock)} (${dur(r.lock - Date.now())} from now).`);
   }
+  /** The scoreboard: the next lock, the week, and the one thing to do now. */
+  function renderHero() {
+    const now = Date.now(), td = mine.td, wNow = F.weekOf(now), started = now >= F.weekStart(0);
+    if (td == null) return;
+    const lock = F.lockOfDay(td);
+    $("fx-kick").textContent = clock(lock - now);
+    $("fx-kick-l").textContent = "Next lineup lock";
+    $("fx-kick-s").textContent = `for ${when(F.dayStart(td))}`;
+    $("fx-weekline").textContent = `Fantasy Producers · ${started ? `Week ${wNow + 1}` : `Week 1 starts ${when(F.weekStart(0))}`}${TESTNET ? " · testnet" : ""}`;
+    const s = sheetOf(mine.tw), v = verdict(), nx = $("fx-next");
+    let step, act = null;
+    if (!picks) step = "Teams open when the Picks contract is live. You can look around meanwhile.";
+    else if (!me()) step = TESTNET ? "Choose a test player in the red bar to start." : "Connect a wallet to pick your team.";
+    else if (!s) step = sheetWait();
+    else if (mine.remind) step = `Week ${mine.remind.week + 1}'s prices are out: set your Monday team.`;
+    else if (draft.length < FR.TEAM) { step = `Add ${FR.TEAM - draft.length} more producer${FR.TEAM - draft.length > 1 ? "s" : ""} to your team.`; act = ["Go to players", pickFromList]; }
+    else if (v.ok) { step = "Your lineup is ready. Save it before the lock."; act = ["Go to save", () => $("fx-save").scrollIntoView({ block: "center" })]; }
+    else if (v.bad) step = v.text;
+    else if (mine.saved) step = `You're set for ${when(F.dayStart(mine.sd))}. Plan a later day or challenge a rival.`;
+    else step = mine.inForce ? "Your team carries on. Make your one change for the day, or leave it." : v.text;
+    nx.replaceChildren(el("span", { class: "fx-next-l", text: "Your move" }), el("span", { class: "fx-next-t", text: step }), act ? el("button", { type: "button", onclick: act[1] }, act[0]) : "");
+  }
+  const clock = (ms) => { const t = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), x = t % 60; return h >= 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : `${h}:${String(m).padStart(2, "0")}:${String(x).padStart(2, "0")}`; };
   function render() {
     if (mine.td == null) return;
-    renderRemind();
+    renderRemind(); renderHero();
     renderSheet(); renderPool(); renderWeek(); renderLeague(); renderRival();
+  }
+
+  /** The section tabs: the one in view is marked. */
+  function setupNav() {
+    const links = [...document.querySelectorAll(".fx-nav a")];
+    if (!("IntersectionObserver" in window) || !links.length) return;
+    const seen = new Map();
+    const io = new IntersectionObserver((es) => {
+      for (const e of es) seen.set(e.target.id, e.isIntersecting ? e.intersectionRatio : 0);
+      let best = null, r = 0; for (const l of links) { const id = l.hash.slice(1), v = seen.get(id) || 0; if (v > r) { r = v; best = l; } }
+      if (best) for (const l of links) { if (l === best) l.setAttribute("aria-current", "true"); else l.removeAttribute("aria-current"); }
+    }, { rootMargin: "-120px 0px -40% 0px", threshold: [0, .1, .3, .6] });
+    for (const l of links) { const t = document.getElementById(l.hash.slice(1)); if (t) io.observe(t); }
   }
 
   // ── start ──
@@ -483,6 +555,8 @@
     $("fx-save").addEventListener("click", saveTeam);
     $("fx-reset").addEventListener("click", () => { draft = [...(mine.saved || mine.inForce || [])]; render(); });
     $("fx-rival-send").addEventListener("click", sendRival);
+    if ($("fx-q")) $("fx-q").addEventListener("input", renderPool);
+    setupNav();
     for (const b of document.querySelectorAll("[data-sort]")) b.addEventListener("click", () => { sortBy = b.dataset.sort; for (const x of document.querySelectorAll("[data-sort]")) x.setAttribute("aria-pressed", String(x === b)); renderPool(); });
     for (const b of document.querySelectorAll("[data-week]")) b.addEventListener("click", () => { leagueWeek = b.dataset.week; for (const x of document.querySelectorAll("[data-week]")) x.setAttribute("aria-pressed", String(x === b)); renderLeague(); });
     if (W && W.subscribe) W.subscribe(() => { draftFor = null; refreshMine(); });
@@ -492,6 +566,7 @@
     say(!NET.picks ? "Teams open when the Knode Games Picks contract is live. Until then you can watch the price list and the league." : files.index ? "" : "No results recorded yet.");
     await refreshMine();
     setInterval(() => { if (!document.hidden) renderSheet(); }, 15000);
+    setInterval(() => { if (!document.hidden && mine.td != null) $("fx-kick").textContent = clock(F.lockOfDay(mine.td) - Date.now()); }, 1000);
     setInterval(() => { if (!document.hidden) loadFiles().then(refreshMine); }, TESTNET ? 60000 : 300000);
     // A new day to pick for (the old one locked): move the sheet on.
     setInterval(() => { if (!document.hidden && mine.td !== targetDay()) { draftFor = null; refreshMine(); } }, 20000);
