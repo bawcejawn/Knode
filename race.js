@@ -444,5 +444,5 @@
   })();
 
   // Stake in the Race (vault game 7): the shared panel stays hidden until the Knode Games vault (v6) is live.
-  if (window.KStake) window.KStake.mount(document.getElementById("race-stake"), { game: 7 });
+  if (window.KStake) window.KStake.mount(document.getElementById("stake"), { game: 7 });
 })();
