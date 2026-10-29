@@ -1343,8 +1343,10 @@ async function upgrade(sub: string | undefined, send: boolean, botPays = false) 
   const abiText = JSON.stringify(loadAbi());
   const mana = BigInt(await provider.getAccountRc(payer.getAddress()));
   const rcLimit = (mana * 95n) / 100n;
-  log(`Pays the Mana      ${botPays ? "bot" : "owner"} wallet ${payer.getAddress()} (has ${showKoin(mana)} Mana; an upload needs about 60)`);
-  if (mana < toSat(60)) throw new Error(`The ${botPays ? "bot" : "owner"} wallet needs about 60 Mana for the upload. Add KOIN to it and let the Mana refill${botPays ? "" : " (or use --bot-pays, then move the KOIN out of the bot wallet afterwards)"}.`);
+  // Upload Mana grows with the code's size: about 60 KOIN for v5's 57.7 KB, so v6's ~82 KB needs about 85 (+5 margin).
+  const needKoin = Math.ceil((wasm.length / 57_699) * 60) + 5;
+  log(`Pays the Mana      ${botPays ? "bot" : "owner"} wallet ${payer.getAddress()} (has ${showKoin(mana)} Mana; this upload needs about ${needKoin})`);
+  if (mana < toSat(needKoin)) throw new Error(`The ${botPays ? "bot" : "owner"} wallet needs about ${needKoin} Mana for this upload (${(wasm.length / 1024).toFixed(1)} KB). Add KOIN to it and let the Mana refill${botPays ? "" : " (or use --bot-pays, then move the KOIN out of the bot wallet afterwards)"}.`);
   if (!send) { log("\nDry run only — nothing was sent. Add --send to upload."); return; }
   log(`\n1/2 Uploading the announced code (owner authorizes, ${botPays ? "bot" : "owner"} wallet pays) ...`);
   const c = new Contract({ id: dep.contract, abi: loadAbi(), provider, signer: owner, bytecode: new Uint8Array(wasm) });
