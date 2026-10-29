@@ -160,9 +160,114 @@
             "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2172902327606"
           },
           "seal": "5a1cf217c223ed8e6fddc815b22e96d0547a08516b810e1f0244a459ff3cc6a2"
+        },
+        {
+          "height": 40612982,
+          "readAt": "2026-10-29T05:41:18.014Z",
+          "values": {
+            "14MHW6TF8gw8EuMRLCJc2PQHLzZLKuwGqb": "66273819049966",
+            "1PcrAcNPXqAGHmLATxigqZJpmHBvVHDfPE": "10465604509878",
+            "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh": "11846876733894",
+            "1932QKYoPzaGmwBxTnnYhNqV9LQi2sYLHT": "112546638899",
+            "1F96MSYgSsgY1WJHnTBtjtgPEN9te7xNxp": "540494801228",
+            "122hrgzoXVmmxWxUs8TUrCFGcKG9czYgvf": "30466896732",
+            "15jueaBcMieDCMGw6wAmEK6cNSUVicknG1": "45885283753",
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2171677396816"
+          },
+          "seal": "317b5889da1a565cefca651a902906c8c7c1f23af8a2b0ee2bc86abd70ae492b"
+        },
+        {
+          "height": 40614242,
+          "readAt": "2026-10-29T06:47:12.088Z",
+          "values": {
+            "14MHW6TF8gw8EuMRLCJc2PQHLzZLKuwGqb": "66250136976080",
+            "1PcrAcNPXqAGHmLATxigqZJpmHBvVHDfPE": "10461113082137",
+            "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh": "11843610238368",
+            "1932QKYoPzaGmwBxTnnYhNqV9LQi2sYLHT": "112546638899",
+            "1F96MSYgSsgY1WJHnTBtjtgPEN9te7xNxp": "539269866516",
+            "122hrgzoXVmmxWxUs8TUrCFGcKG9czYgvf": "30466896732",
+            "15jueaBcMieDCMGw6wAmEK6cNSUVicknG1": "45885283753",
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2170452462507"
+          },
+          "seal": "0909d5f0fb4f7070c00c20cec4a31dfa84dbf9a844e392f220f744fbdbdf62ce"
+        },
+        {
+          "height": 40615634,
+          "readAt": "2026-10-29T07:57:32.885Z",
+          "values": {
+            "14MHW6TF8gw8EuMRLCJc2PQHLzZLKuwGqb": "66225229841431",
+            "1PcrAcNPXqAGHmLATxigqZJpmHBvVHDfPE": "10456621630682",
+            "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh": "11839118784142",
+            "1932QKYoPzaGmwBxTnnYhNqV9LQi2sYLHT": "112546638899",
+            "1F96MSYgSsgY1WJHnTBtjtgPEN9te7xNxp": "538861553130",
+            "122hrgzoXVmmxWxUs8TUrCFGcKG9czYgvf": "30466896732",
+            "15jueaBcMieDCMGw6wAmEK6cNSUVicknG1": "45885283753",
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2168410893054"
+          },
+          "seal": "18f1b2c096cafb6b93829fdf38e6885a5cc9fbf03d1e8bba1e63a0e851b5733c"
+        },
+        {
+          "height": 40616669,
+          "readAt": "2026-10-29T08:49:43.501Z",
+          "values": {
+            "14MHW6TF8gw8EuMRLCJc2PQHLzZLKuwGqb": "66204814060185",
+            "1PcrAcNPXqAGHmLATxigqZJpmHBvVHDfPE": "10452538476342",
+            "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh": "11832994049269",
+            "1932QKYoPzaGmwBxTnnYhNqV9LQi2sYLHT": "111730008213",
+            "1F96MSYgSsgY1WJHnTBtjtgPEN9te7xNxp": "538453236968",
+            "122hrgzoXVmmxWxUs8TUrCFGcKG9czYgvf": "30466896732",
+            "15jueaBcMieDCMGw6wAmEK6cNSUVicknG1": "45885283753",
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2168410893054"
+          },
+          "seal": "b118ce114facbfcba75cce701570375f283406dabda26bbd640f127ba6539d13"
+        },
+        {
+          "height": 40617720,
+          "readAt": "2026-10-29T09:46:09.157Z",
+          "values": {
+            "14MHW6TF8gw8EuMRLCJc2PQHLzZLKuwGqb": "66180315028920",
+            "1PcrAcNPXqAGHmLATxigqZJpmHBvVHDfPE": "10450088573283",
+            "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh": "11826460971775",
+            "1932QKYoPzaGmwBxTnnYhNqV9LQi2sYLHT": "111730008213",
+            "1F96MSYgSsgY1WJHnTBtjtgPEN9te7xNxp": "538453236968",
+            "122hrgzoXVmmxWxUs8TUrCFGcKG9czYgvf": "30466896732",
+            "15jueaBcMieDCMGw6wAmEK6cNSUVicknG1": "45885283753",
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2168002576637"
+          },
+          "seal": "c855348bd3de26d13c417e4c838cf5b6205275f89525a5c41b7aea01a01fe4d6"
+        },
+        {
+          "height": 40618856,
+          "readAt": "2026-10-29T10:43:17.825Z",
+          "values": {
+            "14MHW6TF8gw8EuMRLCJc2PQHLzZLKuwGqb": "66162348994028",
+            "1PcrAcNPXqAGHmLATxigqZJpmHBvVHDfPE": "10445597065938",
+            "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh": "11821969462548",
+            "1932QKYoPzaGmwBxTnnYhNqV9LQi2sYLHT": "111730008213",
+            "1F96MSYgSsgY1WJHnTBtjtgPEN9te7xNxp": "537636599043",
+            "122hrgzoXVmmxWxUs8TUrCFGcKG9czYgvf": "30466896732",
+            "15jueaBcMieDCMGw6wAmEK6cNSUVicknG1": "45885283753",
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2167594258423"
+          },
+          "seal": "3945c4184a894166b695b6ce8b396f67d530b17ce9ea1d2a2690f4eadf67da70"
+        },
+        {
+          "height": 40619972,
+          "readAt": "2026-10-29T11:39:25.876Z",
+          "values": {
+            "14MHW6TF8gw8EuMRLCJc2PQHLzZLKuwGqb": "66141932963444",
+            "1PcrAcNPXqAGHmLATxigqZJpmHBvVHDfPE": "10443555463627",
+            "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh": "11817886256352",
+            "1932QKYoPzaGmwBxTnnYhNqV9LQi2sYLHT": "111730008213",
+            "1F96MSYgSsgY1WJHnTBtjtgPEN9te7xNxp": "536819958395",
+            "122hrgzoXVmmxWxUs8TUrCFGcKG9czYgvf": "30466896732",
+            "15jueaBcMieDCMGw6wAmEK6cNSUVicknG1": "45885283753",
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2165144335814"
+          },
+          "seal": "087c433f325b4166c367aaaf14198e9bedc65c4ff7abda199a79df293223bba2"
         }
       ],
-      "vhpSeal": "edc916d68bdc6f582b4ccddaaf7be3aa02b756f258ca547a4b45a80cc92dd2b5"
+      "vhpSeal": "157b02634345f50a8194ab015207f9f07707060f5cf593fd85a019ee4036d544"
     },
     {
       "id": "W001-D3-2",
@@ -272,9 +377,74 @@
             "15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ": "175360352347423"
           },
           "seal": "b079775ef571481863fc592c675054a82923f289a096fb416336c42abdb8e6e9"
+        },
+        {
+          "height": 40612982,
+          "readAt": "2026-10-29T05:41:18.014Z",
+          "values": {
+            "15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ": "175289306413146"
+          },
+          "seal": "763931812de2487129c1af473bbd1f98c83bb7f1c8fa409d14f5231d4647c4dc"
+        },
+        {
+          "height": 40614242,
+          "readAt": "2026-10-29T06:47:12.088Z",
+          "values": {
+            "15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ": "175206419118874"
+          },
+          "seal": "fe87d1f40b54b05d3a3882445ec8416b7a280298ef4ec75a755a164dc4cd5aaf"
+        },
+        {
+          "height": 40615634,
+          "readAt": "2026-10-29T07:57:32.885Z",
+          "values": {
+            "15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ": "175115773464482"
+          },
+          "seal": "f99b05b94321722483cb0e8c62869744810d533fd2b458d48c232b32d36b028e"
+        },
+        {
+          "height": 40616669,
+          "readAt": "2026-10-29T08:49:43.501Z",
+          "values": {
+            "15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ": "175052076237904"
+          },
+          "seal": "2b44cc60651a871746bebbe849a587540649eabcaaeb5adb90aeee7061b7fd0f"
         }
       ],
-      "vhpSeal": "b5603071ed95588870984fe83398ae0c2548029515acb8da6df911d094f868a1"
+      "vhpSeal": "39dc1193e2cf199176969bb907f167b652ba4855e7a6e23439117d7d478a5a99",
+      "result": {
+        "void": false,
+        "option": 3,
+        "value": "1,578",
+        "dataHash": "7886520aa5e44dc0db2cc7790493270a2ae4f8098f2c6d6f6a2aa11b2c3ccd06",
+        "resolvedAt": "2026-10-29T09:41:59.100Z",
+        "vhpCheck": {
+          "limit": 0.1,
+          "releaseHeight": 40593224,
+          "decidedHeight": 40617224,
+          "readings": [
+            40608537,
+            40609510,
+            40610676,
+            40611883,
+            40612982,
+            40614242,
+            40615634,
+            40616669
+          ],
+          "readingsInWindow": 8,
+          "values": {
+            "15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ": {
+              "release": "173076207817297",
+              "end": "175580429583940",
+              "change": "+1.45%",
+              "height": 40608537
+            }
+          }
+        }
+      },
+      "chainOutcome": 4,
+      "chainDataHash": "0x7886520aa5e44dc0db2cc7790493270a2ae4f8098f2c6d6f6a2aa11b2c3ccd06"
     },
     {
       "id": "W001-D3-3",
@@ -379,7 +549,36 @@
           "seal": "9773cc53e87b61ce1350b2a2ab3c9c5598cad4ad71b4cd2a9fd530a69d6fc47a"
         }
       ],
-      "vhpSeal": "2223c819ae96ab6863fc538e5084065cdc8a5e27e0e3d1a80cd63d70cea5e912"
+      "vhpSeal": "2223c819ae96ab6863fc538e5084065cdc8a5e27e0e3d1a80cd63d70cea5e912",
+      "result": {
+        "void": false,
+        "option": 3,
+        "value": "64",
+        "dataHash": "eae7262cc9c45de13fdc78eb9ca8ae4831071792fd04251e8c075816912df009",
+        "resolvedAt": "2026-10-29T05:24:01.940Z",
+        "vhpCheck": {
+          "limit": 0.1,
+          "releaseHeight": 40593224,
+          "decidedHeight": 40612388,
+          "readings": [
+            40608537,
+            40609510,
+            40610676,
+            40611883
+          ],
+          "readingsInWindow": 4,
+          "values": {
+            "network": {
+              "release": "2226624631984413",
+              "end": "2238321154828610",
+              "change": "+0.53%",
+              "height": 40608537
+            }
+          }
+        }
+      },
+      "chainOutcome": 4,
+      "chainDataHash": "0xeae7262cc9c45de13fdc78eb9ca8ae4831071792fd04251e8c075816912df009"
     },
     {
       "id": "W001-D3-4",
@@ -476,7 +675,35 @@
           "seal": "ce015d56457212d59a4600bc93ee37c000fb46e29f4646c0828c34f3f38be7d7"
         }
       ],
-      "vhpSeal": "d12e23049639d04bcc25b3b3598123b7c8068c1a1a88dee833a03f1a4b0fac72"
+      "vhpSeal": "d12e23049639d04bcc25b3b3598123b7c8068c1a1a88dee833a03f1a4b0fac72",
+      "result": {
+        "void": false,
+        "option": 2,
+        "value": "31.120 s",
+        "dataHash": "eae7262cc9c45de13fdc78eb9ca8ae4831071792fd04251e8c075816912df009",
+        "resolvedAt": "2026-10-29T05:24:01.940Z",
+        "vhpCheck": {
+          "limit": 0.1,
+          "releaseHeight": 40593224,
+          "decidedHeight": 40611594,
+          "readings": [
+            40608537,
+            40609510,
+            40610676
+          ],
+          "readingsInWindow": 4,
+          "values": {
+            "network": {
+              "release": "2226624631984413",
+              "end": "2238321154828610",
+              "change": "+0.53%",
+              "height": 40608537
+            }
+          }
+        }
+      },
+      "chainOutcome": 3,
+      "chainDataHash": "0xeae7262cc9c45de13fdc78eb9ca8ae4831071792fd04251e8c075816912df009"
     },
     {
       "id": "W001-D3-5",
@@ -581,7 +808,36 @@
           "seal": "62598f69162376f06e108080ed41fa0735b9dd98dd9470dc43c6c5a3a534ea82"
         }
       ],
-      "vhpSeal": "e4fe23997c8e4a5a5526a04d9c88f50fd4a1455752536230fcfd024613bfe50c"
+      "vhpSeal": "e4fe23997c8e4a5a5526a04d9c88f50fd4a1455752536230fcfd024613bfe50c",
+      "result": {
+        "void": false,
+        "option": 2,
+        "value": "3.095 s",
+        "dataHash": "eae7262cc9c45de13fdc78eb9ca8ae4831071792fd04251e8c075816912df009",
+        "resolvedAt": "2026-10-29T05:24:01.940Z",
+        "vhpCheck": {
+          "limit": 0.1,
+          "releaseHeight": 40593224,
+          "decidedHeight": 40612646,
+          "readings": [
+            40608537,
+            40609510,
+            40610676,
+            40611883
+          ],
+          "readingsInWindow": 4,
+          "values": {
+            "network": {
+              "release": "2226624631984413",
+              "end": "2238321154828610",
+              "change": "+0.53%",
+              "height": 40608537
+            }
+          }
+        }
+      },
+      "chainOutcome": 3,
+      "chainDataHash": "0xeae7262cc9c45de13fdc78eb9ca8ae4831071792fd04251e8c075816912df009"
     }
   ],
   "daySeal": "da196ab2d6192a3c52c920afb8f3a7b5138c9c9035403f415bc4fdc8aa5803f5"

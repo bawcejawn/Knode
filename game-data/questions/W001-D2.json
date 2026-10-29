@@ -569,9 +569,65 @@
             "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2172902327606"
           },
           "seal": "2d6ac5a7e9f1145b137a814f0ae378fb9cc13ea963fe4073f3104f71fe64e5d2"
+        },
+        {
+          "height": 40612982,
+          "readAt": "2026-10-29T05:41:18.014Z",
+          "values": {
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2171677396816"
+          },
+          "seal": "011eeb047498ee065e78bd2d5c4cbfeea975a807b6bb3124c480abce08db3157"
+        },
+        {
+          "height": 40614242,
+          "readAt": "2026-10-29T06:47:12.088Z",
+          "values": {
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2170452462507"
+          },
+          "seal": "cb4579d6b4b6f18b2ef96fddcf95230853e3acab58ef6345dc9bf3c28c4ec96f"
+        },
+        {
+          "height": 40615634,
+          "readAt": "2026-10-29T07:57:32.885Z",
+          "values": {
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2168410893054"
+          },
+          "seal": "6fe5d27da56b5113008d22d9cc7fdef6e3c8263424189fcf01abc2e6dca8f2c9"
+        },
+        {
+          "height": 40616669,
+          "readAt": "2026-10-29T08:49:43.501Z",
+          "values": {
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2168410893054"
+          },
+          "seal": "ac7a829203077726c732b1e0d66190e8a7b3dcc1324b031566f6c1a39841628a"
+        },
+        {
+          "height": 40617720,
+          "readAt": "2026-10-29T09:46:09.157Z",
+          "values": {
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2168002576637"
+          },
+          "seal": "94bb6c61da0bc9c27e5a6f2424b91618e0ac7c509fb65c173caf3a7b20b0696b"
+        },
+        {
+          "height": 40618856,
+          "readAt": "2026-10-29T10:43:17.825Z",
+          "values": {
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2167594258423"
+          },
+          "seal": "8e0269d9dd04de289d5aeca14f9906bb7251fa3248662b9e7a64672158eba148"
+        },
+        {
+          "height": 40619972,
+          "readAt": "2026-10-29T11:39:25.876Z",
+          "values": {
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2165144335814"
+          },
+          "seal": "6d7b3f6c11c774e93c2f42e1a9798022ce22982fa5cf43061071d8782b1122bb"
         }
       ],
-      "vhpSeal": "f552af6064eb0680f9b5b0a8e94a88bf827e10b76a873cc84f83b1a5d796e51a"
+      "vhpSeal": "45bfdae63b046cdea1573663766c1a00ede440ab5b1615cbc0e3e496fc852efa"
     },
     {
       "id": "W001-D2-4",

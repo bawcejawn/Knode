@@ -1,290 +1,324 @@
-/* Knode Games: "Stake in this game", one panel every game page can use (owner, 2026-10-28: every game takes stakes in
- * the Knode Games Vault, v6). It shows the wallet's stake in the game, what counts this week, the game's total and the
- * minimum, and offers Stake, Withdraw, Move and the claims the vault would pay.
- *
- *   KStake.mount(hostElement, { game: 7, name: "Producer Race", provider, toast,
- *     note: "Staked players share this game's weekly bucket; free players play for the 2 + 1 VHP prize." });
- *
- * Shown once the vault is live (get_state → config.v6_rule_week_plus_one > 0), this site's contract ABI has the v6
- * calls, and the game exists in the vault. Withdraw and claims are always offered for a game that exists, active or
- * not, as the contract allows (stakes are always withdrawable); Stake and Move only while the game takes stakes and new
- * deposits aren't paused. Every transaction is signed in the player's own wallet (window.KWallet); nothing here holds a
- * key. Vault calls (the player is argument 1):
- *   deposit_to(from, game, amount, koin)   after approving the vault for exactly that amount, in the same transaction
- *   withdraw_from(to, game, amount)        any amount, at any time
- *   move_stake(player, from_game, to_game, amount)   counts in the new game from next week
- *   claim_game(player, game, week)         only offered when the vault would pay more than 0 (its claimableG rule,
- *                                          worked out exactly here)
- * Built with textContent only. */
-(function (root) {
+/* Knode Games: the shared "stake in this game" panel (Vault v6).
+   Any game page mounts it with   KStake.mount(element, { game: <vault game id> })   after wallet.js has loaded.
+   It shows the wallet's stake in that game, the game's total and this week's minimum, and offers Stake (deposit_to),
+   Withdraw (withdraw_from), Move (move_stake) and the claims for the game's finished weeks (claim_game).
+   It stays hidden until the vault is live: the game contract answers get_state with v6_rule_week_plus_one > 0 and the
+   game is registered. Withdraw is always offered when there is a stake, also when deposits are paused or the game has
+   stopped. Every transaction is signed in the player's own wallet (wallet.js). The question game (id 1) keeps its own
+   controls on the home page; this panel is for every other game. */
+(() => {
   "use strict";
-  const lib = root.koilib || root.koinos || root;
-  const UNIT = 100000000n, MAX_U64 = 18446744073709551615n, CAP_A = 10n * UNIT;   // CAP_A: the vault's basket-A cap
-  const CLAIM_WEEKS = 52;                    // how far back claims are looked for (the vault never expires them)
-  const ROOT = new URL("./", location.href);
-  const T = { type: "bytes", options: { "(koinos.btype)": "ADDRESS" } };
+
+  const UNIT = 100000000n;                 // 1 VHP / 1 KOIN = 10^8 units
+  const CAP_A = 10n * UNIT;                // basket A counts a stake up to 10 VHP (the vault's V5_CAP_A)
+  const RPC = "https://koinos.armana.io";
+  const DEPLOYMENT = "./game-data/deployment.json";
+  const Q_GAME = 1;
+  const CLAIM_WEEKS = 6;                   // finished weeks checked for something to claim
+  const lib = window.koilib || window.koinos || window;
+
+  // ── The parts of the vault (game contract, v6) this panel uses. Entry points = first 4 bytes of sha256(name);
+  //    tests/audit/site.stake-panel.test.mjs checks them, and every field number against game/abi/kpred.koilib.json
+  //    once that file is the v6 one. Fields the panel doesn't read are left out (the decoder skips them).
+  const addr = (id) => ({ type: "bytes", id, options: { "(koinos.btype)": "ADDRESS" } });
+  const u64 = (id) => ({ type: "uint64", id, options: { jstype: "JS_STRING" } });
+  const u32 = (id) => ({ type: "uint32", id });
+  const bool = (id) => ({ type: "bool", id });
+  const VAULT_ABI = {
+    methods: {
+      get_state: { entry_point: 0x3d02a349, argument: "kpred.get_state_arguments", return: "kpred.get_state_result", read_only: true },
+      get_game: { entry_point: 0x6f8d72cf, argument: "kpred.get_game_arguments", return: "kpred.get_game_result", read_only: true },
+      list_games: { entry_point: 0x2efa793, argument: "kpred.list_games_arguments", return: "kpred.list_games_result", read_only: true },
+      get_game_player: { entry_point: 0xfeb472b, argument: "kpred.get_game_player_arguments", return: "kpred.get_game_player_result", read_only: true },
+      deposit_to: { entry_point: 0x7bb5c436, argument: "kpred.deposit_to_arguments", return: "kpred.deposit_to_result", read_only: false },
+      withdraw_from: { entry_point: 0x5b0aaef8, argument: "kpred.withdraw_from_arguments", return: "kpred.withdraw_from_result", read_only: false },
+      move_stake: { entry_point: 0x7c268e69, argument: "kpred.move_stake_arguments", return: "kpred.move_stake_result", read_only: false },
+      claim_game: { entry_point: 0x4107e3ab, argument: "kpred.claim_game_arguments", return: "kpred.claim_game_result", read_only: false },
+    },
+    koilib_types: { nested: { kpred: { nested: {
+      config_object: { fields: { min_stake: u64(9), paused: bool(11), min_stake_next: u64(13), min_stake_next_week: u64(14), v6_rule_week_plus_one: u64(21) } },
+      get_state_arguments: { fields: {} },
+      get_state_result: { fields: { config: { type: "config_object", id: 1 }, week: u64(4), time: u64(11) } },
+      game_object: { fields: { id: u32(1), name: { type: "string", id: 2 }, staked: bool(3), free_prize: bool(4), active: bool(5), from_week: u64(6), last_week_plus_one: u64(7), stake: u64(10), week_stake: u64(11), week: u64(12), season_weeks: u32(15) } },
+      gweek_object: { fields: {
+        closed: bool(1), prize: u64(3), voided: bool(7), finalized: bool(8), rolled_over: bool(9), cutoff: u32(12),
+        pot_a: u64(14), pot_b: u64(15), bw_hi: u64(17), bw_lo: u64(18), aw_hi: u64(19), aw_lo: u64(20),
+        first_n: u32(26), second_n: u32(27), prize_first: u64(28), prize_second: u64(29),
+      } },
+      bucket_object: { fields: { stake: u64(1), players: u32(2), sum_w: u64(3), capped: u64(4) } },
+      get_game_arguments: { fields: { game: u32(1), week: u64(2) } },
+      get_game_result: { fields: { game: { type: "game_object", id: 1 }, week: { type: "gweek_object", id: 2 }, buckets: { rule: "repeated", type: "bucket_object", id: 3 } } },
+      list_games_arguments: { fields: {} },
+      list_games_result: { fields: { games: { rule: "repeated", type: "game_object", id: 1 } } },
+      gplayer_object: { fields: { stake: u64(1), pending: u64(2), pending_week: u64(3), void_week_plus_one: u64(4) } },
+      gentry_object: { fields: { stake: u64(1), voided: bool(2), points: u32(3), claimed: bool(4), reward: u64(5), prize_place: u32(6) } },
+      get_game_player_arguments: { fields: { player: addr(1), game: u32(2), week: u64(3) } },
+      get_game_player_result: { fields: { player: { type: "gplayer_object", id: 1 }, entry: { type: "gentry_object", id: 2 }, active_stake: u64(3), week_stake: u64(4) } },
+      deposit_to_arguments: { fields: { from: addr(1), game: u32(2), amount: u64(3), koin: bool(4) } },
+      deposit_to_result: { fields: {} },
+      withdraw_from_arguments: { fields: { to: addr(1), game: u32(2), amount: u64(3) } },
+      withdraw_from_result: { fields: {} },
+      move_stake_arguments: { fields: { player: addr(1), from_game: u32(2), to_game: u32(3), amount: u64(4) } },
+      move_stake_result: { fields: {} },
+      claim_game_arguments: { fields: { player: addr(1), game: u32(2), week: u64(3) } },
+      claim_game_result: { fields: { reward: u64(1) } },
+    } } } },
+  };
   const TOKEN_ABI = {
     methods: {
       balance_of: { entry_point: 0x5c721497, argument: "token.balance_of_arguments", return: "token.balance_of_result", read_only: true },
       approve: { entry_point: 0x74e21680, argument: "token.approve_arguments", return: "token.approve_result", read_only: false },
     },
     koilib_types: { nested: { token: { nested: {
-      balance_of_arguments: { fields: { owner: { ...T, id: 1 } } },
-      balance_of_result: { fields: { value: { type: "uint64", id: 1, options: { jstype: "JS_STRING" } } } },
-      approve_arguments: { fields: {
-        owner: { ...T, id: 1 }, spender: { ...T, id: 2 },
-        value: { type: "uint64", id: 3, options: { jstype: "JS_STRING" } } } },
+      balance_of_arguments: { fields: { owner: addr(1) } },
+      balance_of_result: { fields: { value: u64(1) } },
+      approve_arguments: { fields: { owner: addr(1), spender: addr(2), value: u64(3) } },
       approve_result: { fields: {} },
     } } } },
   };
 
-  const big = (x) => { try { return BigInt(x || 0); } catch { return 0n; } };
-  /** VHP amount from base units, e.g. 250000000n → "2.5". */
-  function vhp(units) {
-    const u = big(units), whole = u / UNIT, frac = (u % UNIT).toString().padStart(8, "0").replace(/0+$/, "");
-    return whole.toLocaleString("en-US") + (frac ? "." + frac : "");
-  }
-  /** Base units from text: up to 8 decimals; null when it isn't a number. Exported for tests. */
-  function toUnits(text) {
-    const m = String(text).trim().match(/^(\d{1,12})(?:\.(\d{1,8}))?$/);
+  // ═══════════════ pure helpers (also used by the tests) ═══════════════
+  const big = (x) => { try { return BigInt(x ?? 0); } catch { return 0n; } };
+  const amount = (units) => {
+    const v = Number(big(units)) / 1e8;
+    return v.toLocaleString("en-US", { maximumFractionDigits: v !== 0 && Math.abs(v) < 1 ? 4 : 2 });
+  };
+  /** Every decimal, nothing rounded. */
+  const exact = (units) => {
+    const v = big(units), w = v / UNIT, f = (v % UNIT).toString().padStart(8, "0").replace(/0+$/, "");
+    return f ? `${w}.${f}` : `${w}`;
+  };
+  /** "12.5" → 1250000000n; null if not a positive amount with at most 8 decimals or above 64 bits. */
+  function toUnits(raw) {
+    const m = /^(\d{1,11})(?:\.(\d{1,8}))?$/.exec(String(raw).trim());
     if (!m) return null;
-    return BigInt(m[1]) * UNIT + BigInt((m[2] || "").padEnd(8, "0") || "0");
+    const v = BigInt(m[1]) * UNIT + BigInt((m[2] || "").padEnd(8, "0"));
+    return v > 0n && v <= 18446744073709551615n ? v : null;
   }
-  const u128 = (lo, hi) => (big(hi) << 64n) | big(lo);
-  /** A staked winner's share of a week's bucket: the vault's rewardOfG, in exact integer arithmetic. buckets[p] is the
-   *  bucket for p points (get_game's list). Exported for tests. */
-  function rewardOf(gw, buckets, e) {
-    const b = (buckets || [])[Number(e.points || 0)] || {}, n = big(b.players);
-    if (n === 0n) return 0n;
-    const aw = u128(gw.aw_lo, gw.aw_hi), bw = u128(gw.bw_lo, gw.bw_hi), stake = big(e.stake), w = big(b.sum_w);
-    let r = 0n;
-    if (aw > 0n) r += (big(gw.pot_a) * ((w * (stake < CAP_A ? stake : CAP_A)) / n)) / aw;
-    if (bw > 0n) r += (big(gw.pot_b) * ((w * stake) / n)) / bw;
-    return r;
+  /** The minimum stake for week w: a new minimum applies from its first week (get_state → config). */
+  function minStakeFor(config, w) {
+    const next = big(config && config.min_stake_next);
+    return next > 0n && big(w) >= big(config.min_stake_next_week) ? next : big(config && config.min_stake);
   }
-  /** What the vault would pay for a finished week now (its claimableG rule); 0n = nothing. Exported for tests. */
-  function claimable(gw, buckets, e) {
+  const live = (state) => !!(state && state.config && big(state.config.v6_rule_week_plus_one) > 0n);
+  /** What claim_game would pay for a week now (0n = nothing), the same rule as the vault's claimableG / rewardOfG. */
+  function claimable(gw, e, buckets) {
     if (!gw || !gw.finalized || !e || e.claimed) return 0n;
     const place = Number(e.prize_place || 0);
     if (place === 1) return big(gw.prize_first);
-    if (place === 2) return big(gw.prize_second);                 // 0 when tied 1st places share the whole prize
-    if (gw.rolled_over || Number(gw.cutoff || 0) < 1 || Number(e.points || 0) < Number(gw.cutoff)) return 0n;
-    return rewardOf(gw, buckets, e);
+    if (place === 2) return Number(gw.first_n || 0) === 1 ? big(gw.prize_second) : 0n;
+    const points = Number(e.points || 0), cutoff = Number(gw.cutoff || 0);
+    if (gw.rolled_over || cutoff < 1 || points < cutoff) return 0n;
+    const b = (buckets || [])[points];
+    const n = big(b && b.players);
+    if (n === 0n) return 0n;
+    const sumW = big(b.sum_w), stake = big(e.stake);
+    const aw = (big(gw.aw_hi) << 64n) + big(gw.aw_lo), bw = (big(gw.bw_hi) << 64n) + big(gw.bw_lo);
+    let reward = 0n;
+    if (aw > 0n) reward = (big(gw.pot_a) * ((sumW * (stake < CAP_A ? stake : CAP_A)) / n)) / aw;
+    if (bw > 0n) reward += (big(gw.pot_b) * ((sumW * stake) / n)) / bw;
+    return reward;
   }
-  /** The minimum stake for week w (the vault's minStakeFor). Exported for tests. */
-  function minStake(cfg, w) {
-    const next = big(cfg.min_stake_next);
-    return next > 0n && w >= Number(cfg.min_stake_next_week || 0) ? next : big(cfg.min_stake);
+  /** One line for the page: who plays for what in this game. */
+  function explain(game, min) {
+    const m = exact(min || UNIT);
+    if (!game || !game.staked) return "";
+    const prize = Number(game.season_weeks || 0) > 1 ? "the 4 + 2 VHP season prize" : "the 2 + 1 VHP prize";
+    return game.free_prize
+      ? `Staked players (at least ${m} VHP in this game) share this game's weekly bucket; free players play for ${prize}.`
+      : `Staked players (at least ${m} VHP in this game) share this game's weekly bucket.`;
   }
-  /** Where a wallet stands this week, by the vault's rules: "staked" earns from the bucket (this week's lowest stake at
-   *  least the minimum); "free" plays for the free prize (peak below the minimum); "neither" (staked at some point this
-   *  week, but withdrew below the minimum): no bucket share and no free prize. Exported for tests. */
-  function standing(r, min) {
-    const peak = r.entry ? big(r.entry.peak_stake) : big(r.active_stake);
-    if (min <= 0n || peak < min) return "free";
-    return big(r.week_stake) >= min ? "staked" : "neither";
+  const opOf = async (contract, fn, args) => (await contract.functions[fn](args, { onlyOperation: true })).operation;
+  /** The operations for one action, in one transaction. `units` is a BigInt amount; `k` = { lib, dep, provider }. */
+  async function buildOps(k, action, a) {
+    const vault = new k.lib.Contract({ id: k.dep.contract, abi: VAULT_ABI, provider: k.provider });
+    const amt = a.units != null ? a.units.toString() : undefined;
+    if (action === "stake") {
+      const tokenId = a.koin ? k.dep.koin : k.dep.vhp;
+      const token = new k.lib.Contract({ id: tokenId, abi: TOKEN_ABI, provider: k.provider });
+      return [
+        await opOf(token, "approve", { owner: a.player, spender: k.dep.contract, value: amt }),
+        await opOf(vault, "deposit_to", { from: a.player, game: a.game, amount: amt, koin: !!a.koin }),
+      ];
+    }
+    if (action === "withdraw") return [await opOf(vault, "withdraw_from", { to: a.player, game: a.game, amount: amt })];
+    if (action === "move") return [await opOf(vault, "move_stake", { player: a.player, from_game: a.game, to_game: a.to, amount: amt })];
+    if (action === "claim") return [await opOf(vault, "claim_game", { player: a.player, game: a.game, week: String(a.week) })];
+    throw new Error(`unknown action ${action}`);
   }
 
-  let n = 0;
-  function el(tag, attrs, ...kids) {
-    const e = document.createElement(tag);
-    for (const [k, v] of Object.entries(attrs || {})) {
-      if (v === null || v === undefined || v === false) continue;
-      if (k === "text") e.textContent = v; else if (k === "onclick") e.addEventListener("click", v); else e.setAttribute(k, v === true ? "" : v);
+  // ═══════════════ DOM ═══════════════
+  const el = (tag, attrs = {}, ...kids) => {
+    const n = document.createElement(tag);
+    for (const [key, v] of Object.entries(attrs)) {
+      if (key === "class") n.className = v;
+      else if (key.startsWith("on")) n.addEventListener(key.slice(2), v);
+      else if (v !== false && v != null) n.setAttribute(key, v === true ? "" : v);
     }
-    for (const c of kids) if (c) e.append(c);
-    return e;
+    for (const kid of kids.flat()) if (kid != null && kid !== false) n.append(kid.nodeType ? kid : String(kid));
+    return n;
+  };
+
+  let shared = null;   // { dep, provider, vault } for every panel on the page
+  async function setup() {
+    if (shared) return shared;
+    if (!lib.Contract || !lib.Provider) throw new Error("koilib missing");
+    const res = await fetch(DEPLOYMENT, { cache: "no-cache" });
+    if (!res.ok) throw new Error("no deployment");
+    const dep = await res.json();
+    if (!dep || !dep.contract || !dep.vhp || !dep.koin) throw new Error("no vault");
+    const provider = new lib.Provider([dep.rpc || RPC]);
+    shared = { dep, provider, vault: new lib.Contract({ id: dep.contract, abi: VAULT_ABI, provider }) };
+    return shared;
   }
-  async function fetchJson(url) { const r = await fetch(url, { cache: "no-cache" }); if (!r.ok) throw new Error(String(r.status)); return r.json(); }
+  const read = async (fn, args) => (await shared.vault.functions[fn](args)).result || {};
 
-  function mount(host, opt) {
-    const o = Object.assign({ game: 0, name: "this game", note: "", provider: null, toast: null }, opt || {});
-    const W = root.KWallet, id = `ks${++n}`;
-    const status = el("p", { class: "note ks-status", role: "status" });
-    const say = (m, ms) => (o.toast ? o.toast(m, ms) : (status.textContent = m));
-    const body = el("div", { class: "ks-body" });
-    host.hidden = true;
-    host.classList.add("ks");
-    host.replaceChildren(el("h2", { text: `Stake in the ${o.name}` }), o.note ? el("p", { class: "note ks-note", text: o.note }) : null, body, status);
-    let dep = null, vault = null, cfg = null, cur = 0, game = null, targets = [], me = null, busy = false, gen = 0;
-
-    async function load() {
-      try {
-        dep = await fetchJson(new URL("game-data/deployment.json", ROOT));
-        const abi = await fetchJson(new URL("game/abi/kpred.koilib.json", ROOT));
-        if (!abi.methods || !abi.methods.deposit_to || !abi.methods.get_game_player) return;      // the site is still on v5
-        vault = new lib.Contract({ id: dep.contract, abi, provider: o.provider });
-        cfg = (await vault.functions.get_state({})).result.config;
-        if (!(Number(cfg.v6_rule_week_plus_one || 0) > 0)) return;                                // the vault isn't live
-        if (!(await reloadGames())) return;                                                       // no such game
-        host.hidden = false;
-      } catch (e) { return; /* not live, or the node can't be reached: the panel stays hidden */ }
-      await refresh().catch(failed);
-    }
-    function failed() {
-      body.replaceChildren(el("p", { class: "note", text: "Couldn't load your stake in this game right now." }),
-        el("div", { class: "ks-actions" }, el("button", { type: "button", class: "btn btn-ghost", onclick: () => refresh().catch(failed) }, "Try again")));
-    }
-    async function reloadGames() {
-      cfg = (await vault.functions.get_state({})).result.config || cfg;   // paused and the minimum can change
-      const list = (await vault.functions.list_games({})).result.games || [];
-      game = list.find((g) => Number(g.id) === o.game) || null;
-      targets = list.filter((g) => g.active && g.staked && Number(g.id) !== o.game);
-      cur = Math.max(0, Math.floor((Date.now() - Number(cfg.genesis_time)) / Number(cfg.week_length)));
-      return !!game;
-    }
-    const canStake = () => !!(game && game.active && game.staked && !cfg.paused);
-
-    /** The finished weeks this wallet can claim, newest first: [week, amount]. */
-    async function claimsOf(who) {
-      // Not from game.from_week: a game restarted after a gap moves it forward, and earlier weeks stay claimable.
-      const from = Math.max(0, cur - CLAIM_WEEKS), weeks = [];
-      for (let w = cur - 1; w >= from && w >= 0; w--) weeks.push(w);
-      const out = [];
-      for (let i = 0; i < weeks.length; i += 8) {
-        const part = weeks.slice(i, i + 8);
-        const entries = await Promise.all(part.map((w) => vault.functions.get_game_player({ player: who, game: o.game, week: String(w) }).then((x) => x.result.entry)));
-        for (let j = 0; j < part.length; j++) {
-          const e = entries[j];
-          if (!e || e.claimed || !(Number(e.points || 0) > 0 || Number(e.prize_place || 0) > 0)) continue;
-          const g = (await vault.functions.get_game({ game: o.game, week: String(part[j]) })).result;
-          const amt = claimable(g.week, g.buckets, e);
-          if (amt > 0n) out.push([part[j], amt]);
-        }
-      }
-      return out;
-    }
+  function mount(root, opts = {}) {
+    const game = Number(opts.game);
+    if (!root || !Number.isInteger(game) || game <= Q_GAME) return null;
+    root.hidden = true;
+    root.classList.add("kstake");
+    const P = { state: null, game: null, games: [], me: null, claims: [], busy: false, note: "" };
 
     async function refresh() {
-      const mine = ++gen, who = W && W.address, kind = W && W.kind;
-      await reloadGames();
-      const g = game, min = minStake(cfg, cur);
-      const rows = [el("p", {}, "Staked in the game: ", el("b", { text: `${vhp(g.stake)} VHP` }), ` · minimum ${vhp(min)} VHP`)];
-      if (!g.active || !g.staked) rows.push(el("p", { class: "note", text: "This game doesn't take new stakes now. You can still withdraw and claim at any time." }));
-      else if (cfg.paused) rows.push(el("p", { class: "note", text: "New stakes are paused for now. You can still withdraw and claim at any time." }));
-      let state = null;
-      if (who) {
-        const r = (await vault.functions.get_game_player({ player: who, game: o.game, week: String(cur) })).result || {};
-        const p = r.player || {}, total = big(p.stake) + big(p.pending);
-        state = { who, total, week: big(r.week_stake), stand: standing(r, min), claims: await claimsOf(who) };
-      }
-      if (mine !== gen || (W && W.address) !== who) return;            // a newer refresh, or another wallet, took over
-      me = state;
-      if (!who) rows.push(el("p", { class: "note", text: "Connect a wallet to stake in this game." }));
-      else {
-        const later = me.total > me.week;
-        rows.push(el("p", {}, "Your stake: ", el("b", { text: `${vhp(me.total)} VHP` }),
-          ` · this week: ${vhp(me.week)} VHP`, later ? " (the rest counts from next week)" : "",
-          { staked: " · Staked board", free: " · Free play board", neither: " · this week: no bucket share and no free prize (you withdrew below the minimum)" }[me.stand]));
-        if (kind === "guest") {
-          rows.push(el("p", { class: "note", text: "A guest wallet can't stake." + (me.claims.length ? " It has a prize to claim: back up your guest key, import it into Kondor, then claim it here." : "") }));
-          if (me.claims.length) rows.push(el("p", { class: "note", text: me.claims.map(([w, a]) => `Week ${w + 1}: ${vhp(a)} VHP`).join(" · ") }));
-        } else {
-          rows.push(el("div", { class: "ks-actions" },
-            el("button", { type: "button", class: "btn btn-primary", onclick: (ev) => ask("stake", ev.currentTarget), disabled: !canStake() }, "Stake"),
-            el("button", { type: "button", class: "btn btn-ghost", onclick: (ev) => ask("withdraw", ev.currentTarget), disabled: me.total === 0n }, "Withdraw"),
-            el("button", { type: "button", class: "btn btn-ghost", onclick: (ev) => ask("move", ev.currentTarget), disabled: me.total === 0n || !targets.length || cfg.paused }, "Move")));
-          if (me.claims.length) rows.push(el("div", { class: "ks-actions" },
-            ...me.claims.map(([w, a]) => el("button", { type: "button", class: "btn btn-tang", onclick: () => claim(w) }, `Claim week ${w + 1}: ${vhp(a)} VHP`))));
-        }
-      }
-      body.replaceChildren(...rows);
-      body.querySelectorAll("button").forEach((b) => { if (busy) b.disabled = true; });
-    }
-
-    async function send(label, who, build) {
-      if (busy) { say("Already sending: wait for it to finish.", 4000); return; }
-      if (!W || W.address !== who) { say("Your wallet changed: nothing was sent. Check the panel and try again.", 8000); refresh().catch(() => {}); return; }
-      busy = true;
-      body.querySelectorAll("button").forEach((b) => { b.disabled = true; });
       try {
-        const ops = await build();
-        if (W.address !== who) throw new Error("your wallet changed while preparing it; nothing was sent");
-        say(`Confirm “${label}” in ${W.label()}…`, 20000);
-        const txid = await W.send(label, ops, {});
-        say(txid ? `Done: ${label}` : `Sent: ${label}. It may take a minute to show.`, 8000);
-      } catch (e) {
-        const m = String((e && e.message) || e);
-        say(/reject|denied|cancel/i.test(m) ? `Cancelled in ${W.label()}.` : `Not sent: ${m.slice(0, 160)}`, 9000);
-      } finally { busy = false; refresh().catch(() => {}); }
-    }
-    const op = async (contract, fn, args) => (await contract.functions[fn](args, { onlyOperation: true })).operation;
-
-    function claim(w) {
-      const who = me && me.who;
-      send(`claim ${o.name} week ${w + 1}`, who, async () => [await op(vault, "claim_game", { player: who, game: o.game, week: String(w) })]);
-    }
-
-    /** The Stake / Withdraw / Move dialog. */
-    async function ask(mode, opener) {
-      if (!me || busy) return;
-      const who = me.who, total = me.total, min = minStake(cfg, cur);
-      const ids = { title: `${id}-t`, help: `${id}-h`, err: `${id}-e`, amount: `${id}-a`, token: `${id}-k`, target: `${id}-g` };
-      const amount = el("input", { id: ids.amount, inputmode: mode === "stake" ? "numeric" : "decimal", autocomplete: "off", placeholder: mode === "stake" ? "e.g. 5" : "e.g. 2.5", "aria-describedby": `${ids.help} ${ids.err}` });
-      const token = el("select", { id: ids.token }, el("option", { value: "VHP", text: "VHP" }), el("option", { value: "KOIN", text: "KOIN (burned into VHP 1:1)" }));
-      const target = el("select", { id: ids.target }, ...targets.map((g) => el("option", { value: String(g.id), text: g.name || `Game ${g.id}` })));
-      const err = el("p", { class: "note ks-err", id: ids.err, role: "alert" });
-      const help = {
-        stake: `Whole VHP only (1, 2, 3 …). It counts from next week and is held as VHP; you can withdraw at any time. Paying with KOIN needs Mana at least equal to the amount.${total < min ? ` It earns once your stake here reaches ${vhp(min)} VHP.` : ""}`,
-        withdraw: `Any amount up to ${vhp(total)} VHP, at any time. It goes back to your wallet as VHP.`,
-        move: `Move up to ${vhp(total)} VHP to another game. No tokens move, and it counts there from next week.`,
-      }[mode];
-      const go = el("button", { type: "submit", class: "btn btn-primary" }, { stake: "Stake", withdraw: "Withdraw", move: "Move" }[mode]);
-      const cancel = el("button", { type: "button", class: "btn btn-ghost" }, "Cancel");
-      const form = el("form", { method: "dialog" },
-        el("h3", { id: ids.title, text: { stake: `Stake in the ${o.name}`, withdraw: `Withdraw from the ${o.name}`, move: `Move stake from the ${o.name}` }[mode] }),
-        el("p", { class: "note", id: ids.help, text: help }),
-        el("label", { for: ids.amount, text: "Amount" }), amount,
-        mode === "stake" ? el("label", { for: ids.token, text: "Pay with" }) : null, mode === "stake" ? token : null,
-        mode === "move" ? el("label", { for: ids.target, text: "To" }) : null, mode === "move" ? target : null,
-        err, el("div", { class: "ks-actions" }, go, cancel));
-      const d = el("dialog", { class: "ks-dialog", "aria-labelledby": ids.title, "aria-describedby": ids.help }, form);
-      document.body.append(d);
-      cancel.addEventListener("click", () => d.close());
-      d.addEventListener("close", () => { d.remove(); if (opener && opener.isConnected) opener.focus(); });
-      let confirmed = false;
-      form.addEventListener("submit", async (ev) => {
-        ev.preventDefault();
-        const raw = amount.value.trim(), units = toUnits(raw);
-        if (mode === "stake" && !/^[1-9]\d{0,11}$/.test(raw)) { err.textContent = "Whole VHP only, for example 1 or 25."; return; }
-        if (units === null || units <= 0n) { err.textContent = "Enter an amount, for example 2.5 (up to 8 decimals)."; return; }
-        if (units > MAX_U64) { err.textContent = "That amount is too large."; return; }
-        if (mode !== "stake" && units > total) { err.textContent = `That is more than your ${vhp(total)} VHP in this game.`; return; }
-        if (W.address !== who) { err.textContent = "Your wallet changed. Close this and try again."; return; }
-        if (mode === "stake") {
-          const koin = token.value === "KOIN";
-          const t = new lib.Contract({ id: koin ? dep.koin : dep.vhp, abi: TOKEN_ABI, provider: o.provider });
-          let have = null;
-          try { have = big((await t.functions.balance_of({ owner: who })).result.value); } catch { /* the wallet will refuse if short */ }
-          if (have !== null && units > have) { err.textContent = `That is more than your wallet holds (${vhp(have)} ${koin ? "KOIN" : "VHP"}).`; return; }
-          d.close();
-          send(`stake ${vhp(units)} ${koin ? "KOIN" : "VHP"} in the ${o.name}`, who, async () => [
-            await op(t, "approve", { owner: who, spender: dep.contract, value: units.toString() }),
-            await op(vault, "deposit_to", { from: who, game: o.game, amount: units.toString(), koin })]);
-        } else if (mode === "withdraw") {
-          // Warn once if it would cost this week: staked this week, and what's left falls under the minimum.
-          if (!confirmed && me.stand === "staked" && total - units < min) {
-            confirmed = true;
-            err.textContent = `This leaves less than the ${vhp(min)} VHP minimum: this week you'd get no share of the ${o.name}'s bucket, and you can't win its free prize either. Press Withdraw again to go ahead.`;
-            return;
+        await setup();
+        const state = await read("get_state", {});
+        if (!live(state)) { root.hidden = true; return; }
+        const week = big(state.week);
+        const g = await read("get_game", { game, week: week.toString() });
+        if (!g.game || !g.game.staked) { root.hidden = true; return; }
+        P.state = state; P.game = g.game;
+        P.games = ((await read("list_games", {})).games || []).filter((x) => x.active && x.staked && Number(x.id) !== game);
+        const who = window.KWallet && window.KWallet.address;
+        P.me = null; P.claims = [];
+        if (who) {
+          P.me = await read("get_game_player", { player: who, game, week: week.toString() });
+          const from = big(g.game.from_week);
+          for (let w = week - 1n; w >= 0n && w >= from && w >= week - BigInt(CLAIM_WEEKS); w--) {
+            const [gx, px] = await Promise.all([read("get_game", { game, week: w.toString() }), read("get_game_player", { player: who, game, week: w.toString() })]);
+            const r = claimable(gx.week, px.entry, gx.buckets);
+            if (r > 0n) P.claims.push({ week: w, reward: r });
           }
-          d.close();
-          send(`withdraw ${vhp(units)} VHP from the ${o.name}`, who, async () => [await op(vault, "withdraw_from", { to: who, game: o.game, amount: units.toString() })]);
-        } else {
-          if (!target.value) { err.textContent = "There is no other game to move to."; return; }
-          const to = Number(target.value), name = (targets.find((g) => Number(g.id) === to) || {}).name || `game ${to}`;
-          d.close();
-          send(`move ${vhp(units)} VHP from the ${o.name} to ${name}`, who, async () => [await op(vault, "move_stake", { player: who, from_game: o.game, to_game: to, amount: units.toString() })]);
         }
-      });
-      d.showModal();
-      amount.focus();
+        render();
+      } catch {
+        // Not live, not reachable or not on this network: keep the panel out of the way (the game page still works).
+        // A read that fails after the panel has shown keeps what it showed.
+        if (!P.state) root.hidden = true;
+      }
     }
 
-    if (W && W.subscribe) W.subscribe(() => { if (!host.hidden) refresh().catch(failed); });
-    load();
-    return { refresh: () => (host.hidden ? Promise.resolve() : refresh()) };
+    async function act(label, action, a) {
+      if (P.busy) return;
+      const W = window.KWallet;
+      if (!W) return;
+      if (!W.address) { await W.connect(); return; }
+      P.busy = true; P.note = `Confirm “${label}” in ${W.label()}…`; render();
+      try {
+        const ops = await buildOps({ lib, dep: shared.dep, provider: shared.provider }, action, { ...a, player: W.address, game });
+        const id = await W.send(label, ops);
+        P.note = id ? `Done: ${label}.` : `Sent: ${label}. It may take a minute to show.`;
+      } catch (e) {
+        const msg = String((e && e.message) || e);
+        P.note = /reject|denied|cancel/i.test(msg) ? "Cancelled in your wallet." : `Not sent: ${(/"([^"]{6,140})"/.exec(msg) || [, msg])[1].slice(0, 160)}`;
+      }
+      P.busy = false;
+      await refresh();
+    }
+
+    function dialog(mode) {
+      const W = window.KWallet;
+      if (W && W.kind === "guest") return W.guestInfo();
+      if (W && !W.address) return W.connect();
+      const st = P.me && P.me.player ? big(P.me.player.stake) + big(P.me.player.pending) : 0n;
+      const cfg = P.state.config, min = minStakeFor(cfg, P.state.week);
+      const input = el("input", { inputmode: mode === "stake" ? "numeric" : "decimal", autocomplete: "off", placeholder: mode === "stake" ? "e.g. 25" : "e.g. 2.5", required: true });
+      const tok = el("div", { class: "seg", role: "radiogroup", "aria-label": "Token" },
+        el("label", {}, el("input", { type: "radio", name: "kstake-tok", value: "VHP", checked: true }), el("span", {}, "VHP")),
+        el("label", {}, el("input", { type: "radio", name: "kstake-tok", value: "KOIN" }), el("span", {}, "KOIN")));
+      const to = el("select", { "aria-label": "Move to" }, ...P.games.map((x) => el("option", { value: String(x.id) }, x.name || `Game ${x.id}`)));
+      const err = el("p", { class: "warn", hidden: true });
+      const help = mode === "stake"
+        ? `Whole numbers only (1, 2, 3 …). It counts from next week. You need at least ${exact(min)} VHP in this game to play as a staked player. KOIN is burned into VHP 1:1.`
+        : mode === "withdraw"
+          ? `Any amount up to ${exact(st)} VHP, decimals included, straight back to your wallet. Always available. Withdrawing part keeps you in this week at the lower stake; withdrawing everything takes you out of this week.`
+          : `Moves stake to another game without leaving the vault. It counts there from next week. Up to ${exact(st)} VHP.`;
+      const max = mode === "stake" ? null : el("button", { class: "btn btn-ghost btn-small", type: "button", onclick: () => { input.value = exact(st); } }, "All");
+      const d = el("dialog", { class: "kstake-dialog" },
+        el("form", { method: "dialog" },
+          el("h2", {}, mode === "stake" ? "Stake in this game" : mode === "withdraw" ? "Withdraw from this game" : "Move stake"),
+          el("p", { class: "muted" }, help),
+          el("label", { class: "field" }, el("span", {}, "Amount"), el("span", { class: "amount-row" }, input, max)),
+          mode === "stake" ? tok : null,
+          mode === "move" ? el("label", { class: "field" }, el("span", {}, "To"), to) : null,
+          err,
+          el("p", { class: "muted fine-print" }, "Staking is optional; rewards aren't guaranteed. ", el("a", { href: "terms.html", target: "_blank", rel: "noopener" }, "Terms & risks")),
+          el("div", { class: "dialog-actions" },
+            el("button", { class: "btn btn-ghost", value: "cancel", type: "submit", formnovalidate: true }, "Cancel"),
+            el("button", { class: "btn btn-primary", value: "go", type: "submit" }, "Continue in your wallet"))));
+      d.addEventListener("close", () => {
+        const go = d.returnValue === "go";
+        const raw = input.value.trim();
+        const koin = mode === "stake" && d.querySelector('input[name="kstake-tok"]:checked').value === "KOIN";
+        d.remove();
+        if (!go) return;
+        const units = toUnits(raw);
+        if (mode === "stake") {
+          if (!/^[1-9]\d*$/.test(raw) || !units) { P.note = "Stakes are whole numbers only, for example 1 or 25."; return render(); }
+          return act(`stake ${exact(units)} ${koin ? "KOIN" : "VHP"} in this game`, "stake", { units, koin });
+        }
+        if (!units) { P.note = "Enter an amount, for example 2.5 (up to 8 decimals)."; return render(); }
+        if (units > st) { P.note = "That is more than you have staked in this game."; return render(); }
+        if (mode === "withdraw") return act(`withdraw ${exact(units)} VHP from this game`, "withdraw", { units });
+        const target = Number(to.value);
+        const name = (P.games.find((x) => Number(x.id) === target) || {}).name || `game ${target}`;
+        return act(`move ${exact(units)} VHP to ${name}`, "move", { units, to: target });
+      });
+      document.body.append(d);
+      d.showModal();
+      input.focus();
+    }
+
+    function render() {
+      const g = P.game, cfg = P.state.config, week = big(P.state.week);
+      const min = minStakeFor(cfg, week);
+      const W = window.KWallet, who = W && W.address;
+      const p = P.me && P.me.player;
+      const mine = p ? big(p.stake) + big(p.pending) : 0n;
+      const counted = P.me ? big(P.me.week_stake) : 0n;
+      const pendingNote = p && big(p.pending) > 0n && big(p.pending_week) > week ? ` (${exact(p.pending)} VHP counts from week ${p.pending_week})` : "";
+      const staked = counted >= min && min > 0n;
+      const canStake = g.active && !cfg.paused;
+      const rows = [
+        el("div", { class: "kstake-stats" },
+          el("div", {}, el("span", { class: "muted" }, "Your stake here"), el("b", {}, who ? `${amount(mine)} VHP` : "—")),
+          el("div", {}, el("span", { class: "muted" }, "Game total"), el("b", {}, `${amount(g.stake)} VHP`)),
+          el("div", {}, el("span", { class: "muted" }, "Minimum this week"), el("b", {}, `${exact(min)} VHP`))),
+        who ? el("p", { class: "kstake-status" }, staked
+          ? `You're a staked player in this game this week (${amount(counted)} VHP counted).${pendingNote}`
+          : `You're a free player in this game this week.${pendingNote}`) : null,
+        el("p", { class: "muted kstake-explain" }, explain(g, min)),
+        !g.active ? el("p", { class: "warn" }, "This game has stopped taking stakes. You can withdraw any time.") : null,
+        g.active && cfg.paused ? el("p", { class: "warn" }, "New stakes are paused. Withdrawals always work.") : null,
+        el("div", { class: "kstake-actions" },
+          !who ? el("button", { class: "btn btn-primary", type: "button", onclick: () => W && W.connect() }, "Connect wallet to stake") : null,
+          who && canStake ? el("button", { class: "btn btn-primary", type: "button", disabled: P.busy, onclick: () => dialog("stake") }, "Stake") : null,
+          who && mine > 0n ? el("button", { class: "btn btn-ghost", type: "button", disabled: P.busy, onclick: () => dialog("withdraw") }, "Withdraw") : null,
+          who && mine > 0n && canStake && P.games.length ? el("button", { class: "btn btn-ghost", type: "button", disabled: P.busy, onclick: () => dialog("move") }, "Move") : null),
+        P.claims.length ? el("ul", { class: "kstake-claims" }, ...P.claims.map((c) => el("li", {},
+          el("span", {}, `Week ${c.week}: ${amount(c.reward)} VHP`),
+          el("button", { class: "btn btn-tang btn-small", type: "button", disabled: P.busy, onclick: () => act(`claim ${exact(c.reward)} VHP for week ${c.week}`, "claim", { week: c.week }) }, "Claim")))) : null,
+        P.note ? el("p", { class: "muted kstake-note", role: "status" }, P.note) : null,
+      ];
+      root.replaceChildren(el("h3", {}, "Stake in this game"), ...rows.filter(Boolean));
+      root.hidden = false;
+    }
+
+    if (window.KWallet && window.KWallet.subscribe) window.KWallet.subscribe(() => { P.note = ""; refresh(); });
+    refresh();
+    return { refresh };
   }
 
-  root.KStake = { mount, toUnits, claimable, rewardOf, minStake, standing, vhp };
-})(typeof window !== "undefined" ? window : globalThis);
+  window.KStake = { mount, _test: { VAULT_ABI, TOKEN_ABI, toUnits, minStakeFor, live, claimable, explain, buildOps, exact } };
+})();
