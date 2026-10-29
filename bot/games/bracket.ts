@@ -3,17 +3,18 @@
  * The rules live in site/bracket-math.js, the same file the page runs.
  *
  * Each run, for last week (until final), this week and next week:
- *  1. Seeding. From Saturday 12:00 UTC before a week: the race card in force at that time (race-data) gives the field;
+ *  1. Seeding. From Saturday 12:00 UTC before a week, once that block is irreversible: every producer's exact VHP
+ *     averaged over the 28,800 blocks before it (bracket-math.averageCard), on both nodes; they must agree.
  *     bracket-math.seeding turns it into the bracket (8, 16 with byes, or 32 producers; under 8: no bracket that week).
- *     Recorded once and never changed, with a sha256 of what it says. No card 6 hours after the seeding time: the
- *     week is void.
+ *     Recorded once and never changed, with a sha256 of what it says. Not seeded 24 hours later: the week is void.
  *  2. Picks. Once the block at the lock (Sunday 23:55 UTC) is irreversible: every pick for the week's round from the
  *     Picks contract (game 9), on both nodes; they must agree. The chain refused picks after the lock.
  *  3. Hours. Every UTC hour of each round's day, once irreversible: its first and last height, how many blocks it had,
- *     how many each seed signed, and how many each seed was expected to sign, from its exact VHP just before every
- *     block (owner decision 2026-10-28, option A). The VHP is rebuilt from the chain itself: each producer's balance is
- *     read once at the head (pinned to one block), and every VHP event in the blocks between (the per-block burn,
- *     transfers, mints from burning KOIN) is walked back. Done on both nodes; the hours must come out identical.
+ *     how many each seed signed, the most VHP each seed held just before any of its blocks (vmax), and Σ 1 ÷ active VHP
+ *     over its blocks (q) — bracket-math.exactHours (owner decision 2026-10-28, option A; audit A-1). The VHP is rebuilt
+ *     from the chain itself: each producer's balance is read once at the head (pinned to one block), and every VHP event
+ *     in the blocks between (the per-block burn, transfers, mints from burning KOIN; not reverted transactions) is
+ *     walked back. Done on both nodes; the hours must come out identical. At most 6 hours a run (audit A-2).
  *  4. Results and points: each round's day index (bracket-math.indexFromHours), the winners, every pick's points.
  *     The week is final 12 hours after the last round's day (the correction window); then nothing changes.
  *  5. Leaderboards (board.json): Next week (its seeding), This week, Last week and All time (final weeks only). Every
@@ -23,7 +24,9 @@
  * Every time decision uses the irreversible block's time, read on both nodes (audit F-4). The run refuses to write when
  * the last run's files are incomplete (audit F-3): a failed read must never wipe the history.
  *
- *   RPC, RPC_CHECK ("off" to skip the second node), BRACKET_PREV (last run's files), BRACKET_OUT, RACE_DATA.
+ * Two nodes are required to seed and to record hours (audit A-3): with RPC_CHECK off, those steps wait.
+ *
+ *   RPC, RPC_CHECK, BRACKET_PREV (last run's files), BRACKET_OUT.
  *   npm run bracket         (or: npx tsx bot/games/bracket.ts)
  */
 import { Provider, Contract } from "koilib";
@@ -43,21 +46,21 @@ const E = process.env;
 const RPC = E.RPC || "https://api.koinos.io";
 const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
 const HOUR = 3600000, DAY = 24 * HOUR;
-const SEED_GRACE = 6 * HOUR;               // no seeding card this long after Saturday 12:00 → the week is void
+const SEED_GRACE = 24 * HOUR;              // not seeded this long after Saturday 12:00 → the week is void
 const CORRECTION = 12 * HOUR;              // final 12 hours after the last round's day
-const MAX_HOURS_PER_RUN = 30;              // a long outage catches up over a few runs
+const MAX_HOURS_PER_RUN = 6;               // a long outage catches up over a few runs (audit A-2)
 const MAX_BOARD_ROWS = 1000;               // per leaderboard view (the page shows 50; your own score is in W<week>.json)
 const isAddr = (a: unknown): a is string => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
 
 export type RawPick = { player: string; number: number; time: number };
-type Hour = { from: number; to: number; n: number; by: Record<string, number>; exp: Record<string, number>; checked: number };
+type Hour = { from: number; to: number; n: number; by: Record<string, number>; vmax: Record<string, number>; q: number; checked: number };
 type Seeding = { at: number; cardAt: number; size: number; seeds: string[]; vhp: number[]; totalVhp: number; out: string[]; hash: string };
 /** A recorded pick: [player, number, pick time (ms), valid bracket 1/0]. */
 type Pick = [string, number, number, number];
 /** Points: [player, points, correct champion 1/0, correct winners]. */
 type Points = [string, number, number, number];
 export type WeekFile = {
-  v: 2; week: number; start: number; end: number;
+  v: 3; week: number; start: number; end: number;
   status: "waiting" | "none" | "void" | "open" | "locked" | "final";
   seeding: Seeding | null; picks: { checked: number; rows: Pick[] } | null;
   days: (Hour | null)[][];                 // [round][hour 0–23]
@@ -91,13 +94,14 @@ function readJson(dir: string | undefined, name: string): any {
   try { if (fs.lstatSync(f).isSymbolicLink()) return null; return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; }
 }
 const wName = (w: number) => `W${String(w).padStart(3, "0")}.json`;
-const FILE_V = 2;   // v2 (2026-10-28): hours carry exact expected blocks; v1 files (card shares) are not read
+const FILE_V = 3;   // v3 (2026-10-28): hours carry vmax and q (audit A-1), seeding from exact VHP; older files are not read
 const emptyDays = (size: number) => Array.from({ length: size ? B.roundsOf(size) : 0 }, () => new Array<Hour | null>(24).fill(null));
 function freshWeek(w: number): WeekFile {
-  return { v: FILE_V as 2, week: w, start: B.weekStart(w), end: B.weekStart(w + 1), status: "waiting", seeding: null, picks: null, days: [], results: null, points: [] };
+  return { v: FILE_V as 3, week: w, start: B.weekStart(w), end: B.weekStart(w + 1), status: "waiting", seeding: null, picks: null, days: [], results: null, points: [] };
 }
 const hourOk = (h: any) => h && Number.isInteger(h.from) && Number.isInteger(h.to) && h.to >= h.from - 1 && Number.isInteger(h.n) && h.n >= 0
-  && h.by && typeof h.by === "object" && h.exp && typeof h.exp === "object" && Object.values(h.exp).every((x: any) => Number.isFinite(x) && x >= 0) && (h.checked === 1 || h.checked === 2);
+  && h.by && typeof h.by === "object" && h.vmax && typeof h.vmax === "object" && Object.values(h.vmax).every((x: any) => Number.isFinite(x) && x >= 0)
+  && Number.isFinite(h.q) && h.q >= 0 && h.checked === 2;
 function loadWeek(dir: string | undefined, w: number): WeekFile {
   const f = freshWeek(w), old = readJson(dir, wName(w));
   if (!old || old.v !== FILE_V || old.week !== w) return f;
@@ -120,22 +124,12 @@ function defaultPicksContract(): string | null {
   try { const d = JSON.parse(fs.readFileSync(new URL("../../picks-data/deployment.json", import.meta.url), "utf8")); return isAddr(d.contract) ? d.contract : null; } catch { return null; }
 }
 
-// ── the card in force at a time (race-data, hourly legs) ──
-function cardAt(raceDir: string | undefined, t: number): any | null {
-  const ra = M.raceAt(t);
-  const wf = readJson(raceDir, wName(M.weekOf(ra.start)));
-  const race = wf && Array.isArray(wf.races) ? wf.races.find((r: any) => r && r.id === ra.id) : null;
-  if (!race || !Array.isArray(race.cards)) return null;
-  const n = M.legsOf(race.cards);
-  const c = M.cardForLeg(race.cards, M.legOf(ra.start, t, n));
-  return c && Array.isArray(c.field) && c.field.length ? c : null;
-}
-
 // ── chain reads ──
 const ser = new Serializer((utils.tokenAbi as any).koilib_types);
 async function vhpEvents(it: any) {
   const rc = it.receipt || {}, out: any[] = [], h = Number(it.block_height);
-  const all = [...(rc.events || []), ...(rc.transaction_receipts || []).flatMap((t: any) => t.events || [])];
+  // a reverted transaction's events changed nothing (audit A-4)
+  const all = [...(rc.events || []), ...(rc.transaction_receipts || []).filter((t: any) => !t.reverted).flatMap((t: any) => t.events || [])];
   for (const x of all) {
     if (x.source !== B.VHP_CONTRACT) continue;
     const n = String(x.name || ""), kind = /transfer_event$/.test(n) ? "transfer_event" : /mint_event$/.test(n) ? "mint_event" : /burn_event$/.test(n) ? "burn_event" : "";
@@ -165,20 +159,27 @@ function chainNode(p: any): Node {
     async blockId(h) { return String((await blockAt(h)).block_id); },
     async chain(from, to) {
       const hNow = await headNow(); headId = hNow.id;   // blocks up to the head as it is now
+      const n = to - from + 1, items: any[] = new Array(Math.max(0, n));
+      const queue: [number, number][] = []; for (let s = from; s <= to; s += 50) queue.push([s, Math.min(to, s + 49)]);
+      const worker = async () => {   // 4 reads at a time (audit A-2)
+        while (queue.length) {
+          const [s, e] = queue.shift()!;
+          let k = s;
+          while (k <= e) {
+            const res: any = await withRetry(`blocks at ${k}`, () => p.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(k), num_blocks: e - k + 1, return_block: true, return_receipt: true }));
+            const got = res?.block_items ?? [];
+            if (!got.length) throw new Error(`no blocks returned at ${k}`);
+            for (const it of got) { if (Number(it.block_height) !== k || k > e) throw new Error(`blocks out of order at ${k}`); items[k - from] = it; k++; }
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: 4 }, worker));
       const out: Chain = { hs: [], ts: [], sig: [], signers: [], ids: [], deltas: [] };
       const idx = new Map<string, number>(), events: any[] = [];
-      let k = from;
-      while (k <= to) {
-        const res: any = await withRetry(`blocks at ${k}`, () => p.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(k), num_blocks: Math.min(50, to - k + 1), return_block: true, return_receipt: true }));
-        const items = res?.block_items ?? [];
-        if (!items.length) throw new Error(`no blocks returned at ${k}`);
-        for (const it of items) {
-          if (Number(it.block_height) !== k || k > to) throw new Error(`blocks out of order at ${k}`);
-          const a = String(it.block.header.signer); let i = idx.get(a); if (i === undefined) { i = out.signers.length; out.signers.push(a); idx.set(a, i); }
-          out.hs.push(k); out.ts.push(Number(it.block.header.timestamp)); out.sig.push(i); out.ids.push(String(it.block_id));
-          events.push(...(await vhpEvents(it)));
-          k++;
-        }
+      for (const it of items) {
+        const a = String(it.block.header.signer); let i = idx.get(a); if (i === undefined) { i = out.signers.length; out.signers.push(a); idx.set(a, i); }
+        out.hs.push(Number(it.block_height)); out.ts.push(Number(it.block.header.timestamp)); out.sig.push(i); out.ids.push(String(it.block_id));
+        events.push(...(await vhpEvents(it)));
       }
       out.deltas = B.vhpDeltas(events);
       return out;
@@ -206,24 +207,35 @@ async function heightAt(n: Node, head: Head, t: number): Promise<number> {
   while (lo < hi) { const m = Math.floor((lo + hi) / 2); if ((await n.blockTime(m)) < t) lo = m + 1; else hi = m; }
   return lo;
 }
+/** Blocks fromH..toH (irreversible) with an exact VHP book for every producer that signed in them and every address in
+ *  `also`: balances read once at the head (pinned to a block) and the VHP events walked back to the range. */
+async function bookFor(n: Node, fromH: number, toH: number, also: string[]) {
+  const c = await n.chain(fromH, toH);
+  const who = [...new Set([...c.signers, ...also])];
+  const anchors: Record<string, { h: number; v: number }> = {}, at = new Map<number, string>();
+  for (const a of who) { const b = await n.balance(a); anchors[a] = { h: b.h, v: b.v }; at.set(b.h, b.id); }
+  const top = Math.max(...[...at.keys()]);
+  if (top < toH) throw new Error(`a balance was read below block ${toH}; tried again next run`);
+  const tail = top > toH ? await n.chain(toH + 1, top) : ({ hs: [], ids: [], deltas: [] } as any);
+  // The blocks walked back are the very ones the balances were read on (no fork in between).
+  const idOf = new Map<number, string>(); c.hs.forEach((h, i) => idOf.set(h, c.ids[i])); tail.hs.forEach((h: number, i: number) => idOf.set(h, tail.ids[i]));
+  for (const [h, id] of at) if (idOf.get(h) !== id) throw new Error(`block ${h} changed while reading (a fork); tried again next run`);
+  const book = B.vhpBook(anchors, [...c.deltas, ...tail.deltas]);
+  for (const a of who) { const v = book.before(a, fromH); if (v === null || v < -0.5) throw new Error(`the VHP rebuild for ${a} went below zero (a missed event)`); }
+  return { c, book };
+}
 /** Hour records for the given hour starts (all irreversible), on one node, from exact VHP. */
 export async function readHours(n: Node, head: Head, starts: number[], seeds: string[]) {
   const first = Math.min(...starts), last = Math.max(...starts);
   const fromH = Math.max(1, (await heightAt(n, head, first)) - B.ACTIVE_BLOCKS), toH = (await heightAt(n, head, last + HOUR)) - 1;
-  const c = await n.chain(fromH, toH);
-  // Anchors: every producer that signed in the range, and every seed, read once at the head (pinned to a block).
-  const who = [...new Set([...c.signers, ...seeds])];
-  const anchors: Record<string, { h: number; v: number }> = {}, at = new Map<number, string>();
-  for (const a of who) { const b = await n.balance(a); anchors[a] = { h: b.h, v: b.v }; at.set(b.h, b.id); }
-  const top = Math.max(...[...at.keys()]);
-  const tail = top > toH ? await n.chain(toH + 1, top) : { hs: [], ids: [], deltas: [] } as any;
-  // The blocks walked back are the very ones the balances were read on (no fork in between).
-  const idOf = new Map<number, string>(); c.hs.forEach((h, i) => idOf.set(h, c.ids[i])); tail.hs.forEach((h: number, i: number) => idOf.set(h, tail.ids[i]));
-  for (const [h, id] of at) if (h > toH && idOf.get(h) !== id) throw new Error(`block ${h} changed while reading (a fork); tried again next run`);
-  if (top < toH) throw new Error(`a balance was read below block ${toH}; tried again next run`);
-  const book = B.vhpBook(anchors, [...c.deltas, ...tail.deltas]);
-  for (const a of who) { const v = book.before(a, fromH); if (v === null || v < -0.5) throw new Error(`the VHP rebuild for ${a} went below zero (a missed event)`); }
+  const { c, book } = await bookFor(n, fromH, toH, seeds);
   return B.exactHours(c, starts, seeds, book) as Omit<Hour, "checked">[];
+}
+/** The seeding card at time `at` (irreversible), on one node: exact VHP averaged over the SEED_BLOCKS blocks before. */
+export async function readSeedCard(n: Node, head: Head, at: number) {
+  const seedH = await heightAt(n, head, at), fromH = Math.max(1, seedH - B.SEED_BLOCKS);
+  const { c, book } = await bookFor(n, fromH, seedH - 1, []);
+  return { ...B.averageCard(c, 0, c.hs.length, book), at, height: seedH };
 }
 const PICKS_ABI = () => JSON.parse(fs.readFileSync(new URL("../../picks/abi/picks.koilib.json", import.meta.url), "utf8"));
 async function readPicks(node: any, contract: string, round: number): Promise<RawPick[]> {
@@ -277,7 +289,6 @@ export function scoreWeek(wf: WeekFile) {
 export async function run(o: Opts) {
   const OUT = o.out ?? E.BRACKET_OUT ?? "games-data/bracket";
   const PREV = o.prev ?? E.BRACKET_PREV ?? "";
-  const RACE = o.raceDir ?? E.RACE_DATA ?? "";
   const problems: string[] = [];
   const contract = o.picksContract === undefined ? defaultPicksContract() : o.picksContract;
   const nodeP: Node = o.nodeOf ? o.nodeOf(o.p) : chainNode(o.p);
@@ -311,16 +322,21 @@ export async function run(o: Opts) {
     if (!wf.seeding) {
       const at = B.seedTime(w);
       if (now < at) continue;
-      const card = cardAt(RACE, at);
-      if (!card) {
-        if (now >= at + SEED_GRACE) { wf.status = "void"; wf.void = "no race card was recorded at the seeding time; no bracket this week"; }
-        else problems.push(`week ${w}: no race card yet for the seeding time; tried again next run`);
+      let card: any = null;
+      try {
+        if (!nodeC) throw new Error("a second node is needed to seed (RPC_CHECK)");
+        const c1 = await readSeedCard(nodeP, head, at), c2 = await readSeedCard(nodeC, head, at);
+        if (JSON.stringify(c1) !== JSON.stringify(c2)) throw new Error("the two nodes disagree about the seeding");
+        card = c1;
+      } catch (e) {
+        if (now >= at + SEED_GRACE) { wf.status = "void"; wf.void = "the seeding could not be read on two nodes within 24 hours; no bracket this week"; }
+        else problems.push(`week ${w}: seeding: ${(e as Error).message} (tried again next run)`);
         continue;
       }
       const s = B.seeding(card);
       const vhpOf = new Map<string, number>(card.field.map((r: any) => [r.a, Number(r.vhp)]));
-      const totalVhp = [...card.field, ...(card.paddock || [])].reduce((t: number, r: any) => t + (Number.isFinite(r?.vhp) && r.vhp > 0 ? r.vhp : 0), 0);
-      const base = { at, cardAt: Number(card.at) || 0, size: s.size, seeds: [...s.seeds], vhp: s.seeds.map((a: string) => vhpOf.get(a) ?? 0), totalVhp, out: [...s.out] };
+      const totalVhp = Math.round([...card.field, ...card.paddock].reduce((t: number, r: any) => t + r.vhp, 0) * 100) / 100;
+      const base = { at, cardAt: card.height, size: s.size, seeds: [...s.seeds], vhp: s.seeds.map((a: string) => vhpOf.get(a) ?? 0), totalVhp, out: [...s.out] };
       wf.seeding = { ...base, hash: seedHash(w, base) };
       wf.days = emptyDays(s.size);
       if (!s.size) { wf.status = "none"; wf.void = `only ${s.seeds.length + s.out.length} producers in the field (8 needed); no bracket this week`; continue; }
@@ -371,18 +387,16 @@ export async function run(o: Opts) {
       const start = B.roundDay(w, r) + h * HOUR;
       if (!wf.days[r][h] && start + HOUR <= head.libTime && todo.length < hoursLeft) todo.push([r, h, start]);
     }
-    if (todo.length) {
+    if (todo.length && !nodeC) problems.push(`week ${w}: hours wait for a second node (RPC_CHECK)`);
+    else if (todo.length) {
       hoursLeft -= todo.length;
       try {
         const starts = todo.map((x) => x[2]);
         const a = await readHours(nodeP, head, starts, seeds);
-        let checked = 1;
-        if (nodeC) {
-          const b = await readHours(nodeC, head, starts, seeds);
-          const bad = a.findIndex((x, i) => JSON.stringify(x) !== JSON.stringify(b[i]));
-          if (bad >= 0) throw new Error(`the two nodes disagree about round ${todo[bad][0] + 1} hour ${todo[bad][1]}; not recorded this run`);
-          checked = 2;
-        }
+        const b = await readHours(nodeC!, head, starts, seeds);
+        const bad = a.findIndex((x, i) => JSON.stringify(x) !== JSON.stringify(b[i]));
+        if (bad >= 0) throw new Error(`the two nodes disagree about round ${todo[bad][0] + 1} hour ${todo[bad][1]}; not recorded this run`);
+        const checked = 2;
         todo.forEach(([r, h], i) => { wf.days[r][h] = { ...a[i], checked }; });
         console.log(`week ${w}: ${todo.length} hour(s) recorded`);
       } catch (e) { problems.push(`week ${w}: hours: ${(e as Error).message} (tried again next run)`); }

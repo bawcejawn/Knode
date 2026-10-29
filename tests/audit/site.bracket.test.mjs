@@ -179,7 +179,8 @@ test("expected blocks follow exact VHP: a producer signing its share scores ≈1
   const book = M.vhpBook(anchors, deltas);
   const idx = M.dayIndex(B, DAY0, Object.keys(vhp), book);
   const totalExp = [...idx.values()].reduce((t, r) => t + r.expected, 0);
-  assert.ok(Math.abs(totalExp - 24 * 1200) < 1e-3, `expected adds up to the blocks of the day (${totalExp})`);
+  // the day VHP is the most held, before the day's burns: ~4 VHP a block is ~2.3% of this small network a day (~0.9% on mainnet), the same share for all
+  assert.ok(totalExp / (24 * 1200) - 1 > 0 && totalExp / (24 * 1200) - 1 < 0.025, `expected adds up to the blocks of the day plus the day's burns (${totalExp})`);
   for (const a of ["1Big", "1Mid"]) assert.ok(Math.abs(idx.get(a).index - 1) < 0.05, `${a} ${idx.get(a).index}`);
   assert.ok(Math.abs(idx.get("1Sml").index - 1) < 0.25, `small ${idx.get("1Sml").index}`);
   // hour records are contiguous and count every block once
@@ -200,10 +201,25 @@ test("moving VHP away and back (or adding it) gains nothing: expected follows th
   // its expected blocks are within 0.1% of never having moved anything (2 blocks of 1,200 an hour)
   const still = fakeChain(vhp, { seed: 3 }), idx2 = M.dayIndex(still.B, DAY0, ["1Dog"], M.vhpBook(still.anchors, still.deltas));
   assert.ok(Math.abs(idx.get("1Dog").expected / idx2.get("1Dog").expected - 1) < 0.002);
-  // VHP added mid-day (burning KOIN) raises expected exactly as much as chances: index stays ≈1
+  // VHP added mid-day (burning KOIN) counts for the whole day: it can't help that day (about 0.77 here)
   const up = fakeChain(vhp, { seed: 5, moves: [{ at: M.ACTIVE_BLOCKS + 6 * 1200, a: "1Dog", d: 200_000 }] });
   const iu = M.dayIndex(up.B, DAY0, ["1Fav", "1Dog"], M.vhpBook(up.anchors, up.deltas));
-  assert.ok(Math.abs(iu.get("1Dog").index - 1) < 0.1, `after adding VHP ${iu.get("1Dog").index}`);
+  assert.ok(iu.get("1Dog").index < 0.85 && iu.get("1Dog").index > 0.7, `after adding VHP ${iu.get("1Dog").index}`);
+});
+test("audit A-1: holding VHP only while a stopped producer still counts as active doesn't pay (it did before)", () => {
+  // a 20% producer stops at 06:00 and still counts as active for the next 7,200 blocks; the seed holds its VHP in its
+  // producing address only during those 6 hours, elsewhere the rest of the day
+  const vhp = { "1Seed": 50_000, "1Opp": 50_000, "1Dead": 250_000, "1Rest": 900_000 };
+  const s0 = M.ACTIVE_BLOCKS + 6 * 1200, s1 = s0 + M.ACTIVE_BLOCKS;
+  const moves = [{ at: 0, a: "1Seed", d: -49_000 }, { at: s0, a: "1Seed", d: 49_000 }, { at: s1, a: "1Seed", d: -49_000 }];
+  let ahead = 0, sum = 0; const N = 30;
+  for (let d = 0; d < N; d++) {
+    const c = fakeChain(vhp, { seed: 500 + d, moves, offline: (a, i) => a === "1Dead" && i >= s0 });
+    const idx = M.dayIndex(c.B, DAY0, ["1Seed", "1Opp"], M.vhpBook(c.anchors, c.deltas));
+    sum += idx.get("1Seed").index; if (idx.get("1Seed").index > idx.get("1Opp").index) ahead++;
+  }
+  assert.ok(sum / N < 0.5, `the timing seed's mean index ${(sum / N).toFixed(3)}: its day VHP is the most it held`);
+  assert.ok(ahead <= 2, `ahead of an honest opponent on ${ahead} of ${N} days`);
 });
 test("a seed that goes offline is still expected to sign by its VHP, and loses", () => {
   const vhp = { "1Fav": 100_000, "1Dog": 20_000, "1Rest": 880_000 };

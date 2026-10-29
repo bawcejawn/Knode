@@ -24,9 +24,10 @@ const hAt = (t) => H0 + Math.ceil((t - T0) / 3000);
 
 // A field of n producers with VHP n, n−1, …; the signer of block h is drawn by VHP (deterministic per height).
 function fieldOf(n) { return Array.from({ length: n }, (_, i) => ({ a: addr(i), vhp: 1000 * (n - i) })); }
-function signerFn(field, offline = new Set()) {
-  const live = field.filter((r) => !offline.has(r.a)), tot = live.reduce((s, r) => s + r.vhp, 0);
-  const f = (h) => { let x = ((Math.imul(h, 2654435761) >>> 0) / 4294967296) * tot; for (const r of live) { x -= r.vhp; if (x < 0) return r.a; } return live[live.length - 1].a; };
+function signerFn(field, offline = new Set(), offFrom = 0) {
+  const pick = (set) => { const tot = set.reduce((s, r) => s + r.vhp, 0); return (h) => { let x = ((Math.imul(h, 2654435761) >>> 0) / 4294967296) * tot; for (const r of set) { x -= r.vhp; if (x < 0) return r.a; } return set[set.length - 1].a; }; };
+  const all = pick(field), live = pick(field.filter((r) => !offline.has(r.a)));
+  const f = (h) => (h >= offFrom ? live(h) : all(h));   // the offline producers stop at height offFrom
   f.field = field;
   return f;
 }
@@ -46,6 +47,8 @@ function nodeOf(signer, tamper = null, { moves = [], forkAt = null } = {}) {
       async blockTime(h) { return T(h); },
       async blockId(h) { return id(h); },
       async chain(from, to) {
+        // the fake chain's history starts 40,000 blocks (~33 hours) before H0: last week's bracket can't be seeded
+        if (from < H0 - 40_000) throw new Error(`no block ${from} on this node`);
         const out = { hs: [], ts: [], sig: [], signers: [], ids: [], deltas: [] }, ix = new Map();
         for (let h = from; h <= to; h++) {
           const a = who(h); let i = ix.get(a); if (i === undefined) { i = out.signers.length; out.signers.push(a); ix.set(a, i); }
@@ -77,18 +80,19 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "bracket-"));
 const quiet = async (f) => { const log = console.log; console.log = () => {}; try { return await f(); } finally { console.log = log; } };
 const readW = (dir, w = W) => JSON.parse(fs.readFileSync(path.join(dir, `W${String(w).padStart(3, "0")}.json`), "utf8"));
 const P = (i) => addr(50 + i);
-function picksOf(rows, tamper = false) { return async (node) => rows.map((r, i) => ({ ...r, number: node === "check" && tamper && i === 0 ? r.number + 1 : r.number })); }
+// picks for week W only (other weeks: none)
+function picksOf(rows, tamper = false) { return async (node, round) => (round !== B.picksRound(W) ? [] : rows.map((r, i) => ({ ...r, number: node === "check" && tamper && i === 0 ? r.number + 1 : r.number }))); }
 
 /** Run the recorder repeatedly at time t (carrying files forward) until nothing more gets recorded. */
-async function runUntil(t, o, dir, times = 12) {
+async function runUntil(t, o, dir, times = 40) {   // at most 6 hours a run (audit A-2)
   let last;
   for (let i = 0; i < times; i++) last = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(t), ...o }));
   return last;
 }
 
-test("seeding: from the Saturday 12:00 card, recorded once with a hash, never changed by later cards", async () => {
-  const field = fieldOf(17), dir = tmp(), race = raceDir(field);
-  const o = { raceDir: race, picksContract: "1P", nodeOf: nodeOf(signerFn(field)), picksOf: picksOf([]) };
+test("seeding: exact VHP averaged over the day before Saturday 12:00, on two nodes; recorded once with a hash, never changed", async () => {
+  const field = fieldOf(17), dir = tmp();
+  const o = { picksContract: "1P", nodeOf: nodeOf(signerFn(field)), picksOf: picksOf([]) };
   await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) - H), ...o }));
   assert.ok(!fs.existsSync(path.join(dir, "W003.json")), "nothing before the seeding time");
   await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + 40 * 60000), ...o }));
@@ -96,29 +100,34 @@ test("seeding: from the Saturday 12:00 card, recorded once with a hash, never ch
   assert.equal(wf.status, "open"); assert.equal(wf.seeding.size, 16); assert.equal(wf.seeding.seeds.length, 16);
   assert.deepEqual(wf.seeding.seeds, field.slice(0, 16).map((r) => r.a)); assert.deepEqual(wf.seeding.out, [field[16].a]);
   assert.match(wf.seeding.hash, /^[0-9a-f]{64}$/); assert.equal(wf.days.length, 4);
-  // a later run with a different field keeps the published seeding
-  const other = raceDir(fieldOf(40));
-  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + 3 * H), ...o, raceDir: other }));
+  assert.equal(wf.seeding.cardAt, hAt(B.seedTime(W)), "the block at Saturday 12:00");
+  // the average is over the day before: seed 1's average is its starting VHP less about half a day's burns
+  assert.ok(wf.seeding.vhp[0] < field[0].vhp * 1000 && wf.seeding.vhp[0] > field[0].vhp * 1000 * 0.99);
+  // a later run on another chain keeps the published seeding
+  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + 3 * H), ...o, nodeOf: nodeOf(signerFn(fieldOf(40))) }));
   assert.deepEqual(readW(dir).seeding, wf.seeding);
-  // a tampered seeding in the last run's files is not trusted (its hash no longer matches)
+  // a tampered seeding in the last run's files is not trusted (its hash no longer matches): seeded again from the chain
   const bad = readW(dir); bad.seeding.seeds[0] = addr(77); fs.writeFileSync(path.join(dir, "W003.json"), JSON.stringify(bad));
-  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + 4 * H), ...o, raceDir: other }));
-  assert.equal(readW(dir).seeding.size, 32, "re-seeded from the card, not the tampered file");
+  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + 4 * H), ...o, nodeOf: nodeOf(signerFn(fieldOf(40))) }));
+  assert.equal(readW(dir).seeding.size, 32, "re-seeded from the chain, not the tampered file");
 });
 
-test("seeding: no card waits and turns void after 6 hours; under 8 producers is no bracket; 40 is a 32-bracket", async () => {
-  const field = fieldOf(17), dir = tmp(), race = raceDir(field, { skip: (t) => t >= B.seedTime(W) - 6 * H && t < B.seedTime(W) + 12 * H });
-  const o = { raceDir: race, picksContract: "1P", nodeOf: nodeOf(signerFn(field)), picksOf: picksOf([]) };
+test("seeding: waits while the nodes disagree and turns void after 24 hours; under 8 is no bracket; 13 has byes; 40 is a 32-bracket", async () => {
+  const field = fieldOf(17), dir = tmp();
+  const skew = (name) => { const n = nodeOf(signerFn(field))(name); return name === "check" ? { ...n, balance: async (a) => { const b = await n.balance(a); return { ...b, v: b.v + 1e8 }; } } : n; };
+  const o = { picksContract: "1P", nodeOf: skew, picksOf: picksOf([]) };
   const r1 = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + H), ...o }));
-  assert.ok(r1.problems.some((p) => p.includes("no race card yet")));
-  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + 7 * H), ...o }));
+  assert.ok(r1.problems.some((p) => p.includes("disagree about the seeding")));
+  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + 23 * H), ...o }));
+  assert.ok(!fs.existsSync(path.join(dir, "W003.json")) || readW(dir).status !== "void", "still waiting at 23 hours");
+  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + 25 * H), ...o }));
   assert.equal(readW(dir).status, "void");
-  const d7 = tmp(); await quiet(() => run({ p: "main", check: "check", prev: d7, out: d7, head: headAt(B.seedTime(W) + H), ...o, raceDir: raceDir(fieldOf(7)) }));
-  assert.equal(readW(d7).status, "none"); assert.match(readW(d7).void, /8 needed/);
-  const d40 = tmp(); await quiet(() => run({ p: "main", check: "check", prev: d40, out: d40, head: headAt(B.seedTime(W) + H), ...o, raceDir: raceDir(fieldOf(40)) }));
-  const w40 = readW(d40); assert.equal(w40.seeding.size, 32); assert.equal(w40.days.length, 5, "Monday to Friday");
-  const d13 = tmp(); await quiet(() => run({ p: "main", check: "check", prev: d13, out: d13, head: headAt(B.seedTime(W) + H), ...o, raceDir: raceDir(fieldOf(13)) }));
-  assert.equal(readW(d13).seeding.size, 16); assert.equal(readW(d13).seeding.seeds.length, 13);
+  const one = tmp(); const r0 = await quiet(() => run({ p: "main", check: null, prev: one, out: one, head: headAt(B.seedTime(W) + H), picksContract: "1P", nodeOf: nodeOf(signerFn(field)) }));
+  assert.ok(r0.problems.some((p) => p.includes("second node")), "one node can't seed");
+  const seedWith = async (f) => { const d = tmp(); await quiet(() => run({ p: "main", check: "check", prev: d, out: d, head: headAt(B.seedTime(W) + H), picksContract: "1P", nodeOf: nodeOf(signerFn(f)) })); return readW(d); };
+  const w7 = await seedWith(fieldOf(7)); assert.equal(w7.status, "none"); assert.match(w7.void, /8 needed/);
+  const w40 = await seedWith(fieldOf(40)); assert.equal(w40.seeding.size, 32); assert.equal(w40.days.length, 5, "Monday to Friday");
+  const w13 = await seedWith(fieldOf(13)); assert.equal(w13.seeding.size, 16); assert.equal(w13.seeding.seeds.length, 13);
 });
 
 test("picks: only after the lock is irreversible, only when both nodes agree; bad numbers kept but marked invalid", async () => {
@@ -140,8 +149,8 @@ test("picks: only after the lock is irreversible, only when both nodes agree; ba
 });
 
 test("a whole week: hours irreversible only, results equal the shared math on the same blocks, final after 12 hours, then frozen", async () => {
-  const field = fieldOf(17), offline = new Set([field[0].a]);   // seed 1 is offline all week: it loses round 1
-  const signer = signerFn(field, offline), race = raceDir(field), dir = tmp();
+  const field = fieldOf(17), offline = new Set([field[0].a]);   // seed 1 goes offline from Monday: it loses round 1
+  const signer = signerFn(field, offline, hAt(B.weekStart(W))), race = raceDir(field), dir = tmp();
   // perfect bracket computed straight from the fake chain with bracket-math (balances read at the end, walked back)
   const seeds = field.slice(0, 16).map((r) => r.a), fake = nodeOf(signer)("main");
   headAt(B.roundDay(W, 4) + H);
@@ -156,10 +165,11 @@ test("a whole week: hours irreversible only, results equal the shared math on th
   await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + H), ...o }));
   await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.lockTime(W) + 60000), ...o }));
   // Tuesday 10:30: Monday done, Tuesday hours up to 10:00 recorded, nothing later
-  await runUntil(B.roundDay(W, 1) + 10.5 * H, o, dir);
+  const last = await runUntil(B.roundDay(W, 1) + 10.5 * H, o, dir);
+  assert.deepEqual(last.problems, []);
   let wf = readW(dir);
   assert.ok(wf.days[0].every(Boolean)); assert.equal(wf.days[1].filter(Boolean).length, 10); assert.ok(wf.days[2].every((x) => x === null));
-  assert.ok(wf.days[0].every((x) => x.checked === 2 && x.exp && Object.keys(x.exp).length === 16));
+  assert.ok(wf.days[0].every((x) => x.checked === 2 && x.q > 0 && Object.keys(x.vmax).length === 16));
   assert.equal(B.indexFromHours(wf.days[0]).get(field[0].a).blocks, 0, "seed 1 signed nothing");
   assert.ok(B.indexFromHours(wf.days[0]).get(field[0].a).expected > 100, "…but was expected to, by its VHP");
   assert.equal(wf.results.rounds.length, 1); assert.deepEqual(wf.results.rounds[0], truth.rounds[0]);
@@ -201,19 +211,22 @@ test("hours: the two nodes must agree; a fork while reading is caught; VHP moved
   assert.ok(r.problems.some((p) => p.includes("disagree")));
   assert.ok(readW(dir).days[0].every((x) => x === null), "nothing recorded while the nodes disagree");
   // a fork between the hour and the head while reading (the block a balance was read at changed): nothing recorded
-  const r2 = await quiet(() => run({ p: "main", check: null, prev: dir, out: dir, head: headAt(B.roundDay(W, 0) + 8 * H), ...o, nodeOf: nodeOf(signer, null, { moves, forkAt: { node: "main", h: hAt(B.roundDay(W, 0) + 8 * H) } }) }));
-  assert.ok(r2.problems.some((p) => p.includes("fork")));
-  // agreeing nodes: recorded, and hour 5's expected for the mover shows the 10 minutes it held 1% of its VHP
+  const r2 = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.roundDay(W, 0) + 8 * H), ...o, nodeOf: nodeOf(signer, null, { moves, forkAt: { node: "main", h: hAt(B.roundDay(W, 0) + 8 * H) + 1 } }) }));
+  assert.ok(r2.problems.some((p) => p.includes("fork")), JSON.stringify(r2.problems));
+  // agreeing nodes: recorded (at most 6 hours a run); parking VHP for 10 minutes doesn't lower the mover's day VHP
+  const r3 = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.roundDay(W, 0) + 8 * H), ...o }));
+  assert.equal(readW(dir).days[0].filter(Boolean).length, 6, "6 hours a run (audit A-2) " + JSON.stringify(r3.problems));
   await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.roundDay(W, 0) + 8 * H), ...o }));
   const wf = readW(dir);
   assert.equal(wf.days[0].filter(Boolean).length, 8, "00:00–07:59 are irreversible by 08:00");
-  const e4 = wf.days[0][4].exp[mover], e5 = wf.days[0][5].exp[mover];
-  assert.ok(e5 < e4 * 0.9 && e5 > e4 * 0.75, `hour 5 expected ${e5} vs hour 4 ${e4}: 10 of 60 minutes at 1%`);
+  const v4 = wf.days[0][4].vmax[mover], v5 = wf.days[0][5].vmax[mover];
+  assert.ok(Math.abs(v5 / v4 - 1) < 0.001, `hour 5's most VHP ${v5} is still the full amount (hour 4: ${v4})`);
+  assert.ok(Math.abs(wf.days[0][5].q / wf.days[0][4].q - 1) < 0.05, "q is about the same every hour");
 });
 
 test("files: only the expected names, sizes and fields", async () => {
   const field = fieldOf(17), dir = tmp();
-  await quiet(() => run({ p: "main", check: null, prev: dir, out: dir, head: headAt(B.seedTime(W) + H), raceDir: raceDir(field), picksContract: null, nodeOf: nodeOf(signerFn(field)) }));
+  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + H), picksContract: null, nodeOf: nodeOf(signerFn(field)) }));
   const names = fs.readdirSync(dir).sort();
   assert.ok(names.includes("W003.json") && names.includes("board.json") && names.includes("index.json"));
   assert.ok(names.every((f) => /^(index|board|W\d{3})\.json$/.test(f)), names.join());
@@ -233,7 +246,7 @@ const shapeOk = (dir) => { try { execFileSync("python3", ["-c", bracketPy, dir],
 
 test("workflow: records the bracket with the same prev/out/race folders and publishes only its own files", () => {
   assert.ok(bracketPy, "a bracket shape check in the publish job");
-  assert.match(yml, /run: npm run bracket\n\s+env:\n\s+RPC: .*\n\s+RPC_CHECK: .*\n\s+BRACKET_PREV: \$\{\{ runner\.temp \}\}\/prev\/bracket\n\s+BRACKET_OUT: \$\{\{ runner\.temp \}\}\/games-data\/bracket\n\s+RACE_DATA: \$\{\{ runner\.temp \}\}\/race/);
+  assert.match(yml, /run: npm run bracket\n\s+env:\n\s+RPC: .*\n\s+RPC_CHECK: .*\n\s+BRACKET_PREV: \$\{\{ runner\.temp \}\}\/prev\/bracket\n\s+BRACKET_OUT: \$\{\{ runner\.temp \}\}\/games-data\/bracket\n/);
   assert.match(yml, /for g in blockx bracket; do/);
   assert.doesNotMatch(yml.split("publish:")[1], /npm |npx |tsx /, "the publish job runs no repository code");
 });

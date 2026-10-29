@@ -47,21 +47,17 @@ const safe = { before: (a, h) => book.before(a, h) ?? 0 };
 const chain = { hs, ts, sig, signers: names };
 const lb = (t) => { let lo = 0, hi = n; while (lo < hi) { const m = (lo + hi) >> 1; if (ts[m] < t) lo = m + 1; else hi = m; } return lo; };
 
-// ── seeding from exact VHP (the race field rule) ──
-function cardAt(t) {
-  const i = lb(t); if (i < B.ACTIVE_BLOCKS || i >= n) return null;
-  const act = new Set(); for (let j = i - B.ACTIVE_BLOCKS; j < i; j++) act.add(names[sig[j]]);
-  const rows = [...act].map((a) => ({ a, vhp: safe.before(a, hs[i]) / 1e8 })).filter((r) => r.vhp > 0);
-  const tot = rows.reduce((s, r) => s + r.vhp, 0), field = [], paddock = [];
-  for (const r of rows) (7200 * r.vhp / tot >= M.MIN_K ? field : paddock).push(r);
-  return { field, paddock };
-}
+// ── seeding: exact VHP averaged over the day before (as the recorder does it) ──
+function cardAt(t) { const i = lb(t); if (i < B.SEED_BLOCKS || i >= n) return null; return B.averageCard(chain, i - B.SEED_BLOCKS, i, safe); }
 /** Index over [t0, t1) for the given producers (whole hours). */
 function indexOver(t0, t1, who) {
   const hours = []; for (let t = t0; t < t1; t += H) hours.push(t);
-  const hr = B.exactHours(chain, hours, who, safe);
+  // over several days: each day's index, then blocks ÷ expected summed over the days
   const out = new Map(who.map((a) => [a, { blocks: 0, expected: 0 }]));
-  for (const x of hr) for (const a of who) { out.get(a).blocks += x.by[a]; out.get(a).expected += x.exp[a]; }
+  for (let d = t0; d < t1; d += DAY) {
+    const idx = B.indexSoFar(B.exactHours(chain, hours.filter((t) => t >= d && t < d + DAY), who, safe));
+    for (const a of who) { const r = idx.get(a); out.get(a).blocks += r.blocks; out.get(a).expected += r.expected; }
+  }
   return out;
 }
 

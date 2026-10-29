@@ -2,7 +2,7 @@
 // hour by hour over the 8-day mainnet sample (data/bracket-vhp-sample.json.gz: every block's signer, every VHP event,
 // every producer's balance read at the end on two nodes; made by tools/sim/bracket/sample-vhp.ts). The sample's times are
 // moved so it holds one whole bracket week: seeding Saturday 12:00, lock Sunday 23:55, rounds Monday–Thursday, final.
-// The race cards for the seeding are made from the same exact VHP. Fake brackets: chalk, underdog, random, perfect.
+// The seeding is exact VHP averaged over the day before Saturday 12:00, as the recorder does it. Fake brackets: chalk, underdog, random, perfect.
 // Checks: seeded, locked, every hour of every round recorded with contiguous heights covering every block of the day,
 // results equal to the shared math run directly on the sample, the perfect bracket on top with the most points, and the
 // publish job's shape check passes. Prints the week's matchups with each producer's index.
@@ -68,8 +68,8 @@ for (let w = WK - 1; w <= WK + 1; w++) {
 }
 
 // ── the truth, straight from the sample with the shared math ──
-const seedCard = cardAt(B.seedTime(WK)), sd = B.seeding(seedCard);
 const chain = { hs, ts, sig: S.blocks.sig, signers: names };
+const seedI = lb(B.seedTime(WK)), sd = B.seeding(B.averageCard(chain, seedI - B.SEED_BLOCKS, seedI, book));
 const days = Array.from({ length: B.roundsOf(sd.size) }, (_, r) => B.dayIndex(chain, B.roundDay(WK, r), sd.seeds, book));
 const truth = B.results(sd.seeds, sd.size, days);
 const nS = sd.seeds.length, mk = (fn) => B.encode(B.play(sd.size, nS, fn).rounds, sd.size, nS);
