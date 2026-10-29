@@ -11,7 +11,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { utils } from "koilib";
+import { utils, Signer } from "koilib";
+const addr = (seed) => Signer.fromSeed(seed).getAddress();
 
 const APP = process.env.APP || ".";
 const BX = await import(path.resolve(APP, "bot/games/blockx.ts"));
@@ -29,7 +30,7 @@ function fieldsOf(buf) {               // { field: bytes | bigint } of a flat me
   return out;
 }
 const V = 100000000n;
-const VAULT = "1" + "V".repeat(33);
+const VAULT = addr("r3-vault");
 /** A fake node: the vault is live (v6_rule_week_plus_one = 4, min_stake 1 VHP) or not; each player's answer. */
 function fakeNode({ live = true, players = {} } = {}) {
   const asked = [];
@@ -71,7 +72,7 @@ test("BX-61: the v6 ABI file is in git and has get_game_player (active_stake 3, 
 });
 
 test("BX-61: readVault on the mainnet path decodes a real get_game_player answer, peak_stake included", async () => {
-  const A = "1" + "A".repeat(33), B = "1" + "B".repeat(33), C = "1" + "C".repeat(33);
+  const A = addr("r3-a"), B = addr("r3-b"), C = addr("r3-c");
   const node = fakeNode({ players: {
     [A]: { active: 0n, week: 0n, entry: { stake: 0n, peak: 4n * V } },     // withdrew everything mid-week: peak 4 VHP, so Staked
     [B]: { active: 0n, week: 0n, entry: { stake: 0n, peak: V / 2n } },     // never reached the minimum: Free play
@@ -87,14 +88,14 @@ test("BX-61: readVault on the mainnet path decodes a real get_game_player answer
 
 test("BX-61: before v6 is live, nothing but get_state is read and the v6 ABI file is never needed", async () => {
   const node = fakeNode({ live: false });
-  const v = await BX.readVault(node, VAULT, 2, ["1" + "A".repeat(33)], 1, () => { throw new Error("ENOENT: no such file kpred-v6.koilib.json"); });
+  const v = await BX.readVault(node, VAULT, 2, [addr("r3-a")], 1, () => { throw new Error("ENOENT: no such file kpred-v6.koilib.json"); });
   assert.equal(v.live, false);
   assert.deepEqual(node.asked, [1023583049], "only the state was read");
 });
 
 // A full recorder run on the mainnet code path (no injected stake reader): the pick of a wallet staked in Block X
 // (by peak_stake) is recorded as Staked, the target isn't voided, and there is no "no such file" problem.
-const BIG = "1" + "G".repeat(33), MID = "1" + "H".repeat(33), ALICE = "1" + "D".repeat(33), BOB = "1" + "E".repeat(33);
+const BIG = addr("r3-big"), MID = addr("r3-mid"), ALICE = addr("r3-alice"), BOB = addr("r3-bob");
 const W3 = M.weekStart(3), H0 = 48_000_000;
 const T = (h) => W3 + 3600000 + (h - H0) * 3000;
 test("BX-61: a recorder run with the real vault reader records Staked picks and voids nothing", async () => {
@@ -110,10 +111,10 @@ test("BX-61: a recorder run with the real vault reader records Staked picks and 
   const log = console.log; console.log = () => {};
   let r;
   try {
-    r = await BX.run({ p: node, check: null, out, raceDir: rd, picksContract: "1" + "P".repeat(33), knodeGame: VAULT,
+    r = await BX.run({ p: node, check: null, out, raceDir: rd, picksContract: addr("r3-picks"), knodeGame: VAULT,
       blockOf: async (_n, h) => ({ signer: BIG, time: T(h) }),
       picksOf: async (_n, rr) => [{ player: ALICE, producer: BIG, time: T(rr * X.ROUND) - 3600000 }, { player: BOB, producer: MID, time: T(rr * X.ROUND) - 3600000 }],
-      vhpEventsOf: async () => ({ inflow: 0n }),
+      vhpMovesOf: async () => 0n,
       head: { height: lib + 60, time: T(lib + 60), lib } });
   } finally { console.log = log; }
   assert.ok(!r.problems.some((p) => /no such file|ENOENT/i.test(p)), r.problems.join("\n"));

@@ -344,7 +344,9 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
       const vhp: [string, number][] = producers.map((a) => [a, Number(fair[a] || 0n) / 1e8]);
       const card: Card = { ...M.makeCard(vhp, blocksPerRace, cardTime), samples: used, ...(differ.length ? { flagged: [...differ].sort() } : {}) };
       // Audit BX-38: a card made from too few samples is published but flagged; Block X doesn't score with it.
-      if (used < MIN_SAMPLES) problems.push(`handicap card from only ${used} VHP sample(s) in the last 6 hours (want ${MIN_SAMPLES}); flagged: Block X waits for a card with enough samples`);
+      // Audit BX-58: the Producer Race still runs on such a card (its picks were made against it), and says so on the
+      // card (`samples`, shown on the race page); Block X never scores with it.
+      if (used < MIN_SAMPLES) problems.push(`handicap card from only ${used} VHP sample(s) in the last 6 hours (want ${MIN_SAMPLES}); the race uses it as is (its card shows the sample count); Block X waits for a card with enough samples`);
       console.log(`card VHP: effective, highest of ${used} sample(s) in the last 6 hours and the read now`);
       for (const { race, leg } of want) { race.cards[leg] = card; console.log(`card for ${race.id} leg ${leg + 1}: ${card.field.length} horses, c = ${card.c}${check ? ", blocks and VHP checked on 2 nodes" : ""}`); }
     }
@@ -525,6 +527,9 @@ export async function sample({ p, check, prev, out, vhpOf, vhpCheckOf, spreadMs 
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  // Audit BX-59: never quietly down to one node. One node only with ALLOW_ONE_NODE=yes (said so on every run).
+  if (!RPC_CHECK && E.ALLOW_ONE_NODE !== "yes") { console.error(`error: no second node (RPC_CHECK is off, missing or the same as RPC): the race needs two. Set RPC_CHECK, or ALLOW_ONE_NODE=yes to run on one node.`); process.exit(1); }
+  if (!RPC_CHECK) console.log("::warning::running on ONE node (ALLOW_ONE_NODE=yes): cards and results are not cross-checked");
   const nodes = { p: new Provider([RPC]), check: RPC_CHECK ? new Provider([RPC_CHECK]) : null };
   (process.argv.includes("--sample") ? sample(nodes) : run(nodes)).catch((e) => { console.error(`error: ${String((e && e.message) || e).replace(/[\r\n]+/g, " ").replace(/::/g, ": ").slice(0, 500)}`); process.exit(1); });
 }

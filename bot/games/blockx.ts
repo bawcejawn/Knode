@@ -29,7 +29,7 @@
  *   npm run blockx                          mainnet (RPC, RPC_CHECK, BLOCKX_PREV, BLOCKX_OUT, RACE_DATA)
  *   npm run blockx -- --testnet --game 2    one game of testnet/blockx.json (TESTNET_RPC overrides its rpc)
  */
-import { Provider, Contract } from "koilib";
+import { Provider, Contract, utils as kutils } from "koilib";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -53,7 +53,7 @@ type Pick = [string, string, number, number, number];
 type Target = {
   round: number; height: number; final: true; checked: number;
   signer: string | null; time: number; lockTime: number;
-  card: { at: number; top: number; signerVhp: number | null } | null;
+  card: { at: number; top: number; signerVhp: number | null; afterAt?: number } | null;   // afterAt: the first card after X (BX-35)
   void?: string; picks: Pick[];
 };
 type WeekFile = { v: 1; week: number; start: number; end: number; game?: number; targets: Target[] };
@@ -76,6 +76,8 @@ export type Opts = {
   stakeOf?: (who: string[], node: any, week: number) => Promise<{ min: bigint; week: Map<string, bigint> } | null>;
   signersOf?: (node: any, from: number, to: number) => Promise<{ signers: string[]; first: number; last: number; n: number }>;
   vhpOf?: (who: string[]) => Promise<Record<string, string>>;
+  /** Tests: VHP moved into `who` in blocks from..to (audit BX-53). */
+  vhpMovesOf?: (node: any, who: string, from: number, to: number) => Promise<bigint>;
   head?: { height: number; time: number; lib: number };
 };
 
@@ -257,6 +259,57 @@ export function vaultPoints(ranked: { player: string; place: number }[]): { play
   return ranked.map((x) => ({ player: x.player, points: pts.get(x.place)! }));
 }
 
+// ── VHP moved in around block X (audit BX-53) ──
+/** Blocks before the lock card that still count: added VHP counts for production 20 blocks after it arrives. */
+export const MOVE_MARGIN = 25;
+/** A card with `vhp` (1e-8 units) added to `who` (field or paddock); the same card when nothing moved. */
+export function withMoved(card: Card | null, who: string, vhp: bigint): Card | null {
+  if (!card || vhp <= 0n) return card;
+  const add = Number(vhp) / 1e8;
+  const bump = (rows: any[]) => (rows || []).map((r: any) => (r && r.a === who ? { ...r, vhp: r.vhp + add } : r));
+  return { ...card, field: bump(card.field), paddock: bump(card.paddock) };
+}
+/** VHP moved INTO `who` by the VHP contract in blocks from..to: the sum of its transfer and mint events naming `who` as
+ *  the receiver (events are read from the block receipts, 200 blocks per call). Moves out are ignored: the card already
+ *  counts the highest VHP. Exported for the tests. */
+export async function scoringVhpMoves(node: any, headId: string, vhp: string, who: string, from: number, to: number): Promise<bigint> {
+  let moved = 0n;
+  for (let s = Math.max(1, from); s <= to; s += 200) {
+    const res: any = await withRetry(`receipts at ${s}`, () => node.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(s), num_blocks: Math.min(200, to - s + 1), return_block: false, return_receipt: true }));
+    for (const it of res?.block_items ?? []) moved += vhpInflows(it?.receipt, vhp, who);
+  }
+  return moved;
+}
+/** From one block receipt: VHP received by `who` (transfer: to = field 2, value = 3; mint: to = 1, value = 2). */
+export function vhpInflows(receipt: any, vhp: string, who: string): bigint {
+  const events = [...(receipt?.events ?? []), ...((receipt?.transaction_receipts ?? []) as any[]).flatMap((t) => t?.events ?? [])];
+  let sum = 0n;
+  for (const e of events) {
+    if (!e || e.source !== vhp || typeof e.name !== "string") continue;
+    const mint = /mint/i.test(e.name), transfer = /transfer/i.test(e.name);
+    if (!mint && !transfer) continue;
+    const f = pbFields(e.data);
+    const to = f.get(mint ? 1 : 2), value = f.get(mint ? 2 : 3);
+    if (to instanceof Uint8Array && typeof value === "bigint" && kutils.encodeBase58(to) === who) sum += value;
+  }
+  return sum;
+}
+function pbFields(data: unknown): Map<number, Uint8Array | bigint> {
+  const out = new Map<number, Uint8Array | bigint>();
+  let b: Uint8Array;
+  try { b = typeof data === "string" ? new Uint8Array(Buffer.from(data, "base64")) : new Uint8Array(0); } catch { return out; }
+  let i = 0;
+  const vint = (): bigint | null => { let r = 0n, sh = 0n; for (let k = 0; k < 10; k++) { if (i >= b.length) return null; const x = b[i++]; r |= BigInt(x & 0x7f) << sh; if (!(x & 0x80)) return r; sh += 7n; } return null; };
+  while (i < b.length) {
+    const tag = vint(); if (tag === null) break;
+    const f = Number(tag >> 3n), w = Number(tag & 7n);
+    if (w === 0) { const v = vint(); if (v === null) break; if (!out.has(f)) out.set(f, v); }
+    else if (w === 2) { const n = vint(); if (n === null || i + Number(n) > b.length) break; if (!out.has(f)) out.set(f, b.slice(i, i + Number(n))); i += Number(n); }
+    else break;
+  }
+  return out;
+}
+
 // ── cards ──
 /** The handicap card for a lock at time t (audit BX-3): the latest card TAKEN at or before t (its `at`), no older than
  *  3 hours, so a card made after the lock (with VHP that moved after it) is never used. Race cards come from the race
@@ -276,10 +329,12 @@ function latestCardAt(cards: (Card | null | undefined)[], t: number, race = fals
 }
 /** Audit BX-35: the first card taken AFTER block X (within 3 hours). A target is scored with the lower multiplier
  *  of this card and the lock's card, so VHP moved in right after the lock card doesn't pay. */
-function firstCardAfter(cards: (Card | null | undefined)[], t: number, race = false): Card | null {
+function firstCardAfter(cards: (Card | null | undefined)[], t: number, race = false, signer = ""): Card | null {
   let best: Card | null = null;
   for (const c of cards) {
     if (!usable(c, race)) continue;
+    if (signer && flags(c, signer)) continue;   // audit BX-55: a card on which the nodes disagreed about the signer waits for the next
+
     if (c.at > t && c.at - t <= CARD_MAX_AGE_MS && (!best || c.at < best.at)) best = c;
   }
   return best;
@@ -297,9 +352,11 @@ function raceCards(raceDir: string | undefined, times: number[]): (Card | null)[
   }
   return all;
 }
-function raceCardAfter(raceDir: string | undefined, t: number): Card | null {
-  return firstCardAfter(raceCards(raceDir, [t, t + M.RACE]), t, true);
+function raceCardAfter(raceDir: string | undefined, t: number, signer = ""): Card | null {
+  return firstCardAfter(raceCards(raceDir, [t, t + M.RACE]), t, true, signer);
 }
+/** Audit BX-55: the race recorder lists on a card the producers whose VHP the two nodes read differently. */
+export const flags = (c: Card | null | undefined, who: string) => !!c && Array.isArray(c.flagged) && c.flagged.includes(who);
 function raceCardAt(raceDir: string | undefined, t: number): Card | null {
   const all: (Card | null)[] = [];
   for (const at of [t, t - M.RACE]) {
@@ -311,7 +368,7 @@ function raceCardAt(raceDir: string | undefined, t: number): Card | null {
   return latestCardAt(all, t, true);
 }
 const selfCardAt = (cards: Card[], t: number): Card | null => latestCardAt(cards, t);
-const selfCardAfter = (cards: Card[], t: number): Card | null => firstCardAfter(cards, t);
+const selfCardAfter = (cards: Card[], t: number, signer = ""): Card | null => firstCardAfter(cards, t, false, signer);
 
 /** One run for one game. Exported for the tests, which pass fake nodes. */
 export async function run(o: Opts) {
@@ -331,10 +388,11 @@ export async function run(o: Opts) {
   const headId = live ? live.id : "";
   const blockP = o.blockOf ? (h: number) => o.blockOf!(o.p, h) : blockReader(o.p, headId);
   let blockC: ((h: number) => Promise<{ signer: string; time: number }>) | null = null;
+  let checkHeadId = "";
   if (o.check) {
     if (o.blockOf) blockC = (h: number) => o.blockOf!(o.check, h);
     else {
-      const ch = await headOf(o.check); blockC = blockReader(o.check, ch.id);
+      const ch = await headOf(o.check); blockC = blockReader(o.check, ch.id); checkHeadId = ch.id;
       // Audit BX-17: a block is irreversible only when both nodes say so.
       if (ch.lib < head.lib) head.lib = ch.lib;
     }
@@ -385,7 +443,7 @@ export async function run(o: Opts) {
     cards.sort((a, b) => a.at - b.at);
   }
   const cardAt = (t: number) => (CARDS === "self" ? selfCardAt(cards, t) : raceCardAt(RACE, t));
-  const cardAfter = (t: number) => (CARDS === "self" ? selfCardAfter(cards, t) : raceCardAfter(RACE, t));
+  const cardAfter = (t: number, signer = "") => (CARDS === "self" ? selfCardAfter(cards, t, signer) : raceCardAfter(RACE, t, signer));
 
   // The weeks touched: the last 3 days and now.
   const weeks = new Map<number, WeekFile>();
@@ -443,7 +501,7 @@ export async function run(o: Opts) {
       const never = (CARDS === "self" && cards.length > 0 && lock.time < cards[0].at) || head.time > lock.time + CARD_MAX_AGE_MS;
       if (!card && !old && !never) { problems.push(`block ${h}: no handicap card yet for ${new Date(lock.time).toISOString()}; tried again next run`); continue; }
       // Audit BX-35: and the first card after block X; until it exists the target waits (3 hours at most).
-      const after = card ? cardAfter(b.time) : null;
+      const after = card ? cardAfter(b.time, b.signer) : null;
       const afterNever = head.time > b.time + CARD_MAX_AGE_MS;
       if (card && !after && !old && !afterNever) { problems.push(`block ${h}: waiting for the first handicap card after the block (scored with the lower of the two); tried again next run`); continue; }
       // Audit BX-4: Staked or Free play is read on both nodes too; a disagreement holds the target like a block's.
@@ -454,15 +512,32 @@ export async function run(o: Opts) {
         const other = await rankedRead(players, o.check, wk);
         if (ranked.size !== other.size || [...ranked].some((a) => !other.has(a))) { problems.push(`block ${h}: the two nodes disagree about which players are Staked; not recorded this run`); if (old) voidAt(r, h, b.time, lock.time, "the two nodes disagreed about Staked status until it left the 3-day window"); continue; }
       }
-      const { m, top } = card ? X.vhpOf(card) : { m: new Map(), top: 0 };
-      const scoring = card && after ? card : null;
-      const pointsOf = (producer: string) => (scoring ? Math.min(X.pointsOf(card, producer, b.signer), X.pointsOf(after, producer, b.signer)) : 0);
+      // Audit BX-55: a lock card on which the two nodes disagreed about the signer's VHP is never scored: the target
+      // waits (the lock card can't change, so it is voided at the usual 3-hour limit).
+      const lockFlagged = !!card && flags(card, b.signer);
+      if (lockFlagged && !old && !afterNever) { problems.push(`block ${h}: the two nodes disagreed about ${b.signer}'s VHP on its lock card; held (voided after 3 hours)`); continue; }
+      // Audit BX-53: VHP moved INTO the signer between its lock card and block X (a "flash" stake that neither card
+      // sees) counts for the signer on both cards, read on both nodes (the higher of the two), so it can't look small.
+      let moved = 0n;
+      // (Tests that serve fake blocks with blockOf and no vhpMovesOf have no receipts to read: nothing moved.)
+      if (card && after && !lockFlagged && isAddr(b.signer) && (o.vhpMovesOf || !o.blockOf)) {
+        const from = Math.max(1, h - Math.ceil(Math.max(0, b.time - Number(card.at)) / 3000) - MOVE_MARGIN), to = h;
+        const read = o.vhpMovesOf ?? ((node: any, who: string, f: number, t: number) => scoringVhpMoves(node, node === o.p ? headId : checkHeadId, VHP, who, f, t));
+        const mp = await read(o.p, b.signer, from, to), mc = o.check ? await read(o.check, b.signer, from, to) : mp;
+        moved = mp > mc ? mp : mc;
+        if (moved > 0n) console.log(`block ${h}: ${Number(moved) / 1e8} VHP moved into ${b.signer} between its card and the block; counted on both cards`);
+      }
+      const lockC = withMoved(card, b.signer, moved), afterC = withMoved(after, b.signer, moved);
+      const { m, top } = lockC ? X.vhpOf(lockC) : { m: new Map(), top: 0 };
+      const scoring = card && after && !lockFlagged ? lockC : null;
+      const pointsOf = (producer: string) => (scoring ? Math.min(X.pointsOf(lockC, producer, b.signer), X.pointsOf(afterC, producer, b.signer)) : 0);
       const picks: Pick[] = raw.map((x) => [x.player, x.producer, x.time, pointsOf(x.producer), ranked.has(x.player) ? 1 : 0]);
       const t: Target = {
         round: r, height: h, final: true, checked, signer: isAddr(b.signer) ? b.signer : null, time: b.time, lockTime: lock.time,
         card: scoring ? { at: Number(card.at) || 0, top, signerVhp: m.get(b.signer) ?? null, afterAt: Number(after!.at) || 0 } : null, picks,
       };
       if (!card) t.void = "no handicap card was recorded for this target's lock; no points";
+      else if (lockFlagged) t.void = "the two nodes disagreed about the signer's VHP on the lock's handicap card; no points";
       else if (!after) t.void = "no handicap card was taken within 3 hours after the block; no points";
       const wf = weekFor(M.weekOf(b.time));
       wf.targets = wf.targets.filter((x) => x.round !== r).concat([t]).sort((x, y) => x.round - y.round);
@@ -625,8 +700,11 @@ export function readNetConfig(file: URL | string = new URL("../../testnet/blockx
 async function main() {
   const argv = process.argv.slice(2);
   if (!argv.includes("--testnet")) {
-    const RPC = E.RPC || "https://api.koinos.io";
+    const RPC = E.RPC || "https://koinos.armana.io";   // audit BX-60: the same default node as the race recorder
     const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
+    // Audit BX-59: never quietly down to one node on mainnet; ALLOW_ONE_NODE=yes says so out loud.
+    if (!RPC_CHECK && E.ALLOW_ONE_NODE !== "yes") throw new Error("no second node (RPC_CHECK is off, missing or the same as RPC): Block X needs two on mainnet. Set RPC_CHECK, or ALLOW_ONE_NODE=yes to run on one node.");
+    if (!RPC_CHECK) console.log("::warning::running on ONE node (ALLOW_ONE_NODE=yes): blocks, picks and stakes are not cross-checked");
     const r = await run({ p: new Provider([RPC]), check: RPC_CHECK ? new Provider([RPC_CHECK]) : null, prizesFromWeek: E.PRIZES_FROM_WEEK ? Number(E.PRIZES_FROM_WEEK) : null });
     return r;
   }
