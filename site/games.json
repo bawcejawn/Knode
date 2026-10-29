@@ -16,6 +16,9 @@
     { "id": "fantasy", "name": "Fantasy Producers", "kinds": ["staked"], "status": "soon", "href": "",
       "line": "Draft 5 producers under a salary cap, with a captain who scores double." },
     { "id": "golf", "name": "Block Golf", "kinds": ["staked"], "status": "soon", "href": "",
-      "line": "Nine holes a day: guess how many blocks until a producer signs its next one." }
+      "line": "Every Knode Games game is a hole. Your place on each game's weekly leaderboard sets your strokes; lowest score of the week wins.",
+      "board": { "data": "games-data/golf/board.json", "unranked": "To be ranked, hold at least 1 VHP or stake in Knode Games.",
+        "free": { "show": 6, "prize": "Practice weeks have no prizes. Once the vault is live, Block Golf is a staked game." },
+        "columns": [{ "key": "pts", "label": "Points" }, { "key": "topar", "label": "To par" }, { "key": "holes", "label": "Holes played", "wide": true }, { "key": "lost", "label": "Lost balls", "wide": true }] } }
   ]
 }

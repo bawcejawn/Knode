@@ -318,7 +318,7 @@ export async function run(o: Opts) {
   const weekList = [...known].sort((a, b) => a - b);
   fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), weeks: weekList, course, minField }) + "\n");
 
-  const view = (wf: WeekFile | undefined) => (wf ? wf.cards : []).map((c) => ({ a: c.a, place: c.place, pts: c.pts, toPar: c.toPar, strokes: c.strokes, holes: c.holes.filter((x) => x[2] !== null).length, lost: c.lost, ranked: c.ranked }));
+  const view = (wf: WeekFile | undefined) => (wf ? wf.cards : []).map((c) => ({ a: c.a, place: c.place, pts: c.pts, topar: c.toPar, strokes: c.strokes, holes: c.holes.filter((x) => x[2] !== null).length, lost: c.lost, ranked: c.ranked }));
   // All time: final weeks only, points summed; places by points, then more weeks played.
   const tot = new Map<string, { pts: number; toPar: number; strokes: number; holes: number; lost: number; ranked: boolean }>();
   for (const w of weekList) {
@@ -339,7 +339,7 @@ export async function run(o: Opts) {
     today: { day: M.dayOf(now), rows: view(cur) },
     week: { week: nowW, start: M.weekStart(nowW), rows: view(cur) },
     lastWeek: last ? { week: last.week, start: last.start, final: last.final, rows: view(last) } : null,
-    allTime: { rows: allRows.map((r: any) => ({ a: r.a, place: r.place, pts: r.pts, toPar: r.toPar, strokes: r.strokes, holes: r.holes, lost: r.lost, ranked: r.ranked })) },
+    allTime: { rows: allRows.map((r: any) => ({ a: r.a, place: r.place, pts: r.pts, topar: r.toPar, strokes: r.strokes, holes: r.holes, lost: r.lost, ranked: r.ranked })) },
   };
   fs.writeFileSync(path.join(OUT, "board.json"), JSON.stringify(board) + "\n");
 

@@ -27,6 +27,8 @@ export const PAGES = [
     desc: "Every Koinos block producer is a horse. Four 6-hour races a day, handicapped by VHP so every horse has the same chance. Free, live from the chain.", image: "og-knode.png", priority: "0.7" },
   { file: "blockx.html", path: "blockx.html", title: "Who Signs Block X · Pick the Koinos producer of the next big blocks", short: "Who Signs Block X",
     desc: "Every 2,400 Koinos blocks is a target. Pick the producer you think signs it; smaller producers score more, up to 3×. Free, with weekly VHP prizes.", image: "og-knode.png", priority: "0.6" },
+  { file: "golf.html", path: "golf.html", title: "Block Golf · Every Knode Games game is a hole", short: "Block Golf",
+    desc: "A golf course made of every Knode Games game. Your place on each game's weekly leaderboard sets your strokes; lowest score of the week wins.", image: "og-knode.png", priority: "0.6" },
   { file: "pulse.html", path: "pulse.html", title: "Koinos network pulse · Blocks, transactions and producers, live", short: "Koinos network pulse",
     desc: "The Koinos chain right now: block time, transactions per hour, who is producing blocks, and how much KOIN is burned into VHP.", image: "og-knode.png", priority: "0.6" },
   { file: "mana.html", path: "mana.html", title: "Mana levels · Check any Koinos wallet's Mana", short: "Koinos Mana levels",

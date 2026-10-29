@@ -1,0 +1,81 @@
+/* Block Golf: the game's own look, built on the site tokens in styles.css.
+ * The signature element is the scorecard, marked the way golfers mark a paper card: a birdie is circled, an eagle
+ * double-circled, a bogey boxed, a double bogey double-boxed. The week's total sits on a navy scoreboard. */
+
+.gf { max-width: 1000px; margin: 0 auto; padding: 22px 16px 64px; }
+.gf h1 { font-family: var(--display); font-weight: 800; font-size: clamp(36px, 6vw, 60px); line-height: .95; letter-spacing: -.02em; margin: 0; text-wrap: balance; }
+.gf h2 { font-family: var(--display); font-weight: 700; font-size: 22px; margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+.gf-kicker { margin: 0 0 8px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--mint); }
+.gf-intro { display: flex; justify-content: space-between; align-items: flex-end; gap: 18px 28px; flex-wrap: wrap; margin-bottom: 16px; }
+.gf-intro > div:first-child { flex: 1 1 340px; min-width: 0; }
+.gf-lede { margin: 10px 0 0; color: var(--muted); max-width: 56ch; font-size: 17px; }
+.gf-sub { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+.status { font-size: 14px; color: var(--muted); min-height: 1.3em; margin: 0 0 8px; }
+.note { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+
+/* the scoreboard */
+.gf-total { flex: 0 1 260px; min-width: 200px; background: var(--navy); color: var(--navy-ink); border-radius: var(--r-lg); padding: 14px 18px 16px; display: flex; flex-direction: column; gap: 2px; }
+.gf-total-label { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--navy-muted); }
+.gf-total b { font-family: var(--num); font-weight: 900; font-size: 54px; line-height: 1; font-variant-numeric: tabular-nums; }
+.gf-total b.under { color: #7CE0AE; }
+.gf-total b.over { color: var(--sun); }
+.gf-total span:last-child { font-size: 14px; color: var(--navy-muted); }
+
+.gf-practice { margin: 0 0 18px; padding: 10px 14px; border-radius: var(--r-sm); background: var(--sun-soft); color: var(--ink); font-size: 14px; }
+
+/* the scorecard */
+.gf-card, .gf-board, .gf-todo { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; box-shadow: var(--shadow); margin-bottom: 18px; }
+.gf-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px 16px; flex-wrap: wrap; margin-bottom: 12px; }
+.gf-card-head > div:first-child { min-width: 0; }
+.tabs2 { display: flex; gap: 6px; }
+.tabs2 button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+.tabs2 button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.tabs2 button:focus-visible, .gf .btn:focus-visible, .gf a:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+.gf-scroll { overflow-x: auto; }
+.gf-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.gf-table th, .gf-table td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.gf-table thead th { font-size: 12px; color: var(--muted); font-weight: 700; letter-spacing: .03em; }
+.gf-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.gf-table tfoot th, .gf-table tfoot td { border-bottom: 0; border-top: 2px solid var(--ink); font-weight: 800; font-family: var(--num); }
+.gf-hole { font-family: var(--num); font-weight: 900; font-size: 18px; width: 3ch; color: var(--muted); }
+.gf-game a { color: var(--ink); font-weight: 700; text-decoration-color: var(--line); }
+.gf-game small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+.gf-place { color: var(--muted); font-size: 14px; }
+tr.gf-dropped td { color: var(--muted); }
+tr.gf-dropped .gf-mark { opacity: .55; }
+tr.gf-off td { color: var(--muted); font-style: italic; }
+.gf-mull { font-family: var(--body); font-weight: 400; font-size: 13px; color: var(--muted); }
+.gf-tag { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 2px 8px; border-radius: 99px; background: var(--paper); color: var(--muted); font-style: normal; }
+.gf-tag.live { background: var(--mint-soft); color: var(--mint); }
+
+/* the marks, as on a paper scorecard */
+.gf-mark { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; height: 34px; font-family: var(--num); font-weight: 900; font-size: 17px; font-variant-numeric: tabular-nums; position: relative; }
+.gf-mark.s1 { background: var(--sun); color: #2b1d00; border-radius: 50%; }
+.gf-mark.s2 { border: 2px solid var(--mint); border-radius: 50%; box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--mint); }
+.gf-mark.s3 { border: 2px solid var(--mint); border-radius: 50%; }
+.gf-mark.s5 { border: 2px solid var(--rose); border-radius: 3px; }
+.gf-mark.s6 { border: 2px solid var(--rose); border-radius: 3px; box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--rose); }
+.gf-mark.s7 { color: var(--muted); }
+.gf-name { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; text-align: right; }
+
+.gf-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.gf-actions .btn { background: var(--violet); color: var(--violet-ink); }
+.gf-share { margin: 10px 0 0; padding: 10px 12px; border-radius: var(--r-sm); background: var(--paper); white-space: pre-wrap; word-break: break-word; font-size: 14px; user-select: all; }
+
+.gf-todo-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.gf-todo-list a { font-size: 14px; font-weight: 700; text-decoration: none; padding: 8px 14px; border-radius: 99px; border: 1px solid var(--line); color: var(--ink); background: var(--paper); }
+.gf-todo-list a:hover { border-color: var(--muted); }
+
+.gf-how { margin-top: 26px; }
+.gf-how summary { cursor: pointer; font-family: var(--display); font-weight: 700; font-size: 20px; }
+.gf-how .explain { max-width: 70ch; }
+.gf-key { max-width: 520px; margin: 4px 0 8px; font-size: 14px; }
+.gf-key .gf-mark { min-width: 28px; height: 28px; font-size: 14px; }
+
+#card-box, #board-box, #how { scroll-margin-top: 80px; }
+@media (max-width: 640px) {
+  .gf-table .hide-sm { display: none; }
+  .gf-total { flex: 1 1 100%; }
+  .gf-table th, .gf-table td { padding: 9px 5px; }
+}
+@media (max-width: 760px) { #card-box, #board-box, #how { scroll-margin-top: 124px; } }

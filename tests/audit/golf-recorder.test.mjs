@@ -71,7 +71,7 @@ test("mid-week, first run: every live game joins at once; live holes and scoreca
   assert.equal(board.week.week, W);
   assert.equal(board.week.rows.length, wf.cards.length);
   assert.deepEqual(board.allTime.rows, [], "all time counts final weeks only");
-  assert.deepEqual(Object.keys(board.week.rows[0]).sort(), ["a", "holes", "lost", "place", "pts", "ranked", "strokes", "toPar"]);
+  assert.deepEqual(Object.keys(board.week.rows[0]).sort(), ["a", "holes", "lost", "place", "pts", "ranked", "strokes", "topar"]);
   assert.equal(r.problems.length, 0);
 });
 
@@ -293,7 +293,7 @@ test("the publish jobs' shape check accepts the recorder's files and refuses tam
     const bad2 = tmp("bad-");
     for (const f of fs.readdirSync(out)) fs.copyFileSync(path.join(out, f), path.join(bad2, f));
     const b = JSON.parse(fs.readFileSync(path.join(bad2, "board.json"), "utf8"));
-    b.week.rows.push({ a: P[0], place: 1, pts: 1, toPar: 0, strokes: 1, holes: 1, lost: 0, ranked: true, html: "<b>" });
+    b.week.rows.push({ a: P[0], place: 1, pts: 1, topar: 0, strokes: 1, holes: 1, lost: 0, ranked: true, html: "<b>" });
     fs.writeFileSync(path.join(bad2, "board.json"), JSON.stringify(b));
     assert.throws(() => execFileSync("python3", [check, bad2], { stdio: "pipe" }), wfName);
   }

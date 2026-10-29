@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- Only these sources may run scripts, load data or be framed. 'unsafe-eval' is needed by koilib (its protobuf
+       encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://raw.githubusercontent.com/bawcejawn/Knode/blocks-data/ https://raw.githubusercontent.com/bawcejawn/Knode/race-data/ https://raw.githubusercontent.com/bawcejawn/Knode/games-data/ https://koinvault.app; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Block Golf · Every Knode Games game is a hole</title>
+  <!-- seo:start (written by tools/site-seo.mjs; edit there) -->
+  <meta name="description" content="A golf course made of every Knode Games game. Your place on each game's weekly leaderboard sets your strokes; lowest score of the week wins.">
+  <link rel="canonical" href="https://bawcejawn.github.io/Knode/site/golf.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Knode Games">
+  <meta property="og:title" content="Block Golf">
+  <meta property="og:description" content="A golf course made of every Knode Games game. Your place on each game's weekly leaderboard sets your strokes; lowest score of the week wins.">
+  <meta property="og:url" content="https://bawcejawn.github.io/Knode/site/golf.html">
+  <meta property="og:image" content="https://bawcejawn.github.io/Knode/site/media/og-knode.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Block Golf">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Block Golf">
+  <meta name="twitter:description" content="A golf course made of every Knode Games game. Your place on each game's weekly leaderboard sets your strokes; lowest score of the week wins.">
+  <meta name="twitter:image" content="https://bawcejawn.github.io/Knode/site/media/og-knode.png">
+  <!-- seo:end -->
+  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="media/icon-180.png">
+  <meta name="theme-color" content="#14213D">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Archivo:wdth,wght@62..125,600;62..125,800;62..125,900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="board.css">
+  <link rel="stylesheet" href="golf.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href="./" aria-label="Knode home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="brand-name">Knode</span>
+      </a>
+      <nav class="tabs" aria-label="Sections">
+        <details class="dd">
+          <summary>Games</summary>
+          <div class="dd-menu">
+            <a href="games.html">All games</a>
+            <a href="index.html#play">Daily Questions</a>
+            <a href="race.html">Producer Race</a>
+          </div>
+        </details>
+        <a href="index.html#leaderboard">Leaderboards</a>
+        <a href="index.html#results">Results</a>
+        <details class="dd">
+          <summary>Tools</summary>
+          <div class="dd-menu">
+            <a href="swap.html">Swap VHP → KOIN</a>
+            <a href="burn.html">Burn KOIN</a>
+            <a href="mana.html">Mana levels</a>
+            <a href="node.html">Producer lookup</a>
+            <a href="pulse.html">Network pulse</a>
+          </div>
+        </details>
+        <a href="index.html#how">Rules</a>
+        <a href="start.html" class="tab-start">New to Koinos?</a>
+        <details class="dd">
+          <summary>Info</summary>
+          <div class="dd-menu">
+            <a href="get.html">Get VHP</a>
+            <a href="index.html#welcome">New here? Quick tour</a>
+            <a href="install.html">Install app</a>
+            <a href="trust.html">Trust</a>
+            <a href="terms.html">Terms &amp; risks</a>
+          </div>
+        </details>
+      </nav>
+      <a class="btn btn-wallet" href="./#play">Play Knode</a>
+    </div>
+  </header>
+
+  <main class="gf">
+    <div class="gf-intro">
+      <div>
+        <p class="gf-kicker">Knode Games · the whole platform is the course</p>
+        <h1>Block Golf</h1>
+        <p class="gf-lede">Every Knode Games game is a hole. Play the games as usual: your place on each game's weekly leaderboard turns into strokes. Lowest score of the week wins.</p>
+      </div>
+      <div class="gf-total" id="total" aria-live="polite">
+        <span class="gf-total-label" id="total-label">Your week</span>
+        <b id="total-par">–</b>
+        <span id="total-line">Connect a wallet to see your card</span>
+      </div>
+    </div>
+    <p class="status" id="status" role="status">Loading the course…</p>
+    <p class="gf-practice" id="practice">Practice weeks: scorecards and leaderboards are real, but there are no prizes until the Knode Games vault is live.</p>
+
+    <section class="gf-card" id="card-box" aria-labelledby="card-title">
+      <div class="gf-card-head">
+        <div>
+          <h2 id="card-title">Scorecard</h2>
+          <p class="gf-sub" id="card-sub">–</p>
+        </div>
+        <div class="tabs2" role="group" aria-label="Week">
+          <button type="button" id="wk-this" aria-pressed="true">This week</button>
+          <button type="button" id="wk-last" aria-pressed="false" hidden>Last week</button>
+        </div>
+      </div>
+      <div class="gf-scroll">
+        <table class="gf-table" id="card">
+          <thead><tr><th scope="col">Hole</th><th scope="col">Game</th><th scope="col" class="hide-sm">Your place</th><th scope="col" class="num">Par</th><th scope="col" class="num">Score</th></tr></thead>
+          <tbody id="card-rows"></tbody>
+          <tfoot><tr><th scope="row" colspan="2">Total <span class="gf-mull" id="mull-note"></span></th><td class="hide-sm"></td><td class="num" id="par-total">–</td><td class="num" id="strokes-total">–</td></tr></tfoot>
+        </table>
+      </div>
+      <div class="gf-actions">
+        <button type="button" class="btn" id="share" disabled>Copy my scorecard</button>
+        <span class="gf-sub" id="share-note" role="status"></span>
+      </div>
+      <pre class="gf-share" id="share-text" hidden></pre>
+    </section>
+
+    <section class="gf-todo" id="todo-box" hidden aria-labelledby="todo-title">
+      <h2 id="todo-title">Holes you haven't played this week</h2>
+      <p class="gf-sub">A game you don't play is a lost ball (7 strokes), and the mulligan can't drop it. Even a bad week in a game scores better.</p>
+      <div class="gf-todo-list" id="todo"></div>
+    </section>
+
+    <section class="gf-board" id="board-box" aria-labelledby="board-title">
+      <h2 id="board-title">Leaderboard</h2>
+      <div id="gf-board"></div>
+      <p class="note">Points = 7 for each counted hole, minus your strokes. A week is final 12 hours after it ends, once every game's results are final.</p>
+    </section>
+
+    <details class="gf-how" id="how">
+      <summary>How it works</summary>
+      <div class="explain">
+        <p><b>The course.</b> Every live Knode Games game is a par-4 hole. A new game joins the course the Monday after it goes live. There is nothing to pick in Block Golf: you just play the games.</p>
+        <p><b>Your strokes on a hole</b> come from your place on that game's leaderboard for the week (Monday to Monday, UTC):</p>
+        <div class="gf-scroll">
+          <table class="gf-table gf-key">
+            <thead><tr><th scope="col">Your week in that game</th><th scope="col">Score</th><th scope="col" class="num">Strokes</th></tr></thead>
+            <tbody id="key-rows"></tbody>
+          </table>
+        </div>
+        <p><b>Who you're placed against.</b> The players that game ranks (they hold 1 VHP or have a Knode stake), so empty wallets can't push anyone up. Players on the same score share the middle of their places. A hole with fewer than 5 ranked players that week is skipped for everyone.</p>
+        <p><b>The mulligan.</b> Your worst played hole is dropped each week. A lost ball (a game you didn't play) can't be dropped.</p>
+        <p><b>The week.</b> Lowest score wins. Points (what the vault uses) are 7 for each counted hole minus your strokes. Ties: more points, then fewer lost balls, then more holes under par, then your best hole.</p>
+        <p><b>Prizes.</b> Block Golf is a staked game: stake at least 1 VHP in it once the Knode Games vault is live, and the top 30% share its weekly bucket. Until then, weeks are practice.</p>
+        <p><b>Fair checks.</b> Block Golf only reads each game's published, final results. If a game's results aren't final 60 hours after the week, that hole is skipped for everyone, never guessed. The page and the recorder run the same scoring file.</p>
+      </div>
+    </details>
+  </main>
+
+  <nav class="tabbar" aria-label="Main">
+    <a href="games.html"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect></svg>Games</a>
+    <a href="index.html#leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg>Leaders</a>
+    <a href="index.html#results"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg>Results</a>
+    <a href="swap.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4L3 8l4 4"></path><path d="M3 8h14"></path><path d="M17 20l4-4-4-4"></path><path d="M21 16H7"></path></svg>Swap</a>
+    <button type="button" class="tb-more" aria-expanded="false" aria-controls="more-sheet"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>More</button>
+  </nav>
+  <div class="more-sheet" id="more-sheet" hidden>
+    <nav class="more-panel" aria-label="More pages">
+      <p class="ms-h">Play</p>
+      <a href="index.html#play"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.6 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg><span>Daily Questions</span></a>
+      <a href="race.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 21V4"></path><path d="M5 4h12l-2.5 4L17 12H5"></path></svg><span>Producer Race</span></a>
+      <a href="index.html#how"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"></path><path d="M9 9h6M9 13h6"></path></svg><span>Rules</span></a>
+      <p class="ms-h">Tools</p>
+      <a href="burn.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 21c-4 0-6.5-2.6-6.5-6 0-3.5 3-5.5 3.5-9 2 1.5 3 3 3 5 1-1 1.5-2 1.5-3.5 2.5 2 4.5 4.6 4.5 7.5 0 3.4-2.5 6-6 6z"></path></svg><span>Burn KOIN</span></a>
+      <a href="mana.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M13 3L5 14h6l-1 7 8-11h-6z"></path></svg><span>Mana levels</span></a>
+      <a href="node.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg><span>Producer lookup</span></a>
+      <a href="pulse.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12h4l2-5 4 10 2-5h6"></path></svg><span>Network pulse</span></a>
+      <p class="ms-h">Learn</p>
+      <a href="start.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg><span>New to Koinos?</span></a>
+      <a href="index.html#welcome"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg><span>New here? Quick tour</span></a>
+      <a href="get.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8M8 12h8"></path></svg><span>Get VHP</span></a>
+      <p class="ms-h">About</p>
+      <a href="install.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v11"></path><path d="M7.5 10.5L12 15l4.5-4.5"></path><path d="M5 20h14"></path></svg><span>Install app</span></a>
+      <a href="trust.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z"></path></svg><span>Trust</span></a>
+      <a href="terms.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"></path><path d="M10 12h5M10 16h5"></path></svg><span>Terms &amp; risks</span></a>
+    </nav>
+  </div>
+
+  <footer class="foot">
+    <div class="wrap">
+      <div class="foot-row">
+        <span>Knode runs fully on Koinos. Open source.</span>
+        <span class="foot-links"><a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a> · <a href="install.html">Install app</a> · <a href="https://github.com/bawcejawn/Knode" target="_blank" rel="noopener">Source code</a></span>
+      </div>
+    </div>
+  </footer>
+  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js" integrity="sha384-IAL9o3r4bQJvWhvszkorFINY2ct4LBA/LvyXE9NSOPCyYB25BsFV12JITA7Gxbk6" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js" integrity="sha384-WOeNFfSdOron0s4x9jdzLtA7Ic7RSqZCXZAaeQd6HRL6WezQp0KAtIF2XSa+11TL" crossorigin="anonymous"></script>
+  <script src="guest.js"></script>
+  <script src="wallet.js"></script>
+  <script src="header-wallet.js"></script>
+  <script src="nav.js"></script>
+  <script src="golf-math.js"></script>
+  <script src="board.js"></script>
+  <script src="golf.js"></script>
+</body>
+</html>

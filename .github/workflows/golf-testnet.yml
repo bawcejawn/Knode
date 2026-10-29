@@ -112,9 +112,9 @@ jobs:
               return all(type(x) is list and len(x) == 4 and x[0] in ids and type(x[1]) is int and 1 <= x[1] <= 7 and (x[2] is None or nat(x[2])) and (x[3] is None or nat(x[3])) for x in c["holes"])
           def rows_ok(v, extra=()):
               if type(v) is not dict or type(v.get("rows")) is not list or len(v["rows"]) > 100000: return False
-              keys = {"a", "place", "pts", "toPar", "strokes", "holes", "lost", "ranked"}
+              keys = {"a", "place", "pts", "topar", "strokes", "holes", "lost", "ranked"}
               return all(type(x) is dict and set(x) == keys and isaddr(x["a"]) and type(x["ranked"]) is bool
-                  and all(small(x[k]) for k in ("place", "pts", "toPar", "strokes", "holes", "lost")) for x in v["rows"])
+                  and all(small(x[k]) for k in ("place", "pts", "topar", "strokes", "holes", "lost")) for x in v["rows"])
           for f in os.listdir(d):
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "index.json":
