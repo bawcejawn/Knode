@@ -24,6 +24,7 @@ are closed and paid by the v5 code paths unchanged. The per-game stake accumulat
 | id | u32; 1 = question game (built in), 2–4294967295 others |
 | staked | has a stake bucket (top 30% / baskets A+B) |
 | free_prize | pays 2 VHP (1st) + 1 VHP (2nd) each week to its best free players |
+| season_weeks | 1–4: the free prize is paid once a season of this many weeks, its weekly 3 VHP held until the season's last week (Survivor: 2 weeks, so 4 + 2 VHP). Seasons start at `from_week`. |
 | active | takes new deposits and moves, and earns from the next week |
 | from_week | first week the game earns or pays |
 
@@ -70,27 +71,36 @@ are closed and paid by the v5 code paths unchanged. The per-game stake accumulat
   (points 1–255). Then the same paged finalize and the same basket math as game 1.
 - Other free games: the operator posts the 1st-place and 2nd-place wallets (ties allowed, up to 10 each). Each must have
   less than the minimum stake in that game that week. A prize nobody wins returns to the pool, fee-free.
+- Games with prize seasons (Survivor): winners are posted only for a season's last week, which carries the whole
+  season's funded prize. A game stopped mid-season returns its held prize to the pool, fee-free.
+- Only the ORDER of posted points matters (rank weights 1/√rank and the top-30% headcount), so each game maps its own
+  scores onto 1–255 keeping their order and ties (Block Golf: 7 × counted holes − strokes).
 
 ### Results timeline (other games)
 | Step | When | Who |
 |---|---|---|
 | post results / prize winners | after the week ends, until the week's results deadline (week end + 3 days) | operator |
 | seal | once posting is complete | operator |
-| correct a player's points, remove a winner, or void the game's week | until seal + 12 h | owner |
-| finalize | after the vault week is closed and seal + 12 h | anyone |
+| correct a player's points, remove a winner, or void the game's week | until 24 h after the seal (unsealed: until the deadline) | owner |
+| finalize | after the vault week is closed, and 12 h after both the seal and the last correction | anyone |
 | roll over | not sealed by the deadline: anyone may finalize it as "no results"; the bucket rolls over within the game | anyone |
 
 One game's missing results never hold up another game or the question game.
 
 ## Claims
-`claim_game(game, week, player)` pays a staked winner or a free-prize winner. Unclaimed rewards never expire
-. Every claim ends with `assertSolvent`.
+`claim_game(player, game, week)` pays a staked winner or a free-prize winner. Unclaimed rewards never expire.
+Every claim ends with `assertSolvent`.
 
 ## Compatibility
 - `get_player`, `get_state` and every v5 method keep their arguments and results. New fields are appended only.
 - The sponsor checks `get_player` (stake or pending > 0) to recognise real players. A player staked only in other
   games shows `stake_other > 0`, a new field; the sponsor's next version (Build 3's allowlist upgrade) must read it.
-- New storage spaces 9–15; spaces 0–8 keep their v5 layout.
+- New storage spaces 9–14; spaces 0–8 keep their v5 layout.
+- Every new player action takes the player as argument field 1 (`deposit_to`, `withdraw_from`, `move_stake`,
+  `claim_game`), like every v5 player action, so the Mana sponsor can check who it pays for.
+- **Sponsor dependency:** sponsor v3 (branch `picks`) pays only for a fixed list of 8 game entry points and refuses the
+  game contract on its allowlist. Until a sponsor version adds `deposit_to`, `withdraw_from`, `move_stake` and
+  `claim_game` (the last as free play, for guest prize winners), players pay their own Mana for these calls.
 
 ## Owner decisions (2026-10-27)
 | # | Question | Decision |

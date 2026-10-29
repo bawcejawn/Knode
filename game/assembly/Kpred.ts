@@ -104,6 +104,7 @@ const MAX_PRIZE_WINNERS: u32 = 10;             // wallets per free-prize place
 const PRIZE_V6: u64 = 3 * 100_000_000;         // free prize per game per week: 2 VHP for 1st + 1 VHP for 2nd
 const RESULTS_DAYS: u64 = 3;                   // other games' results are due 3/7 of a week (3 days) after the week
 const MAX_NAME: i32 = 32;
+const MAX_SEASON_WEEKS: u32 = 4;               // a free prize can be paid once a season of up to 4 weeks (Survivor: 2)
 
 // ───────────── keys ─────────────
 function u64Key(v: u64): Uint8Array {
@@ -1354,6 +1355,15 @@ export class Kpred {
   gentryKey(game: u32, w: u64, player: Uint8Array): Uint8Array { return cat(this.gweekKey(game, w), player); }
   gbucketKey(game: u32, w: u64, points: u32): Uint8Array { return cat(this.gweekKey(game, w), u32Key(points)); }
 
+  /** A game's free-prize season length in weeks (1 = the prize is paid every week). */
+  seasonWeeks(g: kpred.game_object): u64 { return g.season_weeks > 1 ? <u64>g.season_weeks : 1; }
+
+  /** Whether week `w` is the last week of one of the game's prize seasons (seasons start at its from_week). */
+  seasonEnds(g: kpred.game_object, w: u64): bool {
+    const n = this.seasonWeeks(g);
+    return w >= g.from_week && (w - g.from_week) % n == n - 1;
+  }
+
   /** Whether a game earns (gets a bucket and a prize) for week `w`. */
   gameEarns(g: kpred.game_object, w: u64): bool {
     return g.from_week <= w && (g.last_week_plus_one == 0 || w + 1 <= g.last_week_plus_one);
@@ -1469,12 +1479,16 @@ export class Kpred {
     //    rollover into the split.
     let split = pot - prizes;
     let rolledUsed: u64 = 0;
+    let prizeReleased: u64 = 0;                       // a stopped game's season prize so far: back to the pool, fee-free
     const weight = new Array<u64>(n);
     let weightTotal: u64 = 0;
     for (let i = 0; i < n; i++) {
       const g = list[i];
       weight[i] = 0;
-      if (!this.gameEarns(g, week)) { split += g.rolled; rolledUsed += g.rolled; g.rolled = 0; }
+      if (!this.gameEarns(g, week)) {
+        split += g.rolled; rolledUsed += g.rolled; g.rolled = 0;
+        prizeReleased += g.prize_held; g.prize_held = 0;
+      }
       else if (g.staked) { weight[i] = this.weightFor(g, week); weightTotal += weight[i]; }
     }
     const bucket = new Array<u64>(n);
@@ -1502,7 +1516,9 @@ export class Kpred {
         const gw = this.gweeks.get(gk)!;
         gw.closed = true;
         gw.bucket = bucket[i] + g.rolled;
-        gw.prize = got[i];
+        // A game with prize seasons holds each week's funded prize and pays the season's total in its last week.
+        if (this.seasonEnds(g, week)) { gw.prize = got[i] + g.prize_held; g.prize_held = 0; }
+        else { gw.prize = 0; g.prize_held += got[i]; }
         rolledUsed += g.rolled;
         g.rolled = 0;
         this.gweeks.put(gk, gw);
@@ -1511,10 +1527,10 @@ export class Kpred {
     }
     t.acc_player_lo = 0; t.acc_player_hi = 0; t.acc_house_lo = 0; t.acc_house_hi = 0;
     t.acc_seed_lo = 0; t.acc_seed_hi = 0;
-    t.rolled_over = 0;
+    t.rolled_over = prizeReleased;                    // returned prizes are paid out with the next close, fee-free
     t.games_rolled -= rolledUsed;
     t.fee_vhp += fee;
-    t.pots_outstanding += pot + rolledUsed;
+    t.pots_outstanding += pot + rolledUsed - prizeReleased;
     t.total_gain += gain;
     t.weeks_closed += 1;
     this.totals.put(t);
@@ -1797,7 +1813,9 @@ export class Kpred {
     const c = this.cfg();
     System.requireAuthority(authority.authorization_type.contract_call, c.operator!);
     const gw = this.postable(c, args.game, args.week);
-    System.require(this.otherGame(args.game).free_prize, "that game has no free prize");
+    const pg = this.otherGame(args.game);
+    System.require(pg.free_prize, "that game has no free prize");
+    System.require(this.seasonEnds(pg, args.week), "prize winners are posted for the last week of the game's season");
     System.require(args.place == 1 || args.place == 2, "place must be 1 or 2");
     const before: u32 = args.place == 1 ? gw.first_n : gw.second_n;
     System.require(args.players.length > 0 && <u32>args.players.length + before <= MAX_PRIZE_WINNERS, "at most 10 wallets per place");
@@ -2054,6 +2072,7 @@ export class Kpred {
     const name = args.name != null ? args.name! : "";
     System.require(name.length > 0 && name.length <= MAX_NAME, "a name of 1 to 32 characters");
     System.require(args.staked || args.free_prize, "a game needs a stake bucket, a free prize, or both");
+    System.require(args.season_weeks <= MAX_SEASON_WEEKS, "a prize season is 1 to 4 weeks");
     const g = this.games.get(u32Key(args.game));
     if (g == null) System.require(c.game_count < MAX_GAMES, "at most 12 games besides the question game");
     else System.require(!g.active, "that game is running: deactivate it first");
@@ -2063,6 +2082,7 @@ export class Kpred {
     ng.name = name;
     ng.staked = args.staked;
     ng.free_prize = args.free_prize;
+    ng.season_weeks = args.season_weeks;
     pr.game = ng;
     pr.eta = this.now() + c.timelock_length;
     this.gproposals.put(u32Key(args.game), pr);
@@ -2094,6 +2114,7 @@ export class Kpred {
     g.name = pr!.game!.name;
     g.staked = pr!.game!.staked;
     g.free_prize = pr!.game!.free_prize;
+    g.season_weeks = pr!.game!.season_weeks;
     g.active = true;
     g.from_week = this.weekOf(c, now) + 1;
     g.last_week_plus_one = 0;

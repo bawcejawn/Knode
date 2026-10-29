@@ -2119,6 +2119,17 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "season_weeks": {
+                "type": "uint32",
+                "id": 15
+              },
+              "prize_held": {
+                "type": "uint64",
+                "id": 16,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
@@ -2436,16 +2447,16 @@
           },
           "get_game_player_arguments": {
             "fields": {
-              "game": {
-                "type": "uint32",
-                "id": 1
-              },
               "player": {
                 "type": "bytes",
-                "id": 2,
+                "id": 1,
                 "options": {
                   "(koinos.btype)": "ADDRESS"
                 }
+              },
+              "game": {
+                "type": "uint32",
+                "id": 2
               },
               "week": {
                 "type": "uint64",
@@ -2499,6 +2510,10 @@
               "free_prize": {
                 "type": "bool",
                 "id": 4
+              },
+              "season_weeks": {
+                "type": "uint32",
+                "id": 5
               }
             }
           },
@@ -2545,16 +2560,16 @@
           },
           "deposit_to_arguments": {
             "fields": {
-              "game": {
-                "type": "uint32",
-                "id": 1
-              },
               "from": {
                 "type": "bytes",
-                "id": 2,
+                "id": 1,
                 "options": {
                   "(koinos.btype)": "ADDRESS"
                 }
+              },
+              "game": {
+                "type": "uint32",
+                "id": 2
               },
               "amount": {
                 "type": "uint64",
@@ -2574,16 +2589,16 @@
           },
           "withdraw_from_arguments": {
             "fields": {
-              "game": {
-                "type": "uint32",
-                "id": 1
-              },
               "to": {
                 "type": "bytes",
-                "id": 2,
+                "id": 1,
                 "options": {
                   "(koinos.btype)": "ADDRESS"
                 }
+              },
+              "game": {
+                "type": "uint32",
+                "id": 2
               },
               "amount": {
                 "type": "uint64",
@@ -2796,16 +2811,16 @@
           },
           "claim_game_arguments": {
             "fields": {
-              "game": {
-                "type": "uint32",
-                "id": 1
-              },
               "player": {
                 "type": "bytes",
-                "id": 2,
+                "id": 1,
                 "options": {
                   "(koinos.btype)": "ADDRESS"
                 }
+              },
+              "game": {
+                "type": "uint32",
+                "id": 2
               },
               "week": {
                 "type": "uint64",

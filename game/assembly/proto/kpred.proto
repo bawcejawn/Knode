@@ -552,6 +552,8 @@ message game_object {
   uint64 week = 12 [jstype = JS_STRING];              // the week week_stake is for
   uint64 next_stake = 13 [jstype = JS_STRING];        // deposits that start counting in week next_week
   uint64 next_week = 14 [jstype = JS_STRING];
+  uint32 season_weeks = 15;                           // free prize paid once a season of this many weeks (0 or 1 = weekly)
+  uint64 prize_held = 16 [jstype = JS_STRING];        // this season's funded prize so far, paid in its last week (owed)
 }
 
 // A game announced by the owner; it can be applied after the timelock (within 7 days).
@@ -639,8 +641,8 @@ message list_games_result {
 // @description A player's stake and week in a game other than the question game.
 // @read-only true
 message get_game_player_arguments {
-  uint32 game = 1;
-  bytes player = 2 [(koinos.btype) = ADDRESS];
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  uint32 game = 2;
   uint64 week = 3 [jstype = JS_STRING];
 }
 
@@ -658,6 +660,7 @@ message propose_game_arguments {
   string name = 2;
   bool staked = 3;
   bool free_prize = 4;
+  uint32 season_weeks = 5;                            // free prize paid once a season of 1 to 4 weeks (0 = 1)
 }
 
 message propose_game_result {
@@ -685,8 +688,8 @@ message deactivate_game_result {}
 // @description Stake VHP in a game other than the question game (whole numbers; counts from next week).
 // @read-only false
 message deposit_to_arguments {
-  uint32 game = 1;
-  bytes from = 2 [(koinos.btype) = ADDRESS];
+  bytes from = 1 [(koinos.btype) = ADDRESS];          // the player first, as in every player action (the sponsor checks it)
+  uint32 game = 2;
   uint64 amount = 3 [jstype = JS_STRING];
   bool koin = 4;                                      // pay in KOIN (burned 1:1 into VHP)
 }
@@ -696,8 +699,8 @@ message deposit_to_result {}
 // @description Withdraw from a game other than the question game. Any amount, at any time.
 // @read-only false
 message withdraw_from_arguments {
-  uint32 game = 1;
-  bytes to = 2 [(koinos.btype) = ADDRESS];
+  bytes to = 1 [(koinos.btype) = ADDRESS];
+  uint32 game = 2;
   uint64 amount = 3 [jstype = JS_STRING];
 }
 
@@ -786,8 +789,8 @@ message finalize_game_week_result {
 // @description Claim a game week's reward or free prize.
 // @read-only false
 message claim_game_arguments {
-  uint32 game = 1;
-  bytes player = 2 [(koinos.btype) = ADDRESS];
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  uint32 game = 2;
   uint64 week = 3 [jstype = JS_STRING];
 }
 
