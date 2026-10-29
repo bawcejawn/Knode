@@ -142,6 +142,33 @@
                 "rule": "repeated",
                 "type": "allowed_call",
                 "id": 13
+              },
+              "mana_caps": {
+                "rule": "repeated",
+                "type": "mana_cap",
+                "id": 14
+              }
+            }
+          },
+          "mana_cap": {
+            "fields": {
+              "contract": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "entry_point": {
+                "type": "uint32",
+                "id": 2
+              },
+              "max_mana": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },

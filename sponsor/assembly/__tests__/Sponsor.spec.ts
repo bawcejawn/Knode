@@ -254,18 +254,26 @@ describe("sponsor settings", () => {
     errorIs("SPONSOR: caps must be per transaction <= per player per day <= per player per week, and per player per day <= per day");
   });
 
-  it("refuses a daily cap above 1,000 mana", () => {
+  it("refuses a daily cap above 5,000 mana", () => {
     CFG = goodConfig();
-    CFG.max_mana_per_day = 1001 * MANA;
+    CFG.max_mana_per_day = 5001 * MANA;
     expect(() => { setConfig(); }).toThrow();
-    errorIs("SPONSOR: daily cap above 1,000 mana");
+    errorIs("SPONSOR: daily cap above 5,000 mana");
   });
 
-  it("refuses a weekly cap above 7,000 mana", () => {
+  it("accepts a daily cap of exactly 5,000 mana (owner, 2026-10-28)", () => {
     CFG = goodConfig();
-    CFG.max_mana_per_account_week = 7001 * MANA;
+    CFG.max_mana_per_day = 5000 * MANA;
+    setConfig();
+    expect(new Sponsor().get_config(new sponsor.get_config_arguments()).max_mana_per_day).toBe(5000 * MANA);
+  });
+
+  it("refuses a weekly cap above 35,000 mana", () => {
+    CFG = goodConfig();
+    CFG.max_mana_per_day = 5000 * MANA;
+    CFG.max_mana_per_account_week = 35001 * MANA;
     expect(() => { setConfig(); }).toThrow();
-    errorIs("SPONSOR: weekly cap above 7,000 mana");
+    errorIs("SPONSOR: weekly cap above 35,000 mana");
   });
 
   it("refuses switching on with a zero cap", () => {

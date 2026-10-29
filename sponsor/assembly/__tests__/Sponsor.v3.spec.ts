@@ -307,3 +307,91 @@ describe("v3: a free player collects their own free-game prize; L-3: a stake cou
     expect(pays()).toBe(true);
   });
 });
+
+// ── v3 (owner, 2026-10-28): per-action Mana limits ──
+// The caps count each transaction's Mana LIMIT, so the limit must fit what the action really uses: a pick uses about
+// 0.05 Mana (testnet), so with a row of 0.1 a pick may ask for at most 0.1, and 3 picks for at most 0.3.
+function capRow(contract: Uint8Array, entry: u32, mana: u64): sponsor.mana_cap { return new sponsor.mana_cap(contract, entry, mana); }
+function startCaps(): void {
+  MockVM.reset();
+  MockVM.setContractId(SELF);
+  MockVM.setHeadInfo(new chain.head_info(null, T0, 0));
+  MockVM.commitTransaction();
+  CFG = v3Config();
+  CFG.mana_caps = [capRow(PICKS, PICK, MANA / 10), capRow(RACE, PICK, MANA / 5)];
+  setConfig(); MockVM.commitTransaction();
+  PAYEE = USER; RC = MANA;
+}
+describe("v3 per-action Mana limits", () => {
+  it("a pick asking for more than its row is refused; at its row it is paid and counts only that much", () => {
+    startCaps();
+    emptyWallet();
+    OPS = [call(PICKS, PICK, pickArgs(USER))];
+    RC = MANA;
+    refused("SPONSOR: mana limit above what these actions may ask for");
+    RC = MANA / 10 + 1;
+    refused("SPONSOR: mana limit above what these actions may ask for");
+    RC = MANA / 10;
+    emptyWallet();
+    expect(pays()).toBe(true);
+    MockVM.commitTransaction();
+    expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day).toBe(MANA / 10);
+    expect(new Sponsor().get_usage(new sponsor.get_usage_arguments(USER)).used_day).toBe(MANA / 10);
+    expect(new Sponsor().get_total_usage(new sponsor.get_total_usage_arguments()).used_day).toBe(MANA / 10);
+  });
+  it("several operations may ask for the sum of their rows, never more", () => {
+    startCaps();
+    OPS = [call(PICKS, PICK, pickArgs(USER)), call(PICKS, PICK, pickArgs(USER)), call(PICKS, PICK, pickArgs(USER))];
+    RC = 3 * MANA / 10 + 1;
+    emptyWallet();
+    refused("SPONSOR: mana limit above what these actions may ask for");
+    RC = 3 * MANA / 10;
+    emptyWallet();
+    expect(pays()).toBe(true);
+  });
+  it("an action with no row may ask for up to the per-transaction cap, as before", () => {
+    startCaps();
+    holder();
+    OPS = [call(GAME, GAME_ANSWER, NONE)];
+    RC = MANA;
+    expect(pays()).toBe(true);
+    MockVM.rollbackTransaction();
+    // a pick (row 0.1) next to an answer (no row: 1): together up to 1.1, but never above the per-transaction cap 1
+    holder();
+    OPS = [call(GAME, GAME_ANSWER, NONE), call(PICKS, PICK, pickArgs(USER))];
+    RC = MANA;
+    expect(pays()).toBe(true);
+    MockVM.rollbackTransaction();
+    RC = MANA + 1;
+    holder();
+    refused("SPONSOR: mana limit above the per-transaction cap");
+  });
+  it("set_config checks every row: a real address, above 0, at most the per-transaction cap, no duplicates, at most 16", () => {
+    startCaps();
+    CFG = v3Config(); CFG.mana_caps = [capRow(PICKS, PICK, MANA + 1)];
+    badConfig("SPONSOR: a per-action mana limit must be above 0 and at most the per-transaction cap");
+    CFG = v3Config(); CFG.mana_caps = [capRow(PICKS, PICK, 0)];
+    badConfig("SPONSOR: a per-action mana limit must be above 0 and at most the per-transaction cap");
+    CFG = v3Config(); CFG.mana_caps = [capRow(PICKS, PICK, MANA / 10), capRow(PICKS, PICK, MANA / 5)];
+    badConfig("SPONSOR: duplicate per-action mana limit");
+    CFG = v3Config(); CFG.mana_caps = [capRow(bytes([0, 1, 2]), PICK, MANA / 10)];
+    badConfig("SPONSOR: invalid per-action mana limit contract");
+    CFG = v3Config();
+    const many = new Array<sponsor.mana_cap>();
+    for (let i: u32 = 0; i < 17; i++) many.push(capRow(PICKS, i + 1, MANA / 10));
+    CFG.mana_caps = many;
+    badConfig("SPONSOR: at most 16 per-action mana limits");
+    CFG = v3Config(); CFG.mana_caps = many.slice(0, 16);
+    setConfig();
+    expect(new Sponsor().get_config(new sponsor.get_config_arguments()).mana_caps.length).toBe(16);
+  });
+  it("a row for the same entry point on another contract doesn't apply", () => {
+    startCaps();
+    CFG = v3Config(); CFG.mana_caps = [capRow(STAKED, PICK, MANA / 10)];
+    setConfig(); MockVM.commitTransaction();
+    emptyWallet();
+    OPS = [call(PICKS, PICK, pickArgs(USER))];
+    RC = MANA;
+    expect(pays()).toBe(true);
+  });
+});

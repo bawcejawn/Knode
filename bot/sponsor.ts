@@ -4,8 +4,15 @@
  *
  *   npm run sponsor -- status                       the sponsor right now: on/off, caps, KOIN and Mana, today's use
  *   npm run sponsor -- upload [--send]              put the sponsor contract on the sponsor wallet (SPONSOR_WIF)
- *   npm run sponsor -- config [--per-tx 1] [--per-player-day 25] [--per-player-week 150] [--per-day 1000] [--free-per-day 300] [--min-vhp 1] [--send]
- *                                                   set the caps (in Mana; 1 Mana = 1 KOIN of Mana); keeps on/off as is
+ *   npm run sponsor -- config [--per-tx 1] [--per-player-day 50] [--per-player-week 300] [--per-day 5000] [--free-per-day 2000] [--min-vhp 1] [--send]
+ *                                                   set the caps (in Mana; 1 Mana = 1 KOIN of Mana) and the per-action
+ *                                                   Mana limits (sponsor-data/mana-limits.json); keeps on/off as is
+ *   npm run sponsor -- mana-limit <game|desk|race|picks>:<action> <most used> [--source text] [--save]
+ *                                                   add one action measured elsewhere (e.g. picks:pick 0.0477, testnet)
+ *   npm run sponsor -- mana-report [--blocks 28800] [--save]
+ *                                                   the Mana adjuster: what each sponsored action really used (read
+ *                                                   from the chain), and a safe limit for each; --save writes them to
+ *                                                   sponsor-data/mana-limits.json (then config --send puts them on chain)
  *   npm run sponsor -- enable [--send]              switch the sponsor on (it pays within the caps)
  *   npm run sponsor -- disable [--send]             switch it off (players pay their own Mana)
  *   npm run sponsor -- payer sponsor|self [--rc-limit 1] [--send]
@@ -25,6 +32,7 @@ import { KoinosChain, showKoin, toSat } from "./chain.ts";
 import { tokenAbi } from "./token-abi.ts";
 import { contractMetadata } from "./chaincheck.ts";
 import { units, isMainnet, pinDeployment, PINNED_MAINNET } from "./bot.ts";
+import { readLimits, summarize, merge, chainRows, siteMap, actionNames, checkRows, toMana, key, LIMITS_FILE, type Sample } from "./mana-limits.ts";
 
 const E = process.env;
 const log = (...a: any[]) => console.log(...a);
@@ -41,14 +49,19 @@ const PICKS_DEP = path.join("picks-data", "deployment.json");
 export const PICKS_PICK = 0x8ce33c6c;
 export const PICKS_ARG_TYPES = "0x0301010301";
 /** Suggested caps (Mana): per transaction, per player per day, per player per week, everyone per day.
- *  The caps count each transaction's Mana limit (1 Mana): a day's 5 answers and 5 race picks = 10, a week's 30
- *  answers and 35 picks = 65. Owner's decision 2026-10-27: 25 a day and 150 a week, room for the KnodeGames picks
- *  (Who Signs Block X: up to 12 targets a day). The spam controls stay: 1 Mana per transaction, everyone's 1,000 a day,
- *  and wallets with no VHP and no stake share the free total (300 a day). */
-export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "25", perPlayerWeek: "150", perDay: "1000", minVhp: "1", freePerDay: "300" };
+ *  Owner's decisions 2026-10-28: everyone 5,000 a day (the sponsor wallet holds at least 25,000 KOIN, whose Mana refills
+ *  in about 5 days), of which free players (no VHP, no stake; guests too) share at most 2,000, so staked players always
+ *  have 3,000 or more; 50 per player per day (300 a week). The caps count each transaction's Mana limit, and with the
+ *  per-action limits (mana-report) a Block X pick counts about 0.1, not 1. */
+export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "50", perPlayerWeek: "300", perDay: "5000", minVhp: "1", freePerDay: "2000" };
 /** The audited sponsor build (sponsor/README.md "Build"). upload refuses any other wasm. v2 (race picks), audited
  *  2026-10-27 (docs/history/AUDIT-2026-10-27-race-picks.md); v1 was 8cfeff6209b8d5cbc3b3e5fa30751e995767f5904b77693ed8a41e323ea2a8ed. */
 export const SPONSOR_SHA256 = "fa4659e65c6156da3dde34238e0545a489a8b7f00cdf51df9bf79517a0019f33";
+/** v3 release candidate (allowlist, free claims, 5,000 ceiling, per-action Mana limits): NOT yet audited, so it may go
+ *  only on the testnet. After the audit and fix-check it replaces SPONSOR_SHA256. */
+export const SPONSOR_V3_CANDIDATE = "21bec82583e1a7decbb2c70376f4b08e026f617c32bca268ab700f50e9aef2df";
+/** The builds this network may receive. */
+export const allowedBuilds = (mainnet: boolean) => (mainnet ? [SPONSOR_SHA256] : [SPONSOR_SHA256, SPONSOR_V3_CANDIDATE]);
 
 const sha256hex = (b: Uint8Array) => crypto.createHash("sha256").update(b).digest("hex");
 const readJson = (f: string, d: any = null) => (fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : d);
@@ -130,7 +143,8 @@ async function upload(send: boolean) {
   if (!fs.existsSync(WASM)) throw new Error(`${WASM} not found: in the sponsor folder run npm test && npm run check`);
   const wasm = fs.readFileSync(WASM);
   // Audit L-1: only the audited build goes on chain.
-  if (sha256hex(wasm) !== SPONSOR_SHA256) throw new Error(`${WASM} is not the audited sponsor build (sha256 ${sha256hex(wasm)}, expected ${SPONSOR_SHA256}). Rebuild: cd sponsor, npm ci, npm test, npm run check.`);
+  const okBuilds = allowedBuilds(mainnet);
+  if (!okBuilds.includes(sha256hex(wasm))) throw new Error(`${WASM} is not ${mainnet ? "the audited sponsor build" : "an allowed sponsor build"} (sha256 ${sha256hex(wasm)}, expected ${okBuilds.join(" or ")}). Rebuild: cd sponsor, npm ci, npm test, npm run check.`);
   const abi = loadAbi();
   const m = await contractMetadata(provider, A);
   const have = BigInt(await provider.getAccountRc(A));
@@ -152,7 +166,7 @@ async function upload(send: boolean) {
   const after = await contractMetadata(provider, A);
   // Audit L-1: the chain must now hold exactly this code, with only "pays for transactions" switched on.
   const bad: string[] = [];
-  if (after.hash.replace(/^0x1220/, "") !== SPONSOR_SHA256) bad.push(`code on chain is ${after.hash}`);
+  if (after.hash.replace(/^0x1220/, "") !== sha256hex(wasm)) bad.push(`code on chain is ${after.hash}`);
   if (!after.tx) bad.push("pays for transactions is OFF");
   if (after.call) bad.push("call override is ON (must be off)");
   if (after.upload) bad.push("upload override is ON (must be off)");
@@ -166,7 +180,7 @@ async function upload(send: boolean) {
 function flag(a: string[], name: string, d: string) { const i = a.indexOf(name); return i >= 0 && a[i + 1] && !a[i + 1].startsWith("--") ? a[i + 1] : d; }
 
 /** Builds the config: the pinned game, Desk, VHP and KOIN, and the caps. Exported for the tests. */
-export function buildConfig(game: any, desk: any, caps: { perTx: string; perPlayerDay: string; perPlayerWeek: string; perDay: string; minVhp?: string; freePerDay?: string }, enabled: boolean, race?: string, picks?: string) {
+export function buildConfig(game: any, desk: any, caps: { perTx: string; perPlayerDay: string; perPlayerWeek: string; perDay: string; minVhp?: string; freePerDay?: string }, enabled: boolean, race?: string, picks?: string, manaRows: ReturnType<typeof readLimits>["rows"] = []) {
   const vhp = game.vhp ?? PINNED_MAINNET.vhp;
   const c = {
     enabled, game: game.contract, desk: desk.contract, tokens: [vhp, game.koin ?? PINNED_MAINNET.koin],
@@ -182,14 +196,17 @@ export function buildConfig(game: any, desk: any, caps: { perTx: string; perPlay
     ...(race ? { race } : {}),
     // v3: the KnodeGames Picks contract's picks are free play like answers (the payee's own, arguments in the Picks shape).
     ...(picks ? { allowed: [{ contract: picks, entry_point: PICKS_PICK, free_play: true, arg_types: PICKS_ARG_TYPES }] } : {}),
+    // v3: each action's own Mana limit (sponsor-data/mana-limits.json, from mana-report). No rows: the per-transaction cap.
+    ...(manaRows.length ? { mana_caps: chainRows(manaRows) } : {}),
   };
+  checkRows(manaRows, BigInt(units(caps.perTx)));
   if (race && [c.game, c.desk, ...c.tokens].includes(race)) throw new Error("The race contract must differ from the game, Knode Swap and the tokens.");
   if (picks && [c.game, c.desk, ...c.tokens, race].includes(picks)) throw new Error("The Picks contract must differ from the game, Knode Swap, the race and the tokens.");
   if (BigInt(c.min_vhp) === 0n) throw new Error("The VHP minimum must be above 0 (empty wallets would be sponsored).");
   const n = (x: string) => BigInt(x);
   if (!(n(c.max_mana_per_tx) <= n(c.max_mana_per_account_day) && n(c.max_mana_per_account_day) <= n(c.max_mana_per_account_week) && n(c.max_mana_per_account_day) <= n(c.max_mana_per_day)))
     throw new Error("Caps must be per transaction ≤ per player per day ≤ per player per week, and per player per day ≤ everyone per day.");
-  if (n(c.max_mana_per_day) > toSat(1000)) throw new Error("Everyone's daily cap can't be above 1,000 Mana.");
+  if (n(c.max_mana_per_day) > toSat(5000)) throw new Error("Everyone's daily cap can't be above 5,000 Mana.");
   if (n(c.max_mana_free_day) > n(c.max_mana_per_day)) throw new Error("The free-player daily cap can't be above everyone's daily cap.");
   if (enabled && n(c.max_mana_per_tx) === 0n) throw new Error("A per-transaction cap of 0 with the sponsor on would refuse everything.");
   return c;
@@ -216,7 +233,8 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
       ? (Number(cur.max_mana_free_day ?? 0) / 1e8).toString() : undefined as any),
   };
   const enabled = enabledArg ?? !!cur.enabled;
-  const config = buildConfig(game, desk, caps, enabled, race, picks);
+  const limits = readLimits();
+  const config = buildConfig(game, desk, caps, enabled, race, picks, limits.rows);
   log(`To the sponsor contract ${A} on ${rpc}${isMainnet(rpc) ? "   ⚠ MAINNET" : ""}, signed and paid by the sponsor wallet:`);
   log(`  set_config: ${enabled ? "ON" : "off"}; pays for the game ${config.game} and Knode Swap ${config.desk}; approves on VHP and KOIN`);
   log(`  caps: ${caps.perTx} Mana per transaction, ${caps.perPlayerDay} per player per day, ${caps.perPlayerWeek} per player per week, ${caps.perDay} for everyone per day`);
@@ -224,11 +242,102 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
   log(`  KnodeGames picks: ${picks ? `free play like answers, on ${picks} (sponsor v3)` : "not sponsored (no picks-data/deployment.json yet)"}`);
   log(`  players: answers${race ? " and race picks" : ""}${picks ? " and KnodeGames picks" : ""} for any wallet; everything else only for wallets holding at least ${caps.minVhp} VHP, or with a stake in the game`);
   log(`  free answers (wallets with no VHP and no stake): at most ${Number(config.max_mana_free_day) / 1e8} Mana for everyone per day, inside the ${caps.perDay}`);
+  if (limits.rows.length) {
+    log(`  per-action Mana limits (${LIMITS_FILE}; any other action: ${caps.perTx} per transaction):`);
+    for (const r of limits.rows) log(`    ${r.name.padEnd(32)} ${toMana(r.max_mana)} Mana${r.observed ? `   (has used up to ${toMana(r.observed.max)}, ${r.observed.count} seen, ${r.observed.source})` : ""}`);
+  } else log(`  per-action Mana limits: none yet (every action may ask for up to ${caps.perTx}; run mana-report)`);
   if (!send) { log("\nDry run only. Nothing was sent. Add --send to send it."); return; }
   const chain = new KoinosChain(rpc, A);
   const r = await chain.send([{ contract: A, abi: loadAbi(), method: "set_config", args: { config } }], [s], { payer: A, rcLimitKoin: 2 });
   log(r.ok ? `✔ done (Mana used ${showKoin(r.rcUsed)})  transaction ${r.txId}` : `✖ ${r.error}`);
-  if (!r.ok) process.exitCode = 1;
+  if (!r.ok) { process.exitCode = 1; return; }
+  // The website asks for the same limits the sponsor now accepts.
+  if (syncSiteLimits(limits.rows)) log(`Updated the per-action limits in ${GAME_DEP} and ${DESK_DEP}: commit and push them.`);
+}
+
+/** Copies the per-action limits into the website's sponsor block (game and desk deployment files), if it has one. */
+export function syncSiteLimits(rows: ReturnType<typeof readLimits>["rows"], files = { game: GAME_DEP, desk: DESK_DEP }): boolean {
+  let changed = false;
+  for (const f of [files.game, files.desk]) {
+    const d = readJson(f);
+    if (!d?.sponsor) continue;
+    d.sponsor.rcLimits = siteMap(rows);
+    writeJson(f, d); changed = true;
+  }
+  return changed;
+}
+
+// ═══════════════════════════════ the Mana adjuster ═══════════════════════════════
+/** One action measured elsewhere (the testnet, before it is sponsored on mainnet): adds it with the usual margin. */
+function manaLimit(a: string[]) {
+  const [what, most] = a.filter((x) => !x.startsWith("--") && x !== flag(a, "--source", "\u0000"));
+  const m = /^(game|desk|race|picks):([a-z_]+)$/.exec(what ?? "");
+  if (!m || !(Number(most) > 0)) throw new Error('Usage: npm run sponsor -- mana-limit picks:pick 0.0477 [--source "testnet 2026-10-28"] [--save]');
+  const k = knode();
+  const contract = ({ game: k.game.contract, desk: k.desk.contract, race: k.race, picks: k.picks } as any)[m[1]];
+  if (!contract) throw new Error(`No ${m[1]} contract yet (its deployment.json is missing).`);
+  const names = actionNames({ game: k.game.contract, desk: k.desk.contract, race: k.race, picks: k.picks });
+  const hit = Object.entries(names).find(([kk, n]) => kk.startsWith(contract + ":") && n.endsWith(" " + m[2]));
+  if (!hit) throw new Error(`${m[2]} is not a sponsored action of the ${m[1]} contract.`);
+  const entry = parseInt(hit[0].split(":")[1], 16);
+  const perTx = BigInt(units(DEFAULT_CAPS.perTx)), old = readLimits(), at = new Date().toISOString();
+  const rows = merge(old.rows, [{ contract, entry, name: hit[1], count: 1, maxSat: BigInt(units(String(most))), typicalSat: BigInt(units(String(most))) }], perTx, flag(a, "--source", "measured by hand"), at);
+  const r = rows.find((x) => x.contract === contract && x.entry_point === entry)!;
+  log(`${r.name}: has used up to ${toMana(r.observed!.max)} Mana → limit ${toMana(r.max_mana)} Mana (1.5 ×, rounded up).`);
+  if (!a.includes("--save")) { log("Nothing saved. Add --save."); return; }
+  writeJson(LIMITS_FILE, { v: 1, updated: at, margin: 1.5, rows });
+  log(`✔ saved ${LIMITS_FILE}. Next: npm run sponsor -- config (dry run), then --send.`);
+}
+
+/** Reads sponsored transactions from the last `blocks` blocks: what each action used (read-only). */
+async function manaReport(a: string[]) {
+  const { game, desk, rpc, race, picks } = knode();
+  const st = readJson(STATE);
+  const address = st?.address ?? PINNED_MAINNET.sponsor;
+  const provider = new Provider([rpc]);
+  const blocks = Math.max(100, Math.min(201600, Number(flag(a, "--blocks", "28800")) || 28800));
+  const head: any = await provider.getHeadInfo();
+  const top = Number(head.last_irreversible_block), from = Math.max(1, top - blocks + 1);
+  log(`Mana adjuster: sponsored transactions (payer ${address}) in blocks ${from}–${top} (~${Math.round(blocks * 3 / 3600)} hours) on ${rpc}…`);
+  const samples: Sample[] = [];
+  let seenTx = 0;
+  for (let h = from; h <= top; h += 100) {
+    const n = Math.min(100, top - h + 1);
+    const r: any = await provider.call("block_store.get_blocks_by_height", { head_block_id: head.head_topology.id, ancestor_start_height: String(h), num_blocks: n, return_block: true, return_receipt: true });
+    for (const it of r?.block_items ?? []) {
+      const txs = it.block?.transactions ?? [], recs = it.receipt?.transaction_receipts ?? [];
+      for (let i = 0; i < txs.length; i++) {
+        const tx = txs[i], rec = recs[i] ?? {};
+        if (tx?.header?.payer !== address) continue;
+        seenTx++;
+        const calls = (tx.operations ?? []).map((o: any) => o.call_contract).filter(Boolean);
+        if (!calls.length || calls.length !== (tx.operations ?? []).length) continue;
+        const k0 = key(calls[0].contract_id, calls[0].entry_point >>> 0);
+        if (!calls.every((c: any) => key(c.contract_id, c.entry_point >>> 0) === k0)) continue;   // mixed: can't split fairly
+        samples.push({ contract: calls[0].contract_id, entry: calls[0].entry_point >>> 0, rcUsed: BigInt(rec.rc_used ?? 0), ops: calls.length, reverted: !!rec.reverted });
+      }
+    }
+    if ((h - from) % 5000 < 100) process.stdout.write(`  …block ${h}\r`);
+  }
+  const cfg = await readSponsor(provider, address, "get_config").catch(() => ({} as any));
+  const perTx = BigInt(cfg.max_mana_per_tx && cfg.max_mana_per_tx !== "0" ? cfg.max_mana_per_tx : units(DEFAULT_CAPS.perTx));
+  const names = actionNames({ game: game.contract, desk: desk.contract, race, picks, tokens: [game.vhp ?? PINNED_MAINNET.vhp, game.koin ?? PINNED_MAINNET.koin] });
+  const stats = summarize(samples, names);
+  const old = readLimits();
+  log(`\n${seenTx} sponsored transactions, ${samples.length} measured (single-action, not reverted).`);
+  log(`${"Action".padEnd(32)} ${"seen".padStart(5)} ${"typical".padStart(9)} ${"most".padStart(9)} ${"limit now".padStart(10)} ${"suggested".padStart(10)}`);
+  const at = new Date().toISOString();
+  const rows = merge(old.rows, stats, perTx, `mainnet blocks ${from}-${top}`, at);
+  for (const r of rows) {
+    const s = stats.find((x) => key(x.contract, x.entry) === key(r.contract, r.entry_point));
+    const now = old.rows.find((x) => key(x.contract, x.entry_point) === key(r.contract, r.entry_point));
+    log(`${r.name.padEnd(32)} ${String(s?.count ?? "–").padStart(5)} ${(s ? toMana(s.typicalSat) : "–").padStart(9)} ${(s ? toMana(s.maxSat) : "–").padStart(9)} ${(now ? toMana(now.max_mana) : toMana(perTx)).padStart(10)} ${toMana(r.max_mana).padStart(10)}`);
+  }
+  log(`\nRule: limit = 1.5 × the most an action has used (at least 0.02, at most the ${toMana(perTx)} per-transaction cap), never below 1.25 ×.`);
+  if (!a.includes("--save")) { log(`Nothing saved. Add --save to write ${LIMITS_FILE}, then: npm run sponsor -- config --send (and commit both).`); return; }
+  fs.mkdirSync("sponsor-data", { recursive: true });
+  writeJson(LIMITS_FILE, { v: 1, updated: at, margin: 1.5, rows });
+  log(`✔ saved ${LIMITS_FILE}. Next: npm run sponsor -- config (dry run), then --send; commit ${LIMITS_FILE} and the deployment files.`);
 }
 
 // ═══════════════════════════════ website payer ═══════════════════════════════
@@ -250,6 +359,8 @@ export function setPayer(choice: "sponsor" | "self", rcLimitMana = "1", files: {
     rcLimit: units(rcLimitMana),
     // Staking, withdrawing, swapping and claiming do far more than an answer (approve, transfer, Proof-of-Burn, stake).
     rcLimitOther: units("3"),
+    // v3: each action's own Mana limit (sponsor-data/mana-limits.json); the page asks for the sum of its actions' limits.
+    rcLimits: siteMap(readLimits().rows),
   } : undefined;
   for (const [f, d] of [[files.game, game], [files.desk, desk]] as const) {
     d.payer = choice;
@@ -270,6 +381,8 @@ async function main() {
     case "config": return setConfig(a, send);
     case "enable": return setConfig(a, send, true);
     case "disable": return setConfig(a, send, false);
+    case "mana-report": return manaReport(a);
+    case "mana-limit": return manaLimit(a);
     case "payer": {
       const choice = a[0];
       if (choice !== "sponsor" && choice !== "self") throw new Error('payer sponsor | payer self');
@@ -285,7 +398,7 @@ async function main() {
       log(`Edited ${GAME_DEP} and ${DESK_DEP}. Commit and push them (git add game-data/deployment.json desk-data/deployment.json, git commit, git push): the site follows within a few minutes.`);
       return;
     }
-    default: throw new Error(`Unknown command "${cmd}". Commands: status, upload, config, enable, disable, payer sponsor|self`);
+    default: throw new Error(`Unknown command "${cmd}". Commands: status, upload, config, enable, disable, mana-report, mana-limit, payer sponsor|self`);
   }
 }
 

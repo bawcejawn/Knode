@@ -133,3 +133,29 @@ test("an own-Mana claim may be paid by the sponsor (never by the game contract)"
   await w.send([w.op(GAME)], { ownMana: true });
   assert.deepEqual(w.log.sent, [SPONSOR]);
 });
+
+// ── sponsor v3: each action's own Mana limit (rcLimits, from the sponsor's mana-report) ──
+const PICKS = "1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW", PICK = 0x8ce33c6c, ANSWER = 0x0db52f40;
+const withLimits = (rcLimits) => ({ address: SPONSOR, covers: [GAME, DESK, VHP, KOIN, PICKS], tokens: [VHP, KOIN], picks: PICKS, rcLimit: "100000000", rcLimitOther: "300000000", rcLimits });
+test("v3: a pick asks for its own limit; several ask for the sum; never more than the old limit", async () => {
+  const w = world({ sponsor: withLimits({ [`${PICKS}:8ce33c6c`]: "8000000" }) });
+  await w.send([w.op(PICKS, PICK)]);
+  assert.equal(w.log.built[0].rcLimit, "8000000", "0.08 Mana for one pick");
+  await w.send([w.op(PICKS, PICK), w.op(PICKS, PICK), w.op(PICKS, PICK)]);
+  assert.equal(w.log.built[1].rcLimit, "24000000", "0.24 for three");
+  const many = Array.from({ length: 10 }, () => w.op(PICKS, PICK));
+  const w2 = world({ sponsor: withLimits({ [`${PICKS}:8ce33c6c`]: "20000000" }) });
+  await w2.send(many);
+  assert.equal(w2.log.built[0].rcLimit, "100000000", "10 × 0.2 = 2, capped at the old 1 Mana");
+});
+test("v3: an action without its own limit keeps the old limit; a malformed entry is ignored", async () => {
+  const w = world({ sponsor: withLimits({ [`${PICKS}:8ce33c6c`]: "8000000" }) });
+  await w.send([w.op(GAME, ANSWER), w.op(PICKS, PICK)]);
+  assert.equal(w.log.built[0].rcLimit, "100000000", "the answer has no row: the old answers limit");
+  const w2 = world({ sponsor: withLimits({ [`${PICKS}:8ce33c6c`]: "-5" }) });
+  await w2.send([w2.op(PICKS, PICK)]);
+  assert.equal(w2.log.built[0].rcLimit, "100000000");
+  const w3 = world({ sponsor: withLimits({ [`${PICKS}:8ce33c6c`]: "1e9" }) });
+  await w3.send([w3.op(PICKS, PICK)]);
+  assert.equal(w3.log.built[0].rcLimit, "100000000");
+});

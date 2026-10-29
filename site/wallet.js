@@ -394,7 +394,7 @@
     if (W.chainId === MAINNET_CHAIN_ID && (!sp || sp.address !== PINNED_SPONSOR || !Array.isArray(sp.covers) || !sp.covers.includes(PINNED_GAME)))
       throw new Error("Guest play is paused: the page's Mana sponsor settings aren't the live Knode Games sponsor. Nothing was sent.");
     if (!sp) throw new Error("Guest play works on the game pages. Nothing was sent.");
-    const rcLimit = String(sp.rcLimit || "100000000");
+    const rcLimit = rcFor(sp, ops, String(sp.rcLimit || "100000000"));
     if (!(await sponsorSaysYes(sp, rcLimit, true))) throw new Error(GUEST_NO_FREE);
     const signer = await window.KGuest.signer();
     if (signer.getAddress() !== W.address) throw new Error("The guest key on this device changed. Reconnect as a guest.");
@@ -499,7 +499,7 @@
       || (sp.picks && o.call_contract.contract_id === sp.picks && Number(o.call_contract.entry_point) === PICK)));
     // Answers are light (rcLimit, 1 Mana); staking, withdrawing, swapping and claiming do much more in one transaction
     // (approve, transfer, burn, stake), so they ask for rcLimitOther (default 3 Mana).
-    const rcLimit = sp ? String(answerOnly ? (sp.rcLimit || "100000000") : (sp.rcLimitOther || "300000000")) : null;
+    const rcLimit = sp ? rcFor(sp, ops, String(answerOnly ? (sp.rcLimit || "100000000") : (sp.rcLimitOther || "300000000"))) : null;
     if (sp && await sponsorSaysYes(sp, rcLimit, answerOnly)) {
       try { return await sendKondorWith(label, ops, { ...opts, sponsor: sp.address, rcLimit }); }
       catch (e) {
@@ -551,7 +551,8 @@
 
   // ── Mana sponsor (sponsor/README.md) ──
   // deployment.json "payer": "sponsor" (the sponsor wallet pays the Mana) or "self" (players' own Mana; also the default).
-  // "sponsor": { address, covers: [game, desk, vhp, koin], rcLimit (answers), rcLimitOther (everything else) }. The sponsor contract decides on chain; the page
+  // "sponsor": { address, covers: [game, desk, vhp, koin], rcLimit (answers), rcLimitOther (everything else), rcLimits (v3:
+  // each action's own limit) }. The sponsor contract decides on chain; the page
   // only picks it when every operation is one it pays for and its caps (would_pay) say yes, else the player's own Mana.
   // Answers are sponsored for any wallet (free play); everything else only for wallets with VHP or a stake.
   const APPROVE = 0x74e21680, WOULD_PAY = 0xda1fd8f5, ANSWER = 0x0db52f40, CLAIM = 0xdd1b3c31, PICK = 0x8ce33c6c;
@@ -566,6 +567,22 @@
       if (sp.tokens && sp.tokens.includes(c.contract_id) && Number(c.entry_point) !== APPROVE) return null;
     }
     return sp;
+  }
+  /** Sponsor v3 (owner, 2026-10-28): each action's own Mana limit ("rcLimits": "contract:entry" → Mana, from the
+   *  sponsor's mana-report). When every operation has one, ask for their sum (never more than the old limit), so a
+   *  0.05-Mana pick counts about 0.1 against the caps instead of 1. Otherwise the old limit, as before. */
+  function rcFor(sp, ops, fallback) {
+    const m = sp && sp.rcLimits;
+    if (!m || typeof m !== "object") return fallback;
+    let sum = 0n;
+    for (const o of ops) {
+      const c = o && o.call_contract;
+      const k = c && `${c.contract_id}:${(Number(c.entry_point) >>> 0).toString(16).padStart(8, "0")}`;
+      const v = k && m[k];
+      if (typeof v !== "string" || !/^[1-9][0-9]{0,15}$/.test(v)) return fallback;
+      sum += BigInt(v);
+    }
+    return String(sum < BigInt(fallback) ? sum : BigInt(fallback));
   }
   /** would_pay(account, rc_limit, answer_only): true only when the sponsor answers yes (any error: no). */
   async function sponsorSaysYes(sp, rcLimit, answerOnly) {

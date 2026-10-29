@@ -15,7 +15,8 @@ From then on, when a transaction names the sponsor as payer, the chain asks this
 - **free play is free for everyone** (owner's decisions 2026-10-26 and 2026-10-27: free play drives chain activity and
   traffic): a transaction made only of game `answer` calls and Producer Race `pick` calls is paid for any wallet, even
   an empty one (a guest). Free play by wallets that hold no VHP and have no stake also counts against a separate daily
-  total for everyone, `max_mana_free_day` (default 300 of the 1,000), so it can never use up what real players need;
+  total for everyone, `max_mana_free_day` (default 2,000 of the 5,000), so it can never use up what real players need
+  (staked players always have 3,000 or more);
 - **everything else** (approve, deposit, withdraw, settle, claim, close/finalize, swap) is paid only for a **real
   Knode player**: holds at least `min_vhp` VHP (default 1 VHP) or has a stake (active or pending) in the game
   (audit 2026-10-26, M-1). The check reads the VHP token and the game (read-only). For those actions a read that fails
@@ -67,7 +68,7 @@ website says: the page then falls back to the player's own Mana.
    other than the audited one, and after uploading it stops with an error if the code or the switches on chain are not
    exactly right (pays for transactions ON, call and upload OFF).
 5. **Set the caps** (dry run first, then `--send`):
-   `npm run sponsor -- config --per-tx 1 --per-player-day 25 --per-player-week 150 --per-day 1000 --free-per-day 300 --min-vhp 1`
+   `npm run sponsor -- config --per-tx 1 --per-player-day 50 --per-player-week 300 --per-day 5000 --free-per-day 2000 --min-vhp 1`
    (once `race-data/deployment.json` exists, this also sets the race contract, so picks are sponsored)
    (`--free-per-day 0` turns free answers off; pass it each time you change the caps, because an unset value means 500)
 6. **Switch it on**: `npm run sponsor -- enable --send`.
@@ -83,18 +84,17 @@ it from the sponsor wallet in Kondor, like any wallet.
 
 - Mana amounts: 1 Mana = 1 KOIN's worth (100000000 units). A wallet's Mana is its KOIN balance and refills over about
   5 days.
-- The caps count each transaction's **Mana limit**, not what it really used. The site asks for `rcLimit` (default
-  1 Mana) per transaction. Knode's own transactions use well under that (announcing an upgrade used 0.31 Mana; the game
-  pays up to 2 Mana for a sponsored player transaction).
-- Knode's settings: **1** per transaction, **25** per player per day and **150** per player per week (owner's decision
-  2026-10-27: answers, race picks and KnodeGames picks such as Who Signs Block X's 12 targets a day), **1,000** for
-  everyone per day (a hard cap: 1,000 is also the contract's own ceiling, `CAP_LIMIT`), of which at most **300** for
-  free play by wallets with no VHP and no stake (the spam control: fresh wallets can never use more than that). Every other action needs
-  **1 VHP** or a stake.
-- Knode's sponsor wallet `1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8` keeps at least **5,000 KOIN**: it refills about a fifth of
-  its balance a day, so about 1,000 Mana a day, matching the cap. Keep some headroom above that for transactions waiting
-  in a block.
-- If use gets near 1,000 a day: add KOIN first. Going above 1,000 a day needs a new contract version (raise
+- The caps count each transaction's **Mana limit**, not what it really used (the sponsor approves a transaction before
+  it runs). With v3's per-action limits the site asks for each action's own limit (a Block X pick about 0.08), so the
+  counts stay close to the Mana really spent. Actions without a limit yet ask for the old 1 Mana (answers) or 3 (others).
+- Knode's settings (owner's decisions 2026-10-28): **1** per transaction, **50** per player per day and **300** per
+  player per week, **5,000** for everyone per day (v3's ceiling, `CAP_LIMIT`; v2's was 1,000), of which at most
+  **2,000** for free play by wallets with no VHP and no stake, so staked players always have **3,000** or more. Every
+  other action needs **1 VHP** or a stake.
+- Knode's sponsor wallet `1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8` keeps at least **25,000 KOIN**: it refills about a fifth
+  of its balance a day, so about 5,000 Mana a day, matching the cap. Keep some headroom above that for transactions
+  waiting in a block.
+- If use gets near 5,000 a day: add KOIN first. Going above 5,000 a day needs a new contract version (raise
   `CAP_LIMIT`, re-audit, re-upload by the sponsor wallet).
 
 ## Limits to know
@@ -104,9 +104,10 @@ it from the sponsor wallet in Kondor, like any wallet.
   sponsor refuses is never included and costs nothing. So the caps are exact upper bounds.
 - Near 00:00 UTC a transaction can be accepted with today's counts and then dropped from the block (mempool expiry);
   the page may already say "Sent". The player simply tries again.
-- Free answers: anyone can make new wallets, so empty wallets answering can use up the free total (500 a day: 100
-  wallets × 5 answers). Then free wallets pay their own Mana until the next UTC day, while players with VHP or a stake
-  keep the other 500 (they still count against everyone's 1,000). If spam appears, lower `--free-per-day`.
+- Free play: anyone can make new wallets, so empty wallets can use up the free total (2,000 a day: at 0.08 a pick that
+  is about 25,000 picks, at 50 Mana per wallet at least 40 wallets). Then free wallets pay their own Mana until the
+  next UTC day, while players with VHP or a stake keep the other 3,000 (they still count against everyone's 5,000). If
+  spam appears, lower `--free-per-day`.
 - Everything else needs real VHP (or a stake) in every wallet: using up the rest takes many wallets each holding the
   VHP minimum. If that ever happens, raise `--min-vhp`. When the daily budget is used up, everyone pays their own Mana
   until the next UTC day. Nothing else is at risk: the sponsor never signs or moves
@@ -149,12 +150,37 @@ cost, to be monitored).
 Re-check of those fixes: "ready for testnet, and from the code, ready for mainnet"; its Info finding S3-8 is fixed too
 (a transaction with more than 4 signatures is refused without recovering the rest).
 
-Release candidate sha256 (v3): `b192e6f4df622b1d8fbee36b7911d2b156d2826fd5028b60f6af08a80af9f3f3` (31,829 bytes).
-The upload tool still pins v2 until v3 has passed a short fix-check and the Harbinger trial.
+Earlier v3 candidate (before the 5,000 ceiling and per-action limits): `b192e6f4…` (31,829 bytes), superseded.
+The upload tool still pins v2 on mainnet until v3 has passed the audit, the fix-check and a testnet trial.
 
 When v3 is live (audit S3-5, S3-6): measure `rc_used` for 1, 3 and 7 picks and set the site's `rcLimit` to about twice
 one pick; change the guest prize message in `site/wallet.js` (the sponsor now pays a guest's own claim) and ask a
 claim's Mana with the answers' 1 Mana limit, not `rcLimitOther`.
+
+## Sponsor v3 additions (owner, 2026-10-28): 5,000 a day and per-action Mana limits
+
+- **Ceiling 5,000 Mana a day** for everyone (was 1,000; weekly per-player ceiling 35,000). The sponsor wallet holds at
+  least 25,000 KOIN, whose Mana refills in about 5 days, so 5,000 a day is always covered. Caps: 5,000 for everyone,
+  of which free players (no VHP, no stake; guests too) share at most 2,000; 50 per player per day, 300 per week.
+- **Per-action Mana limits** (`config.mana_caps`, up to 16 rows of contract, entry point, most Mana). The chain only
+  charges the Mana a transaction really uses, but the sponsor approves a transaction before it runs, so its caps
+  count the transaction's Mana *limit*. With one 1-Mana limit for everything, a 0.05-Mana pick used up 1 Mana of the
+  player's day and of everyone's day. Now a transaction's limit must be at most the sum of its operations' rows (an
+  operation with no row counts as the per-transaction cap, as before), and the website asks for exactly that sum.
+- **The Mana adjuster** sets the rows from what each action really used on chain, with a margin, and never so tight
+  that a transaction could run out:
+  ```
+  npm run sponsor -- mana-report            reads the last day of sponsored transactions; shows each action's use and a safe limit
+  npm run sponsor -- mana-report --save     writes sponsor-data/mana-limits.json (public)
+  npm run sponsor -- mana-limit picks:pick 0.0477 --source "testnet 2026-10-28" --save    one action measured elsewhere
+  npm run sponsor -- config                 dry run: shows the caps and every limit; then --send (it also updates the website's copy)
+  ```
+  Rule: limit = 1.5 × the most that action has ever used (at least 0.02, at most the per-transaction cap), rounded up
+  to 0.01; the tool refuses any limit below 1.25 × the most used, and a new report never lowers a limit below an
+  older maximum. Run it weekly, or after a contract upgrade.
+
+Release candidate sha256 (v3 with the above): `21bec82583e1a7decbb2c70376f4b08e026f617c32bca268ab700f50e9aef2df`
+(33,210 bytes). Not yet audited: the upload tool allows it on the testnet only.
 
 ## Build
 

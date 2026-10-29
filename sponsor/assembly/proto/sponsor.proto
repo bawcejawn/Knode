@@ -68,6 +68,21 @@ message config {
   // v3: more Knode player actions, by contract and entry point, so new KnodeGames contracts (the Picks contract first)
   // are sponsored without new sponsor code. At most 8. See allowed_call.
   repeated allowed_call allowed = 13;
+  // v3 (owner, 2026-10-28): the most Mana each kind of action may ask for, so a transaction's limit fits what it
+  // really uses. The caps count a transaction's Mana LIMIT (the sponsor can't know what it will use when it approves
+  // it), so a loose limit used up players' allowances and everyone's daily totals far faster than the Mana really spent.
+  // A transaction's rc_limit must be at most the sum, over its operations, of each operation's row here (an operation
+  // with no row counts as max_mana_per_tx), and at most max_mana_per_tx. At most 16 rows. The tool sets each row from
+  // measured use with a safety margin (npm run sponsor -- mana-report).
+  repeated mana_cap mana_caps = 14;
+}
+
+// v3: one kind of action and the most Mana it may ask for (see config.mana_caps).
+message mana_cap {
+  bytes contract = 1 [(koinos.btype) = ADDRESS];
+  uint32 entry_point = 2;
+  // At most max_mana_per_tx, above 0.
+  uint64 max_mana = 3 [jstype = JS_STRING];
 }
 
 // v3: one more player action the sponsor pays for. The call is paid only when its arguments are exactly what the

@@ -29,8 +29,11 @@ export const MAX_ARGS_BYTES = 400;
 const MS_PER_DAY: u64 = 86400000;
 /** KCS-4 approve entry point. */
 export const APPROVE_ENTRY: u32 = 0x74e21680;
-/** No cap may be above this (1,000 Mana a day for everyone; 1 Mana = 100000000), so a typo can't open the tap. */
-export const CAP_LIMIT: u64 = 100000000000;
+/** No cap may be above this (5,000 Mana a day for everyone; 1 Mana = 100000000), so a typo can't open the tap.
+ *  Owner, 2026-10-28: 5,000 a day (the sponsor wallet holds at least 25,000 KOIN, whose Mana refills in about 5 days). */
+export const CAP_LIMIT: u64 = 500000000000;
+/** v3: at most 16 per-action Mana limits (config.mana_caps). */
+export const MAX_MANA_CAPS = 16;
 
 // The player actions the sponsor pays for (entry points = the first 4 bytes of sha256 of the method name; the same in
 // game v3 and v5, and in the Desk v1 and v2). Owner, operator and seed actions are never sponsored.
@@ -131,10 +134,13 @@ export class Sponsor {
     const ops = tx.operations;
     System.require(ops.length > 0 && ops.length <= MAX_OPERATIONS, "SPONSOR: 1 to 10 operations");
     let answerOnly = true;    // free play only: game answers and race picks
+    let budget: u64 = 0;      // v3: the most Mana these operations may ask for together (config.mana_caps)
     for (let i = 0; i < ops.length; i++) {
       checkOperation(ops[i], cfg, payee);
       if (!isFreePlay(ops[i], cfg, payee)) answerOnly = false;
+      budget += manaCapOf(cfg, ops[i]);   // each at most max_mana_per_tx (set_config), 10 operations: no overflow
     }
+    System.require(rcLimit <= budget, "SPONSOR: mana limit above what these actions may ask for");
 
     const now = System.getHeadInfo().head_block_time;
     const day = dayOf(now), week = weekOf(now);
@@ -293,9 +299,20 @@ export class Sponsor {
         cfg.max_mana_per_account_day <= cfg.max_mana_per_day,
       "SPONSOR: caps must be per transaction <= per player per day <= per player per week, and per player per day <= per day"
     );
-    System.require(cfg.max_mana_per_day <= CAP_LIMIT, "SPONSOR: daily cap above 1,000 mana");
+    // v3: per-action Mana limits. Each row: a real address, above 0 and at most the per-transaction cap, no row twice.
+    System.require(cfg.mana_caps.length <= MAX_MANA_CAPS, "SPONSOR: at most 16 per-action mana limits");
+    for (let i = 0; i < cfg.mana_caps.length; i++) {
+      const m = cfg.mana_caps[i];
+      System.require(isAddress(m.contract), "SPONSOR: invalid per-action mana limit contract");
+      System.require(m.max_mana > 0 && m.max_mana <= cfg.max_mana_per_tx, "SPONSOR: a per-action mana limit must be above 0 and at most the per-transaction cap");
+      for (let j = 0; j < i; j++) {
+        const o = cfg.mana_caps[j];
+        System.require(!(Arrays.equal(o.contract!, m.contract!) && o.entry_point == m.entry_point), "SPONSOR: duplicate per-action mana limit");
+      }
+    }
+    System.require(cfg.max_mana_per_day <= CAP_LIMIT, "SPONSOR: daily cap above 5,000 mana");
     System.require(cfg.max_mana_free_day <= cfg.max_mana_per_day, "SPONSOR: the free-player cap can't be above the daily cap");
-    System.require(cfg.max_mana_per_account_week <= 7 * CAP_LIMIT, "SPONSOR: weekly cap above 7,000 mana");
+    System.require(cfg.max_mana_per_account_week <= 7 * CAP_LIMIT, "SPONSOR: weekly cap above 35,000 mana");
     System.require(!cfg.enabled || cfg.max_mana_per_tx > 0, "SPONSOR: switched on with a zero cap");
     System.require(!cfg.enabled || (isAddress(cfg.vhp) && contains(cfg.tokens, cfg.vhp!) && cfg.min_vhp > 0),
       "SPONSOR: switched on without the VHP token (one of the tokens) and a minimum above 0");
@@ -362,6 +379,19 @@ function bytesOf(a: u8[]): Uint8Array {
   const b = new Uint8Array(a.length);
   for (let i = 0; i < a.length; i++) b[i] = a[i];
   return b;
+}
+
+/** v3: the most Mana one operation may ask for: its row in config.mana_caps, else the per-transaction cap. */
+function manaCapOf(cfg: sponsor.config, op: protocol.operation): u64 {
+  const call = op.call_contract;
+  if (call == null || call.contract_id == null) return 0;
+  for (let i = 0; i < cfg.mana_caps.length; i++) {
+    const m = cfg.mana_caps[i];
+    if (m.contract != null && Arrays.equal(m.contract!, call.contract_id!) && m.entry_point == call.entry_point) {
+      return m.max_mana < cfg.max_mana_per_tx ? m.max_mana : cfg.max_mana_per_tx;
+    }
+  }
+  return cfg.max_mana_per_tx;
 }
 
 /** The allowlisted row for a call, or null. */
