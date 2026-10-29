@@ -305,22 +305,22 @@ describe("v6 weekly split", () => {
     expect(w0.prizes).toBe(3 * VHP);
     expect(k.totals.get()!.fee_vhp).toBe(5 * VHP);
     expect(gweek(k, G2, 0).closed).toBe(false);
-    // nobody answered: game 1's week 0 rolls over inside game 1 (all but the prize, which went to basket B and rolls too)
+    // nobody answered: game 1's bucket (92) rolls over inside game 1; its unused prize (3) goes back to the pool
     finalizeQ(k, 0);
     const w0f = k.get_week(new kpred.get_week_arguments(0)).week!;
     expect(w0f.rolled_over).toBe(true);
-    expect(game(k, 1).rolled).toBe(95 * VHP);
-    expect(k.totals.get()!.games_rolled).toBe(95 * VHP);
-    expect(k.totals.get()!.rolled_over).toBe(0);
+    expect(game(k, 1).rolled).toBe(92 * VHP);
+    expect(k.totals.get()!.games_rolled).toBe(92 * VHP);
+    expect(k.totals.get()!.rolled_over).toBe(3 * VHP);
     k.assertSolvent();
-    // week 1: 80 VHP of new rewards; the rollover comes back to game 1 fee-free
+    // week 1: 80 VHP of new rewards plus the 3 VHP prize returned (fee-free); game 1's rollover comes back to it
     give(VHP_TAG, CONTRACT, 80 * VHP);
     closeWeek(k, 1);
     const w1 = k.get_week(new kpred.get_week_arguments(1)).week!;
-    expect(w1.gain).toBe(80 * VHP);
-    expect(w1.fee_vhp).toBe(4 * VHP);
+    expect(w1.gain).toBe(83 * VHP);
+    expect(w1.fee_vhp).toBe(4 * VHP);             // 5% of the 80 new only
     expect(w1.prizes).toBe(6 * VHP);              // game 1 and game 3
-    const R: u64 = 76 * VHP - 6 * VHP;            // 70 VHP split 30:10 by the week's stake
+    const R: u64 = 79 * VHP - 6 * VHP;            // 73 VHP split 30:10 by the week's stake
     expect(w1.split).toBe(R);
     const b2 = gweek(k, G2, 1);
     expect(b2.closed).toBe(true);
@@ -328,7 +328,7 @@ describe("v6 weekly split", () => {
     expect(b2.prize).toBe(0);
     expect(gweek(k, G3, 1).prize).toBe(3 * VHP);
     expect(gweek(k, G3, 1).bucket).toBe(0);
-    expect(w1.pot).toBe(R - R / 4 + 95 * VHP + 3 * VHP);
+    expect(w1.pot).toBe(R - R / 4 + 92 * VHP + 3 * VHP);
     expect(w1.pot_a).toBe((w1.pot - w1.pot_free) * 4 / 10);
     expect(game(k, 1).rolled).toBe(0);
     expect(k.totals.get()!.games_rolled).toBe(0);
@@ -679,6 +679,79 @@ describe("v6 free prizes", () => {
     const wk = k.get_week(new kpred.get_week_arguments(0)).week!;
     expect(k.claim(new kpred.claim_arguments(A, 0)).reward).toBe(wk.pot_a + wk.pot_b);
     k.assertSolvent();
+  });
+
+  it("question game: an unfilled place goes back to the pool, not to the stakers (same rule as every game)", () => {
+    const k = setup();
+    at(200);
+    depositQ(k, A, 10 * VHP);
+    seedIn(k, 1000 * VHP);
+    give(VHP_TAG, CONTRACT, 40 * VHP);
+    // week 0: A staked, C the only free scorer
+    at(GENESIS + 100);
+    as(OPERATOR);
+    const q0 = k.post_question(new kpred.post_question_arguments(2, (GENESIS + 300) * MS, GENESIS + 301, GENESIS + 400, new Uint8Array(32).fill(7))).id;
+    const q1 = k.post_question(new kpred.post_question_arguments(2, (GENESIS + 300) * MS, GENESIS + 301, GENESIS + 400, new Uint8Array(32).fill(7))).id;
+    at(GENESIS + 200);
+    const who: Uint8Array[] = [A, C];
+    for (let p = 0; p < 2; p++) {
+      as(who[p]);
+      k.answer(new kpred.answer_arguments(who[p], q0, 1));
+      k.answer(new kpred.answer_arguments(who[p], q1, 1));
+    }
+    at(GENESIS + 500);
+    as(OPERATOR);
+    k.resolve_question(new kpred.resolve_question_arguments(q0, 1, new Uint8Array(32).fill(9)));
+    k.resolve_question(new kpred.resolve_question_arguments(q1, 1, new Uint8Array(32).fill(9)));
+    closeWeek(k, 0);
+    const before = k.get_week(new kpred.get_week_arguments(0)).week!;
+    expect(before.pot_free).toBe(3 * VHP);
+    for (let p = 0; p < 2; p++) k.settle(new kpred.settle_arguments(who[p], 0));
+    MockVM.commitTransaction();
+    finalizeQ(k, 0);
+    const wk = k.get_week(new kpred.get_week_arguments(0)).week!;
+    expect(wk.pot_free).toBe(2 * VHP);                     // 1st's part stays; 2nd's 1 VHP left the question game
+    expect(wk.pot_b).toBe(before.pot_b);                   // the stakers' basket did not grow
+    expect(wk.pot).toBe(before.pot - VHP);
+    expect(k.totals.get()!.rolled_over).toBe(VHP);         // back to the pool for next week, fee-free
+    as(C);
+    expect(k.claim(new kpred.claim_arguments(C, 0)).reward).toBe(2 * VHP);
+    as(A);
+    expect(k.claim(new kpred.claim_arguments(A, 0)).reward).toBe(wk.pot_a + wk.pot_b);
+    k.assertSolvent();
+    closeWeek(k, 1);
+    const w1 = k.get_week(new kpred.get_week_arguments(1)).week!;
+    expect(w1.gain).toBe(VHP);
+    expect(w1.fee_vhp).toBe(0);
+    k.assertSolvent();
+  });
+
+  it("other games: a wallet staked in that game at the start of the week is not a free player, even after withdrawing", () => {
+    const k = setup();
+    gK = k;
+    at(110);
+    as(OWNER);
+    k.propose_game(new kpred.propose_game_arguments(4, "Both", true, true));
+    at(110 + LOCK + 10);
+    as(OWNER);
+    k.apply_game(new kpred.apply_game_arguments(4));
+    at(200);
+    depositG(k, 4, B, 2 * VHP);
+    depositQ(k, C, 5 * VHP);                               // staked in the question game only: free in game 4
+    seedIn(k, 1000 * VHP);
+    closeWeek(k, 0);
+    at(weekEnd(0) + 300);
+    as(B);
+    k.withdraw_from(new kpred.withdraw_from_arguments(B, 4, 2 * VHP));   // all of it, mid-week
+    MockVM.commitTransaction();
+    give(VHP_TAG, CONTRACT, 50 * VHP);
+    closeWeek(k, 1);
+    as(OPERATOR);
+    gWho = B;
+    expect(() => { gK!.post_prize_winners(new kpred.post_prize_winners_arguments(4, 1, 1, [gWho])); }).toThrow();
+    k.post_prize_winners(new kpred.post_prize_winners_arguments(4, 1, 1, [C]));
+    MockVM.commitTransaction();
+    expect(k.get_game_player(new kpred.get_game_player_arguments(C, 4, 1)).entry!.prize_place).toBe(1);
   });
 });
 

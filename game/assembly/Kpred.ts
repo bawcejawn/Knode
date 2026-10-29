@@ -952,7 +952,17 @@ export class Kpred {
         if (wk.free_best_n == 0) back = wk.pot_free;
         else if (wk.free_best_n == 1 && wk.free_second_n == 0) back = wk.prize_v6 ? wk.pot_free - prizeFirst(wk.pot_free) : wk.pot_free - wk.pot_free / 2;
         wk.pot_free -= back;
-        wk.pot_b += back;
+        if (wk.prize_v6) {
+          // v6: an unfilled place goes back to the pool, fee-free, as in every other game (owner, 2026-10-28).
+          wk.pot -= back;
+          const tb = this.totals.get()!;
+          this.accrue(tb);
+          tb.pots_outstanding -= back;
+          tb.rolled_over += back;
+          this.totals.put(tb);
+        } else {
+          wk.pot_b += back;                           // v5 weeks keep the v5 rule: to the stakers' basket B
+        }
       }
       const tf = this.totals.get()!;
       tf.weeks_finalized += 1;
@@ -1573,6 +1583,7 @@ export class Kpred {
       if (this.gentries.get(k) != null) continue;
       const e = new kpred.gentry_object();
       e.stake = this.activeStakeG(p, x);
+      e.peak_stake = e.stake;                         // kept when a withdrawal later lowers e.stake
       e.voided = p.void_week_plus_one == x + 1;
       this.gentries.put(k, e);
     }
@@ -1785,6 +1796,7 @@ export class Kpred {
     const p = this.gplayers.get(this.gplayerKey(game, player))!;
     n.voided = p.void_week_plus_one == w + 1;
     n.stake = this.activeStakeG(p, w);
+    n.peak_stake = n.stake;
     return n;
   }
 
@@ -1825,8 +1837,9 @@ export class Kpred {
       System.require(isAddress(who), "address required");
       const e = this.resultEntry(args.game, args.week, who);
       System.require(e.points == 0 && e.prize_place == 0, "that player already has a result this week");
-      // A free player: below the minimum stake in this game that week.
-      System.require(e.voided || e.stake < min, "staked players can't win the free prize");
+      // A free player never held the minimum stake in this game that week (the question game's rule: someone staked at
+      // the start of the week who withdraws later is still a staked player that week, not a free one).
+      System.require(e.peak_stake < min, "staked players can't win the free prize");
       e.prize_place = args.place;
       this.gentries.put(this.gentryKey(args.game, args.week, who), e);
     }

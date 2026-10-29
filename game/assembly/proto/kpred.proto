@@ -578,6 +578,8 @@ message gentry_object {
   bool claimed = 4;
   uint64 reward = 5 [jstype = JS_STRING];
   uint32 prize_place = 6;                             // free prize: 1 = first, 2 = second, 0 = none
+  uint64 peak_stake = 7 [jstype = JS_STRING];         // highest stake that week (a withdrawal never lowers it): a free
+                                                      // player never held the minimum in this game that week
 }
 
 // A week of a game other than the question game.

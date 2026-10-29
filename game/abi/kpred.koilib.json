@@ -2211,6 +2211,13 @@
               "prize_place": {
                 "type": "uint32",
                 "id": 6
+              },
+              "peak_stake": {
+                "type": "uint64",
+                "id": 7,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },

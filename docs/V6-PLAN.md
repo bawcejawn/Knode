@@ -64,13 +64,19 @@ are closed and paid by the v5 code paths unchanged. The per-game stake accumulat
 
 ## Inside a game
 - Game 1: exactly the v5 machinery (questions, settle, finalize, claim). Its pot is `B_1 + its rollover + prize_1`.
-  Free prize 2 + 1 VHP : players tied for 1st share all 3; otherwise 1st gets 2 and players tied
-  for 2nd share 1. A share nobody can take goes to basket B (as in v5).
+  Free prize 2 + 1 VHP: players tied for 1st share all 3; otherwise 1st gets 2 and players tied
+  for 2nd share 1. A share nobody can take goes back to the pool, fee-free, as in every other game (owner,
+  2026-10-28; v5-rule weeks keep the v5 rule: to basket B).
 - Other staked games: the operator posts `(player, points)` batches for players with at least 1 point. The vault
   checks each player's own frozen or live stake (≥ 1 VHP, not voided) and adds them to that game's score buckets
   (points 1–255). Then the same paged finalize and the same basket math as game 1.
-- Other free games: the operator posts the 1st-place and 2nd-place wallets (ties allowed, up to 10 each). Each must have
-  less than the minimum stake in that game that week. A prize nobody wins returns to the pool, fee-free.
+- Other free games: the operator posts the 1st-place and 2nd-place wallets (ties allowed, up to 10 each). Each must
+  never have held the minimum stake in that game during that week (the question game's rule: a wallet staked at the
+  week's start that withdraws later is still a staked player that week). A prize nobody wins returns to the pool,
+  fee-free.
+- **One player rule in every game (owner, 2026-10-28):** a wallet is a staked player in a game only if it is staked
+  (at least the minimum) in that game. Anyone playing a game without a stake in it is a free player there, whatever
+  it holds or stakes elsewhere.
 - Games with prize seasons (Survivor): winners are posted only for a season's last week, which carries the whole
   season's funded prize. A game stopped mid-season returns its held prize to the pool, fee-free.
 - Only the ORDER of posted points matters (rank weights 1/√rank and the top-30% headcount), so each game maps its own
