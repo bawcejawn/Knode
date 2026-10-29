@@ -1,5 +1,11 @@
-import { execSync } from "node:child_process";
-for (const u of ["https://bawcejawn.github.io/Knode/site/install.html", "https://bawcejawn.github.io/Knode/", "https://www.knodegames.com/", "http://knodegames.com/", "https://knodegames.com/install.html", "https://knodegames.com/sitemap.xml", "https://knodegames.com/robots.txt"]) {
-  const o = execSync(`curl -s -o /dev/null -L -w "%{http_code} %{url_effective}" "${u}" || true`, { encoding: "utf8" });
-  console.log(`::warning::${u} -> ${o}`);
-}
+import { Provider, Contract } from "koilib";
+import fs from "node:fs";
+const p = new Provider(["https://api.koinos.io"]);
+const abi = JSON.parse(fs.readFileSync("game/abi/kpred.koilib.json", "utf8"));
+const g = new Contract({ id: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", abi, provider: p }).functions as any;
+try {
+  const s = (await g.get_state({})).result;
+  const c = s.config ?? {};
+  console.log(`::warning::reward_rule_week_plus_one=${c.reward_rule_week_plus_one} scorer_rule=${c.scorer_rule_week_plus_one} weeks_closed=${s.weeks_closed ?? s.time && ""} now=${s.time}`);
+  console.log(`::warning::config keys ${Object.keys(c).join(",").slice(0, 600)}`);
+} catch (e: any) { console.log("::warning::ERR " + e.message); }
