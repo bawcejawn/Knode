@@ -522,6 +522,7 @@ export class Kpred {
     r.mana = Tokens.mana(this.contractId);
     r.upgrade = this.upgrade.get()!;
     r.seed_withdrawal = this.seedWd.get()!;
+    r.safe_mode = safeMode();
     return r;
   }
 

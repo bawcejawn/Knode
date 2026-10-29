@@ -40,7 +40,7 @@ import crypto from "node:crypto";
 import { spawnSync, execSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { Signer, Provider, Contract } from "koilib";
-import { Chain, KoinosChain, SimChain, Call, showKoin, toSat, loadAbi } from "./chain.ts";
+import { Chain, KoinosChain, SimChain, Call, showKoin, toSat, loadAbi, pagePlayers } from "./chain.ts";
 import { tokenAbi } from "./token-abi.ts";
 import { readCsv, syncBlocks, fetchRange, readVhp, MAINNET_VHP, type Blk } from "../common.ts";
 import { chainOutcome, scoreQuestion, storedOutcome, paramsHashOf, vhpSubjects, type VhpReading } from "../resolver.ts";
@@ -329,12 +329,16 @@ export async function tick(ctx: Ctx) {
     try { await fn(); } catch (e) { ctx.problems.push(`${name} failed: ${(e as Error).message ?? e}`); log(`  ✖ ${name} failed: ${(e as Error).message ?? e}`); }
     save();
   };
+  // The withdrawals-only build refuses new questions, closes and finalizing (fix-check 2, V2-2): don't spend Mana on
+  // calls it always refuses. Recording results (resolving, settling, other games' results) goes on.
+  const safe = !!st0.raw.safe_mode;
+  if (safe) log("  The vault runs the WITHDRAWALS-ONLY build: no new questions, closes or finalizing; results are still recorded.");
   await step("resolving questions", () => resolvePass(ctx, bs));
-  await step("posting questions", () => postPass(ctx, bs));
-  await step("closing / finalizing", () => closeFinalizePass(ctx));
+  if (!safe) await step("posting questions", () => postPass(ctx, bs));
+  if (!safe) await step("closing / finalizing", () => closeFinalizePass(ctx));
   // v6: other games' results (posted once their week is final) and their weeks' finalization. Skipped on v5.
   await step("other games' results", () => vaultResultsPass(vaultCtx(ctx), (what, calls) => sendOp(ctx, what, calls)));
-  await step("finalizing other games", () => vaultFinalizePass(vaultCtx(ctx), (what, calls) => sendOp(ctx, what, calls)));
+  if (!safe) await step("finalizing other games", () => vaultFinalizePass(vaultCtx(ctx), (what, calls) => sendOp(ctx, what, calls)));
   // The alerts run before the settle pass (audit L-6): a week with a great many entries to settle must never delay an
   // alert about an announced upgrade or owner change. The settle pass also has its own time budget.
   await step("health check", () => healthPass(ctx, bs));
@@ -975,14 +979,7 @@ async function closeFinalizePass(ctx: Ctx) {
 // ───────────── settle everyone who answered ─────────────
 
 export async function allPlayers(chain: Chain, week: number) {
-  const rows: any[] = [];
-  let start = "";
-  for (;;) {
-    const page = (await chain.read("list_players", { start, limit: 50, week: String(week) })).rows ?? [];
-    rows.push(...page);
-    if (page.length < 50) return rows;
-    start = page[page.length - 1].address;
-  }
+  return pagePlayers(chain, week);   // stops with an error rather than loop (fix-check 2, V2-1)
 }
 
 const FREE_SETTLE_MAX = 20;
@@ -1305,9 +1302,14 @@ async function upgrade(sub: string | undefined, send: boolean, botPays = false, 
   const wasm = fs.readFileSync(WASM_FILE);
   // Fix-check VN-10: the normal upgrade never ships the withdrawals-only build, and the safe one only the pinned one.
   const sha = (b: Buffer) => crypto.createHash("sha256").update(b).digest("hex");
-  if (!safe && fs.existsSync(SAFE_WASM) && sha(fs.readFileSync(SAFE_WASM)) === sha(wasm))
+  // Fix-check 2, V2-3: compared with the pinned fingerprint too, and the build switch must be off for a normal upgrade.
+  if (!safe && ((fs.existsSync(SAFE_WASM) && sha(fs.readFileSync(SAFE_WASM)) === sha(wasm)) || (dep.safeWasmSha256 && sha(wasm) === dep.safeWasmSha256)))
     throw new Error(`${WASM} is the withdrawals-only build. In the game folder run: npm run build, then npm run check.`);
-  if (safe && dep.safeWasmSha256 && sha(wasm) !== dep.safeWasmSha256)
+  if (!safe && !/SAFE_MODE: bool = false;/.test(fs.readFileSync("game/assembly/Mode.ts", "utf8")))
+    throw new Error("game/assembly/Mode.ts is not the normal build's (SAFE_MODE must be false). Restore it (git checkout game/assembly/Mode.ts), then npm run build and npm run check.");
+  if (safe && !dep.safeWasmSha256)
+    throw new Error("game-data/deployment.json has no safeWasmSha256: the withdrawals-only build's fingerprint must be pinned there first.");
+  if (safe && sha(wasm) !== dep.safeWasmSha256)
     throw new Error(`${SAFE_WASM} has sha256 ${sha(wasm)}, not the pinned withdrawals-only build ${dep.safeWasmSha256} (game-data/deployment.json safeWasmSha256).`);
   if (wasm.indexOf(Buffer.from("TEST LEDGER", "utf16le")) !== -1) throw new Error("This is the TEST build (simulated token ledger). Run `npm run build` in the game folder.");
   const local = "0x" + sha256hex(wasm);

@@ -1,4 +1,8 @@
 import { MockVM } from "@koinos/mock-vm";
+import { createRequire } from "node:module";
+
+// The chain orders storage keys bytewise; the mock VM's database doesn't (RepoLens fix-check 2, V2-5).
+const { patchDatabase } = createRequire(import.meta.url)("../tools/mockvm-bytewise.cjs");
 
 // Runs the contract's tests inside a simulated Koinos chain (no network, no KOIN).
 export default {
@@ -7,6 +11,7 @@ export default {
   disclude: [/node_modules/i],
   async instantiate(memory, createImports, instantiate, binary) {
     const mockVM = new MockVM();
+    patchDatabase(mockVM.db, new URL(import.meta.url).pathname);
     const myImports = {
       wasi_snapshot_preview1: { fd_write: () => {}, proc_exit: () => {} },
       env: { ...mockVM.getImports() },

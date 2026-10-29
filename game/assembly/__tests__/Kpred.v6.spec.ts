@@ -3,7 +3,7 @@
  * prizes, the rest by stake over time), other games' results, free prizes, rollovers, corrections, moves, and a full
  * exit. MockVM; in-contract test ledger. Run: npm test
  */
-import { Base58, MockVM, authority, chain, System, protocol } from "@koinos/sdk-as";
+import { Base58, MockVM, authority, chain, System, protocol, Protobuf } from "@koinos/sdk-as";
 import { Kpred, testSetInitV6Rule, testSetFinalizePage, testSetSafeMode } from "../Kpred";
 import { Tokens } from "../Tokens";
 import { kpred } from "../proto/kpred";
@@ -1297,5 +1297,134 @@ describe("v6 fix-check fixes", () => {
     k.apply_game(new kpred.apply_game_arguments(G2));                  // same week: keeps running, without stakes
     postRows(k, G2, 1, [row(A, 5), row(B, 2)]);                       // week 1 still takes its results
     expect(gweek(k, G2, 1).eligible_players).toBe(2);
+  });
+});
+
+// ───────────── RepoLens fix-check 2 (V2-4, V2-5) ─────────────
+
+function hash32b(b: u8): Uint8Array { const h = new Uint8Array(32); h.fill(b); return h; }
+function postQ(k: Kpred, lock: u64, ws: u64, we: u64): u32 {
+  as(OPERATOR);
+  const id = k.post_question(new kpred.post_question_arguments(2, lock * MS, ws, we, hash32b(7))).id;
+  MockVM.commitTransaction();
+  return id;
+}
+function answerQ(k: Kpred, who: Uint8Array, id: u32, option: u32): void {
+  as(who); k.answer(new kpred.answer_arguments(who, id, option)); MockVM.commitTransaction();
+}
+function sponsorTx(k: Kpred, entry: u32, args: Uint8Array): bool {
+  const tx = new protocol.transaction();
+  tx.header = new protocol.transaction_header();
+  tx.header!.rc_limit = VHP / 2;
+  const op = new protocol.operation();
+  op.call_contract = new protocol.call_contract_operation(CONTRACT, entry, args);
+  tx.operations.push(op);
+  MockVM.setTransaction(tx);
+  System.resetCache();
+  return k.authorize(new authority.authorize_arguments(authority.authorization_type.transaction_application)).value;
+}
+
+describe("v6 fix-check 2", () => {
+  it("V2-4: in safe mode all 8 result-recording methods work, finished weeks pay, and the vault sponsors nothing", () => {
+    const k = setup();
+    gK = k;
+    addGames(k);
+    at(200);
+    depositQ(k, A, 10 * VHP);
+    depositQ(k, B, 10 * VHP);
+    seedIn(k, 100 * VHP);
+    depositG(k, G2, C, 5 * VHP);
+    give(MANA_TAG, CONTRACT, 100 * VHP);
+    at(1100);
+    const q0 = postQ(k, 1300, 1301, 1400), q1 = postQ(k, 1300, 1301, 1400);
+    at(1200);
+    answerQ(k, A, q0, 1); answerQ(k, A, q1, 1);
+    answerQ(k, B, q0, 0); answerQ(k, B, q1, 1);
+    at(1500);
+    as(OPERATOR);
+    k.resolve_question(new kpred.resolve_question_arguments(q0, 1, hash32b(9)));
+    k.resolve_question(new kpred.resolve_question_arguments(q1, 1, hash32b(9)));
+    MockVM.commitTransaction();
+    give(VHP_TAG, CONTRACT, 40 * VHP);
+    closeWeek(k, 0);
+    const q2 = postQ(k, 2300, 2301, 2400);         // week 1's question
+    at(2100);
+    answerQ(k, A, q2, 1);
+    // The normal build would sponsor B's settle (A's answer this week already settled A's week 0); the
+    // withdrawals-only build sponsors nothing.
+    as(OWNER);
+    k.set_sponsor_limit(new kpred.set_sponsor_limit_arguments(VHP, 0));
+    MockVM.commitTransaction();
+    as(B);
+    const settleArgs = Protobuf.encode(new kpred.settle_arguments(B, 0), kpred.settle_arguments.encode);
+    expect(sponsorTx(k, 0x6868e83d, settleArgs)).toBe(true);
+    testSetSafeMode(true);
+    expect(sponsorTx(k, 0x6868e83d, settleArgs)).toBe(false);
+    MockVM.setTransaction(new protocol.transaction());
+    // 1-2. settle
+    nobody();
+    k.settle(new kpred.settle_arguments(B, 0));
+    MockVM.commitTransaction();
+    // 3-4. resolve and correct a question
+    at(2500);
+    as(OPERATOR);
+    k.resolve_question(new kpred.resolve_question_arguments(q2, 0, hash32b(9)));
+    MockVM.commitTransaction();
+    as(OWNER);
+    k.correct_question(new kpred.correct_question_arguments(q2, 1, hash32b(8)));
+    MockVM.commitTransaction();
+    // Week 0 finalizes and week 1 closes only in the normal build.
+    nobody();
+    gWeek = 0;
+    expect(() => { gK!.finalize_week(new kpred.finalize_week_arguments(gWeek)); }).toThrow();
+    testSetSafeMode(false);
+    finalizeQ(k, 0);
+    closeWeek(k, 1);
+    testSetSafeMode(true);
+    // 5-8. other games: post points, prize winners, seal; correct; void
+    postRows(k, G2, 1, [row(C, 4)]);
+    as(OPERATOR);
+    k.post_prize_winners(new kpred.post_prize_winners_arguments(G3, 1, 1, [D]));
+    MockVM.commitTransaction();
+    seal(k, G3, 1);
+    as(OWNER);
+    k.correct_result(new kpred.correct_result_arguments(G2, 1, C, 6, false));
+    k.void_game_week(new kpred.void_game_week_arguments(G2, 1));
+    MockVM.commitTransaction();
+    expect(gweek(k, G2, 1).voided).toBe(true);
+    expect(gweek(k, G3, 1).sealed).toBe(true);
+    // A finished question week pays in safe mode.
+    as(A);
+    const won = k.claim(new kpred.claim_arguments(A, 0)).reward;
+    MockVM.commitTransaction();
+    expect(won > 0).toBe(true);
+    k.assertSolvent();
+    testSetSafeMode(false);
+  });
+
+  it("V2-5: keys with high bytes stay apart and page in byte order (score buckets up to 255, many players)", () => {
+    const k = setup();
+    playG2Week1(k);                                 // A, B, C, D staked in game 2
+    closeWeek(k, 1);
+    postRows(k, G2, 1, [row(A, 255), row(B, 128), row(C, 129), row(D, 200)]);
+    const gw = gweek(k, G2, 1);
+    expect(gw.max_points).toBe(255);
+    const bks = k.get_game(new kpred.get_game_arguments(G2, 1)).buckets;
+    expect(bks[255].players).toBe(1);
+    expect(bks[128].players).toBe(1);
+    expect(bks[129].players).toBe(1);
+    expect(bks[200].players).toBe(1);
+    expect(bks[130].players).toBe(0);
+    // The question game's player list pages through every depositor exactly once, in byte order.
+    const all: Uint8Array[] = [A, B, C, D, E, F];
+    for (let i = 0; i < all.length; i++) depositQ(k, all[i], VHP);
+    const list = k.list_players(new kpred.list_players_arguments(new Uint8Array(0), 50, 1)).rows;
+    expect(list.length).toBe(6);
+    for (let i = 1; i < list.length; i++) {
+      const a = list[i - 1].address!, b = list[i].address!;
+      let c = 0;
+      for (let j = 0; j < a.length && c == 0; j++) c = <i32>a[j] - <i32>b[j];
+      expect(c < 0).toBe(true);
+    }
   });
 });

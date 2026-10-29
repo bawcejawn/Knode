@@ -182,6 +182,7 @@ message get_state_result {
   timelock_object upgrade = 9;
   timelock_object seed_withdrawal = 10;
   uint64 time = 11 [jstype = JS_STRING];              // the current block's time (ms)
+  bool safe_mode = 12;                                // v6: this is the withdrawals-only build (fix-check 2, V2-2)
 }
 
 // @description A player's stake and their entry for a week.

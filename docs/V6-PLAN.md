@@ -105,8 +105,8 @@ prizes; the weeks after it close with no gain. Nothing is lost, but the gain lan
 close is overdue.
 
 ## Upgrades and the emergency build
-- The vault refuses to schedule the game's code from before the vault (v3 `917708a7…`, v5 `c17066ae…`): that code
-  can't see stakes in other games or the fee and rollovers owed in VHP. **Never roll back to v5.**
+- The vault refuses to schedule the game's code from before the vault (the first deploy `ff4207b4…`, v3 `917708a7…`, v5
+  `c17066ae…`): that code can't see stakes in other games or the fee and rollovers owed in VHP. **Never roll back.**
 - The emergency target is the **withdrawals-only build** (`npm run build:safe`): the same storage and code with
   `SAFE_MODE` on. It refuses deposits, moves, answers, new questions, closes and finalizing, and keeps open every way
   money leaves: `withdraw`, `withdraw_from`, claims of finished weeks, the seed withdrawal, the fee, and a later
@@ -114,9 +114,10 @@ close is overdue.
   posting, sealing, correcting and voiding other games' results): their deadlines keep running, so freezing them
   would change who gets paid (fix-check VN-1). Rewards that arrive while it runs stay in the vault, owed to nobody
   yet; the next normal build's first close splits them. Weeks closed but not finalized wait for the normal build.
+  It never sponsors a call (so the vault's Mana stays for the KOIN it may need to burn into VHP for withdrawals).
+  `get_state` reports `safe_mode`, and the hourly bot then skips the calls the build refuses (fix-check 2, V2-2).
 - **The seed takes the first loss** (fix-check VN-2): a seed withdrawal pays at most what the vault holds beyond
-  everything owed to others, in both builds. It never sponsors a
-  call (so the vault's Mana stays for the KOIN it may need to burn into VHP for withdrawals).
+  everything owed to others, in both builds.
 
 ## Compatibility
 - `get_player`, `get_state` and every v5 method keep their arguments and results. New fields are appended only.

@@ -21,7 +21,7 @@
  */
 import fs from "node:fs";
 import { Serializer, utils, Signer } from "koilib";
-import { SimChain, loadAbi, showKoin, type Chain } from "./chain.ts";
+import { SimChain, loadAbi, showKoin, pagePlayers, type Chain } from "./chain.ts";
 import { vaultResultsPass, vaultFinalizePass, vaultView, type VaultCtx } from "./vault.ts";
 
 export const V5_BUILD = "game/test-fixtures/kpred-v5-test-build.wasm";
@@ -56,16 +56,7 @@ export async function takeSnapshot(chain: Chain): Promise<Snapshot> {
   const weeks: Record<string, any> = {}, players: Record<string, any[]> = {}, questions: Record<string, any> = {};
   for (let w = 0; w <= lastWeek; w++) {
     weeks[w] = await chain.read("get_week", { week: String(w) });
-    const rows: any[] = [];
-    let start = "";
-    for (;;) {
-      const r = await chain.read("list_players", { limit: 50, week: String(w), ...(start ? { start } : {}) });
-      const page = r.rows ?? [];
-      rows.push(...page);
-      if (page.length < 50) break;
-      start = page[page.length - 1].address;
-    }
-    players[w] = rows;
+    players[w] = await pagePlayers(chain, w);   // stops with an error rather than loop (fix-check 2, V2-1)
   }
   for (let id = 0; id < num(t.next_question_id); id++) questions[id] = (await chain.read("get_question", { id })).question ?? null;
   return { takenAt: new Date().toISOString(), contract: chain.contractId, height: num(state.height), time: num(state.time), state, weeks, questions, players };

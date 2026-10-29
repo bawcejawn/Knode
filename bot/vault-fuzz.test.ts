@@ -106,7 +106,8 @@ async function run(seed: number) {
     assert.ok(big(wk.claimed) <= big(wk.pot), `seed ${seed}: question week ${w} paid ${wk.claimed} > pot ${wk.pot}`);
     for (const g of [2, 3, 13]) {
       const gw = (await read("get_game", { game: g, week: String(w) })).week ?? {};
-      const cap = (gw.rolled_over ? 0n : big(gw.bucket)) + big(gw.prize);
+      // The contract's own cap (fix-check VN-5): the bucket plus the prize finalizing actually gave out.
+      const cap = (gw.rolled_over ? 0n : big(gw.bucket)) + big(gw.prize_first) * BigInt(Number(gw.first_n ?? 0)) + big(gw.prize_second) * BigInt(Number(gw.second_n ?? 0));
       assert.ok(big(gw.claimed) <= cap, `seed ${seed}: game ${g} week ${w} paid ${gw.claimed} > ${cap}`);
     }
   }
@@ -193,8 +194,9 @@ async function run(seed: number) {
       for (const p of players) {
         const e = (await read("get_game_player", { player: p, game: g, week: String(w) })).entry;
         const place = Number(e?.prize_place ?? 0), pts = Number(e?.points ?? 0), cutoff = Number(gw.cutoff ?? 0);
+        // (A bucket winner in a week with a tiny bucket may be owed 0 after rounding: not counted as owed. V2-9.)
         const owed = place === 1 ? big(gw.prize_first) > 0n : place === 2 ? big(gw.prize_second) > 0n
-          : !gw.rolled_over && cutoff >= 1 && pts >= cutoff;
+          : !gw.rolled_over && cutoff >= 1 && pts >= cutoff && big(gw.bucket) >= 1_000_000n;
         if (owed) {
           winners++;
           const res = await sim.sendAs([{ method: "claim_game", args: { player: p, game: g, week: String(w) } }], [p]);
@@ -204,18 +206,21 @@ async function run(seed: number) {
           }
           assert.ok(res.ok, `seed ${seed}: claim_game ${p} game ${g} week ${w}: ${res.error}`);
         }
-        else assert.ok(!(await send(p, "claim_game", { player: p, game: g, week: String(w) })), `seed ${seed}: game ${g} week ${w} paid ${p}, who wasn't owed`);
+        else if (!(!gw.rolled_over && cutoff >= 1 && pts >= cutoff))   // not a winner at all: must be refused
+          assert.ok(!(await send(p, "claim_game", { player: p, game: g, week: String(w) })), `seed ${seed}: game ${g} week ${w} paid ${p}, who wasn't owed`);
+        else await send(p, "claim_game", { player: p, game: g, week: String(w) });   // a tiny bucket: may pay 0 (refused) or a little
       }
       const after = (await read("get_game", { game: g, week: String(w) })).week ?? {};
       const due = (after.rolled_over ? 0n : big(after.bucket)) + big(after.prize_first) * BigInt(Number(after.first_n ?? 0)) + big(after.prize_second) * BigInt(Number(after.second_n ?? 0));
       const left = due - big(after.claimed);
-      if (!(left >= 0n && left <= BigInt(winners + 2))) {
+      const tiny = !after.rolled_over && big(after.bucket) < 1_000_000n ? big(after.bucket) : 0n;   // V2-9: rounding to 0
+      if (!(left >= 0n && left <= BigInt(winners + 2) + tiny)) {
         const rows = [];
         for (const p of players) rows.push((await read("get_game_player", { player: p, game: g, week: String(w) })));
         const bk = ((await read("get_game", { game: g, week: String(w) })).buckets ?? []).map((b: any, i: number) => [i, b]).filter((x: any) => Object.keys(x[1]).length);
         console.log("DUMP", JSON.stringify(bk));
       }
-      assert.ok(left >= 0n && left <= BigInt(winners + 2), `seed ${seed}: game ${g} week ${w} left ${left} unpaid after every winner claimed`);
+      assert.ok(left >= 0n && left <= BigInt(winners + 2) + tiny, `seed ${seed}: game ${g} week ${w} left ${left} unpaid after every winner claimed`);
     }
     for (const p of players) await send(p, "claim", { player: p, week: String(w) });
     await checkPots(w);
@@ -223,7 +228,8 @@ async function run(seed: number) {
     // stop or restart game 13 now and then
     if (!stopped && r.chance(0.25)) {
       await must(addr(owner), "deactivate_game", { game: 13 });
-      await must(addr(owner), "propose_game", { game: 13, name: "Last Node", staked: true, free_prize: false, season_weeks: 1 });
+      // Restarts sometimes change the season length (allowed only after a gap: fix-check VN-8).
+      await must(addr(owner), "propose_game", { game: 13, name: "Last Node", staked: true, free_prize: r.chance(0.5), season_weeks: 1 + r.int(2) });
       stopped = true;
     } else if (stopped && r.chance(0.6)) {
       if (await send(addr(owner), "apply_game", { game: 13 })) stopped = false;

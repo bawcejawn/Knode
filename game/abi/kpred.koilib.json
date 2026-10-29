@@ -1255,6 +1255,10 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "safe_mode": {
+                "type": "bool",
+                "id": 12
               }
             }
           },

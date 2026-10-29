@@ -230,11 +230,13 @@ export async function vaultFinalizePass(ctx: VaultCtx, send: Send) {
   const view = await vaultView(ctx.chain);
   if (!view) return;
   const k = await clock(ctx.chain);
+  if (k.raw?.safe_mode) { log(ctx, "  withdrawals-only build: finalizing waits for the normal build"); return; }   // V2-2
   for (const g of view.games) {
     const id = num(g.id);
     if (id === Q_GAME) continue;
     // Every closed week of the game (a closed game week is one it earned, also before a restart: fix-check VN-3).
-    for (let w = Math.max(0, k.weeksClosed - 6); w < k.weeksClosed; w++) {
+    // Twelve weeks back, so a long bot outage is caught up (fix-check 2, V2-8); older weeks: game-finalize by hand.
+    for (let w = Math.max(0, k.weeksClosed - 12); w < k.weeksClosed; w++) {
       for (let page = 0; page < 20; page++) {
         const gw = (await ctx.chain.read("get_game", { game: id, week: String(w) })).week ?? {};
         if (!gw.closed || gw.finalized) break;
