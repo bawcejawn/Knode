@@ -193,10 +193,13 @@
 
     <section class="card" id="standings-box" hidden>
       <div class="head"><h2 id="standings-title">Season standings</h2><span class="note" id="standings-sub" style="margin:0"></span></div>
+      <div class="tabs2" role="group" aria-label="Board"><button type="button" id="board-free" aria-pressed="true">Free play</button><button type="button" id="board-staked" aria-pressed="false">Staked</button></div>
+      <p class="note" id="board-note" style="margin-top:0"></p>
       <div id="prizes" class="champs"></div>
+      <div id="stake-panel" hidden></div>
       <table class="hist"><thead><tr><th class="num">#</th><th>Wallet</th><th>Lives</th><th class="num">Score</th><th class="num hide-sm">Used</th></tr></thead><tbody id="standings-rows"></tbody></table>
       <p class="note" id="me-line"></p>
-      <p class="note">Ranked by how long you last, then lives left, then the total score of your picks. Prizes at the end: 4 VHP for 1st and 2 VHP for 2nd (ties share), for wallets that held at least 1 VHP (or a Knode stake) at every daily check, in a season with at least 3 players who made 2 or more picks, and not to a player knocked out by a missed pick. Final 12 hours after the season ends.</p>
+      <p class="note">Ranked by how long you last, then lives left, then the total score of your picks. Two boards: wallets staked in Survivor in the Knode Games vault (at least the vault's minimum, 1 VHP today) in either week of a season are on the Staked board; everyone else plays free. Free play prizes at the end: 4 VHP for 1st and 2 VHP for 2nd (ties share), for wallets that held at least 1 VHP (or a Knode stake) at every daily check, in a season with at least 3 such free players who made 2 or more valid picks, and not to a player knocked out by a missed pick. Staked players share Survivor's weekly bucket in the vault instead: each week the top 30% of staked players by the season standings. Final 12 hours after the season ends, once both of its weeks are over.</p>
     </section>
 
     <section class="card" id="field-box">

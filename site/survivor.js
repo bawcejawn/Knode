@@ -305,23 +305,32 @@
   }
 
   // ── the season standings ──
+  // Two boards (owner, 28 Oct): wallets staked in Survivor in the vault, and free players. Places are counted within
+  // each board; the free prize is the free board's.
+  let board = "free";
+  function setBoard(b) { board = b; $("board-free").setAttribute("aria-pressed", String(b === "free")); $("board-staked").setAttribute("aria-pressed", String(b === "staked")); renderStandings(); }
   function renderStandings() {
     if (!season || !season.result || !season.result.players.length) { $("standings-box").hidden = true; return; }
     $("standings-box").hidden = false;
     const r = season.result, who = me();
     const inNow = r.players.filter((x) => x.outN === null).length;
     $("standings-title").textContent = `Season ${season.season} standings`;
-    $("standings-sub").textContent = r.final ? `final after day ${r.endN}` : r.over ? `ended after day ${r.endN}; final 12 hours later` : `after day ${r.endN} of ${S.SEASON_DAYS} · ${inNow} of ${r.players.length} still in`;
+    $("standings-sub").textContent = r.final ? `final after day ${r.endN}` : r.over ? `ended after day ${r.endN}; final once both of its weeks are over and 12 hours have passed` : `after day ${r.endN} of ${S.SEASON_DAYS} · ${inNow} of ${r.players.length} still in`;
+    const rows = S.rank(r.players.filter((x) => !!x.staked === (board === "staked")));
+    $("board-note").textContent = board === "staked"
+      ? `${rows.length} staked player${rows.length === 1 ? "" : "s"}. Staked players share Survivor's weekly bucket in the vault (the top 30% each week, by these standings); they can't win the free prize.`
+      : `${rows.length} free player${rows.length === 1 ? "" : "s"}. Free players play for the season prize: 4 VHP for 1st and 2 VHP for 2nd.`;
     const medal = ["🥇", "🥈"];
-    $("prizes").replaceChildren(...(r.final ? r.prizes : []).map((p) => el("div", { class: "champ" }, el("b", { text: `${medal[p.place - 1] || "🥈"} ${fmt(p.vhp, p.vhp % 1 ? 2 : 0)} VHP` }), el("span", { class: "mono", text: nameOf(p.player) }))));
-    $("standings-rows").replaceChildren(...r.players.slice(0, 100).map((x) => el("tr", { class: `${x.outN === null ? "" : "gone"} ${x.a === who ? "me" : ""}` },
+    $("prizes").replaceChildren(...(r.final && board === "free" ? r.prizes : []).map((p) => el("div", { class: "champ" }, el("b", { text: `${medal[p.place - 1] || "🥈"} ${fmt(p.vhp, p.vhp % 1 ? 2 : 0)} VHP` }), el("span", { class: "mono", text: nameOf(p.player) }))));
+    $("standings-rows").replaceChildren(...rows.slice(0, 100).map((x) => el("tr", { class: `${x.outN === null ? "" : "gone"} ${x.a === who ? "me" : ""}` },
       el("td", { class: "num", text: String(x.place) }),
-      el("td", { class: "mono" }, addrLink(x.a), x.eligible ? null : el("span", { class: "ago", title: "Didn't hold 1 VHP at every daily check: can't win a prize", text: " · no prize" })),
+      el("td", { class: "mono" }, addrLink(x.a), x.eligible || x.staked ? null : el("span", { class: "ago", title: "Didn't hold 1 VHP at every daily check: can't win a prize", text: " · no prize" })),
       el("td", { class: "lives", "aria-label": `${x.lives} lives`, text: x.outN === null ? hearts(x.lives) : `out day ${x.outN}` }),
       el("td", { class: "num", text: fmt(x.total, 1) }),
       el("td", { class: "num hide-sm", text: String(x.used.length) }))));
     const mine = mySeason();
-    $("me-line").textContent = !who ? "" : !mine ? "You're not in this season." : `You: #${mine.place}, ${mine.outN === null ? `${mine.lives} ${mine.lives === 1 ? "life" : "lives"} left` : `out on day ${mine.outN}`}, ${mine.used.length} producer${mine.used.length === 1 ? "" : "s"} used.${mine.eligible ? "" : " You didn't hold 1 VHP at every daily check, so you can't win a prize this season."}`;
+    const myBoard = mine ? S.rank(r.players.filter((x) => !!x.staked === !!mine.staked)).find((x) => x.a === mine.a) : null;
+    $("me-line").textContent = !who ? "" : !mine ? "You're not in this season." : `You: #${myBoard.place} on the ${mine.staked ? "Staked" : "Free play"} board, ${mine.outN === null ? `${mine.lives} ${mine.lives === 1 ? "life" : "lives"} left` : `out on day ${mine.outN}`}, ${mine.used.length} producer${mine.used.length === 1 ? "" : "s"} used.${mine.staked ? " You're staked in Survivor this season: you share its weekly bucket, not the free prize." : mine.eligible ? "" : " You didn't hold 1 VHP at every daily check, so you can't win a prize this season."}`;
   }
 
   // ── tomorrow's handicaps ──
@@ -345,6 +354,8 @@
     renderToday();
   }
   if (W && W.subscribe) W.subscribe(() => { loadMine(); });
+  $("board-free").addEventListener("click", () => setBoard("free"));
+  $("board-staked").addEventListener("click", () => setBoard("staked"));
   (async () => {
     const picksReady = setupPicks().catch(() => {});
     await loadData();

@@ -266,6 +266,13 @@ Line numbers above are from before these changes; the steps are the same.
   (SV-A16).
 - **Season files (v2):** each wallet and producer is written once, in `who` and `prods`; the days refer to them by
   position. A wallet that missed a VHP check is listed once, not every day. A file near 2 MB is reported (SV-A5).
+- **Stakes (owner, 28 Oct: every game takes stakes):** `readStaked` asks the vault (`bot/games/vault-v6.koilib.json`,
+  the v6 ABI) who is staked in game 3 in a vault week: `entry.peak_stake` (or `active_stake`) at least the week's
+  minimum (`min_stake`, or `min_stake_next` from its week), the same test the vault uses for a free-prize winner. Before
+  v6 is live it returns null (nobody staked). Each season keeps `stakes`: one reading per vault week, `final` once read
+  after the week ended. Players get `staked: true` if staked in either week; `prizes` skips them; `weekRows` (in
+  `survivor-math.js`) gives the staked players' points for each week. The 1 VHP rule also counts VHP staked in any vault
+  game (`otherStakes`).
 - **Vault files (Vault v6 hand-off, 28 Oct):** `vaultFiles` writes `vault/W<week>.json` for each season: the season's
   first vault week (once it is over) with no winners, and its last week (once the season is final) with the 1st- and
   2nd-place wallets from the season's prizes. A place with more than 10 tied wallets is left empty. The publish check

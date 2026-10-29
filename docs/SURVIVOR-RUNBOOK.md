@@ -35,7 +35,11 @@ you.
 4. The vault (Build 1, v6) pays the season prizes: 4 VHP and 2 VHP per two-week season.
    - The recorder publishes one results file per vault week at `games-data:survivor/vault/W<week>.json` (vault week 0
      began Monday 19 Oct 2026). A season's first week has no winners; its last week lists the season's 1st and 2nd.
-   - In the vault, game 3 is a free-prize game with `season_weeks` 2, and its `from_week` must be Season 1's first
+   - Each file also lists `rows`: Survivor's staked players with their points for that week (the vault pays its
+     stake bucket from them). The recorder reads who is staked with the vault's `get_game_player` (game 3, peak stake
+     at least the minimum) once a day while a week runs, and once more after it ends; both nodes must agree. A season
+     is final only once both of its weeks are over, so an early-ending season's prizes wait for its second week.
+   - In the vault, game 3 is a staked and free-prize game (`game-add 3 "Survivor" --staked --free`) with `season_weeks` 2, and its `from_week` must be Season 1's first
      week: `floor((FIRST_DAY − 20745) ÷ 7)`. For Monday 16 Nov 2026 that is week 4. If it is off by one week, the vault
      looks for winners in the wrong week.
    - `game-data/deployment.json` → `vaultGames`: `"3": { "name": "Survivor", "results": "games-data:survivor/vault" }`.

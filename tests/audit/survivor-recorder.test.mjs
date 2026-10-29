@@ -10,7 +10,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 const APP = process.env.APP || ".";
-const { run, encodeSeason, readRanked, vaultFiles, vaultWeekOf } = await import(path.resolve(APP, "bot/games/survivor.ts"));
+const { run, encodeSeason, readRanked, readStaked, otherStakes, vaultFiles, vaultWeekOf } = await import(path.resolve(APP, "bot/games/survivor.ts"));
 const S = globalThis.KSurvivor;
 const A = (c) => "1" + c.repeat(33);
 const PRODS = ["A", "B", "C", "D", "E"].map(A);
@@ -60,7 +60,7 @@ async function runs(times, opts = {}, prev = "") {
   let out, r;
   for (const t of times) {
     out = tmp();
-    r = await quiet(() => run({ p: "main", check: "check", prev, out, firstDay: FIRST, picksContract: A("P"), blocksOf: blocksOf(), timeOf, picksOf: picksOf(), rankedOf, gameOf, head: headAt(t), ...opts }));
+    r = await quiet(() => run({ p: "main", check: "check", prev, out, firstDay: FIRST, picksContract: A("P"), blocksOf: blocksOf(), timeOf, picksOf: picksOf(), rankedOf, gameOf, stakedOf: async () => null, head: headAt(t), ...opts }));
     prev = out;
   }
   return { out, r, read: (f) => JSON.parse(fs.readFileSync(path.join(out, f), "utf8")) };
@@ -118,14 +118,14 @@ test("a season: day-1 pickers only, late picks ignored, lives, the end with 2 le
   assert.equal(sf.result.over, true); assert.equal(sf.result.endN, 3);
   assert.equal(sf.result.final, false, "inside the 12-hour correction window");
   assert.deepEqual(sf.result.prizes, []);
-  // 12 hours after the last day: final, and the prizes go to the eligible.
-  const fin = await runs([S.dayStart(FIRST + 3) + 12 * 3600000 + 60000], {}, r.out);
+  // Final once the correction window and both vault weeks are over (the free prize needs both weeks' stake readings).
+  const fin = await runs([S.dayStart(FIRST + 14) + 3600000], {}, r.out);
   const sf2 = fin.read("S001.json");
   assert.equal(sf2.result.final, true);
   assert.deepEqual(sf2.result.prizes.map((p) => [p.player, p.vhp]), [[ALICE, 4], [CAROL, 2]], "Eve can't win: no 1 VHP; Carol lasted longer than Bob");
   assert.deepEqual(fin.read("index.json").seasons, [1]);
   // A final season is never played again.
-  const later = await runs([S.dayStart(FIRST + 5) + 3600000], { picksOf: async () => { throw new Error("must not read picks for a final season"); } }, fin.out);
+  const later = await runs([S.dayStart(FIRST + 16) + 3600000], { picksOf: async () => { throw new Error("must not read picks for a final season"); } }, fin.out);
   assert.deepEqual(later.read("S001.json").result, sf2.result);
 });
 
@@ -157,7 +157,7 @@ test("the files pass the publish job's shape check", async (t) => {
   const start = S.dayStart(FIRST - 1) + 3600000;
   const times = [start, start + 60000, start + 120000, start + 180000];
   for (let n = 1; n <= 3; n++) times.push(S.dayStart(FIRST + n) + 3600000);
-  times.push(S.dayStart(FIRST + 3) + 12 * 3600000 + 60000);
+  times.push(S.dayStart(FIRST + 14) + 3600000);
   const r = await runs(times);
   const outp = execFileSync("python3", ["-", r.out], { input: py }).toString();
   assert.match(outp, /survivor files ok/);
@@ -195,7 +195,7 @@ test("audit SV-4: after an outage longer than a week, the season still gets the 
   const r = await runs(before);
   assert.equal(r.read("S001.json").days.length, 1);
   // 10 days with no runs, then hourly runs until it catches up.
-  const back = S.dayStart(FIRST + 11) + 3600000, after = Array.from({ length: 10 }, (_, i) => back + i * 3600000);
+  const back = S.dayStart(FIRST + 15) + 3600000, after = Array.from({ length: 10 }, (_, i) => back + i * 3600000);
   const r2 = await runs(after, {}, r.out);
   const sf = r2.read("S001.json");
   assert.deepEqual(sf.days.map((x) => x.n), [1, 2, 3], "days 2 and 3 recorded after the outage; it ended on day 3");
@@ -244,7 +244,9 @@ test("audit SV-2 and SV-3: a 1,000-player season fits under 2 MB, and a 1,000-wa
   const field = prods.map((a) => ({ a, k: 40000, h: 1 })), days = [];
   for (let n = 1; n <= 14; n++) days.push({ n, day: FIRST + n - 1, field, counts: prods.map((a) => [a, 1694]), picks: players.map((p, i) => [p, prods[(i + n) % 17]]), noVhp: [] });
   const played = S.playSeason(days);
-  const sf = { v: 1, season: 1, startDay: FIRST, days, result: { over: played.over, endN: played.endN, final: true, players: played.players, prizes: S.prizes(played.players) } };
+  const players1 = played.players.map((x) => ({ ...x, staked: false }));
+  const stakes = [0, 1].map((k) => ({ week: vaultWeekOf(FIRST) + k, final: true, day: FIRST + 7 * (k + 1), staked: [] }));
+  const sf = { v: 1, season: 1, startDay: FIRST, days, stakes, result: { over: played.over, endN: played.endN, final: true, players: players1, prizes: S.prizes(players1) } };
   assert.equal(new Set(players).size, 1000);
   assert.equal(sf.result.prizes.length, 1000, "a 1,000-way tie for 1st");
   assert.ok(sf.result.prizes.reduce((s, p) => s + Math.round(p.vhp * 1e8), 0) <= 6e8, "at most 6 VHP, counted in 1e-8 units");
@@ -260,7 +262,7 @@ const seasonTimes = () => {
   const start = S.dayStart(FIRST - 1) + 3600000;
   const t = [start, start + 60000, start + 120000, start + 180000];
   for (let n = 1; n <= 3; n++) t.push(S.dayStart(FIRST + n) + 3600000);
-  t.push(S.dayStart(FIRST + 3) + 12 * 3600000 + 60000);
+  t.push(S.dayStart(FIRST + 14) + 3600000);
   return t;
 };
 function publishCheck() {
@@ -316,7 +318,9 @@ test("Repo Lense SV-A4 / SV-A13: the publish check tests meaning, not only shape
   assert.equal(ok(d2), false, "updated must be an ISO time");
   const d3 = tmp();
   fs.cpSync(r.out, d3, { recursive: true });
-  fs.writeFileSync(path.join(d3, "fields.json"), fs.readFileSync(path.join(r.out, "fields.json"), "utf8").replace(/"h":[0-9.]+/, `"h":NaN`));
+  const withH = fs.readFileSync(path.join(r.out, "S001.json"), "utf8");
+  assert.match(withH, /"h":[0-9.]+/);
+  fs.writeFileSync(path.join(d3, "S001.json"), withH.replace(/"h":[0-9.]+/, `"h":NaN`));
   assert.equal(ok(d3), false, "NaN is refused");
 });
 
@@ -324,7 +328,7 @@ test("Repo Lense SV-A4: a forged result in the last run's files is replaced by t
   const r = await runs(seasonTimes());
   const real = r.read("S001.json").result;
   const forged = copyOut(r.out, (j) => { j.result.prizes = [{ player: EVE, place: 1, vhp: 4 }, { player: BOB, place: 2, vhp: 2 }]; });
-  const again = await runs([S.dayStart(FIRST + 4) + 3600000], {}, forged);
+  const again = await runs([S.dayStart(FIRST + 16) + 3600000], {}, forged);
   assert.deepEqual(again.read("S001.json").result.prizes, real.prizes);
 });
 
@@ -395,68 +399,127 @@ test("Repo Lense SV-A16: one node only is reported, and its days are checked aga
   assert.ok(r4.r.problems.some((p) => /second node disagrees/.test(p)), JSON.stringify(r4.r.problems));
 });
 
-// ── Vault v6 hand-off (28 Oct): one results file per vault week ──
-test("vault files: the season's first week carries no winners, its last week the season's 1st and 2nd", async (t) => {
+// ── Vault v6 hand-offs (28 Oct): one results file per vault week; Survivor takes stakes too ──
+const W1 = () => vaultWeekOf(FIRST);
+const vfile = (out, w) => { const f = path.join(out, "vault", `W${w}.json`); return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : null; };
+
+test("vault files, nobody staked (vault not v6 yet): no rows; the season's winners only in its last week, once both weeks are over", async (t) => {
   assert.equal(vaultWeekOf(S.dayIndex(Date.parse("2026-10-19T00:00:00Z"))), 0, "week 0 began Monday 19 Oct 2026");
-  assert.equal(vaultWeekOf(FIRST), 4); assert.equal(vaultWeekOf(FIRST + 13), 5, "a season is two vault weeks");
-  const r = await runs(seasonTimes());
-  const v = (w) => JSON.parse(fs.readFileSync(path.join(r.out, "vault", `W${w}.json`), "utf8"));
-  assert.ok(!fs.existsSync(path.join(r.out, "vault", "W4.json")), "the first week isn't over yet");
-  assert.deepEqual(v(5), { game: 3, week: 5, final: true, rows: [], first: [ALICE], second: [CAROL] }, "the season ended early and is final: its winners go in its last week");
-  const later = await runs([S.dayStart(FIRST + 7) + 3600000], {}, r.out);
-  const v2 = (w) => JSON.parse(fs.readFileSync(path.join(later.out, "vault", `W${w}.json`), "utf8"));
-  assert.deepEqual(v2(4), { game: 3, week: 4, final: true, rows: [], first: [], second: [] });
-  assert.deepEqual(v2(5).first, [ALICE]);
-  // Not final yet: no last-week file.
-  const early = await runs(seasonTimes().slice(0, -1));
-  assert.ok(!fs.existsSync(path.join(early.out, "vault", "W5.json")));
-  // The publish check passes the recorder's own vault files, and refuses changed ones.
+  assert.equal(W1(), 4); assert.equal(vaultWeekOf(FIRST + 13), 5, "a season is two vault weeks");
+  const r = await runs(seasonTimes().slice(0, -1));
+  assert.equal(vfile(r.out, 4), null, "week 1 isn't over yet");
+  const mid = await runs([S.dayStart(FIRST + 7) + 3600000], {}, r.out);
+  assert.deepEqual(vfile(mid.out, 4), { game: 3, week: 4, final: true, rows: [], first: [], second: [] });
+  assert.equal(vfile(mid.out, 5), null, "the season ended on day 3 but week 2's stakes aren't known yet");
+  assert.equal(mid.read("S001.json").result.final, false);
+  const end = await runs([S.dayStart(FIRST + 14) + 3600000], {}, mid.out);
+  assert.deepEqual(vfile(end.out, 5), { game: 3, week: 5, final: true, rows: [], first: [ALICE], second: [CAROL] });
   try { execFileSync("python3", ["--version"]); } catch { t.skip("python3 not installed"); return; }
-  const ok = publishCheck();
-  assert.equal(ok(later.out), true);
-  const vaultEdit = (from, w, edit) => {
-    const dir = tmp();
-    fs.cpSync(from, dir, { recursive: true });
-    const f = path.join(dir, "vault", `W${w}.json`), j = JSON.parse(fs.readFileSync(f, "utf8"));
-    edit(j); fs.writeFileSync(f, JSON.stringify(j));
-    return dir;
-  };
-  for (const [why, w, edit] of [
-    ["a different winner", 5, (j) => { j.first = [EVE]; }],
-    ["winners in the season's first week", 4, (j) => { j.first = [ALICE]; }],
-    ["another game", 5, (j) => { j.game = 2; }],
-    ["not final", 5, (j) => { j.final = false; }],
-    ["rows in a free game", 5, (j) => { j.rows = [{ player: ALICE, points: 1 }]; }],
-    ["1st and 2nd swapped", 5, (j) => { [j.first, j.second] = [j.second, j.first]; }],
-  ]) assert.equal(ok(vaultEdit(later.out, w, edit)), false, why);
-  // A vault file with no season file next to it is removed and the run fails (exit 3), the rest still publishes.
-  const orphan = tmp();
-  fs.cpSync(later.out, orphan, { recursive: true });
-  fs.writeFileSync(path.join(orphan, "vault", "W9.json"), JSON.stringify({ game: 3, week: 9, final: true, rows: [], first: [EVE], second: [] }));
-  const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
-  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
-  const indent = /^(\s*)/.exec(m[1])[1].length, py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
-  let code = 0;
-  try { execFileSync("python3", ["-I", "-", orphan], { input: py, stdio: "pipe" }); } catch (e) { code = e.status; }
-  assert.equal(code, 3);
-  assert.ok(!fs.existsSync(path.join(orphan, "vault", "W9.json")) && fs.existsSync(path.join(orphan, "vault", "W5.json")));
+  assert.equal(publishCheck()(end.out), true);
 });
 
-test("vault files: ties, more than 10 tied, nobody qualifying", () => {
-  const M = S, w = vaultWeekOf(FIRST);
-  const W = (k) => A(String.fromCharCode(65 + k)).slice(0, 34);
-  const sf = (prizes) => ({ startDay: FIRST, result: { final: true, prizes } });
-  const now = S.dayStart(FIRST + 15);
-  const f = (prizes, problems = []) => vaultFiles(sf(prizes), now, M, problems)[w + 1];
-  assert.deepEqual([f([{ player: W(1), place: 1, vhp: 3 }, { player: W(0), place: 1, vhp: 3 }]).first, f([]).second], [[W(0), W(1)], []], "tied for 1st: both listed, sorted");
-  assert.deepEqual(f([]), { game: 3, week: w + 1, final: true, rows: [], first: [], second: [] }, "nobody qualifies: empty places");
-  const eleven = Array.from({ length: 11 }, (_, k) => ({ player: W(k), place: 1, vhp: 0.54545454 }));
+test("two boards: a staked player plays for the stake bucket (rows each week) and can't win the free prize", async (t) => {
+  // Carol is staked in Survivor in week 1 only; nobody else is staked.
+  const stakedOf = async (node, who, w) => new Set(w === W1() ? who.filter((a) => a === CAROL) : []);
+  const end = await runs([...seasonTimes().slice(0, -1), S.dayStart(FIRST + 7) + 3600000, S.dayStart(FIRST + 14) + 3600000], { stakedOf });
+  const sf = end.read("S001.json"), by = Object.fromEntries(sf.result.players.map((x) => [x.a, x]));
+  assert.equal(by[CAROL].staked, true, "staked in either week = staked this season");
+  assert.equal(by[ALICE].staked, false);
+  assert.deepEqual(vfile(end.out, 4).rows, [{ player: CAROL, points: 255 }], "week 1's rows: the staked players, best first");
+  assert.deepEqual(vfile(end.out, 5).rows, [], "week 2: the season was already over, nobody still in");
+  // Free players who can win: Alice and Bob (Eve held no VHP, Carol is staked): fewer than 3, so no free prize.
+  assert.deepEqual(sf.result.prizes, []);
+  assert.deepEqual([vfile(end.out, 5).first, vfile(end.out, 5).second], [[], []]);
+  try { execFileSync("python3", ["--version"]); } catch { t.skip("python3 not installed"); return; }
+  const ok = publishCheck();
+  assert.equal(ok(end.out), true);
+  const dir = tmp();
+  fs.cpSync(end.out, dir, { recursive: true });
+  const f = path.join(dir, "vault", "W4.json"), j = JSON.parse(fs.readFileSync(f, "utf8"));
+  j.rows.push({ player: ALICE, points: 200 });
+  fs.writeFileSync(f, JSON.stringify(j));
+  assert.equal(ok(dir), false, "a row for a wallet that wasn't staked is refused");
+  const d2 = copyOut(end.out, (j) => { j.stakes[0].staked = []; });
+  assert.equal(ok(d2), false, "the staked flags must match the stake readings");
+});
+
+test("stake readings: once a day while the week runs, final after it ends, both nodes must agree", async () => {
+  let reads = 0;
+  const stakedOf = async (node, who, w) => { reads++; return new Set(); };
+  const r = await runs([S.dayStart(FIRST) + 3600000, S.dayStart(FIRST) + 7200000], { stakedOf });
+  assert.equal(reads, 0, "no players yet on day 1 (day 1 isn't recorded until it's over)");
+  const r2 = await runs([S.dayStart(FIRST + 1) + 3600000, S.dayStart(FIRST + 1) + 7200000], { stakedOf }, r.out);
+  assert.equal(reads, 2, "one reading on each node, once that day");
+  assert.deepEqual(r2.read("S001.json").stakes.map((x) => [x.week, x.final]), [[W1(), false]]);
+  const bad = await runs([S.dayStart(FIRST + 7) + 3600000], { stakedOf: async (node, who) => new Set(node === "check" ? [ALICE] : []) }, r2.out);
+  assert.ok(bad.r.problems.some((p) => /disagree about who is staked/.test(p)));
+  assert.equal(bad.read("S001.json").stakes.find((x) => x.week === W1()).final, false, "not final while the nodes disagree");
+  const fail = await runs([S.dayStart(FIRST + 7) + 3600000], { stakedOf: async () => { throw new Error("rate limited"); } }, r2.out);
+  assert.ok(fail.r.problems.some((p) => /stakes in vault week 4: rate limited/.test(p)));
+});
+
+test("readStaked: staked in THIS game at the vault's minimum; a mid-week withdrawal stays staked; another game's stake doesn't count", async () => {
+  const VHP = 100000000n;
+  const state = async () => ({ config: { v6_rule_week_plus_one: "3", min_stake: String(VHP), min_stake_next: String(2n * VHP), min_stake_next_week: "9" } });
+  const table = {
+    [ALICE]: { 3: { active_stake: String(VHP) } },                                                      // staked here
+    [BOB]: { 4: { active_stake: String(5n * VHP) } },                                                    // staked in another game only
+    [CAROL]: { 3: { active_stake: "0", entry: { stake: "0", voided: true, peak_stake: String(VHP) } } }, // withdrew mid-week
+    [DAVE]: { 3: { active_stake: String(VHP - 1n) } },                                                   // under the minimum
+  };
+  const gamePlayer = async (node, a, g) => (table[a] && table[a][g]) || { active_stake: "0" };
+  const games = async () => [{ id: 1 }, { id: 3 }, { id: 4 }];
+  const all = [ALICE, BOB, CAROL, DAVE, EVE];
+  assert.deepEqual([...(await readStaked("n", all, 5, A("G"), { state, gamePlayer, games }))].sort(), [ALICE, CAROL].sort());
+  assert.deepEqual([...(await readStaked("n", all, 9, A("G"), { state, gamePlayer, games }))], [], "from week 9 the minimum is 2 VHP");
+  assert.equal(await readStaked("n", all, 5, A("G"), { state: async () => ({ config: { v6_rule_week_plus_one: "0", min_stake: String(VHP) } }), gamePlayer, games }), null, "vault not v6: nobody is staked");
+  await assert.rejects(readStaked("n", all, 5, A("G"), { state, games, gamePlayer: async () => { throw new Error("node down"); } }), /node down/);
+});
+
+test("vaultFiles and weekRows: ties keep their points, more than 10 tied for a prize, week 2 lists only who was still in", () => {
+  const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const Wd = (i) => { let x = "", k = i; do { x = B58[k % 58] + x; k = Math.floor(k / 58); } while (k); return "1" + ("R".repeat(33) + x).slice(-33); };
+  const prods = Array.from({ length: 17 }, (_, i) => Wd(100 + i));
+  const field = prods.map((a) => ({ a, k: 40000, h: 1 }));
+  // 14 days, everybody safe every day (all producers tie), 12 players: everybody ties all season.
+  const players = Array.from({ length: 12 }, (_, i) => Wd(i));
+  const days = Array.from({ length: 14 }, (_, i) => ({ n: i + 1, day: FIRST + i, field, counts: prods.map((a) => [a, 100]), picks: players.map((p, k) => [p, prods[(k + i) % 17]]), noVhp: [] }));
+  const rows = S.weekRows(days, 0, new Set(players.slice(0, 5)));
+  assert.deepEqual(rows.map((x) => x.points), [255, 255, 255, 255, 255], "a tie keeps the same points");
+  assert.equal(S.weekRows(days.slice(0, 6), 0, new Set(players)), null, "week 1's days aren't all recorded yet");
+  const played = S.playSeason(days);
+  const result = (staked) => { const ps = played.players.map((x) => ({ ...x, staked: staked.has(x.a) })); return { final: true, prizes: S.prizes(ps), players: ps }; };
+  const stakes = (s1, s2) => [{ week: W1(), final: true, day: FIRST + 7, staked: [...s1] }, { week: W1() + 1, final: true, day: FIRST + 14, staked: [...s2] }];
   const pr = [];
-  assert.deepEqual([f(eleven, pr).first, f(eleven).second], [[], []], "11 tied for 1st: the vault takes at most 10, so nothing is posted");
-  assert.ok(pr.some((p) => /11 wallets tied for 1st/.test(p)));
-  const two = [{ player: W(20), place: 1, vhp: 4 }, ...Array.from({ length: 11 }, (_, k) => ({ player: W(k), place: 2, vhp: 0.18181818 }))];
-  assert.deepEqual([f(two).first, f(two).second], [[W(20)], []], "11 tied for 2nd: 1st is posted, 2nd's prize returns to the pool");
-  const ten = Array.from({ length: 10 }, (_, k) => ({ player: W(k), place: 1, vhp: 0.6 }));
-  assert.equal(f(ten).first.length, 10, "10 tied is fine");
-  assert.equal(vaultFiles({ startDay: FIRST, result: { final: false, prizes: [] } }, now, M)[w + 1], undefined, "not final: no last-week file");
+  const f12 = vaultFiles({ startDay: FIRST, days, result: result(new Set()), stakes: stakes([], []) }, S, pr);
+  assert.deepEqual([f12[W1() + 1].first, f12[W1() + 1].second, f12[W1() + 1].rows], [[], [], []], "12 tied for 1st: the vault takes at most 10, nothing posted, nobody staked");
+  assert.ok(pr.some((p) => /12 wallets tied for 1st/.test(p)));
+  const st = new Set(players.slice(0, 3));
+  const f9 = vaultFiles({ startDay: FIRST, days, result: result(st), stakes: stakes(st, st) }, S);
+  assert.equal(f9[W1() + 1].first.length, 9, "9 free players tied for 1st: all listed");
+  assert.ok(f9[W1() + 1].first.every((a) => !st.has(a)), "no staked player in the free prize");
+  assert.deepEqual(f9[W1()].rows.map((x) => x.player).sort(), [...st].sort());
+  // Player 0 picks a producer outside the field on days 1 and 2: out on day 2, so not in week 2's rows.
+  const outEarly = days.map((d) => (d.n <= 2 ? { ...d, picks: d.picks.map(([p, q]) => [p, p === players[0] ? Wd(999) : q]) } : d));
+  const w2 = S.weekRows(outEarly, 1, new Set(players));
+  assert.equal(w2.length, 11);
+  assert.ok(!w2.some((x) => x.player === players[0]), "week 2 lists only players still in when it began");
+  assert.ok(S.weekRows(outEarly, 0, new Set(players)).some((x) => x.player === players[0] && x.points < 255), "week 1 lists them, ranked lower");
+  // Points never go below 1, and order is kept down to 255 places.
+  const many = Array.from({ length: 300 }, (_, i) => ({ a: Wd(1000 + i), lives: 2, outN: null, total: 300 - i, used: [], log: "", eligible: true }));
+  const ranked = S.rank(many).map((x) => Math.max(1, 256 - x.place));
+  assert.equal(ranked[0], 255); assert.equal(ranked[254], 1); assert.equal(ranked[299], 1);
+});
+
+test("the 1 VHP rule counts VHP staked in any vault game (v6), not a dust stake", async () => {
+  const VHP = 100000000n;
+  const state = async () => ({ config: { v6_rule_week_plus_one: "3", min_stake: String(VHP) } });
+  const games = async () => [{ id: 1 }, { id: 2 }, { id: 4 }];
+  const table = { [ALICE]: { 4: String(VHP) }, [BOB]: { 2: "1" } };
+  const gamePlayer = async (node, a, g) => ({ active_stake: (table[a] && table[a][g]) || "0" });
+  const others = otherStakes(A("G"), 5, { state, games, gamePlayer });
+  const held = await readRanked("n", [ALICE, BOB, CAROL], "1tok", A("G"), { vhp: async () => ({}), player: async () => ({}), others });
+  assert.deepEqual([...held], [ALICE], "1 VHP staked in Fantasy counts; 1e-8 in Block X doesn't");
+  const before = otherStakes(A("G"), 5, { state: async () => ({ config: { v6_rule_week_plus_one: "0" } }), games, gamePlayer });
+  assert.equal(await before("n", ALICE), 0n, "before v6 there are no other games");
 });

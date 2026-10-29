@@ -40,6 +40,10 @@
  *   while they were in the season, and that weren't knocked out by a missed pick; and only in a season with at least
  *   3 such players who each made 2+ valid picks (owner, 28 Oct; Repo Lense SV-A2, SV-A3). Wallets that hold nothing,
  *   or pick on day 1 and never again, win nothing and don't count toward the 3. The vault pays (Build 1).
+ * TWO BOARDS (owner, 28 Oct): Survivor also takes stakes in the vault (game 3). A wallet staked in Survivor (at least
+ *   the vault's minimum) in either week of a season is a staked player that season: it can't win the free prize above,
+ *   and each week its points (weekRows: the season standings when the week ends, 255 for 1st down to 1) go to the
+ *   vault, whose weekly stake bucket pays the top 30% of staked players. Everyone else is a free player.
  *
  * THE CLOCK (testnet only): KSurvivor is the mainnet game, exactly as above. KSurvivor.withConfig({ day, firstDay,
  * outFloor }) makes the same game with a faster clock for the testnet: a "day" (one round) lasts `day` ms instead of
@@ -60,6 +64,7 @@
     const LEAD_MS = 5 * 60000, AHEAD_MS = 7 * DAY, PICKS_PER_DAY = DAY === MAINNET_DAY ? 20 : 50, MAX_CHANGES = 5;
     const OUT_FLOOR = cfg.outFloor;
     const PRIZES = Object.freeze([4, 2]);
+    const WEEK_DAYS = 7;                          // a vault week; a season is two
     const MIN_PRIZE_PLAYERS = 3;             // a season needs at least this many real players for prizes (default, SV-1)
     const MIN_VALID_PICKS = 2;               // … where a real player made at least this many valid picks
     /** One letter a day in a player's log: s safe, o out-zone, n no pick, f not in the field, u already used, v saved. */
@@ -200,7 +205,9 @@
     function prizes(players, amounts = PRIZES) {
       // Only players who can win count toward the 3-player minimum: they held 1 VHP at every check, weren't knocked
       // out by a missed pick, and made 2+ valid picks (Repo Lense SV-A2: empty wallets used to count).
-      const canWin = players.filter((x) => x.eligible && !outByMissing(x));
+      // Staked players (staked in Survivor in either week of the season) play for the vault's stake bucket, not this
+      // free prize (owner, 28 Oct).
+      const canWin = players.filter((x) => x.eligible && !x.staked && !outByMissing(x));
       if (canWin.filter((x) => validPicks(x) >= MIN_VALID_PICKS).length < MIN_PRIZE_PLAYERS) return [];
       const ranked = rank(canWin);
       const out = [];
@@ -216,11 +223,31 @@
       return out;
     }
 
+    // ── staked players (Vault v6, owner 28 Oct: every game takes stakes) ──
+    /** A season is two vault weeks of WEEK_DAYS days. Week k (0 or 1) of a season: its staked players' points for the
+     *  vault. Listed: players staked in Survivor that week (`staked`, a Set) who were still in the season when the week
+     *  began, ranked by the season standings when the week ends (owner, 28 Oct). Points 1–255 keep that order and its
+     *  ties (only the order matters to the vault): 255 for 1st, one less per place, never below 1. Returns
+     *  [{ player, points }] best first, or null while the week's days aren't all recorded. */
+    function weekRows(days, k, staked) {
+      const upTo = (n) => days.filter((x) => x.n <= n);
+      const end = playSeason(upTo(WEEK_DAYS * (k + 1)));
+      if (!end.over && end.endN < WEEK_DAYS * (k + 1)) return null;
+      let still = null;
+      if (k > 0) {
+        const atStart = playSeason(upTo(WEEK_DAYS * k));
+        if (atStart.over) return [];
+        still = new Set(atStart.players.filter((x) => x.outN === null).map((x) => x.a));
+      }
+      return rank(end.players.filter((x) => staked.has(x.a) && (!still || still.has(x.a))))
+        .map((x) => ({ player: x.a, points: Math.max(1, 256 - x.place) }));
+    }
+
     return Object.freeze({
       DAY, GAME_ID, SEASON_DAYS, LIVES, USES, FORM_DAYS, FORM_GAP, MIN_FORM, LEAD_MS, AHEAD_MS, PICKS_PER_DAY, MAX_CHANGES,
-      PRIZES, MIN_PRIZE_PLAYERS, MIN_VALID_PICKS, CODE, CORRECTION_MS, FIRST_DAY, OUT_FLOOR, MAINNET: DAY === MAINNET_DAY && OUT_FLOOR === 0,
+      PRIZES, MIN_PRIZE_PLAYERS, MIN_VALID_PICKS, CODE, WEEK_DAYS, CORRECTION_MS, FIRST_DAY, OUT_FLOOR, MAINNET: DAY === MAINNET_DAY && OUT_FLOOR === 0,
       dayIndex, dayStart, dayLabel, isMonday, isSeasonStart, lockTime, isOpen, openDays, seasonOf, seasonStartDay,
-      formDays, fieldFor, outSize, scoreDay, playSeason, rank, prizes, validPicks, outByMissing,
+      formDays, fieldFor, outSize, scoreDay, playSeason, rank, prizes, validPicks, outByMissing, weekRows,
       withConfig,
     });
   }

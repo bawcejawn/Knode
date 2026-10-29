@@ -56,10 +56,13 @@ type DayRec = { day: number; heights: [number, number]; blocks: number; checked:
 type Field = { a: string; k: number; h: number }[];
 // noVhp: the players still in who did NOT hold 1 VHP or a stake at that day's check (usually few; audit SV-2).
 type SeasonDay = { n: number; day: number; field: Field; counts: Counts; picks: [string, string][]; noVhp: string[] };
-type SeasonFile = { v: 1; season: number; startDay: number; days: SeasonDay[]; result: any };
+/** Who was staked in Survivor in one vault week of the season (Vault v6; owner, 28 Oct). `final` once the week is over
+ *  (read after its end, so withdrawals can't lower it any more); until then a reading from `day`. */
+type Stake = { week: number; final: boolean; day: number; staked: string[] };
+type SeasonFile = { v: 1; season: number; startDay: number; days: SeasonDay[]; result: any; stakes: Stake[] };
 /** On disk (Repo Lense SV-A5): each wallet and producer is written once, in `who` and `prods`, and the days refer to them
  *  by position. picks: [[wallet index, producer index]]; noVhp: [wallet index]. */
-type SeasonFileV2 = { v: 2; season: number; startDay: number; who: string[]; prods: string[]; days: any[]; result: any };
+type SeasonFileV2 = { v: 2; season: number; startDay: number; who: string[]; prods: string[]; days: any[]; stakes: any[]; result: any };
 export type Blocks = { ts: number[]; signers: string[] };
 export type RawPick = { player: string; producer: string; time: number };
 type Opts = {
@@ -70,6 +73,8 @@ type Opts = {
   timeOf?: (node: any, h: number) => Promise<number>;
   picksOf?: (node: any, day: number) => Promise<RawPick[]>;
   rankedOf?: (node: any, who: string[]) => Promise<Set<string>>;
+  // Who is staked in Survivor (game 3) in vault week w: a Set, or null while the vault isn't v6 (then nobody is).
+  stakedOf?: (node: any, who: string[], week: number) => Promise<Set<string> | null>;
   gameOf?: (node: any) => Promise<any>;                                   // game 3's settings on the Picks contract
   head?: { height: number; time: number; lib: number; libTime: number };
   // Testnet only (bot/survivor-test.ts): the game with a test clock, and the testnet's own token and contracts.
@@ -98,7 +103,7 @@ function loadDays(dir: string | undefined): Map<number, DayRec> {
   return m;
 }
 function loadSeason(dir: string | undefined, season: number, startDay: number): SeasonFile {
-  const fresh: SeasonFile = { v: 1, season, startDay, days: [], result: null };
+  const fresh: SeasonFile = { v: 1, season, startDay, days: [], result: null, stakes: [] };
   let old = readJson(dir, sName(season));
   if (old && old.v === 2) old = decodeSeason(old);
   if (!old || old.v !== 1 || old.season !== season || old.startDay !== startDay || !Array.isArray(old.days)) return fresh;
@@ -107,6 +112,13 @@ function loadSeason(dir: string | undefined, season: number, startDay: number): 
     if (!d || d.n !== fresh.days.length + 1 || d.day !== startDay + d.n - 1 || !Array.isArray(d.field) || !countsOk(d.counts) || !Array.isArray(d.picks) || !Array.isArray(d.noVhp)) break;
     if (!d.picks.every((x: any) => Array.isArray(x) && x.length === 2 && isAddr(x[0]) && isAddr(x[1])) || !d.noVhp.every(isAddr)) break;
     fresh.days.push({ n: d.n, day: d.day, field: d.field, counts: d.counts, picks: d.picks, noVhp: d.noVhp });
+  }
+  // Stake readings: only this season's two weeks, valid addresses, one per week.
+  const w1 = vaultWeekOf(startDay);
+  for (const x of Array.isArray(old.stakes) ? old.stakes : []) {
+    if (!x || (x.week !== w1 && x.week !== w1 + 1) || typeof x.final !== "boolean" || !Number.isInteger(x.day) || !Array.isArray(x.staked) || !x.staked.every(isAddr)) continue;
+    if (fresh.stakes.some((y) => y.week === x.week)) continue;
+    fresh.stakes.push({ week: x.week, final: x.final, day: x.day, staked: [...new Set<string>(x.staked)].sort() });
   }
   // The result is never taken from the file: every run plays the season again from its days (Repo Lense SV-A4).
   return fresh;
@@ -124,14 +136,18 @@ function decodeSeason(j: any): any {
     if (picks.some((x: any) => !x[0] || !x[1]) || noVhp.some((x: any) => !x)) break;
     days.push({ n: d.n, day: d.day, field: d.field, counts: d.counts, picks, noVhp });
   }
-  return { v: 1, season: j.season, startDay: j.startDay, days, result: null };
+  const stakes = (Array.isArray(j.stakes) ? j.stakes : []).map((x: any) => (x && Array.isArray(x.staked) ? { ...x, staked: x.staked.map(W) } : null))
+    .filter((x: any) => x && x.staked.every((a: any) => a));
+  return { v: 1, season: j.season, startDay: j.startDay, days, result: null, stakes };
 }
 export function encodeSeason(sf: SeasonFile): SeasonFileV2 {
   const who: string[] = [], prods: string[] = [], wi = new Map<string, number>(), pi = new Map<string, number>();
   const at = (list: string[], m: Map<string, number>, a: string) => { let i = m.get(a); if (i === undefined) { i = list.length; list.push(a); m.set(a, i); } return i; };
   const days = sf.days.map((d) => ({ n: d.n, day: d.day, field: d.field, counts: d.counts,
     picks: d.picks.map(([p, q]) => [at(who, wi, p), at(prods, pi, q)]), noVhp: d.noVhp.map((a) => at(who, wi, a)) }));
-  return { v: 2, season: sf.season, startDay: sf.startDay, who, prods, days, result: sf.result };
+  // Every player of the season is in `who` (day 1's picks); a staked wallet that never played is listed after them.
+  const stakes = sf.stakes.map((x) => ({ week: x.week, final: x.final, day: x.day, staked: x.staked.map((a) => at(who, wi, a)) }));
+  return { v: 2, season: sf.season, startDay: sf.startDay, who, prods, days, stakes, result: sf.result };
 }
 function defaultPicksContract(): string | null {
   try { const d = JSON.parse(fs.readFileSync(new URL("../../picks-data/deployment.json", import.meta.url), "utf8")); return isAddr(d.contract) ? d.contract : null; } catch { return null; }
@@ -208,10 +224,61 @@ async function readGame(node: any, contract: string): Promise<any> {
 // Anything but a valid address counts as missing, which the run reports (fix-check: a bad file used to be silent).
 const GAME = (() => { try { const c = JSON.parse(fs.readFileSync(new URL("../../game-data/deployment.json", import.meta.url), "utf8")).contract; return isAddr(c) ? (c as string) : ""; } catch { return ""; } })();
 const GAME_ABI = () => JSON.parse(fs.readFileSync(new URL("../../game/abi/kpred.koilib.json", import.meta.url), "utf8"));
+// ── the vault (v6): stakes in Survivor ──
+const V6_ABI = () => JSON.parse(fs.readFileSync(new URL("./vault-v6.koilib.json", import.meta.url), "utf8"));
+type VaultDeps = { state?: (node: any) => Promise<any>; gamePlayer?: (node: any, a: string, game: number, week: number) => Promise<any>; games?: (node: any) => Promise<any[]> };
+function vaultReads(game: string | null, deps: VaultDeps = {}) {
+  const c = (node: any) => new Contract({ id: game!, abi: V6_ABI(), provider: node });
+  return {
+    state: deps.state ?? (async (node: any) => (await withRetry("vault state", () => (c(node).functions as any).get_state({})))?.result ?? {}),
+    gamePlayer: deps.gamePlayer ?? (async (node: any, a: string, g: number, w: number) => (await withRetry(`vault player ${a}`, () => (c(node).functions as any).get_game_player({ player: a, game: g, week: String(w) })))?.result ?? {}),
+    games: deps.games ?? (async (node: any) => (await withRetry("vault games", () => (c(node).functions as any).list_games({})))?.result?.games ?? []),
+  };
+}
+/** The vault's minimum stake for week w (config.min_stake, or min_stake_next from its week), or null before v6. */
+function minStakeFor(st: any, w: number): bigint | null {
+  const c = st?.config ?? {};
+  if (!(Number(c.v6_rule_week_plus_one || 0) > 0)) return null;
+  return BigInt(c.min_stake_next || "0") > 0n && w >= Number(c.min_stake_next_week || 0) ? BigInt(c.min_stake_next) : BigInt(c.min_stake || "0");
+}
+/** Who is staked in Survivor (game 3) in vault week w: their highest stake in game 3 that week (peak_stake: a
+ *  withdrawal never lowers it, so a wallet staked at the week's start stays staked that week) is at least the vault's
+ *  minimum, exactly the vault's own test for a free-prize winner. A stake in another game doesn't count here. null while
+ *  the vault isn't v6 (nobody can stake in Survivor yet). A failed read throws: the reading is tried again next run. */
+export async function readStaked(node: any, who: string[], week: number, game: string | null = GAME, deps: VaultDeps = {}): Promise<Set<string> | null> {
+  if (!game) return null;
+  const v = vaultReads(game, deps);
+  const min = minStakeFor(await v.state(node), week);
+  if (min === null) return null;
+  const out = new Set<string>();
+  for (const a of who) {
+    const p = await v.gamePlayer(node, a, MAINNET_S.GAME_ID, week);
+    const peak = p.entry ? BigInt(p.entry.peak_stake || "0") : BigInt(p.active_stake || "0");
+    if (peak > 0n && peak >= min) out.add(a);
+  }
+  return out;
+}
+/** A wallet's largest active stake in any vault game other than the question game (v6), for the 1 VHP rule. */
+export function otherStakes(game: string | null, week: number, deps: VaultDeps = {}) {
+  const memo = new Map<any, Promise<number[] | null>>();
+  const v = vaultReads(game, deps);
+  const ids = (node: any) => {
+    if (!memo.has(node)) memo.set(node, (async () => (minStakeFor(await v.state(node), week) === null ? null : (await v.games(node)).map((g: any) => Number(g.id)).filter((id: number) => id > 1)))());
+    return memo.get(node)!;
+  };
+  return async (node: any, a: string): Promise<bigint> => {
+    if (!game) return 0n;
+    const list = await ids(node);
+    let best = 0n;
+    for (const id of list ?? []) { const p = await v.gamePlayer(node, a, id, week); const s = BigInt(p.active_stake || "0"); if (s > best) best = s; }
+    return best;
+  };
+}
+
 /** Who may win a prize: at least 1 VHP, or a Knode stake (the owner's 1 VHP rule; a staked player's VHP sits in the vault).
  *  The testnet passes its own token (and no game contract). */
 export async function readRanked(node: any, who: string[], token = MAINNET_VHP, game: string | null = GAME,
-  deps: { vhp?: (node: any, token: string, who: string[]) => Promise<Record<string, string>>; player?: (node: any, game: string, a: string) => Promise<any> } = {}): Promise<Set<string>> {
+  deps: { vhp?: (node: any, token: string, who: string[]) => Promise<Record<string, string>>; player?: (node: any, game: string, a: string) => Promise<any>; others?: (node: any, a: string) => Promise<bigint> } = {}): Promise<Set<string>> {
   const out = new Set<string>();
   if (!who.length) return out;
   const vhpOf = deps.vhp ?? (async (n: any, t: string, w: string[]) => (await readVhp(n, t, w)).values);
@@ -227,7 +294,9 @@ export async function readRanked(node: any, who: string[], token = MAINNET_VHP, 
     // A failed read throws, so the day is tried again next run instead of costing a staker the season (Repo Lense SV-A7).
     const p = (await playerOf(node, game, a)) ?? {};
     // At least 1 VHP staked, the same as the wallet rule: a dust stake doesn't count (Repo Lense SV-A3).
-    if (BigInt(p.stake || "0") + BigInt(p.pending || "0") >= ONE_VHP) out.add(a);
+    if (BigInt(p.stake || "0") + BigInt(p.pending || "0") >= ONE_VHP) { out.add(a); continue; }
+    // Vault v6: VHP staked in any of the vault's games counts too (it sits in the vault).
+    if (deps.others && (await deps.others(node, a)) >= ONE_VHP) out.add(a);
   }
   return out;
 }
@@ -244,20 +313,29 @@ const tally = (signers: string[]): Counts => {
   return [...m.entries()].sort((x, y) => (x[0] < y[0] ? -1 : 1));
 };
 
-/** The vault files of one season, as far as they are final: { week: file }. The season's first week carries no
- *  winners; its last week carries the whole season's 1st and 2nd (Vault v6 hand-off, 28 Oct). A place with more than
- *  10 tied wallets is left empty (the vault refuses more), so its prize returns to the pool; `problems` says so. */
-export function vaultFiles(sf: { startDay: number; result: any }, now: number, math: any, problems: string[] = []): Record<number, any> {
+/** The vault files of one season, as far as they are final: { week: file }.
+ *  - rows (staked players, Vault v6, owner 28 Oct): each week, once the week's stake reading is final and its days are
+ *    all recorded (or the season is over): KSurvivor.weekRows, the season standings at the week's end, 255 down to 1.
+ *  - first / second (free players): only in the season's last week, once the season is final (its result needs both
+ *    weeks' stake readings). A place with more than 10 tied wallets is left empty (the vault refuses more), so its
+ *    prize returns to the pool; `problems` says so. */
+export function vaultFiles(sf: { startDay: number; days: any[]; result: any; stakes: Stake[] }, math: any, problems: string[] = []): Record<number, any> {
   const out: Record<number, any> = {};
-  const w1 = vaultWeekOf(sf.startDay), w2 = w1 + 1;
-  const file = (week: number, first: string[], second: string[]) => ({ game: math.GAME_ID, week, final: true, rows: [], first, second });
-  if (now >= math.dayStart(sf.startDay + 7)) out[w1] = file(w1, [], []);
-  if (sf.result && sf.result.final) {
-    const at = (place: number) => sf.result.prizes.filter((x: any) => x.place === place).map((x: any) => x.player as string).sort();
-    let first = at(1), second = at(2);
-    if (first.length > VAULT_MAX_WINNERS) { problems.push(`Survivor: ${first.length} wallets tied for 1st in the season from ${math.dayLabel(sf.startDay)}; the vault takes at most ${VAULT_MAX_WINNERS}, so no prize is posted for the season (it returns to the pool)`); first = []; second = []; }
-    if (second.length > VAULT_MAX_WINNERS) { problems.push(`Survivor: ${second.length} wallets tied for 2nd in the season from ${math.dayLabel(sf.startDay)}; the vault takes at most ${VAULT_MAX_WINNERS}, so 2nd's prize returns to the pool`); second = []; }
-    out[w2] = file(w2, first, second);
+  const w1 = vaultWeekOf(sf.startDay);
+  for (const k of [0, 1]) {
+    const w = w1 + k, st = sf.stakes.find((x) => x.week === w);
+    if (!st || !st.final) continue;
+    if (k === 1 && !(sf.result && sf.result.final)) continue;
+    const rows = math.weekRows(sf.days, k, new Set(st.staked));
+    if (rows === null) continue;
+    let first: string[] = [], second: string[] = [];
+    if (k === 1) {
+      const at = (place: number) => sf.result.prizes.filter((x: any) => x.place === place).map((x: any) => x.player as string).sort();
+      first = at(1); second = at(2);
+      if (first.length > VAULT_MAX_WINNERS) { problems.push(`Survivor: ${first.length} wallets tied for 1st in the season from ${math.dayLabel(sf.startDay)}; the vault takes at most ${VAULT_MAX_WINNERS}, so no prize is posted for the season (it returns to the pool)`); first = []; second = []; }
+      if (second.length > VAULT_MAX_WINNERS) { problems.push(`Survivor: ${second.length} wallets tied for 2nd in the season from ${math.dayLabel(sf.startDay)}; the vault takes at most ${VAULT_MAX_WINNERS}, so 2nd's prize returns to the pool`); second = []; }
+    }
+    out[w] = { game: math.GAME_ID, week: w, final: true, rows, first, second };
   }
   return out;
 }
@@ -285,7 +363,11 @@ export async function run(o: Opts) {
   const rangeC = !o.check ? null : o.blocksOf ? (a: number, b: number) => o.blocksOf!(o.check, a, b) : (a: number, b: number) => readerC.range(a, b);
   const picksRead = o.picksOf ?? (contract ? (node: any, d: number) => readPicks(node, contract, d) : null);
   const holdToken = o.holdToken ?? MAINNET_VHP, holdGame = o.gameContract === undefined ? GAME : o.gameContract;
-  const rankedRead = o.rankedOf ?? ((node: any, who: string[]) => readRanked(node, who, holdToken, holdGame));
+  const others = otherStakes(holdGame, vaultWeekOf(S.dayIndex(head.time)));
+  const rankedRead = o.rankedOf ?? ((node: any, who: string[]) => readRanked(node, who, holdToken, holdGame, { others }));
+  // Stakes in Survivor (Vault v6): mainnet only; the test clock's rounds aren't vault weeks.
+  const stakesOn = !!o.stakedOf || S.MAINNET;
+  const stakedRead = o.stakedOf ?? ((node: any, who: string[], w: number) => readStaked(node, who, w, holdGame));
   const gameRead = o.gameOf ?? (contract ? (node: any) => readGame(node, contract) : null);
   console.log(`head ${head.height} (${new Date(head.time).toISOString()}), irreversible ${head.lib} (${new Date(head.libTime).toISOString()})`);
 
@@ -466,9 +548,28 @@ export async function run(o: Opts) {
       played = S.playSeason(sf.days);
       console.log(`season ${s} day ${nDay} (${S.dayLabel(d)}): ${picks.length} picks, ${played.players.filter((x: any) => x.outN === null).length} still in`);
     }
+    // Who is staked in Survivor, for each of the season's two vault weeks: read once a day while the week runs (for the
+    // boards), and once more after it ends (final: withdrawals can't change it any more). Both nodes must agree.
+    const w1 = vaultWeekOf(start), everyone = played.players.map((x: any) => x.a);
+    if (stakesOn && seasonsOn) for (const k of [0, 1]) {
+      const w = w1 + k, ended = head.time >= S.dayStart(start + S.WEEK_DAYS * (k + 1));
+      if (head.time < S.dayStart(start + S.WEEK_DAYS * k)) continue;
+      const cur = sf.stakes.find((x) => x.week === w);
+      if (cur && (cur.final || (!ended && cur.day === today))) continue;
+      try {
+        const key = (x: Set<string> | null) => JSON.stringify(x === null ? null : [...x].sort());
+        const mine = everyone.length ? await stakedRead(o.p, everyone, w) : new Set<string>();
+        if (o.check && everyone.length && key(await stakedRead(o.check, everyone, w)) !== key(mine)) { problems.push(`season ${s}: the two nodes disagree about who is staked in Survivor in vault week ${w}; tried again next run`); continue; }
+        sf.stakes = [...sf.stakes.filter((x) => x.week !== w), { week: w, final: ended, day: today, staked: mine ? [...mine].sort() : [] }].sort((x, y) => x.week - y.week);
+      } catch (e) { problems.push(`season ${s}: stakes in vault week ${w}: ${(e as Error).message} (tried again next run)`); }
+    }
+    const stakedAny = new Set<string>(sf.stakes.flatMap((x) => x.staked));
+    const stakesFinal = !stakesOn || [w1, w1 + 1].every((w) => sf.stakes.some((x) => x.week === w && x.final));
+    const players = played.players.map((x: any) => ({ ...x, staked: stakedAny.has(x.a) }));
     const endDay = start + played.endN;                       // the day after the last played day
-    const final = played.over && head.time >= S.dayStart(endDay) + S.CORRECTION_MS;
-    sf.result = { over: played.over, endN: played.endN, final, players: played.players, prizes: final ? S.prizes(played.players) : [] };
+    // Final: over, past the correction window, and both weeks' stakes known (the free prize is for players free in both).
+    const final = played.over && head.time >= S.dayStart(endDay) + S.CORRECTION_MS && stakesFinal;
+    sf.result = { over: played.over, endN: played.endN, final, players, prizes: final ? S.prizes(players) : [] };
     seasons.push(sf);
   }
   seasons.sort((x, y) => x.season - y.season);
@@ -490,7 +591,7 @@ export async function run(o: Opts) {
     if (Buffer.byteLength(text) > SIZE_WARN) problems.push(`Survivor: ${sName(sf.season)} is ${(Buffer.byteLength(text) / 1048576).toFixed(2)} MB, near or over the 2 MB publish limit; only that file is left out (docs/SURVIVOR-RUNBOOK.md)`);
     fs.writeFileSync(path.join(STAGE, sName(sf.season)), text);
     // The vault's results files (mainnet only: the test clock's rounds aren't vault weeks).
-    if (S.MAINNET) for (const [w, f] of Object.entries(vaultFiles(sf, head.time, S, problems))) {
+    if (S.MAINNET) for (const [w, f] of Object.entries(vaultFiles(sf, S, problems))) {
       fs.mkdirSync(path.join(STAGE, "vault"), { recursive: true });
       fs.writeFileSync(path.join(STAGE, "vault", `W${w}.json`), JSON.stringify(f) + "\n");
     }

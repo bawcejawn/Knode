@@ -168,10 +168,12 @@ jobs:
           nat = lambda x: type(x) is int and 0 <= x < 2**53
           day = lambda x: type(x) is int and 0 < x < 10**6
           small = lambda x, lo, hi: type(x) is int and lo <= x <= hi
+          GENESIS_DAY = 20745   # Monday 19 Oct 2026, vault week 0
+          week_of = lambda day: (day - GENESIS_DAY) // 7
           def counts_ok(c): return type(c) is list and len(c) <= 500 and all(type(x) is list and len(x) == 2 and isaddr(x[0]) and nat(x[1]) for x in c)
           def field_ok(f): return type(f) is list and len(f) <= 500 and all(type(x) is dict and set(x) == {"a", "k", "h"} and isaddr(x["a"]) and nat(x["k"]) and num(x["h"]) and x["h"] >= 1 for x in f)
           def player_ok(p, endN):
-              if type(p) is not dict or set(p) != {"a", "lives", "outN", "total", "used", "log", "eligible", "place"}: return False
+              if type(p) is not dict or set(p) != {"a", "lives", "outN", "total", "used", "log", "eligible", "staked", "place"} or type(p["staked"]) is not bool: return False
               if type(p["log"]) is not str or re.fullmatch(r"[sonfuv]{0,14}", p["log"]) is None or len(p["log"]) > endN: return False
               if not (isaddr(p["a"]) and small(p["lives"], 0, 2) and (p["outN"] is None or small(p["outN"], 1, 14)) and num(p["total"]) and p["total"] >= 0 and small(p["place"], 1, 100000) and type(p["eligible"]) is bool): return False
               if not (type(p["used"]) is list and len(p["used"]) <= 14 and all(isaddr(a) for a in p["used"]) and len(set(p["used"])) == len(p["used"])): return False
@@ -234,7 +236,7 @@ jobs:
               return players, over, endN
           def prizes(players):
               missed = lambda x: x["outN"] is not None and x["log"][x["outN"] - 1] == "n"
-              can = [x for x in players if x["eligible"] and not missed(x)]
+              can = [x for x in players if x["eligible"] and not x["staked"] and not missed(x)]
               if sum(1 for x in can if sum(x["log"].count(c) for c in "sov") >= 2) < 3: return []
               ranked, amounts, out, i = rank(can), [4, 2], [], 0
               while i < len(ranked) and i < len(amounts):
@@ -245,18 +247,42 @@ jobs:
                   out += [{"player": ranked[k]["a"], "place": ranked[k]["place"], "vhp": each} for k in range(i, j + 1)]
                   i = j + 1
               return out
-          def replay_ok(j, r, f):
+          def decoded(j):
               who, prods = j["who"], j["prods"]
-              days = [{"n": x["n"], "field": x["field"], "counts": x["counts"], "picks": [(who[p], prods[q]) for p, q in x["picks"]], "noVhp": [who[a] for a in x["noVhp"]]} for x in j["days"]]
-              players, over, endN = play(days)
+              return [{"n": x["n"], "field": x["field"], "counts": x["counts"], "picks": [(who[p], prods[q]) for p, q in x["picks"]], "noVhp": [who[a] for a in x["noVhp"]]} for x in j["days"]]
+          def week_rows(days, k, staked):
+              # KSurvivor.weekRows: staked players still in when the week began, by the standings when it ends.
+              end, over, endN = play([x for x in days if x["n"] <= 7 * (k + 1)])
+              if not over and endN < 7 * (k + 1): return None
+              still = None
+              if k > 0:
+                  start, over0, _ = play([x for x in days if x["n"] <= 7 * k])
+                  if over0: return []
+                  still = {x["a"] for x in start if x["outN"] is None}
+              sel = [x for x in end if x["a"] in staked and (still is None or x["a"] in still)]
+              return [{"player": x["a"], "points": max(1, 256 - x["place"])} for x in rank(sel)]
+          def replay_ok(j, r, f):
+              who = j["who"]
+              players, over, endN = play(decoded(j))
+              staked = {who[a] for x in j["stakes"] for a in x["staked"]}
+              players = [dict(p, staked=p["a"] in staked) for p in players]
               assert r["players"] == players and r["over"] == over and r["endN"] == endN, f + ": the result isn't what its days give"
+              w1 = week_of(j["startDay"])
+              assert not r["final"] or all(any(x["week"] == w and x["final"] for x in j["stakes"]) for w in (w1, w1 + 1)), f + ": final before both weeks' stakes are known"
               assert r["prizes"] == (prizes(players) if r["final"] else []), f + ": the prizes aren't what the result gives"
           def season_ok(j, f):
-              assert set(j) == {"v", "season", "startDay", "who", "prods", "days", "result"} and j["v"] == 2 and small(j["season"], 1, 9999) and f == "S%03d.json" % j["season"] and day(j["startDay"]), f
+              assert set(j) == {"v", "season", "startDay", "who", "prods", "days", "stakes", "result"} and j["v"] == 2 and small(j["season"], 1, 9999) and f == "S%03d.json" % j["season"] and day(j["startDay"]), f
               who, prods = j["who"], j["prods"]
               assert type(who) is list and len(who) <= 100000 and all(isaddr(a) for a in who) and len(set(who)) == len(who), f
               assert type(prods) is list and len(prods) <= 500 and all(isaddr(a) for a in prods) and len(set(prods)) == len(prods), f
               assert type(j["days"]) is list and len(j["days"]) <= 14, f
+              w1 = week_of(j["startDay"])
+              st = j["stakes"]
+              assert type(st) is list and len(st) <= 2 and len({x["week"] for x in st if type(x) is dict and "week" in x}) == len(st), f
+              for x in st:
+                  assert type(x) is dict and set(x) == {"week", "final", "day", "staked"} and type(x["week"]) is int and x["week"] in (w1, w1 + 1), f
+                  assert type(x["final"]) is bool and day(x["day"]) and type(x["staked"]) is list and len(x["staked"]) <= 100000, f
+                  assert all(small(a, 0, len(who) - 1) for a in x["staked"]) and len(set(x["staked"])) == len(x["staked"]), f
               first = None
               for i, x in enumerate(j["days"]):
                   assert type(x) is dict and set(x) == {"n", "day", "field", "counts", "picks", "noVhp"} and x["n"] == i + 1 and x["day"] == j["startDay"] + i, f
@@ -312,21 +338,25 @@ jobs:
           # exactly the winners of the season file published with it. A file whose season file isn't here (left out for
           # size) can't be checked, so it is left out too, and the run fails (exit 3) so it alerts.
           vd, unchecked = os.path.join(d, "vault"), []
-          GENESIS_DAY = 20745   # Monday 19 Oct 2026, vault week 0
-          week_of = lambda day: (day - GENESIS_DAY) // 7
           for f in (sorted(os.listdir(vd)) if os.path.isdir(vd) else []):
               m = re.fullmatch(r"W(0|[1-9][0-9]{0,4})\.json", f)
               assert m, "vault/" + f
               j = json.load(open(os.path.join(vd, f), encoding="utf-8"), parse_constant=bad_constant)
               w = int(m.group(1))
               assert type(j) is dict and set(j) == {"game", "week", "final", "rows", "first", "second"} and j["game"] == 3 and type(j["game"]) is int, f
-              assert type(j["week"]) is int and j["week"] == w and j["final"] is True and j["rows"] == [], f
+              assert type(j["week"]) is int and j["week"] == w and j["final"] is True and type(j["rows"]) is list, f
+              assert all(type(x) is dict and set(x) == {"player", "points"} and isaddr(x["player"]) and small(x["points"], 1, 255) for x in j["rows"]), f
               assert all(type(j[k]) is list and len(j[k]) <= 10 and all(isaddr(a) for a in j[k]) and j[k] == sorted(set(j[k])) for k in ("first", "second")), f
               assert not set(j["first"]) & set(j["second"]), f
               mine = [s for s in seasons.values() if week_of(s["startDay"]) in (w, w - 1)]
               if not mine: unchecked.append(f); continue
               s = mine[0]
-              if week_of(s["startDay"]) == w:
+              k = w - week_of(s["startDay"])
+              st = [x for x in s["stakes"] if x["week"] == w]
+              assert st and st[0]["final"], f + ": its week's stakes aren't final"
+              rows = week_rows(decoded(s), k, {s["who"][a] for a in st[0]["staked"]})
+              assert rows is not None and j["rows"] == rows, f + ": not the season's staked players' points"
+              if k == 0:
                   assert j["first"] == [] and j["second"] == [], f + ": winners only in a season's last week"
                   continue
               r = s["result"]

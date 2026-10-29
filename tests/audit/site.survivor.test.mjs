@@ -261,3 +261,16 @@ test("Repo Lense SV-A6 / SV-A21 / SV-A5: picking waits for a clean read of my pi
   assert.ok(!/S\.lockTime\(d\) - Date\.now\(\)/.test(js), "no lock check on the viewer's own clock");
   assert.match(js, /j\.v === 1 \|\| j\.v === 2/);
 });
+
+test("two boards (owner, 28 Oct): staked players can't win the free prize; the page shows a Free play and a Staked board", () => {
+  const P = (a, staked = false) => ({ a, lives: 2, outN: null, total: 10, eligible: true, log: "ss", staked });
+  const U4 = "1" + "Q".repeat(33);
+  assert.deepEqual(plain(S.prizes([P(U1, true), P(U2), P(U3), P(U4)])).map((x) => x.player).sort(), [U2, U3, U4].sort(), "the staked leader is skipped; the 3 free players share");
+  assert.deepEqual(plain(S.prizes([P(U1, true), P(U2), P(U3)])), [], "only 2 free players who can win: no free prize");
+  const js = read("survivor.js"), html = read("survivor.html");
+  assert.match(html, /id="board-free"[^>]*aria-pressed="true"/);
+  assert.match(html, /id="board-staked"/);
+  assert.match(html, /id="stake-panel" hidden/, "a slot for the shared stake panel (Hub)");
+  assert.match(js, /S\.rank\(r\.players\.filter\(\(x\) => !!x\.staked === \(board === "staked"\)\)\)/, "places are counted within each board");
+  assert.match(js, /r\.final && board === "free" \? r\.prizes : \[\]/, "the free prize shows on the free board only");
+});

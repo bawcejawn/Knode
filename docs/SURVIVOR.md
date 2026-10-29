@@ -87,7 +87,17 @@ day 14. Results are final 12 hours later.
 
 Equal on all three: the same place.
 
-**Prizes.** 4 VHP for 1st and 2 VHP for 2nd. Tied players split the prizes of the places they cover. You can win only
+**Two boards (owner, 28 October).** Survivor also takes stakes in the Knode Games vault (game 3).
+- **Staked players:** wallets with at least the vault's minimum (1 VHP today) staked in Survivor in either week of a
+  season. They play the same game and share Survivor's weekly bucket in the vault: each vault week the recorder sends
+  the vault their points (the season standings when the week ends, 255 for 1st, one less per place, never below 1;
+  only players still in when the week began). The vault pays the top 30%. A stake in another game doesn't count here,
+  and a wallet that withdraws mid-week stays staked that week. Staked players can't win the free prize.
+- **Free players:** everyone else. They play for the free prize below.
+- Stake, withdraw or move a stake with the shared stake panel (built by the site chat; it appears on the page when the
+  vault v6 is live).
+
+**Prizes (free players).** 4 VHP for 1st and 2 VHP for 2nd. Tied players split the prizes of the places they cover. You can win only
 if all of these hold:
 - you held at least 1 VHP (or a Knode Games stake) at every daily check while you were in the season;
 - you weren't knocked out by a missed pick;
