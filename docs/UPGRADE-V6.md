@@ -83,9 +83,9 @@ npm run bot -- games
 ## 6. Add the games (right after the upload)
 The first game announcement is also the first v6 transaction. It switches the rules on from the next Monday. Announce every game that should pay prizes from that Monday:
 ```
-npm run bot -- game-add 2 "Who Signs Block X" --free           then again with --send
-npm run bot -- game-add 3 "Survivor" --free --season 2         then again with --send
-npm run bot -- game-add 7 "Producer Race" --free               then again with --send
+npm run bot -- game-add 2 "Who Signs Block X" --staked --free           then again with --send
+npm run bot -- game-add 3 "Survivor" --staked --free --season 2         then again with --send
+npm run bot -- game-add 7 "Producer Race" --staked --free               then again with --send
 ```
 Staked games are added the same way when each one launches (for example `game-add 13 "Last Node Standing" --staked`).
 
