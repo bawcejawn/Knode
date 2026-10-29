@@ -14,14 +14,14 @@ const A = "1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", B = "1BBBBBBBBBBBBBBBBBBBBBBBBBB
   X = "1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", Y = "1YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY";
 const W = 2, DAYS = F.weekDays(W);
 
-test("time: a week has 7 UTC days from Monday; the sheet is Sunday 12:00 before it; form = the 7 days before that Sunday", () => {
+test("time: a week has 7 UTC days from Monday; the sheet is Saturday 00:00 before it (2 days ahead); form = the 7 days before", () => {
   assert.equal(new Date(F.dayStart(DAYS[0])).toISOString(), "2026-11-02T00:00:00.000Z");
   assert.equal(new Date(F.dayStart(DAYS[6])).toISOString(), "2026-11-08T00:00:00.000Z");
-  assert.equal(new Date(F.sheetTime(W)).toISOString(), "2026-11-01T12:00:00.000Z");
+  assert.equal(new Date(F.sheetTime(W)).toISOString(), "2026-10-31T00:00:00.000Z");
   const fd = F.formDays(W);
   assert.equal(fd.length, 7);
-  assert.equal(new Date(F.dayStart(fd[0])).toISOString(), "2026-10-25T00:00:00.000Z");
-  assert.equal(new Date(F.dayStart(fd[6])).toISOString(), "2026-10-31T00:00:00.000Z", "Saturday: the last full day before the sheet");
+  assert.equal(new Date(F.dayStart(fd[0])).toISOString(), "2026-10-24T00:00:00.000Z");
+  assert.equal(new Date(F.dayStart(fd[6])).toISOString(), "2026-10-30T00:00:00.000Z", "Friday: the last full day before the sheet");
 });
 
 // One card for every hour: A 50%, B 30%, C 20% of VHP (C in the paddock still counts for shares).
@@ -254,7 +254,8 @@ test("clock: the fast test clock (1 test day = 1 hour) runs the same rules in a 
 test("clock: refuses a clock the contract or the rules can't run", () => {
   assert.throws(() => F.withClock({ day: 7 * 60000, genesis: 0 }), /divide 24 hours/);
   assert.throws(() => F.withClock({ day: R.HOUR, genesis: 1000 }), /genesis/);
-  assert.throws(() => F.withClock({ day: R.HOUR, genesis: 0, sheetBefore: 2 * R.HOUR }), /sheet/);
+  assert.throws(() => F.withClock({ day: R.HOUR, genesis: 0, sheetBefore: 7 * R.HOUR }), /sheet/);
+  assert.ok(F.withClock({ day: R.HOUR, genesis: 0, sheetBefore: 2 * R.HOUR }), "2 test days ahead, as live");
   assert.ok(F.withClock({ day: 20 * 60000, genesis: 0, sheetBefore: 10 * 60000 }));
 });
 

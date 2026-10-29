@@ -18,7 +18,7 @@ const P = "ABCDEFGHJKM".split("").map((c) => "1" + c.repeat(33));
 const VHP = [300, 250, 200, 150, 120, 100, 90, 80, 70, 9, 1];   // the last two are in the paddock at 720 blocks a race
 const REL = [1.05, 1.0, 0.75, 1.05, 0.8, 1.02, 0.9, 1.0, 0.78, 1, 1];
 const PLAYERS = ["1Pa1111111111111111111111111111111", "1Pb2222222222222222222222222222222", "1Pc3333333333333333333333333333333", "1Pd4444444444444444444444444444444"];
-const STEP = 30000, T0 = U("2026-10-24T00:00:00Z"), N = Math.floor((U("2026-11-12T00:00:00Z") - T0) / STEP);
+const STEP = 30000, T0 = U("2026-10-20T00:00:00Z"), N = Math.floor((U("2026-11-12T00:00:00Z") - T0) / STEP);
 const chain = (() => {
   const R = M.rng(11), w = VHP.map((v, i) => v * REL[i]), tot = w.reduce((a, b) => a + b), ts = [], who = [];
   for (let i = 0; i < N; i++) { ts.push(T0 + i * STEP); let x = R.next() * tot, j = 0; while (x >= w[j]) { x -= w[j]; j++; } who.push(P[j]); }
@@ -60,14 +60,15 @@ async function hourly(at, prev, opts = {}) {
   const log = console.log; console.log = () => {};
   let r;
   try { r = await run({ p: node(at), check: opts.check === null ? null : node(at, opts.check || {}), prev, out, raceData, picksContract: "1PicksPicksPicksPicksPicksPicks11", picksOf, rivalStaked: async (who) => new Set(who.filter((a) => !unstaked.has(a))) }); } finally { console.log = log; }
+  if (process.env.SHOW_PROBLEMS) console.log(new Date(at).toISOString(), r && r.problems);
   return { out, problems: r.problems };
 }
 const read = (dir, f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
 
-test("Sunday 12:00: the next week's price sheet from the field and last week's form, with its sha256; never remade", async () => {
-  const before = await hourly(U("2026-11-01T11:30Z"), "");
-  assert.equal(read(before.out, "index.json").weeks.includes(2), false, "no sheet before Sunday 12:00");
-  const a = await hourly(U("2026-11-01T12:30Z"), before.out);
+test("Saturday 00:00: the next week's price sheet from the field and last week's form, with its sha256; never remade", async () => {
+  const before = await hourly(U("2026-10-30T23:30Z"), "");
+  assert.equal(read(before.out, "index.json").weeks.includes(2), false, "no sheet before Saturday 00:00");
+  const a = await hourly(U("2026-10-31T01:30Z"), before.out);   // the form days end at 00:00; the test chain is irreversible 30 min behind
   const w = read(a.out, "W002.json");
   assert.ok(w.sheet, "sheet made");
   assert.deepEqual(w.sheet.pool.map((x) => x.a), P.slice(0, 9).sort(), "pool = the field; paddock producers can't be drafted");

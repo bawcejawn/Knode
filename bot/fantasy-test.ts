@@ -5,7 +5,7 @@
  *   - teams are scored on MAINNET producers' blocks, read only. The testnet has a single block producer, so a fantasy
  *     team of testnet producers could not score anything meaningful. Nothing is ever sent to mainnet: this tool never
  *     signs anything for it, and it checks each node's chain id before using it;
- *   - a fast clock: 1 test "day" = 1 hour, so a test week takes 7 hours; the price list comes out 30 minutes before;
+ *   - a fast clock: 1 test "day" = 1 hour, so a test week takes 7 hours; the price list comes out 2 hours before;
  *   - five robot players with different styles, and a local practice page with a red TESTNET bar.
  *
  *   npm run fantasy-test -- setup                   make the test wallets (once)
@@ -14,7 +14,7 @@
  *   npm run fantasy-test -- picks-build             build the testnet Picks contract (needs: cd picks; npm ci; npm test)
  *   npm run fantasy-test -- picks-upload [--send]   put it on the testnet
  *   npm run fantasy-test -- games [--send]          announce games 4 (team) and 5 (rival); run again 10 minutes later
- *   npm run fantasy-test -- week [next]             start test week 1 on the next hour at least 45 minutes away
+ *   npm run fantasy-test -- week [next]             start test week 1 on the next hour at least 2 h 15 min away
  *   npm run fantasy-test -- team <player> <a,b,c,d,e> [--send]   save a team as a test player (captain first; #n = nth on the price list)
  *   npm run fantasy-test -- rival <player> <address|pN> [--send] challenge a rival for the next test week
  *   npm run fantasy-test -- record                  one recorder run (writes testnet-data/fantasy/data)
@@ -52,7 +52,7 @@ const MAINNET_RPC = /api\.koinos\.io|koinos\.armana\.io|koinosblocks\.com|api\.k
 const RACE_DATA_URL = "https://raw.githubusercontent.com/bawcejawn/Knode/race-data/";
 export const PLAYERS = ["p1", "p2", "p3", "p4", "p5", "p6"];
 export const TEST_DAY_MS = 3_600_000;              // one test "day" = 1 hour (owner, 2026-10-28)
-const SHEET_BEFORE_MS = 30 * 60_000;               // the price list comes out 30 minutes before the test week
+const SHEET_BEFORE_MS = 2 * TEST_DAY_MS;           // the price list comes out 2 test days (2 hours) before the test week, as live
 const GAMES = { team: 4, rival: 5 };
 const PICK_RC_KOIN = 0.3;                          // see the Survivor kit: a big limit is held aside until the pick settles
 const portArg = process.argv.indexOf("--port");
@@ -302,11 +302,12 @@ export async function games(sendIt: boolean) {
   else if (sendIt) log(`Next: npm run fantasy-test -- week next${c.clock.genesis ? " (or carry on: the test week is set)" : ""}`);
 }
 
-/** The next hour at least `margin` away: the test week starts there (its price list 30 minutes before). */
-export function nextGenesis(now: number, margin = 45 * 60_000, day = TEST_DAY_MS) { let g = Math.ceil(now / day) * day; while (g - now < margin) g += day; return g; }
+/** The next hour at least `margin` away: the test week starts there (its price list 2 hours before). */
+export function nextGenesis(now: number, margin = SHEET_BEFORE_MS + 15 * 60_000, day = TEST_DAY_MS) { let g = Math.ceil(now / day) * day; while (g - now < margin) g += day; return g; }
 export async function week(arg?: string) {
   const c = readConfig();
-  const g = !arg || arg === "next" ? nextGenesis(NOW(), 45 * 60_000, c.clock.day) : Date.parse(arg);
+  c.clock.sheetBefore = SHEET_BEFORE_MS;                // always the current rule (2 test days ahead)
+  const g = !arg || arg === "next" ? nextGenesis(NOW(), SHEET_BEFORE_MS + 15 * 60_000, c.clock.day) : Date.parse(arg);
   if (!Number.isFinite(g) || g % c.clock.day !== 0) throw new Error("Give 'next', or a start time on the hour (e.g. 2026-11-03T18:00:00Z).");
   if (c.clock.genesis !== null && c.clock.genesis <= NOW()) log(`Note: this replaces the running test schedule (started ${new Date(c.clock.genesis).toLocaleString()}). Old results stay in ${DATA()}; move them away for a clean board.`);
   c.clock.genesis = g;

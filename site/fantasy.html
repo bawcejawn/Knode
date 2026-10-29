@@ -71,11 +71,14 @@
     </div>
     <p class="status" id="status" role="status">Loading…</p>
 
+    <p class="fx-remind" id="fx-remind" role="status" hidden></p>
+
     <section class="fx-sheet" id="sheet" aria-label="Your team">
       <div class="fx-sheet-top">
         <span id="fx-for">Your team</span>
         <span class="fx-lock" id="fx-lock"></span>
       </div>
+      <div class="fx-plan" id="fx-plan" role="group" aria-label="Which day to plan" hidden></div>
       <div class="fx-slots" id="fx-slots"></div>
       <div class="fx-budget"><span>Spent <b id="fx-spent">0</b> of <b id="fx-budget">100</b></span><div class="fx-bar" id="fx-bar"><i></i></div><span id="fx-left"></span></div>
       <p class="fx-check" id="fx-check" aria-live="polite"></p>
@@ -153,8 +156,9 @@
         <p><b>Points.</b> Koinos picks who signs each block in proportion to VHP, so every producer has a fair share of blocks. Each <span data-fx="day">day</span> a producer scores</p>
         <p><span class="formula">100 × blocks it signed ÷ blocks it was expected to sign</span></p>
         <p>(at most 130), with the expected share from the Producer Race's hourly VHP card. 100 means it signed exactly its share; a node that misses blocks scores less. Your week is the sum of your <span data-fx="day">days</span>; a <span data-fx="day">day</span> before you join scores 0.</p>
-        <p><b>Prices.</b> The price list comes out <span data-fx="sheet">Sunday 12:00 UTC</span> for the next week. A producer's price follows its form over the 7 <span data-fx="day">days</span> before: 20 for the middle of the pool, up to 40 for the most reliable, down to 8 for the least. Its fingerprint (sha256) is published with it, so nobody can change it later.</p>
-        <p><b>Locks.</b> The Picks contract refuses a team 5 minutes before its <span data-fx="day">day</span> starts, so nobody can pick knowing the blocks.</p>
+        <p><b>Prices.</b> The price list comes out <span data-fx="sheet">Saturday 00:00 UTC (Friday evening in the Americas)</span> for the next week, two days before it starts, and never changes after that. A producer's price follows its form over the 7 <span data-fx="day">days</span> before: 20 for the middle of the pool, up to 40 for the most reliable, down to 8 for the least. Its fingerprint (sha256) is published with it, so nobody can change it later.</p>
+        <p><b>Plan ahead.</b> Once the prices are out you can line up your team, and a change for any later <span data-fx="day">day</span> of the week, all at once. A planned <span data-fx="day">day</span> can still be changed until its own lock, so planning early never ties your hands. If changing an earlier <span data-fx="day">day</span> would make a planned one break the one-change rule, the page tells you.</p>
+        <p><b>Locks.</b> The Picks contract refuses a team 5 minutes before its <span data-fx="day">day</span> starts, so nobody can pick knowing the blocks. Picking late gives no edge on prices (they're fixed) or on VHP moves (each producer's expected share follows its VHP every hour); the only fresh news is a node's health, which the price list shows everyone (Yesterday and Today).</p>
         <p><b>Prizes.</b> Fantasy is a staked game: the Fantasy share of the Knode Games vault's weekly reward goes to the top 30% of Fantasy stakers with at least 1 point. A week is final <span data-fx="half">12 hours</span> after it ends.</p>
         <p><b>Weekly Rival.</b> Challenge one player for the coming week. Whoever scores more that week wins. Your record counts the challenges you made and those you received. A match counts only if both of you hold a Knode Games stake and had a team on all 7 <span data-fx="day">days</span>, so nobody piles up wins against throwaway wallets.</p>
         <p><b>All time.</b> Every finished week adds your points to the all-time table: total, weeks played and best week. Bragging rights only; prizes are weekly.</p>

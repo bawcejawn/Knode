@@ -136,8 +136,8 @@ npm run fantasy-test -- week next
 npm run fantasy-test -- run --bots
 ```
 
-`week next` starts test week 1 on the next hour at least 45 minutes away. It prints when the price list comes out
-(30 minutes before) and when your first team locks.
+`week next` starts test week 1 on the next hour at least 2 h 15 min away. It prints when the price list comes out
+(2 hours before, as the live game's 2 days) and when your first team locks.
 
 `run --bots` keeps running; **leave that window open**. Every 2 minutes it:
 - records mainnet blocks and the testnet picks;
@@ -163,17 +163,20 @@ top right). You can switch to any robot to see its side, for example to check a 
 3. Press **Save team**. The pop-up confirms it on the chain.
 4. Each test day (each hour) you may make **one change**: swap one producer, or move the captain. The sheet tells you
    what your change is before you save. A second change is refused on the page.
-5. At the start of each new test week you may pick a whole new team. New prices come out 30 minutes before.
-6. **Weekly Rival:** choose a player and press **Challenge**. It counts for the next test week, if you both have a team
+5. At the start of each new test week you may pick a whole new team. New prices come out 2 hours before.
+6. **Plan ahead:** the "Plan:" buttons on the team sheet let you set a change for any later test day now. You can
+   still change it until that test day's lock; the page warns if an earlier change would make it break the rule.
+7. **Weekly Rival:** choose a player and press **Challenge**. It counts for the next test week, if you both have a team
    all 7 test days. (In the live game both players must also hold a Knode Games stake; the test wallets hold none, so
    in practice every test player counts.)
-7. **All time:** the league's "All time" tab adds up every finished test week.
+8. **All time:** the league's "All time" tab adds up every finished test week.
 
 ### What to try (tick them off)
 - [ ] Save a first team, then change the captain the next test day.
 - [ ] Try two changes in one day: the page refuses, and explains why.
 - [ ] Try a team over the budget: the page refuses.
 - [ ] Watch "today so far" fill in during a test day, then the day's score appear once it's final.
+- [ ] Plan a change for a later test day with the "Plan:" buttons, then change an earlier day and see the warning.
 - [ ] Challenge p3, then see the match under Weekly Rival the next test week.
 - [ ] Switch to p5 in the red bar: see that p5 challenged you.
 - [ ] At a week's end, check the league goes "final" 30 minutes later, with Vault points (255 for the best week).

@@ -53,7 +53,7 @@
       if (W && W.init) W.init({ onChange: () => refreshMine() });
       // Words for the fast clock.
       const mins = Math.round(F.DAY_MS / 60000);
-      const words = { day: `test day`, sheet: `${Math.round(F.clock.sheetBefore / 60000)} minutes before the test week`, half: `${Math.round(F.DAY_MS / 120000)} minutes` };
+      const sb = F.clock.sheetBefore, words = { day: `test day`, sheet: sb >= 3600000 ? `${Math.round(sb / 3600000)} hours before the test week` : `${Math.round(sb / 60000)} minutes before the test week`, half: `${Math.round(F.DAY_MS / 120000)} minutes` };
       for (const e of document.querySelectorAll("[data-fx]")) { const w = words[e.getAttribute("data-fx")]; if (w) e.textContent = w; }
       $("how-text").prepend(el("p", {}, el("b", { text: "Testnet practice. " }), `1 test day = ${mins} minutes, so a test week is ${Math.round(7 * mins / 60)} hours. Picks go to a testnet copy of the Picks contract (play money). Teams are scored on real Koinos mainnet producers' blocks, read only, exactly as in the live game.`));
       return;
@@ -125,38 +125,70 @@
   function targetDay(now = Date.now()) { let d = Math.max(F.dayNo(now), F.weekDays(0)[0]); while (F.lockOfDay(d) - now < 60000) d++; return d; }
   function rivalWeek(now = Date.now()) { let w = now < F.weekStart(0) ? 0 : F.weekOf(now) + 1; while (F.lockOfWeek(w) - now < 60000) w++; return w; }
 
-  let draft = [], draftFor = null;
+  /** The days you can plan now: from the next day still open, up to 7 days ahead (the contract's window), in weeks
+   *  whose price list is out. Planning ahead never locks you in: a planned day can be changed until its own lock. */
+  function plannable(now = Date.now()) {
+    const out = [], td = targetDay(now);
+    for (let d = td; d < td + 7; d++) { if (F.dayStart(d) - now > 7 * F.DAY_MS - 60000) break; if (sheetOf(F.weekOf(F.dayStart(d)))) out.push(d); }
+    return out;
+  }
+  let draft = [], draftFor = null, selDay = null;
   async function refreshMine() {
-    const now = Date.now(), td = targetDay(now), tw = F.weekOf(F.dayStart(td)), wNow = F.weekOf(now), rw = rivalWeek(now);
-    const next = { td, tw, inForce: null, saved: null, weekTeams: [], rivalNow: null, rivalNext: null, rw };
+    const now = Date.now(), td = targetDay(now), wNow = F.weekOf(now), rw = rivalWeek(now);
+    const open = plannable(now);
+    if (selDay !== null && !open.includes(selDay)) selDay = null;
+    const sd = selDay ?? td, tw = F.weekOf(F.dayStart(sd));
+    const next = { td, sd, tw, open, inForce: null, saved: null, weekTeams: [], later: [], planned: new Set(), rivalNow: null, rivalNext: null, rw, remind: null };
     const who = me();
     if (who && picks) {
       try {
         const twf = files.weeks.get(tw);
         if (twf && twf.sheet) {
-          const pk = await picksFor(tw, td);
-          next.saved = pk[td] || null;
-          const before = { ...pk }; delete before[td];
+          const days = F.weekDays(tw), i = days.indexOf(sd);
+          const pk = await picksFor(tw, days[6]);             // every day of the week, planned days too
+          next.saved = pk[sd] || null;
+          for (const d of Object.keys(pk)) next.planned.add(Number(d));
+          const before = {}; for (const d of days) if (d < sd && pk[d]) before[d] = pk[d];
           const carried = await lastTeamOf(tw - 1);
-          const days = F.weekDays(tw), i = days.indexOf(td);
-          const teams = F.teamsForWeek(twf.sheet, days, before, carried);
-          next.inForce = i > 0 ? teams[i - 1].team : carried;
+          const upTo = F.teamsForWeek(twf.sheet, days, before, carried);
+          next.inForce = i > 0 ? upTo[i - 1].team : carried;
           next.monday = i === 0;
           next.carriedFits = !!(carried && F.checkTeam(twf.sheet, carried).ok);
-          if (tw === wNow) next.weekTeams = teams;
+          // Later planned days that the rules would ignore as things stand (e.g. after changing an earlier day).
+          const all = F.teamsForWeek(twf.sheet, days, pk, carried);
+          next.later = all.filter((t) => t.day > sd && pk[t.day] && t.note).map((t) => ({ day: t.day, note: t.note }));
+          if (tw === wNow) next.weekTeams = all;
         }
         if (tw !== wNow) {
           const nwf = files.weeks.get(wNow);
           if (nwf && nwf.sheet) { const days = F.weekDays(wNow); next.weekTeams = F.teamsForWeek(nwf.sheet, days, await picksFor(wNow, days[6]), await lastTeamOf(wNow - 1)); }
         }
+        // A reminder when next week's prices are out and your team won't play its Monday.
+        const nw = wNow + (now < F.weekStart(0) ? 0 : 1), nsheet = sheetOf(nw);
+        if (nsheet && F.lockOfWeek(nw) > now) {
+          const mon = F.weekDays(nw)[0];
+          const monPick = (await picksFor(nw, mon))[mon];
+          const carriedNext = monPick ? null : await lastTeamOf(nw - 1);
+          if (!monPick && !(carriedNext && F.checkTeam(nsheet, carriedNext).ok))
+            next.remind = { week: nw, lock: F.lockOfDay(mon), had: !!carriedNext };
+        }
         const rv = async (w) => { const x = await picks.functions.get_pick({ game: G.rival, round: String(F.rivalRound(w)), player: who }); const l = x.result && x.result.pick && x.result.pick.producers; return Array.isArray(l) && isAddr(l[0]) ? l[0] : null; };
         [next.rivalNow, next.rivalNext] = await Promise.all([rv(wNow).catch(() => null), rv(rw).catch(() => null)]);
       } catch (e) { say(`Couldn't read your picks: ${String((e && e.message) || e).slice(0, 120)}`); }
     }
-    const fresh = draftFor !== `${who}|${td}`;
+    const fresh = draftFor !== `${who}|${sd}`;
     mine = next;
-    if (fresh) { draft = [...(next.saved || next.inForce || [])]; draftFor = `${who}|${td}`; }
+    if (fresh) { draft = [...(next.saved || next.inForce || [])]; draftFor = `${who}|${sd}`; }
     render();
+  }
+  const dayLabel = (d) => new Date(F.dayStart(d)).toLocaleString(undefined, TESTNET ? { hour: "numeric", minute: "2-digit" } : { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  function renderPlan() {
+    const box = $("fx-plan");
+    if (!box) return;
+    box.hidden = !mine.open || mine.open.length < 2;
+    box.replaceChildren(el("span", { class: "lbl", text: "Plan:" }), ...(mine.open || []).map((d) => el("button", { type: "button", "aria-pressed": String(d === mine.sd),
+      title: d === mine.td ? "the next day you can change" : "plan ahead: you can still change it until its own lock",
+      onclick: () => { selDay = d === mine.td ? null : d; draftFor = null; refreshMine(); } }, dayLabel(d), mine.planned && mine.planned.has(d) ? el("i", { class: "fx-dotsaved", "aria-label": "saved" }) : null)));
   }
 
   // ── the team sheet ──
@@ -192,8 +224,9 @@
     return { ok: true, text: `Your first team. Cost ${c.cost} of ${s.budget}.` };
   }
   function renderSheet() {
-    const s = sheetOf(mine.tw), now = Date.now(), lock = mine.td != null ? F.lockOfDay(mine.td) : null;
-    $("fx-for").replaceChildren(el("b", { text: `Team for ${when(F.dayStart(mine.td))}` }), ` · week ${mine.tw + 1}${TESTNET ? " (test)" : ""}`);
+    const s = sheetOf(mine.tw), now = Date.now(), lock = mine.sd != null ? F.lockOfDay(mine.sd) : null;
+    renderPlan();
+    $("fx-for").replaceChildren(el("b", { text: `Team for ${when(F.dayStart(mine.sd))}` }), ` · week ${mine.tw + 1}${TESTNET ? " (test)" : ""}${mine.sd !== mine.td ? " · planning ahead" : ""}`);
     $("fx-lock").replaceChildren(lock ? "Locks in " : "", lock ? el("b", { text: dur(lock - now) }) : "");
     const price = priceMap(s);
     $("fx-slots").replaceChildren(...Array.from({ length: FR.TEAM }, (_, i) => {
@@ -221,6 +254,7 @@
     $("fx-save").textContent = !me() ? (TESTNET ? "Choose a test player" : "Connect to save") : mine.saved ? "Save new team" : "Save team";
     if (!me()) $("fx-save").disabled = !picks;
     $("fx-reset").hidden = same(draft, mine.saved || mine.inForce || []);
+    if (mine.later && mine.later.length) { chk.className = "fx-check bad"; chk.textContent = `${v.text ? v.text + " " : ""}Your planned team for ${mine.later.map((x) => dayLabel(x.day)).join(", ")} would be ignored as things stand (${mine.later[0].note.replace(/^ignored: /, "")}). Open that day and save it again.`; }
     $("fx-saved").replaceChildren(...(mine.saved ? ["Saved for this day: ", el("b", { text: mine.saved.map(nameOf).join(", ") })]
       : mine.monday && mine.inForce && !mine.carriedFits ? [el("b", { text: "Last week's team doesn't fit this week's prices." }), " Save a new team, or you score nothing until you do."]
       : mine.inForce ? [mine.monday ? "No new team saved: last week's team carries on." : "No new team saved: today's carries on."] : me() ? ["You have no team yet."] : []));
@@ -391,8 +425,8 @@
     if (!me()) { if (W && W.connect) W.connect(); else say(TESTNET ? "Choose a test player in the red bar first." : "Connect a wallet first."); return; }
     const v = verdict();
     if (!v.ok || sending || !picks) return;
-    const td = mine.td, list = [...draft];
-    if (F.lockOfDay(td) - Date.now() < 60000) { pop("bad", "Too close to the lock", ["That day locks in under a minute. Your team goes to the next one: try again."], [okBtn("OK")]); await refreshMine(); return; }
+    const td = mine.sd, list = [...draft];
+    if (F.lockOfDay(td) - Date.now() < 60000) { pop("bad", "Too close to the lock", ["That day locks in under a minute. Your team goes to the next one: try again."], [okBtn("OK")]); selDay = null; await refreshMine(); return; }
     sending = true; render();
     const what = `C ${nameOf(list[0])}, ${list.slice(1).map(nameOf).join(", ")}`;
     pop("busy", W.kind === "test" || W.kind === "guest" ? "Saving your team…" : `Confirm in ${W.label ? W.label() : "your wallet"}`, [`For ${when(F.dayStart(td))}: ${what}.`, TESTNET ? "Testnet: play money." : "Free: the Knode Mana sponsor pays the Mana."]);
@@ -402,8 +436,10 @@
       pop("busy", "Sent. Checking the chain…", [what]);
       const ok = await confirmPick(G.team, td, list);
       draftFor = null;
+      await refreshMine();
+      const warn = mine.later && mine.later.length ? el("p", {}, el("b", { text: "Heads up: " }), `your planned team for ${mine.later.map((x) => dayLabel(x.day)).join(", ")} is now more than one change from this one, so it would be ignored. Open that day and save it again.`) : null;
       pop(ok ? "ok" : "info", ok ? "Team saved" : "Sent, not seen yet", [ok ? `It plays from ${when(F.dayStart(td))} and carries on until you change it. You can change it until ${when(F.lockOfDay(td))}.` : "Your wallet sent it. It usually shows within a minute.",
-        id ? el("p", { class: "mono", text: `Transaction ${String(id).slice(0, 18)}…` }) : null].filter(Boolean), [okBtn()]);
+        warn, id ? el("p", { class: "mono", text: `Transaction ${String(id).slice(0, 18)}…` }) : null].filter(Boolean), [okBtn()]);
     } catch (e) { const w = why(e); pop(/Cancelled/.test(w) ? "info" : "bad", /Cancelled/.test(w) ? "Cancelled" : "Team not saved", [w], [okBtn("OK")]); }
     finally { sending = false; await refreshMine(); }
   }
@@ -427,8 +463,16 @@
     finally { sending = false; await refreshMine(); }
   }
 
+  function renderRemind() {
+    const r = mine.remind, box = $("fx-remind");
+    if (!box) return;
+    box.hidden = !r;
+    if (r) box.replaceChildren(el("b", { text: `Week ${r.week + 1}'s prices are out. ` }), r.had ? "Your team doesn't fit them, so it won't play on Monday. " : "You have no team for it yet. ",
+      `Save one before ${when(r.lock)} (${dur(r.lock - Date.now())} from now).`);
+  }
   function render() {
     if (mine.td == null) return;
+    renderRemind();
     renderSheet(); renderPool(); renderWeek(); renderLeague(); renderRival();
   }
 

@@ -24,6 +24,13 @@
 .fx-sheet-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px 16px; flex-wrap: wrap; font-size: 14px; color: var(--navy-muted); }
 .fx-sheet-top b { color: var(--navy-ink); }
 .fx-sheet-top .fx-lock b { font-family: var(--num); font-variant-numeric: tabular-nums; font-size: 18px; }
+.fx-plan { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 14px; font-size: 13px; }
+.fx-plan .lbl { color: var(--navy-muted); font-weight: 700; }
+.fx-plan button { font: inherit; font-size: 13px; font-weight: 700; padding: 6px 11px; border-radius: 99px; border: 1px solid rgba(255,255,255,.28); background: transparent; color: var(--navy-ink); cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.fx-plan button[aria-pressed="true"] { background: var(--navy-ink); color: var(--navy); border-color: var(--navy-ink); }
+.fx-plan button:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
+.fx-dotsaved { width: 7px; height: 7px; border-radius: 50%; background: var(--sun); display: inline-block; }
+.fx-remind { margin: 0 0 14px; padding: 12px 14px; border-radius: 14px; background: var(--sun-soft); border: 1px solid var(--sun); color: var(--ink); font-size: 15px; }
 .fx-slots { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin: 18px 0 14px; }
 .fx-slot { position: relative; min-height: 112px; border-radius: 16px; border: 2px dashed rgba(255,255,255,.22); display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; padding: 12px 10px 10px; }
 .fx-slot .n { position: absolute; top: 8px; left: 10px; font-family: var(--num); font-size: 12px; font-weight: 800; color: var(--navy-muted); }

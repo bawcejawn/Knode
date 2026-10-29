@@ -8,8 +8,13 @@ Plan and owner decisions: `claude/builds/05-fantasy-plan.md` in the KnodeGames p
 - **Team:** 5 different producers from the week's price list, cost at most 100. The first one is the captain (×2).
 - **Points:** each day, a producer scores 100 × blocks signed ÷ blocks expected (its VHP share on the Producer Race's
   hourly card), at most 130. Week = the sum of 7 days.
-- **Prices:** made Sunday 12:00 UTC from each producer's form over the 7 days before: 20 + 1.5 × (form − median form),
-  8 to 40. Published with its sha256; never remade.
+- **Prices:** made Saturday 00:00 UTC (2 days before the week; owner 2026-10-29) from each producer's form over the 7
+  days before: 20 + 1.5 × (form − median form), 8 to 40. Published with its sha256; never remade.
+- **Plan ahead:** once the prices are out, a team (and a change for any later day) can be saved for any day up to 7
+  days ahead. A planned day can be changed until its own lock. The page warns when changing an earlier day would make a
+  planned day break the one-change rule, and reminds you when next week's prices are out and your team won't play.
+- **No late-pick edge:** prices are fixed before anyone picks; a producer's expected blocks follow its VHP every hour,
+  so VHP moves don't change scores; the only fresh information is node health (Yesterday/Today), shown to everyone.
 - **Changes:** Monday's team can be any valid team. After that, one change a day: one swap, or the captain's armband.
   No pick = yesterday's team. Last week's team carries into Monday only if it fits the new list.
 - **Locks:** the Picks contract refuses a team 5 minutes before its day starts.

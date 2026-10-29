@@ -13,7 +13,8 @@
  *   price = 20 + 1.5 × (form − the pool's median form), rounded, between 8 and 40. A producer with no form costs 20.
  *   Centring on the median keeps the middle producer at 20, so 5 producers within 100 always exist (with 9 or more in
  *   the pool; a smaller pool's budget is raised to what its 5 cheapest cost).
- *   The sheet is made on Sunday 12:00 UTC for the next week; its pool is the race field on the card in force then.
+ *   The sheet is made on Saturday 00:00 UTC for the next week (2 days ahead, so nobody is rushed; owner 2026-10-29);
+ *   its pool is the race field on the card in force then. Once out, teams for any day of the next week can be planned.
  * - A team is picked for a UTC day and locks before that day starts (the Picks contract enforces the lock).
  *   Each week starts fresh: Monday's team may be any valid team on the new price list. From one day to the next after
  *   that, a team may make one change: swap one producer, or move the captaincy. A swapped-in producer may take the
@@ -53,14 +54,14 @@
   const GAMES = Object.freeze({ team: 4, rival: 5 });
   const isAddr = (a) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
   const round = (x, d) => Math.round(x * 10 ** d) / 10 ** d;
-  /** The real clock: UTC days, weeks from the Knode game's week 0, the sheet on Sunday 12:00 UTC. */
-  const REAL = Object.freeze({ day: DAY, genesis: R.GENESIS, sheetBefore: 12 * HOUR });
+  /** The real clock: UTC days, weeks from the Knode game's week 0, the sheet on Saturday 00:00 UTC. */
+  const REAL = Object.freeze({ day: DAY, genesis: R.GENESIS, sheetBefore: 2 * DAY });   // Saturday 00:00 UTC (owner, 2026-10-29)
 
   function make(clock) {
     const C = Object.assign({}, REAL, clock || {});
     if (!(C.day >= 60000 && C.day <= DAY && DAY % C.day === 0 && HOUR % Math.min(C.day, HOUR) === 0)) throw new Error("fantasy clock: a day must divide 24 hours (and be whole minutes)");
     if (!(Number.isInteger(C.genesis) && C.genesis % C.day === 0)) throw new Error("fantasy clock: the genesis must start a day");
-    if (!(C.sheetBefore > LEAD_MS && C.sheetBefore <= C.day)) throw new Error("fantasy clock: the sheet comes at most a day and more than 5 minutes before the week");
+    if (!(C.sheetBefore > LEAD_MS && C.sheetBefore <= 6 * C.day && C.sheetBefore % 60000 === 0)) throw new Error("fantasy clock: the sheet comes more than 5 minutes and at most 6 days before the week");
     const WEEK = 7 * C.day;
 
     // ── time ──
@@ -71,7 +72,8 @@
     const weekStart = (w) => C.genesis + w * WEEK;
     /** The 7 day numbers of game week w. */
     const weekDays = (w) => { const d0 = dayNo(weekStart(w)); return Array.from({ length: 7 }, (_, i) => d0 + i); };
-    /** When the price sheet for week w is made (real clock: Sunday 12:00 UTC before it), and the form days it uses. */
+    /** When the price sheet for week w is made (real clock: Saturday 00:00 UTC before it, 2 days ahead so nobody is
+     *  rushed), and the form days it uses: the 7 days before the sheet's day. */
     const sheetTime = (w) => weekStart(w) - C.sheetBefore;
     const formDays = (w) => { const last = dayNo(sheetTime(w)) - 1; return Array.from({ length: FORM_DAYS }, (_, i) => last - FORM_DAYS + 1 + i); };
     /** The Picks rounds: a team pick's round is its day. A rival pick's round is the first day of its week, in a game
