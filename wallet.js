@@ -272,7 +272,12 @@
   // Everywhere else every guest path is closed: create, restore, backup, reconnect, switch and sign never touch the key.
   const GUEST_ORIGINS = ["knodegames.com", "www.knodegames.com", "localhost", "127.0.0.1"];
   const guestOrigin = () => {
-    try { const l = window.location; return !!l && (l.protocol === "https:" || l.protocol === "http:") && GUEST_ORIGINS.includes(String(l.hostname || "")); } catch { return false; }
+    // Audit BX-67: https only on knodegames.com; plain http only on this computer (localhost, 127.0.0.1).
+    try {
+      const l = window.location, h = String((l && l.hostname) || "");
+      if (!l || !GUEST_ORIGINS.includes(h)) return false;
+      return l.protocol === "https:" || (l.protocol === "http:" && (h === "localhost" || h === "127.0.0.1"));
+    } catch { return false; }
   };
   const NO_GUEST = () => Promise.reject(new Error("Guest play is only on knodegames.com."));
   const guestLib = () => (guestOrigin() && window.KGuest ? window.KGuest

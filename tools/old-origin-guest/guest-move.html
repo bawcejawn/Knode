@@ -55,6 +55,12 @@
   "use strict";
   // Never inside another site's frame.
   if (window.top !== window.self) { try { window.top.location = window.self.location; } catch { document.body.textContent = ""; } return; }
+  // Audit BX-66: this page is for the OLD address only. The repository is also published at knodegames.com, where it
+  // would find (and offer to erase) the player's CURRENT guest key: there, and anywhere else, it does nothing.
+  if (location.hostname !== "bawcejawn.github.io" || location.protocol !== "https:") {
+    document.getElementById("status").textContent = "This page only works at the old address (bawcejawn.github.io). Your guest wallet on knodegames.com is fine: there is nothing to move here.";
+    return;
+  }
   // The same storage names as Knode Games' guest.js.
   const DB = "knode-guest", STORE = "keys", ID = "guest", LS = "kn-guest-v1", LAST = "kn-guest-last";
   const $ = (id) => document.getElementById(id);

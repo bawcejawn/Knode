@@ -153,27 +153,85 @@ const GAME_ABI = () => JSON.parse(fs.readFileSync(new URL("../../game/abi/kpred.
  *  stake the vault counts (the lowest that week; 0 if all was withdrawn), and the entry's `peak_stake` (else the
  *  active stake) is the most it had (a free player never reached the minimum). Before v6 is live
  *  (get_state → config.v6_rule_week_plus_one = 0) nobody is staked. Audit BX-15: a failed read is an error. */
-export const VAULT_ABI = () => JSON.parse(fs.readFileSync(new URL("../../game/abi/kpred-v6.koilib.json", import.meta.url), "utf8"));
+// Audit BX-61: game/abi/kpred-v6.koilib.json is the vault v6 ABI, copied from the vault repo (branch vault-v6-next,
+// f1ecf59, game/abi/kpred.koilib.json, made there by game/scripts/make-abi.cjs from game/assembly/proto/kpred.proto).
+export const VAULT_ABI_FILE = new URL("../../game/abi/kpred-v6.koilib.json", import.meta.url);
+export const VAULT_ABI = () => JSON.parse(fs.readFileSync(VAULT_ABI_FILE, "utf8"));
+/** Audit BX-61: just enough of the vault's get_state (the same entry point in v5 and v6) to see whether v6 is live and
+ *  what the minimum stake is. Fields the vault has but this doesn't name are skipped by the decoder. So the "is v6
+ *  live?" check never needs the v6 ABI file: before v6, nothing else is read and nobody is staked. */
+const U64 = (id: number) => ({ type: "uint64", id, options: { jstype: "JS_STRING" } });
+export const STATE_ABI = {
+  methods: { get_state: { entry_point: 1023583049, argument: "kpred.get_state_arguments", return: "kpred.get_state_result", read_only: true } },
+  koilib_types: { nested: { kpred: { nested: {
+    get_state_arguments: { fields: {} },
+    get_state_result: { fields: { config: { type: "config_object", id: 1 } } },
+    config_object: { fields: { min_stake: U64(9), min_stake_next: U64(13), min_stake_next_week: U64(14), v6_rule_week_plus_one: U64(21) } },
+  } } } },
+};
 export type VaultView = { live: boolean; min: bigint; players: Map<string, { week: bigint; peak: bigint }> };
 export function minStakeFor(cfg: any, week: number): bigint {
   const next = BigInt(cfg?.min_stake_next || "0"), from = Number(cfg?.min_stake_next_week || 0);
   return next > 0n && week >= from ? next : BigInt(cfg?.min_stake || "0");
 }
-async function readVault(node: any, vault: string | null, game: number, who: string[], week: number): Promise<VaultView> {
-  const out: VaultView = { live: false, min: 0n, players: new Map() };
-  if (!vault) return out;
-  const c = new Contract({ id: vault, abi: VAULT_ABI(), provider: node });
-  const st: any = await withRetry("vault state", () => (c.functions as any).get_state({}));
-  if (!st || !("result" in st)) throw new Error("no answer reading the vault's state");
-  const cfg = st.result?.config ?? {};
-  if (!(Number(cfg.v6_rule_week_plus_one || 0) > 0)) return out;
-  const results = new Map<string, any>();
-  for (const a of who) {
-    const r: any = await withRetry(`vault: ${a} in game ${game}`, () => (c.functions as any).get_game_player({ player: a, game, week: String(week) }));
-    if (!r || !("result" in r)) throw new Error(`no answer reading ${a}'s stake in game ${game}`);
-    results.set(a, r.result ?? {});
-  }
-  return vaultView(cfg, results, week);
+/** Runs fn over items, at most `limit` at a time (audit BX-63). */
+export async function pool<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i]); } };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return out;
+}
+export const VAULT_READS_AT_ONCE = 8;
+/** The vault as Block X sees it, read once per run (audit BX-63): the state once per node, and each wallet's
+ *  get_game_player once per node and week (cached for the run; up to 8 reads at a time). Audit BX-61: the v6 check
+ *  comes first, with STATE_ABI; the v6 ABI file is loaded only once v6 is live. `abi` is for the tests. */
+export function vaultReader(vault: string | null, game: number, abi: () => any = VAULT_ABI) {
+  const state = new Map<any, Promise<any>>();
+  const stakeCache = new Map<any, Map<string, Promise<any>>>();   // node → "week|wallet" → its get_game_player answer
+  const cfgOf = (node: any) => {
+    let s = state.get(node);
+    if (!s) {
+      s = (async () => {
+        const c = new Contract({ id: vault!, abi: STATE_ABI as any, provider: node });
+        const st: any = await withRetry("vault state", () => (c.functions as any).get_state({}));
+        if (!st || !("result" in st)) throw new Error("no answer reading the vault's state");
+        return st.result?.config ?? {};
+      })();
+      s.catch(() => state.delete(node));
+      state.set(node, s);
+    }
+    return s;
+  };
+  return async (node: any, who: string[], week: number): Promise<VaultView> => {
+    if (!vault) return { live: false, min: 0n, players: new Map() };
+    const cfg = await cfgOf(node);
+    if (!(Number(cfg.v6_rule_week_plus_one || 0) > 0)) return { live: false, min: 0n, players: new Map() };
+    const c = new Contract({ id: vault, abi: abi(), provider: node });
+    let mine = stakeCache.get(node);
+    if (!mine) { mine = new Map(); stakeCache.set(node, mine); }
+    const results = new Map<string, any>();
+    const got = await pool([...new Set(who)], VAULT_READS_AT_ONCE, async (a) => {
+      const k = `${week}|${a}`;
+      let p = mine!.get(k);
+      if (!p) {
+        p = (async () => {
+          const r: any = await withRetry(`vault: ${a} in game ${game}`, () => (c.functions as any).get_game_player({ player: a, game, week: String(week) }));
+          if (!r || !("result" in r)) throw new Error(`no answer reading ${a}'s stake in game ${game}`);
+          return r.result ?? {};
+        })();
+        p.catch(() => mine!.delete(k));     // a failed read is tried again (never cached as "not staked")
+        mine!.set(k, p);
+      }
+      return [a, await p] as [string, any];
+    });
+    for (const [a, r] of got) results.set(a, r);
+    return vaultView(cfg, results, week);
+  };
+}
+/** One read of the vault (no cache between calls). Exported for the tests. */
+export function readVault(node: any, vault: string | null, game: number, who: string[], week: number, abi: () => any = VAULT_ABI): Promise<VaultView> {
+  return vaultReader(vault, game, abi)(node, who, week);
 }
 /** From the vault's answers (get_state's config, and get_game_player for THIS game per player): the minimum for the
  *  week, each player's counted stake (`week_stake`, the lowest that week) and the most it had. Exported for the tests. */
@@ -189,7 +247,6 @@ export function vaultView(cfg: any, results: Map<string, any>, week: number): Va
   return out;
 }
 export { stakedSet };
-function stakedSetOf(v: VaultView) { return new Set([...v.players.entries()].filter(([, x]) => v.live && x.peak >= v.min).map(([a]) => a)); }
 const stakedSet = (v: VaultView) => new Set([...v.players.entries()].filter(([, x]) => v.live && x.peak >= v.min).map(([a]) => a));
 
 /** The Vault's points for staked players (1-255, keeping the board's order and ties; only order matters to the
@@ -295,7 +352,9 @@ export async function run(o: Opts) {
     }
   }
   const picksRead = o.picksOf ?? (contract ? (node: any, r: number) => readPicks(node, contract, G.GAME_ID, r) : null);
-  const vaultRead = o.stakeOf ? null : (who: string[], node: any, week: number) => readVault(node, KNODE, G.GAME_ID, who, week);
+  // Audit BX-63: one vault reader for the whole run (each wallet read once per node and week, in parallel).
+  const vaultOnce = vaultReader(KNODE, G.GAME_ID);
+  const vaultRead = o.stakeOf ? null : (who: string[], node: any, week: number) => vaultOnce(node, who, week);
   const rankedRead = o.rankedOf ?? (async (who: string[], node: any, week = 0) => stakedSet(await vaultRead!(who, node, week)));
   const weekStakes = async (who: string[], node: any, week: number): Promise<{ min: bigint; week: Map<string, bigint> } | null> => {
     if (o.stakeOf) return o.stakeOf(who, node, week);
