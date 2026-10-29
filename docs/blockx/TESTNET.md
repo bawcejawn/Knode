@@ -19,8 +19,8 @@ cd C:\kprediction
 git fetch origin
 git checkout picks
 git pull
-npm ci
-cd picks; npm ci; npm test; cd ..
+npm ci --ignore-scripts
+cd picks; npm ci --ignore-scripts; npm test; cd ..
 ```
 
 `npm test` in `picks` must end with `46 / 46` and `✔ Pass!`.

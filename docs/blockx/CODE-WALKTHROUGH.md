@@ -141,7 +141,7 @@ The same file runs in the browser and in the recorder (loaded with `await import
     too late.
   - `roundOf(h)` turns a block height back into its round.
 - **`vhpOf(card)` / `multiplier(card, producer)`** (76–90): reads a handicap card (field and paddock) and returns
-  `min(3, top ÷ producer)` to 2 decimals. A producer missing from the card scores 3.
+  `min(3, top ÷ producer)` to 2 decimals. A producer missing from the card scores 1 (audit BX-3).
 - **`pointsOf`** (92): the multiplier × 100 if the pick named the real signer, else 0. Points are whole hundredths.
 - **`dayOf` / `weekOf`** (95–96): the UTC day; the Knode game week counted from Monday 2026-10-19.
 - **`board(rows)`** (101–114): adds up each wallet's points, right picks and picks, its last right pick and how many
@@ -173,14 +173,17 @@ never crowd out new ones; at most 48 per run):
    which must agree on signer and time, or the target waits for the next run. The testnet has one public node, so
    it is checked once and marked `checked: 1`.
 3. Read every pick for the round (`list_picks`, 100 at a time). On mainnet both nodes must return the same picks.
-4. Find the card in force at the lock block's time. With no card yet, the target waits. After 3 days with no card,
+4. Find the card for the lock: the latest card taken at or before the lock block's time, at most 3 hours old (audit
+   BX-3: never a card made after the lock). With no card yet, the target waits. After 3 days with no card,
    or (testnet) when the lock came long before the first card, it is recorded as **void**: no points.
-5. Mark each player Staked or Free play (`readRanked`: 1 VHP, or a Knode stake including `stake_other`).
+5. Mark each player Staked or Free play (`readRanked`: 1 VHP, or a Knode stake including `stake_other`), on both
+   nodes; if they disagree the target waits (audit BX-4).
 6. Score every pick with `pointsOf` and save the target in its week file.
 
 **Leaderboards** (289–323). Every recorded pick goes through `board` and `places` for Today, This week, Last week
 and All time, with a `ranked` flag per wallet so the page can split Staked and Free play. Last week becomes **final**
-12 hours after it ends, if every target of the week was recorded with no gaps (`targetsCover`). Prizes are listed
+12 hours after it ends, if every target of the week was recorded with no gaps and the first target of the next week
+is recorded too, so none is missing at either end (`targetsCover`, audit BX-5). Prizes are listed
 only when final, only for weeks from `prizesFromWeek`, and only for the Free play board.
 
 **Writing** (325–336): `index.json` (weeks, contract, game id, prizesFromWeek), `W<week>.json` (targets),
@@ -271,7 +274,9 @@ are the audited ones. It then compiles the patched copy and writes `picks/build/
 - **`upload`** (168–201): puts the contract on the brand-new `PICKS_WIF` wallet with all three overrides on, then
   checks on chain that the code hash and overrides are as expected. On the testnet it saves the contract address,
   chain id and VHP contract to `testnet/blockx.json`.
-- **`announce` / `apply` / `pause`**: the owner actions. `pause` is `tighten_game` with `enabled: false`.
+- **`announce` / `apply` / `pause`**: the owner actions. `pause` is `tighten_game` with `enabled: false`. Before
+  signing, each checks on chain that the target holds the expected build with all three overrides on
+  (`assertAuditedContract`, audit BX-19).
 - **`lock-test`** (318–366): sends one pick per block, from 6 blocks before the lock to 3 after, with its own nonces.
   It reports which were applied, the height the contract saw, and the real last block a pick can land in.
 - **`mana-test`** (369–399): sends 1, 3 and 7 picks in one transaction each and reports the Mana per pick.

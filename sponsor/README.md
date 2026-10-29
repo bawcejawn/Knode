@@ -57,7 +57,7 @@ website says: the page then falls back to the player's own Mana.
 3. **Build and check** (once, and again after any change):
    ```
    cd sponsor
-   npm ci
+   npm ci --ignore-scripts
    npm test
    npm run check
    cd ..

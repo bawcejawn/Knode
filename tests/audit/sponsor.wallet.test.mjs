@@ -159,3 +159,29 @@ test("v3: an action without its own limit keeps the old limit; a malformed entry
   await w3.send([w3.op(PICKS, PICK)]);
   assert.equal(w3.log.built[0].rcLimit, "100000000");
 });
+
+// ── audit BXW-2: the Kondor path names the chain and re-checks what Kondor signed ──
+function kondorTamper(tamper, chainId = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==") {
+  const built = [];
+  class Transaction {
+    constructor(c) { this.options = { ...(c.options || {}) }; built.push(this.options); this.transaction = { header: { payer: c.options?.payer, chain_id: c.options?.chainId, rc_limit: c.options?.rcLimit }, operations: [] }; }
+    async pushOperation(op) { this.transaction.operations.push(op); }
+    async sign() { return tamper({ ...this.transaction, header: { ...this.transaction.header }, operations: [...this.transaction.operations], signatures: ["s"] }); }
+    async send() { return {}; }
+  }
+  const ctx = { W: { kind: "kondor", address: PLAYER, provider: { wait: async () => {} }, payer: "self", chainId }, lib: { Transaction, utils }, window: { kondor: { getSigner: () => ({}) } },
+    JSON, Number, BigInt, Uint8Array, Promise, setTimeout, String, withTimeout: (p) => p };
+  vm.createContext(ctx);
+  vm.runInContext(wallet.slice(s0, s1) + "\nthis.sendKondorWith = sendKondorWith;", ctx);
+  const op = { call_contract: { contract_id: GAME, entry_point: 1, args: "AA" } };
+  return { built, send: (opts) => ctx.sendKondorWith("t", [op], opts) };
+}
+test("BXW-2: the chain id is named in the transaction; another chain, a raised Mana limit or changed operations are not sent", async () => {
+  const ok = kondorTamper((t) => t);
+  await ok.send({ ownMana: true });
+  assert.equal(ok.built[0].chainId, "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==");
+  await assert.rejects(kondorTamper((t) => ({ ...t, header: { ...t.header, chain_id: "other" } })).send({ ownMana: true }), /another chain/);
+  await assert.rejects(kondorTamper((t) => ({ ...t, header: { ...t.header, rc_limit: "999999999" } })).send({ sponsor: SPONSOR, rcLimit: "100000000" }), /raised the Mana limit/);
+  await assert.rejects(kondorTamper((t) => ({ ...t, operations: [{ call_contract: { contract_id: DESK, entry_point: 1, args: "AA" } }] })).send({ ownMana: true }), /changed what is signed/);
+  await assert.rejects(kondorTamper((t) => ({ ...t, operations: [] })).send({ ownMana: true }), /changed what is signed/);
+});

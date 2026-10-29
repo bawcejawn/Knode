@@ -290,11 +290,26 @@ export async function sendOps(p: Provider, chainId: string, signer: Signer, ops:
   }
 }
 
+/** Audit BX-19: before the owner key signs anything for the Picks contract, check on chain that the address named in
+ *  the settings holds exactly the expected build (mainnet: the audited one; testnet: the manifest's build) with all
+ *  three overrides on. A wrong or edited deployment file can't make the owner sign for another contract. */
+export async function assertAuditedContract(net: { testnet: boolean; picks: string | null; cfg?: any }, p: Provider, meta = contractMetadata) {
+  if (!net.picks) throw new Error("No Picks contract yet.");
+  const want = net.testnet ? (readJson(TESTNET_MANIFEST)?.sha256 ?? net.cfg?.picksSha256) : PICKS_SHA256;
+  if (!want) throw new Error("No expected build for the testnet Picks contract (picks/build/testnet/manifest.json).");
+  const m = await meta(p, net.picks);
+  if (!m.exists) throw new Error(`${net.picks} has no contract on chain. Nothing was signed.`);
+  const have = String(m.hash).replace(/^0x1220/, "");
+  if (have !== want) throw new Error(`${net.picks} holds code ${have}, not the expected Picks build ${want}. Nothing was signed.`);
+  if (!(m.call && m.tx && m.upload)) throw new Error(`${net.picks} does not have all three overrides on. Nothing was signed.`);
+}
+
 async function announce(id: number, send: boolean) {
   const net = network();
   mainnetGuard(net, send);
   if (!net.picks) throw new Error("No Picks contract yet (npm run picks -- upload).");
   const { p, chainId } = await connect(net);
+  await assertAuditedContract(net, p);
   const g = gameOf(net, id), cfg = buildGameConfig(g);
   const s = ownerKey(net, p);
   const wait = net.testnet ? (readJson(TESTNET_MANIFEST)?.timelockMs ?? 600000) / 60000 + " minutes" : "48 hours";
@@ -311,6 +326,7 @@ async function apply(id: number, send: boolean) {
   mainnetGuard(net, send);
   if (!net.picks) throw new Error("No Picks contract yet.");
   const { p, chainId } = await connect(net);
+  await assertAuditedContract(net, p);
   const pend = (await read(p, net.picks, "get_game", { game: id })).pending;
   if (!pend) throw new Error(`Nothing is announced for game ${id}.`);
   const eta = Number(pend.eta);
@@ -325,6 +341,7 @@ async function pause(id: number, send: boolean) {
   mainnetGuard(net, send);
   if (!net.picks) throw new Error("No Picks contract yet.");
   const { p, chainId } = await connect(net);
+  await assertAuditedContract(net, p);
   const g = (await read(p, net.picks, "get_game", { game: id })).game;
   if (!g) throw new Error(`Game ${id} isn't registered.`);
   const off = { ...g, enabled: false };

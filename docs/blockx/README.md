@@ -46,7 +46,8 @@ using the VHP on the hourly handicap card at the moment of the lock. A wrong pic
 - **The cap of 3** keeps a lucky long shot from winning a week. Every producer with at least a third of the top's VHP is
   an equally good pick on average. In simulation, players who think win about 96% of weeks (without the cap, lucky
   players would win about 88%).
-- A producer missing from the card (a brand-new one) scores the cap, 3.
+- A producer missing from the card (a brand-new one) scores ×1 (audit BX-3).
+- The card used is the latest one taken **at or before** the lock, never a later one (audit BX-3).
 - Points are kept in hundredths, so totals never drift.
 
 **Ties** on a leaderboard: more right picks first, then the earlier last right pick, then the address.

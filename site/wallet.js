@@ -518,7 +518,9 @@
   async function sendKondorWith(label, ops, opts = {}) {
     const signer = window.kondor.getSigner(W.address);
     try { signer.provider = W.provider; } catch {}
-    const options = opts.sponsor ? { payer: opts.sponsor, payee: W.address, rcLimit: opts.rcLimit } : opts.ownMana ? { payer: W.address } : null;
+    // Audit BXW-2: name the chain in the transaction (not re-read from the node by koilib) when the page knows it.
+    const chain = W.chainId ? { chainId: W.chainId } : {};
+    const options = opts.sponsor ? { payer: opts.sponsor, payee: W.address, rcLimit: opts.rcLimit, ...chain } : opts.ownMana ? { payer: W.address, ...chain } : null;
     const tx = new lib.Transaction({ signer, provider: W.provider, ...(options ? { options } : {}) });
     for (const op of ops) await tx.pushOperation(op);
     W.status && W.status(`Confirm “${label}” in Kondor…`);
@@ -528,6 +530,8 @@
         throw new Error("Kondor did not hand back a signed transaction, so the page can't check who pays the Mana. Nothing was sent; try again, or claim later.");
       }
       tx.transaction = signed;
+      // Audit BXW-2: send only what the page built: this chain, no higher Mana limit, the same operations.
+      checkSigned(signed, ops, opts.sponsor ? opts.rcLimit : null);
       const payer = signed.header && signed.header.payer;
       // ownMana: never the game contract. The sponsor (when chosen) or the player may pay.
       const okPayers = opts.sponsor ? [opts.sponsor, W.address] : [W.address];
@@ -547,6 +551,19 @@
     W.status && W.status("Sent. Waiting for the next block…");
     if (id) { try { await W.provider.wait(id, "byBlock", 90000); return id; } catch { return null; } }
     return null;
+  }
+
+  /** The signed transaction is for this chain (when the page knows it), asks for no more Mana than the page set (when
+   *  it set a limit), and carries exactly the operations the page built (same contracts, entry points and arguments). */
+  function checkSigned(signed, ops, rcLimit) {
+    const hd = signed && signed.header;
+    if (!hd) throw new Error("Kondor handed back a transaction without a header. Nothing was sent.");
+    if (W.chainId && hd.chain_id !== W.chainId) throw new Error("The signed transaction is for another chain. Nothing was sent.");
+    if (rcLimit != null && BigInt(hd.rc_limit || 0) > BigInt(rcLimit)) throw new Error("Kondor raised the Mana limit. Nothing was sent.");
+    const got = signed.operations || [];
+    const same = (a, b) => !!(a && b && a.call_contract && b.call_contract && a.call_contract.contract_id === b.call_contract.contract_id
+      && Number(a.call_contract.entry_point) === Number(b.call_contract.entry_point) && String(a.call_contract.args || "") === String(b.call_contract.args || ""));
+    if (got.length !== ops.length || ops.some((o, i) => !same(o, got[i]))) throw new Error("Kondor changed what is signed. Nothing was sent.");
   }
 
   // ── Mana sponsor (sponsor/README.md) ──

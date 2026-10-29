@@ -19,7 +19,8 @@
  *   producer with at least a third of the top's VHP is an equally good pick on average, and the cap of 3 keeps a
  *   lucky long shot from running away with a week (simulated 2026-10-27: thoughtful players win ~96% of weeks; with
  *   no cap lucky players would win ~88%).
- * - A signer missing from the card (a brand-new producer) scores the cap, 3.
+ * - A signer missing from the card (a brand-new producer) scores ×1 (audit BX-3: a fresh producer address must not
+ *   be worth the cap to the wallets that know it will sign).
  * - Points are kept in hundredths (integers), so sums never drift.
  *
  * LEADERBOARD: Today (the target block's UTC day), This week (the Knode game week of the target block) and All time.
@@ -81,11 +82,12 @@
     }
     return { m, top };
   }
-  /** What a correct pick on `producer` scores with this card: min(3, top ÷ its VHP), 2 decimals; 3 if not on the card. */
+  /** What a correct pick on `producer` scores with this card: min(3, top ÷ its VHP), 2 decimals; 1 if not on the card. */
   function multiplier(card, producer) {
     const { m, top } = vhpOf(card);
     const v = m.get(producer);
-    if (!v || !top) return CAP;
+    if (!top) return CAP;          // no card at all: never used for points (the recorder voids such targets)
+    if (!v) return 1;              // audit BX-3: a producer missing from the card scores ×1, never the cap
     return round2(Math.min(CAP, top / v));
   }
   /** Points (hundredths) for a pick: the multiplier if it named the signer, else 0. */

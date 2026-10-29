@@ -38,7 +38,8 @@ function raceDir({ withCards = true } = {}) {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "race-"));
   for (const w of [2, 3, 4]) {
     const races = [];
-    for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) { const i = M.raceIndex(t); races.push({ id: M.raceId(i), start: t, end: t + M.RACE, cards: new Array(6).fill(withCards ? CARD : null), result: null }); }
+    // Each hourly card stamped with the time the race recorder took it (37 minutes into its hour), as on mainnet.
+    for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) { const i = M.raceIndex(t); races.push({ id: M.raceId(i), start: t, end: t + M.RACE, cards: Array.from({ length: 6 }, (_, l) => (withCards ? { ...CARD, at: t + l * 3600000 + 37 * 60000 } : null)), result: null }); }
     fs.writeFileSync(path.join(d, `W${String(w).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), races }));
   }
   return d;
@@ -141,33 +142,35 @@ test("the Free play prize needs picks on 3 different days and at least one point
 });
 
 // ── the testnet way: its own hourly cards, a fast game, its own config ──
-test("testnet: the recorder takes its own hourly card (no Producer Race there) and scores a fast game with it", async () => {
+test("testnet: the recorder takes its own hourly card (no Producer Race there); only locks after a card are scored with it", async () => {
   const FAST = { id: 92, round: 300, offset: 0, lead: 100, ahead: 3700, picksPerDay: 50, maxChanges: 5 };
   const lib = H0 + 10 * 300 + 50;
   const signersOf = async () => ({ signers: [BIG, MID, SMALL], first: T(lib - 7199), last: T(lib), n: 7200 });
   const vhpOf = async () => ({ [BIG]: "200000000000", [MID]: "100000000000", [SMALL]: "1000000000" });
   const fastPicks = async (node, r) => [{ player: ALICE, producer: MID, time: T(r * 300) - 600000 }];
-  // The lock of each target here comes after the card is taken? No: the card is taken at the run (head time), and a
-  // lock before the first card uses the first card taken within the hour after it.
+  // First run: the first card is taken now; every target recorded so far locked before it, so none can be scored.
   const out = tmp();
   const r1 = await quiet(() => run({ p: "main", check: null, out, game: FAST, cards: "self", picksContract: "1P", blockOf: blockOf(), picksOf: fastPicks, rankedOf, signersOf, vhpOf,
     head: { height: lib + 60, time: T(lib + 60), lib } }));
   assert.equal(r1.cards.length, 1, "one card taken this hour");
   const cards = JSON.parse(fs.readFileSync(path.join(out, "cards.json"), "utf8"));
   assert.equal(cards.v, 1); assert.equal(cards.cards.length, 1);
-  const wf = JSON.parse(fs.readFileSync(path.join(out, "W003.json"), "utf8"));
-  assert.equal(wf.game, 92);
-  assert.ok(wf.targets.every((t) => t.height % 300 === 0 && t.lockTime === T(t.height - 100)));
-  const recent = wf.targets.filter((t) => T(lib + 60) - t.lockTime <= 3600000);
-  assert.ok(recent.length >= 1 && recent.every((t) => !t.void && t.card), "targets whose lock is within the hour before the card are scored");
-  assert.ok(wf.targets.every((t) => !t.void), "no void rows for the days before the recorder first ran");
   assert.equal(cards.startHeight, lib + 60, "it remembers where it started");
-  const t = recent.find((x) => x.signer === MID);
+  const w1 = JSON.parse(fs.readFileSync(path.join(out, "W003.json"), "utf8"));
+  assert.equal(w1.game, 92);
+  assert.ok(w1.targets.every((t) => t.height % 300 === 0 && t.lockTime === T(t.height - 100)));
+  assert.ok(w1.targets.every((t) => t.void && !t.card), "audit BX-3: a lock before the first card is never scored with a later card");
+  // A second run 90 minutes later: targets whose lock came after the first card are scored with that card.
+  const lib2 = lib + 1800;
+  const out2 = tmp();
+  await quiet(() => run({ p: "main", check: null, prev: out, out: out2, game: FAST, cards: "self", picksContract: "1P", blockOf: blockOf(), picksOf: fastPicks, rankedOf, signersOf, vhpOf,
+    head: { height: lib2 + 60, time: T(lib2 + 60), lib: lib2 } }));
+  const w2 = JSON.parse(fs.readFileSync(path.join(out2, "W003.json"), "utf8"));
+  const scored = w2.targets.filter((t) => !t.void);
+  assert.ok(scored.length >= 1, "targets locked after the first card are scored");
+  assert.ok(scored.every((t) => t.card && t.card.at <= t.lockTime), "every card used was taken at or before its lock");
+  const t = scored.find((x) => x.signer === MID);
   if (t) assert.equal(t.picks[0][3], 200, "MID has half the top's VHP: ×2");
-  // A second run in the same hour doesn't take another card.
-  const r2 = await quiet(() => run({ p: "main", check: null, prev: out, out: tmp(), game: FAST, cards: "self", picksContract: "1P", blockOf: blockOf(), picksOf: fastPicks, rankedOf, signersOf, vhpOf,
-    head: { height: lib + 70, time: T(lib + 70), lib: lib + 10 } }));
-  assert.equal(r2.cards.length, 1);
 });
 
 test("testnet: testnet/blockx.json is a valid config the Picks contract would accept", async () => {
@@ -231,4 +234,55 @@ for f in sorted(glob.glob(sys.argv[1] + "/.github/workflows/*.yml")):
                 compile(body + "\\n", f, "exec"); n += 1
 print(n)`, path.resolve(APP)], { encoding: "utf8" });
   assert.ok(Number(out) >= 2, `compiled ${out.trim()} blocks`);
+});
+
+// ── audit fixes (Repo Lens, 2026-10-28) ──
+test("BX-4: Staked status is read on both nodes, and a disagreement holds the target", async () => {
+  const lib = H0 + 2 * X.ROUND + 50, asked = [];
+  const lying = async (who, node) => { asked.push(node); return node === "main" ? new Set() : new Set(who.filter((a) => a !== GUEST)); };
+  const r = await quiet(() => run({ p: "main", check: "check", out: tmp(), raceDir: raceDir(), picksContract: "1P", blockOf: blockOf(), picksOf: picksOf(), rankedOf: lying,
+    head: { height: lib, time: T(lib), lib } }));
+  assert.ok(asked.includes("main") && asked.includes("check"), "both nodes asked");
+  assert.ok(r.problems.some((p) => /disagree about which players are Staked/.test(p)));
+  assert.equal([...r.weeks.values()].flatMap((w) => w.targets).length, 0, "nothing recorded while they disagree");
+});
+test("BX-3: a card taken after the lock is never used for it; a signer missing from the card scores ×1", async () => {
+  const lib = H0 + 4 * X.ROUND + 50;
+  const r = await quiet(() => run({ p: "main", check: null, out: tmp(), raceDir: raceDir(), picksContract: "1P", blockOf: blockOf(), picksOf: picksOf(), rankedOf,
+    head: { height: lib, time: T(lib), lib } }));
+  const ts = [...r.weeks.values()].flatMap((w) => w.targets).filter((t) => t.card);
+  assert.ok(ts.length > 0);
+  for (const t of ts) assert.ok(t.card.at <= t.lockTime, `card at ${t.card.at} after lock ${t.lockTime}`);
+  const FRESH = "1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ";
+  const r2 = await quiet(() => run({ p: "main", check: null, out: tmp(), raceDir: raceDir(), picksContract: "1P",
+    blockOf: async (_n, h) => ({ signer: FRESH, time: T(h) }), picksOf: async () => [{ player: ALICE, producer: FRESH, time: T(H0) }], rankedOf,
+    head: { height: lib, time: T(lib), lib } }));
+  const pts = [...r2.weeks.values()].flatMap((w) => w.targets).flatMap((t) => t.picks).map((p) => p[3]);
+  assert.ok(pts.length && pts.every((x) => x <= 100), `fresh signer scored ${pts}`);
+});
+test("BX-5: last week is not final while its last target is unrecorded; it is once that target is in", async () => {
+  const startH = H0 - Math.floor(3600000 / 3000), endH = startH + 7 * 28800;
+  const lastTarget = Math.floor((endH - 1) / X.ROUND) * X.ROUND;
+  const down = async (node, h) => { if (h === lastTarget || h === lastTarget - X.ROUND / 24) throw new Error("node down"); return { signer: signerOf(h), time: T(h) }; };
+  const missing = await weekThenLook(picksGuest, 13, { blockOf: down, prizesFromWeek: 0 });
+  assert.equal(missing.board.lastWeek.final, false, "final with its last target missing");
+  assert.deepEqual(missing.board.lastWeek.prizes, []);
+  const ok = await weekThenLook(picksGuest, 13, { prizesFromWeek: 0 });
+  assert.equal(ok.board.lastWeek.final, true);
+});
+test("BX-5: the week-final check catches a missing last target in the phase the old 3-hour rule missed", async () => {
+  const { targetsCover } = await import(path.resolve(APP, "bot/games/blockx.ts"));
+  const H = 3600000, from = M.weekStart(3), to = M.weekStart(4);
+  // targets every 2 h, the last one of the week 30 min before its end (round 84), the next one 1.5 h into next week
+  const tgt = (round, time) => ({ round, height: round * 2400, final: true, checked: 2, signer: BIG, time, lockTime: time - 300000, card: null, picks: [] });
+  const week = (rounds) => ({ v: 1, week: 3, start: from, end: to, targets: rounds.map((r) => tgt(r, from + (r - 1) * 2 * H + 1.5 * H)) });
+  const all = (w, next) => new Map([[3, w], [4, { v: 1, week: 4, start: to, end: to + 7 * 24 * H, targets: next }]]);
+  const rounds = Array.from({ length: 84 }, (_, i) => i + 1);           // round 84 at to − 0.5 h
+  const full = week(rounds), nextFirst = [tgt(85, to + 1.5 * H)];
+  assert.equal(targetsCover(full, from, to, all(full, nextFirst)), true);
+  const lastMissing = week(rounds.slice(0, -1));                           // round 83 at to − 2.5 h: the old rule said "complete"
+  assert.equal(targetsCover(lastMissing, from, to, all(lastMissing, nextFirst)), false, "a missing last target");
+  assert.equal(targetsCover(full, from, to, all(full, [])), false, "the next week's first target not recorded yet");
+  const gap = week(rounds.filter((r) => r !== 40));
+  assert.equal(targetsCover(gap, from, to, all(gap, nextFirst)), false, "a gap");
 });

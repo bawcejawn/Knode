@@ -192,9 +192,9 @@ admin page on the owner's PC: `npm run admin` (127.0.0.1 only; every action show
 Anyone can rebuild the contracts and compare their fingerprints with the code on chain:
 
 ```
-npm ci
-cd game && npm ci && npm test && npm run check && cd ..
-cd desk && npm ci && npm test && npm run check && cd ..
+npm ci --ignore-scripts
+cd game && npm ci --ignore-scripts && npm test && npm run check && cd ..
+cd desk && npm ci --ignore-scripts && npm test && npm run check && cd ..
 sha256sum game/build/release/contract.wasm desk/build/release/contract.wasm
 npm run bot -- chain-check
 ```
@@ -276,9 +276,9 @@ before the start, the override is set aside and the node starts on its old folde
 ## Running the tests
 
 ```
-npm ci
-cd game && npm ci && npm test && cd ..
-cd desk && npm ci && npm test && cd ..
+npm ci --ignore-scripts
+cd game && npm ci --ignore-scripts && npm test && cd ..
+cd desk && npm ci --ignore-scripts && npm test && cd ..
 npm run test:resolver
 node --import tsx --test bot/*.test.ts
 node --import tsx --test --test-concurrency=1 tests/audit/*.test.ts tests/audit/*.test.mjs

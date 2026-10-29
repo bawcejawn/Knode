@@ -38,9 +38,9 @@ stick when done.
 ```
 git clone https://github.com/bawcejawn/knode.git C:\kprediction
 cd C:\kprediction
-npm ci
+npm ci --ignore-scripts
 cd game
-npm ci
+npm ci --ignore-scripts
 npm test                  # expect: 47 / 47 pass
 cd ..
 ```

@@ -13,7 +13,8 @@
  *       CARDS=race (mainnet): the Producer Race recorder's hourly card (race-data).
  *       CARDS=self (testnet): this recorder takes the same kind of card itself each run, from the VHP of the producers
  *       that signed the last ~6 hours of blocks (cards.json), because the testnet has no Producer Race.
- *     A target whose card can't be found yet waits; after 3 days it is recorded as void (no points).
+ *     Only a card taken at or before the lock counts (audit BX-3). A target whose card can't be found yet waits; after
+ *     3 days it is recorded as void (no points).
  *  3. The picks: every pick for the round from the Picks contract, on both nodes; they must agree. The chain locked them
  *     `lead` blocks before the target. Each pick is stored with its time, points and whether the wallet is Staked
  *     (holds 1 VHP or has a Knode stake when the target is recorded) or Free play (everyone else).
@@ -68,7 +69,7 @@ export type Opts = {
   prizesFromWeek?: number | null;                                          // default: none (no prizes listed)
   picksOf?: (node: any, round: number) => Promise<RawPick[]>;             // for the tests
   blockOf?: (node: any, height: number) => Promise<{ signer: string; time: number }>;
-  rankedOf?: (who: string[]) => Promise<Set<string>>;
+  rankedOf?: (who: string[], node: any) => Promise<Set<string>>;
   signersOf?: (node: any, from: number, to: number) => Promise<{ signers: string[]; first: number; last: number; n: number }>;
   vhpOf?: (who: string[]) => Promise<Record<string, string>>;
   head?: { height: number; time: number; lib: number };
@@ -158,25 +159,29 @@ async function readRanked(node: any, vhpContract: string, knodeGame: string | nu
 }
 
 // ── cards ──
-/** The Producer Race card in force at time t (race-data). */
-function raceCardAt(raceDir: string | undefined, t: number): Card | null {
-  const ra = M.raceAt(t);
-  const wf = readJson(raceDir, wName(M.weekOf(ra.start)));
-  const race = wf && Array.isArray(wf.races) ? wf.races.find((r: any) => r && r.id === ra.id) : null;
-  if (!race || !Array.isArray(race.cards)) return null;
-  const n = M.legsOf(race.cards);
-  const c = M.cardForLeg(race.cards, M.legOf(ra.start, t, n));
-  return c && Array.isArray(c.field) && c.field.length ? c : null;
-}
-/** A self-made card in force at time t: the latest one taken at or before t (within 3 hours), else, for a lock before
- *  the first card, the first one taken within the hour after (like a race whose first card came late). */
-function selfCardAt(cards: Card[], t: number): Card | null {
+/** The handicap card for a lock at time t (audit BX-3): the latest card TAKEN at or before t (its `at`), no older than
+ *  3 hours, so a card made after the lock (with VHP that moved after it) is never used. Race cards come from the race
+ *  at t and the one before; self-made cards (testnet) from cards.json. None: the target waits (then void). */
+const CARD_MAX_AGE_MS = 3 * 3600000;
+function latestCardAt(cards: (Card | null | undefined)[], t: number): Card | null {
   let best: Card | null = null;
-  for (const c of cards) if (c.at <= t && t - c.at <= 3 * 3600000 && (!best || c.at > best.at)) best = c;
-  if (best) return best;
-  for (const c of cards) if (c.at > t && c.at - t <= 3600000 && (!best || c.at < best.at)) best = c;
+  for (const c of cards) {
+    if (!c || !Number.isFinite(c.at) || !Array.isArray(c.field) || !c.field.length) continue;
+    if (c.at <= t && t - c.at <= CARD_MAX_AGE_MS && (!best || c.at > best.at)) best = c;
+  }
   return best;
 }
+function raceCardAt(raceDir: string | undefined, t: number): Card | null {
+  const all: (Card | null)[] = [];
+  for (const at of [t, t - M.RACE]) {
+    const ra = M.raceAt(at);
+    const wf = readJson(raceDir, wName(M.weekOf(ra.start)));
+    const race = wf && Array.isArray(wf.races) ? wf.races.find((r: any) => r && r.id === ra.id) : null;
+    if (race && Array.isArray(race.cards)) all.push(...race.cards);
+  }
+  return latestCardAt(all, t);
+}
+const selfCardAt = (cards: Card[], t: number): Card | null => latestCardAt(cards, t);
 
 /** One run for one game. Exported for the tests, which pass fake nodes. */
 export async function run(o: Opts) {
@@ -201,7 +206,7 @@ export async function run(o: Opts) {
     else { const ch = await headOf(o.check); blockC = blockReader(o.check, ch.id); }
   }
   const picksRead = o.picksOf ?? (contract ? (node: any, r: number) => readPicks(node, contract, G.GAME_ID, r) : null);
-  const rankedRead = o.rankedOf ?? ((who: string[]) => readRanked(o.p, VHP, KNODE, who));
+  const rankedRead = o.rankedOf ?? ((who: string[], node: any) => readRanked(node, VHP, KNODE, who));
   console.log(`game ${G.GAME_ID}: every ${G.ROUND} blocks, lock ${G.LEAD} before; head ${head.height} (${new Date(head.time).toISOString()}), irreversible ${head.lib}`);
 
   // ── self-made cards (CARDS=self): one per hour, from the VHP of the producers of the last ~6 hours ──
@@ -269,9 +274,15 @@ export async function run(o: Opts) {
       const card = cardAt(lock.time);
       // CARDS=self: cards are only ever taken going forward, so a lock more than an hour before the first card will
       // never get one (the recorder wasn't running yet): void now rather than waiting 3 days.
-      const never = CARDS === "self" && cards.length > 0 && lock.time < cards[0].at - 3600000;
+      const never = CARDS === "self" && cards.length > 0 && lock.time < cards[0].at;
       if (!card && !old && !never) { problems.push(`block ${h}: no handicap card yet for ${new Date(lock.time).toISOString()}; tried again next run`); continue; }
-      const ranked = await rankedRead([...new Set(raw.map((x) => x.player))]);
+      // Audit BX-4: Staked or Free play is read on both nodes too; a disagreement holds the target like a block's.
+      const players = [...new Set(raw.map((x) => x.player))];
+      const ranked = await rankedRead(players, o.p);
+      if (o.check) {
+        const other = await rankedRead(players, o.check);
+        if (ranked.size !== other.size || [...ranked].some((a) => !other.has(a))) { problems.push(`block ${h}: the two nodes disagree about which players are Staked; not recorded this run`); continue; }
+      }
       const { m, top } = card ? X.vhpOf(card) : { m: new Map(), top: 0 };
       const picks: Pick[] = raw.map((x) => [x.player, x.producer, x.time, card ? X.pointsOf(card, x.producer, b.signer) : 0, ranked.has(x.player) ? 1 : 0]);
       const t: Target = {
@@ -307,7 +318,7 @@ export async function run(o: Opts) {
     const rows = rowsOf(M.weekStart(lw), M.weekStart(nowW));
     // Final: 12 hours after the week ended, with every target of the week recorded.
     const wf = all.get(lw);
-    const complete = !!wf && wf.targets.length > 0 && targetsCover(wf, M.weekStart(lw), M.weekStart(nowW));
+    const complete = !!wf && wf.targets.length > 0 && targetsCover(wf, M.weekStart(lw), M.weekStart(nowW), all);
     const final = head.time >= M.weekStart(nowW) + CORRECTION_MS && complete;
     // Prizes: the Free play board's top 2 (owner, 2026-10-28), only from PRIZES_FROM_WEEK (none until the vault).
     const rk = rankedSet(rows);
@@ -336,13 +347,21 @@ export async function run(o: Opts) {
   return { problems, weeks, board, cards };
 }
 
-/** Every target whose block time falls in [from, to) is recorded: the rounds between the first and last recorded run
- *  without a gap, and the first and last are within 3 hours of the week's edges (targets are at most ~2 hours apart). */
-function targetsCover(wf: WeekFile, from: number, to: number): boolean {
+/** Every target whose block time falls in [from, to) is recorded (audit BX-5): the week's rounds run without a gap,
+ *  the round right after the last one is recorded and falls at or after the week's end (so no target at the end of
+ *  the week is missing), and the round right before the first one is recorded before the week's start (or, for the
+ *  game's first week, the first target is within 3 hours of the start). */
+export function targetsCover(wf: WeekFile, from: number, to: number, all: Map<number, WeekFile>): boolean {
   const rs = wf.targets.map((t) => t.round).sort((a, b) => a - b);
   for (let i = 1; i < rs.length; i++) if (rs[i] !== rs[i - 1] + 1) return false;
-  const first = wf.targets.find((t) => t.round === rs[0])!, last = wf.targets.find((t) => t.round === rs[rs.length - 1])!;
-  return first.time - from < 3 * 3600000 && to - last.time < 3 * 3600000;
+  const find = (r: number) => { for (const w of all.values()) { const t = w.targets.find((x) => x.round === r); if (t) return t; } return null; };
+  const after = find(rs[rs.length - 1] + 1);
+  if (!after || after.time < to) return false;
+  const before = find(rs[0] - 1);
+  if (before) return before.time < from;
+  const first = wf.targets.find((t) => t.round === rs[0])!;
+  const earlier = [...all.keys()].some((w) => w < wf.week && (all.get(w)?.targets.length ?? 0) > 0);
+  return !earlier && first.time - from < 3 * 3600000;
 }
 
 // ── the testnet config (testnet/blockx.json), read and checked ──

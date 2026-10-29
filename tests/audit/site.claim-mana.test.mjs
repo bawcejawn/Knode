@@ -55,8 +55,8 @@ assert.ok(s0 > 0 && s1 > s0, "sendKondor in site/wallet.js");
 function kondorWorld(signPayer) {
   const log = { options: undefined, signed: 0, sent: 0 };
   class Transaction {
-    constructor(c) { log.options = c.options; this.transaction = { header: { payer: c.options?.payer ?? "1Player" } }; }
-    async pushOperation() {}
+    constructor(c) { log.options = c.options; this.transaction = { header: { payer: c.options?.payer ?? "1Player" }, operations: [] }; }
+    async pushOperation(op) { this.transaction.operations.push(op); }
     async sign() { log.signed++; return { ...this.transaction, header: { payer: signPayer }, signatures: ["x"] }; }
     async send() { log.sent++; return {}; }
   }
@@ -65,7 +65,7 @@ function kondorWorld(signPayer) {
     window: { kondor: { getSigner: () => ({}) } }, JSON,
   });
   vm.runInContext(wallet.slice(s0, s1) + "\nthis.sendKondor = sendKondor;", ctx);
-  return { log, send: (opts) => ctx.sendKondor("collect week 1 reward", [{}], opts) };
+  return { log, send: (opts) => ctx.sendKondor("collect week 1 reward", [{ call_contract: { contract_id: "1MpmfKpredContract", entry_point: 0xdd1b3c31, args: "" } }], opts) };
 }
 
 test("own Mana: the player is the payer, the transaction is signed and checked before it is sent", async () => {

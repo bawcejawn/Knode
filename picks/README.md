@@ -44,7 +44,7 @@ round always means the same target.
 
 ```
 cd picks
-npm ci
+npm ci --ignore-scripts
 npm test
 npm run check
 cd ..

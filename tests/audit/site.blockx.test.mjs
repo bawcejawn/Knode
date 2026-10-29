@@ -53,12 +53,12 @@ const CARD = {
   paddock: [{ a: "1Small", vhp: 100_000, k: 20 }],
 };
 
-test("score: min(3, top VHP ÷ picked VHP) for a correct pick, 0 for a wrong one; missing from the card scores 3", () => {
+test("score: min(3, top VHP ÷ picked VHP) for a correct pick, 0 for a wrong one; missing from the card scores ×1 (audit BX-3)", () => {
   assert.equal(X.multiplier(CARD, "1Big"), 1);
   assert.equal(X.multiplier(CARD, "1Mid"), 2);
   assert.equal(X.multiplier(CARD, "1Third"), 3);
   assert.equal(X.multiplier(CARD, "1Small"), 3, "capped (30× uncapped)");
-  assert.equal(X.multiplier(CARD, "1New"), 3);
+  assert.equal(X.multiplier(CARD, "1New"), 1, "a fresh producer is never worth the cap");
   assert.equal(X.pointsOf(CARD, "1Mid", "1Mid"), 200);
   assert.equal(X.pointsOf(CARD, "1Mid", "1Big"), 0);
   assert.equal(X.pointsOf(CARD, null, "1Big"), 0);

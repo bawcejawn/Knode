@@ -22,7 +22,7 @@ cd C:\kprediction
 git checkout picks
 git pull
 cd picks
-npm ci
+npm ci --ignore-scripts
 npm test
 cd ..
 certutil -hashfile picks\build\release\contract.wasm SHA256

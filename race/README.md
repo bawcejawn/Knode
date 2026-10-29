@@ -27,7 +27,7 @@ need the Knode owner's key (the very first setup needs the race wallet's key).
 2. **Build and test**:
    ```
    cd race
-   npm ci
+   npm ci --ignore-scripts
    npm test
    cd ..
    certutil -hashfile race\build\release\contract.wasm SHA256
