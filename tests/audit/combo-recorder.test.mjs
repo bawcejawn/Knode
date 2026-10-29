@@ -138,22 +138,36 @@ test("when the two nodes disagree about a slot, it isn't recorded that run", asy
   assert.equal(read(out, "W003.json").slots.find((s) => s.round === round), undefined);
 });
 
-test("a leg whose race is never recorded is void 3 days later; the card scores on its other legs if 2 remain, else it is void", async () => {
+test("a leg whose race is never recorded waits, then is void at the deadline (2 days after the week ends); 1 leg left: the card is void", async () => {
   const lost = D3 * 4 + 3;     // Monday's 18:00 race
   const race = raceDir({ noResult: new Set([lost]) });
-  let r = await days(D3, D3 + 2, 12, { raceDir: race });
+  let r = await days(D3, D3 + 4, 12, { raceDir: race });
   let mon = read(r.out, "W003.json").slots.find((s) => s.round === C.slotRound(D3, 0));
   assert.equal(mon.cards.find((c) => c.player === ALICE).state, "pending", "waits for the race");
-  r = await days(D3, D3 + 4, 12, { raceDir: race });
+  r = await days(D3, D3 + 9, 12, { raceDir: race });      // Wednesday of week 4, after the deadline (Wed 00:00)
   mon = read(r.out, "W003.json").slots.find((s) => s.round === C.slotRound(D3, 0));
   const a = mon.cards.find((c) => c.player === ALICE);
   assert.equal(a.legs[0][4], "void");
   assert.equal(a.state, "final"); assert.equal(a.outcome, "void", "1 leg left: the card is void");
 });
 
-test("a card sent before any race card exists is void", async () => {
+test("missing race-data makes cards wait, never void them early; at the deadline they are void", async () => {
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), "race-"));
-  const { out } = await days(D3, D3 + 1, 12, { raceDir: empty });
+  let { out } = await days(D3, D3 + 2, 12, { raceDir: empty });
+  let mon = read(out, "W003.json").slots.find((s) => s.round === C.slotRound(D3, 0));
+  assert.ok(mon.cards.every((c) => c.priceAt === null && c.state === "pending"));
+  ({ out } = await days(D3, D3 + 9, 12, { raceDir: empty }));
+  mon = read(out, "W003.json").slots.find((s) => s.round === C.slotRound(D3, 0));
+  assert.ok(mon.cards.every((c) => c.state === "final" && c.outcome === "void"));
+});
+
+test("a card sent before any race card existed is void (race-data has later cards, none before it)", async () => {
+  const race = raceDir();
+  const f = path.join(race, "W003.json"), wf = JSON.parse(fs.readFileSync(f, "utf8"));
+  fs.unlinkSync(path.join(race, "W002.json"));
+  wf.races.find((x) => x.id === M.raceId(D3 * 4)).cards[0] = null;    // no card at Monday 00:00; the 06:00 race's comes later
+  fs.writeFileSync(f, JSON.stringify(wf));
+  const { out } = await days(D3, D3 + 2, 12, { raceDir: race });
   const mon = read(out, "W003.json").slots.find((s) => s.round === C.slotRound(D3, 0));
   assert.ok(mon.cards.every((c) => c.priceAt === null && c.state === "final" && c.outcome === "void"));
 });
@@ -198,4 +212,108 @@ test("a previous file can't smuggle in cards: only fixed slots of the right week
   const wf = read(out, "W003.json");
   assert.ok(!wf.slots.some((s) => s.cards.some((c) => c.player === "nope")));
   assert.ok(!wf.slots.some((s) => s.round === C.slotRound(D3 + 30, 1)));
+});
+
+// ── formal audit 2026-10-28 (scoring and recorder): the failing tests that showed CC-B1..CC-B5, now passing ──
+const T = (d, h) => d * M.DAY + h * 3600000;
+async function runAt(t, prev, { race, bx, cards = cardsOf(), staked = stakedOf } = {}) {
+  const out = tmp();
+  const r = await quiet(() => run({ p: "main", check: "check", prev, out, raceDir: race, blockxDir: bx, picksContract: "1P", cardsOf: cards, stakedOf: staked, head: headAt(t) }));
+  return { out, r };
+}
+test("CC-B1: a 4-day outage mid-week doesn't block the week's Vault file", async () => {
+  const race = raceDir(), bx = blockxDir(); let prev = "";
+  for (const d of [D3, D3 + 1]) prev = (await runAt(T(d, 13), prev, { race, bx })).out;
+  for (let d = D3 + 6; d <= D3 + 13; d++) prev = (await runAt(T(d, 13), prev, { race, bx })).out;
+  assert.ok(fs.existsSync(path.join(prev, "vault", "W3.json")));
+});
+test("CC-B2: a race card published after the slot was fixed is used, and the card ends final", async () => {
+  const full = raceDir(), bx = blockxDir(), lateDir = raceDir();
+  const f = path.join(lateDir, "W003.json"), wf = JSON.parse(fs.readFileSync(f, "utf8"));
+  wf.races.find((x) => x.id === M.raceId(D3 * 4)).cards[0] = null;
+  wf.races.find((x) => x.id === M.raceId(D3 * 4 + 3)).result = null;
+  fs.writeFileSync(f, JSON.stringify(wf));
+  let prev = (await runAt(T(D3, 13), "", { race: lateDir, bx })).out;
+  prev = (await runAt(T(D3 + 1, 0) + 600000, prev, { race: lateDir, bx })).out;
+  for (let d = D3 + 1; d <= D3 + 4; d++) prev = (await runAt(T(d, 13), prev, { race: full, bx })).out;
+  const a = read(prev, "W003.json").slots.find((s) => s.round === C.slotRound(D3, 0)).cards.find((c) => c.player === ALICE);
+  assert.equal(a.state, "final"); assert.equal(a.outcome, "hit");
+  assert.equal(a.priceAt, M.raceStart(D3 * 4) + 60000, "priced with the card that was in force when sent");
+});
+test("CC-B3: race-data missing at the fixing run doesn't void the day's cards", async () => {
+  const race = raceDir(), bx = blockxDir(), empty = fs.mkdtempSync(path.join(os.tmpdir(), "race-"));
+  let prev = (await runAt(T(D3, 13), "", { race, bx })).out;
+  prev = (await runAt(T(D3 + 1, 13), prev, { race: empty, bx })).out;
+  for (let d = D3 + 2; d <= D3 + 3; d++) prev = (await runAt(T(d, 13), prev, { race, bx })).out;
+  const a = read(prev, "W003.json").slots.find((s) => s.round === C.slotRound(D3, 0)).cards.find((c) => c.player === ALICE);
+  assert.equal(a.outcome, "hit");
+});
+test("CC-B4: one missing result can't push the Vault file past the week's end + 3 days", async () => {
+  const lost = (D3 + 7) * 4 + 3, race = raceDir({ noResult: new Set([lost]) }), bx = blockxDir(), sun = D3 + 6;
+  const cards = async (node, round) => {
+    if (round % 3 !== 0 || C.dayOfRound(round) !== sun) return [];
+    const t = T(sun, 19), r = Math.floor(heightAt(T(sun + 1, 12)) / X.ROUND), even = r % 2 === 0 ? r : r + 1;
+    return [{ player: ALICE, legs: [{ code: C.WIN, round: lost, producer: H1 }, { code: C.BLOCK, round: even, producer: H1 }], time: t, height: heightAt(t), changes: 0 }];
+  };
+  let prev = "";
+  for (let d = D3; d <= D3 + 9; d++) prev = (await runAt(T(d, 23), prev, { race, bx, cards })).out;
+  assert.ok(fs.existsSync(path.join(prev, "vault", "W3.json")), "written by Wed 23:00 (the Vault's deadline is Thu 00:00)");
+});
+test("CC-B5: a leg is worth the lower of its worth when sent and at its lock", () => {
+  const atSend = CARD(0);
+  const atLock = { ...CARD(1), field: [{ a: H1, vhp: 4000, k: 300, h: 1 }, { a: H4, vhp: 8000, k: 600, h: 0.5 }, { a: H2, vhp: 2000, k: 150, h: 2 }, { a: H3, vhp: 2000, k: 150, h: 2 }] };
+  const leg = { code: C.BLOCK, round: 100, producer: H4 };
+  assert.equal(C.finalWorth(atSend, atLock, leg), C.priceLeg(atLock, leg).f100);
+  assert.ok(C.finalWorth(atSend, atLock, leg) < C.priceLeg(atSend, leg).f100);
+  assert.equal(C.finalWorth(atSend, null, leg), C.priceLeg(atSend, leg).f100, "no lock card: the worth when sent");
+  assert.equal(C.finalWorth(atLock, atSend, leg), C.priceLeg(atLock, leg).f100, "never higher than when sent");
+});
+test("CC-B6: once the Vault can be read, This week shows real stakes (not a cache left empty by Today)", async () => {
+  const { out } = await days(D3, D3 + 3, 13);
+  const w = read(out, "board.json").week.rows;
+  assert.ok(w.length > 0);
+  assert.equal(w.find((x) => x.a === ALICE).staked, true);
+  assert.equal(w.find((x) => x.a === CAROL).staked, false);
+});
+test("CC-B7: a previous file can't duplicate a slot or a player, or carry made-up points", async () => {
+  const { out } = await days(D3, D3 + 2, 13);
+  const wf = read(out, "W003.json");
+  const mon = wf.slots.find((s) => s.round === C.slotRound(D3, 0));
+  const fake = JSON.parse(JSON.stringify(mon));
+  fake.cards.find((c) => c.player === ALICE).pts = 500000000;
+  wf.slots.push(fake);                                            // the same slot twice
+  const dupe = JSON.parse(JSON.stringify(wf.slots.find((s) => s.round === C.slotRound(D3 + 1, 0))));
+  dupe.cards.push(JSON.parse(JSON.stringify(dupe.cards[0])));     // a player twice in one slot
+  wf.slots = wf.slots.filter((s) => s.round !== dupe.round).concat([dupe]);
+  fs.writeFileSync(path.join(out, "W003.json"), JSON.stringify(wf));
+  const o2 = tmp();
+  await quiet(() => run({ p: "main", check: null, prev: out, out: o2, raceDir: raceDir(), blockxDir: blockxDir(), picksContract: "1P", cardsOf: cardsOf({ before: 0 }), stakedOf, head: headAt(T(D3 + 2, 14)) }));
+  const w2 = read(o2, "W003.json");
+  assert.equal(w2.slots.filter((s) => s.round === mon.round).length, 1);
+  const a = w2.slots.find((s) => s.round === mon.round).cards.find((c) => c.player === ALICE);
+  assert.equal(a.pts, C.pointsFor(a.legs.filter((l) => l[4] !== "void").map((l) => l[3])), "points recounted from the legs");
+});
+
+// The workflow's publish check (the Python in combo.yml) accepts the recorder's own files and refuses duplicates
+// (audit CC-C6). Skipped where python3 isn't installed.
+test("combo.yml's publish check: the recorder's real files pass; a duplicated Vault row or slot is refused", async (t) => {
+  const { execFileSync } = await import("node:child_process");
+  try { execFileSync("python3", ["--version"]); } catch { t.skip("no python3"); return; }
+  const y = fs.readFileSync(path.resolve(APP, ".github/workflows/combo.yml"), "utf8");
+  const py = y.split("<<'PY'\n")[1].split("\n          PY\n")[0].split("\n").map((l) => (l.startsWith("          ") ? l.slice(10) : l)).join("\n");
+  const script = path.join(tmp(), "check.py");
+  fs.writeFileSync(script, py);
+  const race = raceDir(), bx = blockxDir();
+  let prev = "";
+  for (let d = D3; d <= D3 + 9; d++) {
+    const out = tmp();
+    await quiet(() => run({ p: "main", check: "check", prev, out, raceDir: race, blockxDir: bx, picksContract: "1EDaCKVmBjUxLxgWCmDbRA8gWKkSQ6ByzY", cardsOf: cardsOf(), stakedOf, head: headAt(d * M.DAY + 13 * 3600000) }));
+    prev = out;
+  }
+  assert.ok(fs.existsSync(path.join(prev, "vault", "W3.json")));
+  assert.match(execFileSync("python3", ["-I", script, prev]).toString(), /combo files ok/);
+  const bad = (edit) => { const d = tmp(); fs.cpSync(prev, d, { recursive: true }); edit(d); try { execFileSync("python3", ["-I", script, d], { stdio: "pipe" }); return false; } catch { return true; } };
+  assert.ok(bad((d) => { const f = path.join(d, "vault", "W3.json"), j = read(d, "vault/W3.json"); j.rows.push({ ...j.rows[0] }); fs.writeFileSync(f, JSON.stringify(j)); }), "a player twice in the Vault file");
+  assert.ok(bad((d) => { const f = path.join(d, "W003.json"), j = read(d, "W003.json"); j.slots.push(j.slots[0]); fs.writeFileSync(f, JSON.stringify(j)); }), "a slot twice");
+  assert.ok(bad((d) => { const f = path.join(d, "W003.json"), j = read(d, "W003.json"); j.slots[0].cards[0].legs[0][3] = 301; fs.writeFileSync(f, JSON.stringify(j)); }), "a worth above ×3");
 });

@@ -39,6 +39,8 @@
  *   Simulated 2026-10-28: removing the cap doesn't change who reaches the top 30%; the week's #1 is then usually
  *   decided by one big card (80% of the leader's week vs 45% with a 150 cap).
  *   Easy legs are worth less than ×1 (down to ×0.25), so stacking near-certain legs is not free points.
+ *   For scoring, a leg is worth the LOWER of its worth when the card was sent and its worth on the card in force when
+ *   the leg locks (finalWorth; audit CC-B5): a producer whose VHP grows before the lock can't keep a long-shot price.
  *
  * VOID LEGS: a leg whose race or target is void (no card, never recorded), or whose horse is not in the race at all,
  * is dropped. The card scores on the rest with the base for that many legs; with fewer than 2 legs left it is void.
@@ -171,6 +173,20 @@
     return { chance, factor: f, f100: Math.round(f * 100) };
   }
 
+  /** A leg's worth for scoring (hundredths): the LOWER of its worth on the card in force when the card was sent and on
+   *  the card in force when the leg locks (audit CC-B5, 2026-10-28: VHP can move between sending and the lock, so a
+   *  leg priced as a long shot must not keep that price if its producer has since become big). null if the leg can't
+   *  be priced at sending. No lock card (or the horse not on it): the worth at sending. */
+  function finalWorth(sendCard, lockCard, leg) {
+    const a = priceLeg(sendCard, leg);
+    if (!a) return null;
+    const b = lockCard ? priceLeg(lockCard, leg) : null;
+    return b ? Math.min(a.f100, b.f100) : a.f100;
+  }
+  /** When a leg locks (ms): race legs 25 minutes before the start; Block X legs about 500 blocks before the block
+   *  (targetTime = the recorded time of the target block, else an estimate). */
+  const legLockTime = (leg, targetTime) => (isRace(leg.code) ? M.raceStart(leg.round) - RACE_LEAD_MS : targetTime - BLOCK_LEAD * X.BLOCK_MS);
+
   /** Points (hundredths) for legs with these factors (hundredths): base × product, rounded down, no cap. Exact
    *  (BigInt), so the page and the recorder never differ by a rounding. Up to 10 legs (the contract's limit): the
    *  most a card can score is 960 × 3^10 = 56,687,040 points, well inside exact integers. */
@@ -280,7 +296,7 @@
     GAME_ID, WIN, SHOW, HALF, BLOCK, CODES, NAMES, FAMILY, MIN_LEGS, MAX_LEGS, HARD_MAX_LEGS, BASE, CAP, PREF, F_MIN, F_MAX,
     CARDS_PER_DAY, MAX_CHANGES, BEST, RACE_LEAD_MS, RACE_AHEAD_MS, BLOCK_LEAD, BLOCK_AHEAD,
     isWindow, slotKey, slotRound, dayOfRound, utcDay, lockOf, legOpen, cardLockTime, cardProblem,
-    priceCard, raceChances, factorOf, priceLeg, pointsFor, potential, legResult, scoreCard, board, places, shareText,
+    priceCard, raceChances, factorOf, priceLeg, finalWorth, legLockTime, pointsFor, potential, legResult, scoreCard, board, places, shareText,
     vaultWeek, toVaultPoints, vaultFile, MIN_WEEK_PTS,
   };
 })(typeof window !== "undefined" ? window : globalThis);

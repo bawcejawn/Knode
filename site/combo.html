@@ -314,7 +314,7 @@
             </div>
           </div>
         </div>
-        <p class="rules">Up to 3 legs a race (one Win, one Show, one Top half) and one per block. Each producer can be on your card once. Races lock 25 minutes before the start, Block X 500 blocks (about 25 minutes) before the block. 3 cards a day, each changeable up to 3 times before it locks.</p>
+        <p class="rules">Up to 3 legs a race (one Win, one Show, one Top half) and one per block. Each producer can be on your card once. Races lock 25 minutes before the start, Block X 500 blocks (about 25 minutes) before the block. 3 cards a day, each changeable up to 3 times before it locks, and only on the UTC day you made it. A leg's worth can drop, never rise, if its producer's VHP changes before the leg locks.</p>
       </aside>
     </div>
 
@@ -340,6 +340,7 @@
       <p><b>The legs.</b> <b>Win</b>: the horse wins the race. <b>Show</b>: it finishes in the top 3. <b>Top half</b>: it finishes in the top half of the field. <b>Block X</b>: the producer signs that block (every 2,400th block). A horse must sign at least one block to count. More games add their own legs as they launch.</p>
       <p><b>What a leg is worth.</b> Each leg is priced from its chance, using the Producer Race's latest handicap card when your card is sent:</p>
       <p><span class="formula">leg worth = 0.5 ÷ chance, from ×0.25 to ×3</span></p>
+      <p>If a producer's share of VHP changes before a leg locks, the leg is worth the lower of the two: its worth when you sent the card, or on the race card in force when the leg locks. Prices can drop, never rise, so a long shot can't keep its ×3 after its producer gets bigger.</p>
       <p>A leg that hits half the time is worth ×1. An easy leg, like a big producer finishing in the top half, is worth less than ×1; a hard one up to ×3. Race chances come from 4,000 simulated races on the card; Block X from each producer's share of VHP.</p>
       <p><b>The card.</b> Points = the base for its number of legs × every leg's worth. There's no cap: if you can build it, you can win it.</p>
       <table class="base" id="base-table"></table>

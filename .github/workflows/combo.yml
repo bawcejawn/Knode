@@ -127,6 +127,7 @@ jobs:
                       assert set(j) == {"game", "week", "final", "rows", "first", "second"} and j["game"] == 8 and nat(j["week"]) and v == "W%d.json" % j["week"], v
                       assert j["final"] is True and j["first"] == [] and j["second"] == [] and type(j["rows"]) is list and len(j["rows"]) <= 100000, v
                       assert all(type(r) is dict and set(r) == {"player", "points"} and addr.fullmatch(str(r["player"])) and type(r["points"]) is int and 1 <= r["points"] <= 255 for r in j["rows"]), v
+                      assert len({r["player"] for r in j["rows"]}) == len(j["rows"]), v + ": a player twice"
                   continue
               j = json.load(open(p, encoding="utf-8"))
               if f == "board.json":
@@ -141,6 +142,9 @@ jobs:
                   continue
               assert set(j) == {"v", "week", "start", "end", "slots"} and j["v"] == 1 and f == "W%03d.json" % j["week"], f
               assert type(j["slots"]) is list and len(j["slots"]) <= 21 and all(slot_ok(s) for s in j["slots"]), f
+              rounds = [s["round"] for s in j["slots"]]
+              assert rounds == sorted(set(rounds)), f + ": slots repeated or out of order"
+              assert all(len({c["player"] for c in s["cards"]}) == len(s["cards"]) for s in j["slots"]), f + ": a player twice in a slot"
           print("combo files ok")
           PY
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"

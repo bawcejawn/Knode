@@ -36,9 +36,14 @@ syntax = "proto3";
 //     half; a block one leg), and each producer at most once per card;
 //   - the round of a card is its slot: UTC day * round_size + slot, so a
 //     wallet has round_size cards a day, each made on its own UTC day.
-// Leg types are part of the game's shape: announce_game may only ADD leg types
-// (48 hours), never change or remove one; tighten_game may switch one off,
-// lock it earlier, open it later or lower max_legs.
+// Leg types are part of the game's shape: a leg type's code, clock, round size
+// and offset never change, and none is ever removed or reordered. announce_game
+// (48 hours, public) may add leg types and may loosen an existing one (lock
+// later, open earlier, switch back on) or raise max_legs; tighten_game (at once)
+// may switch one off, lock it earlier, open it later or lower max_legs. The
+// owner must not add a new code with the same clock as an existing one (an
+// "alias", e.g. a second Win code): the chain would then allow two legs of the
+// same kind on one race. Monitoring alerts on every announcement for a card game.
 //
 // Owner changes are timelocked: a new game, or a looser setting on a game,
 // waits 48 hours (announce_game, then apply_game). Switching a game off or

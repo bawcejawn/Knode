@@ -52,6 +52,7 @@
   const ROOT = new URL("../", location.href);
   let picksC = null, cardsLive = false, liveMax = 0, usage = null;
   let slots = [null, null, null];   // today's cards on chain, by slot
+  let slotsDay = null;              // the UTC day those slots were read for; null while unknown (audit CC-C1)
   let editing = null;               // the slot being changed, or null for a new card
   let stake = null;                 // staked in the Combo Card this week: true, false, or null (can't tell yet)
   let sending = false;
@@ -300,19 +301,25 @@
     await loadMine();
   }
   /** Today's 3 cards, today's usage, and the stake in the Combo Card (from the Vault, once it can tell). */
+  // The slots are replaced only after every read succeeded, all at once; while a read is out or failed they are
+  // "unknown" and nothing can be sent (audit CC-C1: an empty list during a refresh made Send overwrite card 1).
+  let loadSeq = 0;
   async function loadMine() {
-    slots = [null, null, null]; usage = null; stake = null;
-    const who = me();
-    if (cardsLive && who && head) {
-      const day = C.utcDay(head.time);
-      try {
-        const got = await Promise.all([0, 1, 2].map((k) => picksC.functions.get_pick({ game: C.GAME_ID, round: String(C.slotRound(day, k)), player: who }).then((x) => (x.result && x.result.pick) || null)));
-        slots = got.map((p) => (p && Array.isArray(p.legs) && p.legs.length ? p : null));
-        usage = (await picksC.functions.get_usage({ game: C.GAME_ID, player: who })).result || null;
-      } catch { /* shown as unknown */ }
-      stake = await readStake(who);
+    const seq = ++loadSeq, who = me();
+    if (!(cardsLive && who && head)) { slots = [null, null, null]; slotsDay = null; usage = null; stake = null; editing = null; renderSlip(); return; }
+    const day = C.utcDay(head.time);
+    try {
+      const got = await Promise.all([0, 1, 2].map((k) => picksC.functions.get_pick({ game: C.GAME_ID, round: String(C.slotRound(day, k)), player: who }).then((x) => (x.result && x.result.pick) || null)));
+      const u = (await picksC.functions.get_usage({ game: C.GAME_ID, player: who })).result || null;
+      const st = await readStake(who);
+      if (seq !== loadSeq || me() !== who) return;   // a newer refresh (or another wallet) took over
+      slots = got.map((p) => (p && Array.isArray(p.legs) && p.legs.length ? p : null));
+      slotsDay = day; usage = u; stake = st;
+    } catch {
+      if (seq !== loadSeq) return;
+      slotsDay = null;                               // unknown: Send stays off until a read succeeds
     }
-    if (editing !== null && !slots[editing]) editing = null;
+    if (editing !== null && (slotsDay === null || !slots[editing])) editing = null;
     renderSlip();
   }
   async function readStake(who) {
@@ -322,11 +329,12 @@
       if (!isAddr(dep.contract) || !abi.methods || !abi.methods.get_game_player) return null;   // the Vault isn't v6 yet
       const v = new lib.Contract({ id: dep.contract, abi, provider });
       const r = (await v.functions.get_game_player({ player: who, game: C.GAME_ID, week: String(M.weekOf(head.time)) })).result || {};
-      return BigInt(r.week_stake || "0") >= 100000000n || BigInt(r.active_stake || "0") >= 100000000n;
+      // The stake that counts for this week (audit CC-C5: a stake added this week counts from next week).
+      return BigInt(r.week_stake || "0") >= 100000000n;
     } catch { return null; }
   }
   /** Which slot a send goes to: the card being changed, else today's first free slot (null if all 3 are used). */
-  const targetSlot = () => (editing !== null ? editing : slots.findIndex((p) => !p) >= 0 ? slots.findIndex((p) => !p) : null);
+  const targetSlot = () => (slotsDay === null ? null : editing !== null ? editing : slots.findIndex((p) => !p) >= 0 ? slots.findIndex((p) => !p) : null);
   function renderSlots() {
     const box = $("slots");
     box.hidden = !cardsLive || !me();
@@ -351,7 +359,9 @@
     if (!cardsLive) why = "Cards open when the Combo upgrade of the Picks contract is live.";
     else if (!who) why = "Connect a wallet to send a card.";
     else if (W && W.kind === "guest") why = "The Combo Card is a staked game: connect Kondor or KOIN Vault.";
-    else if (stake === false) why = "Stake at least 1 VHP in the Combo Card to play.";
+    else if (stake === false) why = "Stake at least 1 VHP in the Combo Card to play. A stake made this week counts from next week.";
+    else if (slotsDay === null) why = "Reading your cards from the chain…";
+    else if (head && C.utcDay(head.time) !== slotsDay) why = "A new UTC day started: reading today's cards…";
     else if (slot === null) why = "You've used today's 3 cards. Pick one above to change it.";
     else if (usage && Number(usage.picks_today) >= Number(usage.max_picks_per_day)) why = "Today's cards and changes are used up. More after 00:00 UTC.";
     else if (!okCard) why = null;
@@ -379,9 +389,19 @@
     try { await readHead(); } catch { /* the last head */ }
     const problem = C.cardProblem(legs, head, maxLegs());
     if (problem) { toast = problem; render(); return; }
+    // The day must still be the day the slots were read for (a card is made or changed only on its own UTC day).
+    if (slotsDay === null || C.utcDay(head.time) !== slotsDay) { toast = "A new UTC day started; your cards are being read again. Try again in a moment."; await loadMine(); render(); return; }
+    // Check the slot on chain right before signing: empty for a new card, or exactly the card being changed (CC-C1).
+    try {
+      const now = (await picksC.functions.get_pick({ game: C.GAME_ID, round: String(C.slotRound(slotsDay, slot)), player: who })).result;
+      const onChain = now && now.pick && Array.isArray(now.pick.legs) && now.pick.legs.length ? now.pick : null;
+      const expected = editing !== null ? slots[editing] : null;
+      const same = (a, b) => (!a && !b) || (a && b && JSON.stringify(a.legs) === JSON.stringify(b.legs) && String(a.changes) === String(b.changes));
+      if (!same(onChain, expected)) { toast = "Your cards changed on the chain since this page read them. Check them and send again."; await loadMine(); render(); return; }
+    } catch { toast = "Couldn't read your card from the chain. Nothing was sent; try again."; render(); return; }
     // Legs whose lock is under 2 minutes away may land after it: ask for a fresh card instead of a failed send.
     if (C.cardLockTime(legs, head) - Date.now() < 120000) { toast = "Your card locks in under 2 minutes; remove the leg that's about to lock."; render(); return; }
-    const round = C.slotRound(C.utcDay(head.time), slot), { sorted, pot } = cardStats();
+    const round = C.slotRound(slotsDay, slot), { sorted, pot } = cardStats();
     sending = true; toast = W.kind === "guest" ? "Sending your card…" : `Confirm in ${W.label ? W.label() : "your wallet"}…`; render();
     try {
       const { operation } = await picksC.functions.pick({ player: who, game: C.GAME_ID, round: String(round), producers: [], number: "0",

@@ -2,16 +2,20 @@
  * Combo Card recorder (run every hour by .github/workflows/combo.yml; read-only on the chain, holds no key).
  *
  * Each run:
- *  1. Cards. A wallet has 3 card slots a UTC day (Picks game 8, round = day × 3 + slot). A slot's cards are read from
- *     the Picks contract on two independent nodes (RPC and RPC_CHECK), which must agree. The contract lets a card be
- *     made or changed only on its own day, so once the last irreversible block is past the end of that day, the
- *     slot is FIXED: stored, and never read again. Until then it is re-read every run (shown as "open").
+ *  1. Cards. A wallet has 3 card slots a UTC day (Picks game 8, round = day × 3 + slot). Every slot of this week and
+ *     last week that isn't fixed yet is read from the Picks contract on two independent nodes (RPC and RPC_CHECK),
+ *     which must agree (audit CC-B1: an outage or a mid-week start never leaves a slot unread). The contract lets a
+ *     card be made or changed only on its own day, so once the last irreversible block on BOTH nodes is past the end
+ *     of that day (CC-B11), the slot is FIXED: stored, and never read again.
  *  2. Prices. Each leg is priced (site/combo-math.js, the same file the page runs) with the Producer Race card in force
- *     when the card was last sent: the latest race card taken at or before that time (race-data). A card with no race
- *     card to price it is void.
+ *     when the card was last sent: the latest race card taken at or before that time (race-data). A card is priced
+ *     only once race-data holds a card taken AFTER it was sent, so the card in force is known for sure (CC-B2, CC-B3:
+ *     a late or missing race file makes it wait, never void it). For scoring, each leg is worth the lower of that and
+ *     its worth on the card in force when the leg locks (CC-B5). A card sent before any race card existed is void.
  *  3. Results. Race legs from the race recorder's final standings (race-data), Block X legs from the Block X recorder's
- *     final targets (games-data/blockx). A leg still without a result 3 days after it was decided is void (dropped),
- *     so one missing result never holds a week open. A card is final when every leg is final.
+ *     final targets (games-data/blockx). A card is final when its slot is fixed and every leg and worth is known.
+ *     DEADLINE (CC-B4): two days after the card's week ends, anything still unknown is void (a leg without a result
+ *     is dropped; a card still unpriced is void), so the week's Vault file is always ready inside the Vault's 3 days.
  *  4. Players. A player counts for the week only with at least 1 VHP staked in the Combo Card that week (the owner's
  *     player rule; the Vault checks it again). Until the Vault (v6) can be read, a player's stake is "unknown" (null).
  *  5. Weeks. A card counts in the KnodeGames week of its slot day. A player's week = the sum of their best 10 cards.
@@ -38,9 +42,7 @@ const C: any = (globalThis as any).KCombo;
 const E = process.env;
 const RPC = E.RPC || "https://koinos.armana.io";
 const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
-const LOOKBACK_DAYS = 3;                     // slots of the last 3 days (and today) are read until fixed
-const VOID_AFTER_MS = 3 * M.DAY;             // a leg with no result 3 days after it was decided is void
-const VOID_AFTER_BLOCKS = 3 * 28800;
+const DEADLINE_MS = 2 * M.DAY;               // after the card's week ends: unknown results and prices are void then
 const CORRECTION_MS = 12 * 3600000;          // a week is final 12 hours after it ends (once every card is final)
 const ONE_VHP = 100000000n;
 const isAddr = (a: unknown) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
@@ -65,10 +67,15 @@ type Opts = {
 };
 
 // ── files ──
+const memo = new Map<string, any>();         // each input file is read once per run (audit CC-B8); cleared by run()
 function readJson(dir: string | undefined, name: string): any {
   if (!dir) return null;
   const f = path.join(dir, name);
-  try { if (fs.lstatSync(f).isSymbolicLink()) return null; return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; }
+  if (memo.has(f)) return memo.get(f);
+  let v: any = null;
+  try { if (!fs.lstatSync(f).isSymbolicLink()) v = JSON.parse(fs.readFileSync(f, "utf8")); } catch { v = null; }
+  memo.set(f, v);
+  return v;
 }
 const wName = (w: number) => `W${String(w).padStart(3, "0")}.json`;
 const legOk = (l: any) => Array.isArray(l) && l.length === 5 && C.CODES.includes(l[0]) && Number.isSafeInteger(l[1]) && isAddr(l[2]) && Number.isSafeInteger(l[3]) && typeof l[4] === "string";
@@ -80,10 +87,27 @@ function loadWeek(dir: string | undefined, w: number): WeekFile {
   const fresh: WeekFile = { v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), slots: [] };
   const old = readJson(dir, wName(w));
   if (!old || old.v !== 1 || old.week !== w || !Array.isArray(old.slots)) return fresh;
-  // Only fixed slots carry over (open ones are read again), and only with well-formed cards of that slot.
-  fresh.slots = old.slots.filter((s: any) => s && s.fixed === true && Number.isSafeInteger(s.round) && Array.isArray(s.cards) &&
-    s.cards.every((c: any) => cardOk(c) && c.round === s.round) && M.weekOf(C.dayOfRound(s.round) * M.DAY) === w);
+  // Only fixed slots carry over (open ones are read again), and only with well-formed cards of that slot; one entry
+  // per slot and one card per player in it; a final card's outcome and points are recounted from its legs (CC-B7).
+  const seen = new Set<number>();
+  for (const sl of old.slots) {
+    if (!(sl && sl.fixed === true && Number.isSafeInteger(sl.round) && !seen.has(sl.round) && Array.isArray(sl.cards) &&
+      sl.cards.every((c: any) => cardOk(c) && c.round === sl.round) && M.weekOf(C.dayOfRound(sl.round) * M.DAY) === w)) continue;
+    const players = new Set(sl.cards.map((c: any) => c.player));
+    if (players.size !== sl.cards.length) continue;
+    seen.add(sl.round);
+    for (const c of sl.cards) if (c.state === "final") { const r = c.priceAt === null ? { outcome: "void", pts: 0 } : recount(c.legs); c.outcome = r.outcome; c.pts = r.pts; }
+    fresh.slots.push({ round: sl.round, fixed: true, cards: sl.cards });
+  }
+  fresh.slots.sort((a, b) => a.round - b.round);
   return fresh;
+}
+/** A final card's outcome and points from its legs alone (worths and results). */
+function recount(legs: Leg[]): { outcome: string; pts: number } {
+  const kept = legs.filter((l) => l[4] !== "void");
+  if (kept.length < C.MIN_LEGS) return { outcome: "void", pts: 0 };
+  if (kept.some((l) => l[4] !== "hit" || !(l[3] > 0))) return { outcome: "miss", pts: 0 };
+  return { outcome: "hit", pts: C.pointsFor(kept.map((l) => l[3])) };
 }
 function defaultPicksContract(): string | null {
   try { const d = JSON.parse(fs.readFileSync(new URL("../../picks-data/deployment.json", import.meta.url), "utf8")); return isAddr(d.contract) ? d.contract : null; } catch { return null; }
@@ -140,6 +164,17 @@ function racesAround(raceDir: string | undefined, t: number): any[] {
   for (const k of [w - 1, w]) { const wf = readJson(raceDir, wName(k)); if (wf && Array.isArray(wf.races)) out.push(...wf.races); }
   return out;
 }
+/** The race-data files hold a card taken after time t: the card in force at t is then known for sure. */
+function racesPast(raceDir: string | undefined, t: number): boolean {
+  for (const k of [M.weekOf(t), M.weekOf(t) + 1]) {
+    const wf = readJson(raceDir, wName(k));
+    if (wf && Array.isArray(wf.races)) for (const r of wf.races) for (const c of (r && Array.isArray(r.cards) ? r.cards : [])) if (c && Number.isFinite(c.at) && c.at > t) return true;
+  }
+  return false;
+}
+function cardAtTime(raceDir: string | undefined, t: number): any | null {
+  return C.priceCard([...racesAround(raceDir, t), ...racesAround(raceDir, t + 7 * M.DAY)], t);
+}
 function blockTargets(blockxDir: string | undefined, weeks: number[]): Map<number, any> {
   const m = new Map<number, any>();
   for (const w of weeks) { const wf = readJson(blockxDir, wName(w)); if (wf && Array.isArray(wf.targets)) for (const t of wf.targets) if (t && Number.isInteger(t.round)) m.set(t.round, t); }
@@ -154,7 +189,11 @@ export async function run(o: Opts) {
   const BX = o.blockxDir ?? E.BLOCKX_DATA ?? "";
   const problems: string[] = [];
   const contract = o.picksContract === undefined ? defaultPicksContract() : o.picksContract;
+  memo.clear();
   const head = o.head ?? (await headOf(o.p));
+  // Slots are fixed only when BOTH nodes are irreversibly past the day (audit CC-B11).
+  let libTime = head.libTime;
+  if (!o.head && o.check) { try { libTime = Math.min(libTime, (await headOf(o.check)).libTime); } catch (e) { problems.push(`second node: ${(e as Error).message}; no slot fixed this run`); libTime = 0; } }
   const cardsRead = o.cardsOf ?? (contract ? (node: any, r: number) => readCards(node, contract, r) : null);
   const stakedRead = o.stakedOf ?? ((w: number, who: string[]) => readStaked(o.p, w, who));
   console.log(`head ${head.height} (${new Date(head.time).toISOString()}), irreversible ${head.lib} (${new Date(head.libTime).toISOString()})`);
@@ -168,15 +207,15 @@ export async function run(o: Opts) {
   const bxWeeks = [nowW - 2, nowW - 1, nowW].filter((w) => w >= 0);
   const targets = blockTargets(BX, bxWeeks);
 
-  // ── 1. cards: read the slots of the last days that aren't fixed yet ──
+  // ── 1. cards: read every slot of last week and this week that isn't fixed yet (audit CC-B1) ──
   if (cardsRead) {
-    for (let day = today - LOOKBACK_DAYS; day <= today; day++) {
+    for (let day = C.utcDay(M.weekStart(Math.max(0, nowW - 1))); day <= today; day++) {
       const wf = weekFor(M.weekOf(day * M.DAY));
       for (let s = 0; s < C.CARDS_PER_DAY; s++) {
         const round = C.slotRound(day, s);
         if (wf.slots.some((x) => x.round === round && x.fixed)) continue;
         try {
-          const fixed = head.libTime >= (day + 1) * M.DAY;
+          const fixed = libTime >= (day + 1) * M.DAY;
           const raw = await cardsRead(o.p, round);
           if (o.check) {
             const other = await cardsRead(o.check, round);
@@ -188,9 +227,9 @@ export async function run(o: Opts) {
             if (!Array.isArray(x.legs) || x.legs.length < C.MIN_LEGS || x.legs.length > C.HARD_MAX_LEGS || !x.legs.every((l) => C.CODES.includes(l.code) && isAddr(l.producer))) {
               problems.push(`slot ${round}: a card of ${x.player} has a leg this recorder doesn't know; left out`); continue;
             }
-            const price = C.priceCard(racesAround(RACE, x.time), x.time);
-            const legs: Leg[] = x.legs.map((l) => { const p = price ? C.priceLeg(price, l) : null; return [l.code, l.round, l.producer, p ? p.f100 : 0, "pending"]; });
-            cards.push({ player: x.player, round, time: x.time, changes: x.changes, priceAt: price ? price.at : null, legs, state: "pending", outcome: null, pts: 0, settled: 0 });
+            // Priced in step 2, once race-data is known to be complete for the time it was sent.
+            const legs: Leg[] = x.legs.map((l) => [l.code, l.round, l.producer, 0, "pending"]);
+            cards.push({ player: x.player, round, time: x.time, changes: x.changes, priceAt: null, legs, state: "pending", outcome: null, pts: 0, settled: 0 });
           }
           wf.slots = wf.slots.filter((x) => x.round !== round).concat([{ round, fixed, cards }]).sort((a, b) => a.round - b.round);
           if (cards.length) console.log(`slot ${round} (${M.dayOf(day * M.DAY)} #${s + 1}): ${cards.length} card(s)${fixed ? ", fixed" : ""}`);
@@ -199,48 +238,81 @@ export async function run(o: Opts) {
     }
   }
 
-  // ── 2–3. results: every card not final yet ──
+  // ── 2–3. prices and results: every card not final yet ──
   for (const w of new Set([...weeks.keys()])) for (const sl of weekFor(w).slots) for (const c of sl.cards) {
     if (c.state === "final") continue;
-    if (c.priceAt === null) {
-      if (sl.fixed) { c.state = "final"; c.outcome = "void"; c.pts = 0; c.settled = head.time; }
-      continue;
-    }
-    const price = C.priceCard(racesAround(RACE, c.time), c.time);
-    if (!price || price.at !== c.priceAt) { problems.push(`slot ${c.round}: the race card that priced ${c.player}'s card is missing; scored next run`); continue; }
-    const results = c.legs.map((l) => {
-      const leg = { code: l[0], round: l[1], producer: l[2] };
-      const isRace = C.FAMILY[l[0]] === "race";
-      let r = isRace ? C.legResult(leg, raceRecord(RACE, l[1]), null) : C.legResult(leg, null, targets.get(l[1]) ?? null);
-      if (r === "pending") {
-        const late = isRace ? head.time > M.raceStart(l[1]) + M.RACE + VOID_AFTER_MS : head.lib > X.target(l[1]) + VOID_AFTER_BLOCKS;
-        if (late) r = "void";
+    const deadline = M.weekStart(M.weekOf(C.dayOfRound(c.round) * M.DAY) + 1) + DEADLINE_MS;
+    const late = head.time >= deadline;
+    const legs = c.legs.map((l) => ({ code: l[0], round: l[1], producer: l[2] }));
+    // The price: the race card in force when the card was sent, once race-data is complete past that moment.
+    let send: any = null;
+    if (racesPast(RACE, c.time)) {
+      send = cardAtTime(RACE, c.time);
+      if (!send) {                                     // sent before any race card existed: nothing to price it with
+        c.priceAt = null; c.outcome = "void"; c.pts = 0;
+        if (sl.fixed) { c.state = "final"; c.settled = c.time; }
+        continue;
       }
-      return r;
+      c.priceAt = send.at;
+    } else if (late) {
+      c.outcome = "void"; c.pts = 0;
+      if (sl.fixed) { c.state = "final"; c.settled = deadline; }
+      problems.push(`slot ${c.round}: ${c.player}'s card could not be priced by the deadline (race-data missing); void`);
+      continue;
+    } else { continue; }                               // race-data not complete yet: wait
+    // Each leg: its result (void if still unknown at the deadline) and its worth (the lower of send and lock).
+    let ready = true, decided = 0;
+    c.legs.forEach((l, i) => {
+      const leg = legs[i], isRace = C.FAMILY[l[0]] === "race", t = isRace ? null : targets.get(l[1]) ?? null;
+      let r = isRace ? C.legResult(leg, raceRecord(RACE, l[1]), null) : C.legResult(leg, null, t);
+      if (r === "pending" && late) r = "void";
+      l[4] = r;
+      const sendWorth = C.priceLeg(send, leg);
+      if (!sendWorth) { l[3] = 0; return; }                         // a horse not in the field when sent: a miss
+      const targetTime = t && Number.isFinite(t.time) ? t.time : head.time + (X.target(l[1]) - head.height) * X.BLOCK_MS;
+      const lockAt = C.legLockTime(leg, targetTime);
+      if (r === "void") { l[3] = sendWorth.f100; return; }
+      if (racesPast(RACE, lockAt)) l[3] = C.finalWorth(send, cardAtTime(RACE, lockAt), leg);
+      else if (late) l[3] = sendWorth.f100;
+      else { l[3] = sendWorth.f100; ready = false; }
+      if (r === "pending") ready = false;
+      decided = Math.max(decided, isRace ? M.raceStart(l[1]) + M.RACE : targetTime);
     });
-    c.legs.forEach((l, i) => { l[4] = results[i]; });
-    const sc = C.scoreCard(price, c.legs.map((l) => ({ code: l[0], round: l[1], producer: l[2] })), results);
-    // A card is final only once its slot is fixed (no more changes) and every leg is final.
-    if (sc.state === "final" && sl.fixed) { c.state = "final"; c.outcome = sc.outcome; c.pts = sc.pts; c.settled = head.time; }
-    else { c.outcome = sc.outcome; c.pts = 0; }
+    const r = recount(c.legs);
+    const pending = c.legs.some((l) => l[4] === "pending");
+    c.outcome = pending ? (c.legs.some((l) => l[4] === "miss" || (l[4] !== "void" && !(l[3] > 0) && l[4] !== "pending")) ? "miss" : null) : r.outcome;
+    // Final once the slot is fixed (no more changes), every leg is known and every worth is settled.
+    if (sl.fixed && !pending && ready) { c.state = "final"; c.outcome = r.outcome; c.pts = r.pts; c.settled = decided || c.time; }
+    else c.pts = 0;
   }
 
   // ── 4–5. players, boards and the Vault ──
   const all = new Map(weeks);
   for (const w of known) if (!all.has(w)) all.set(w, loadWeek(PREV, w));
-  const cardRows = (from: number, to: number) => {
+  // by "slot": cards of slots in [from, to) (a week counts the cards made in it); by "settled": cards decided then (Today).
+  const cardRows = (from: number, to: number, by: "slot" | "settled" = "slot") => {
     const rows: any[] = [];
     for (const wf of all.values()) for (const sl of wf.slots) {
       const t = C.dayOfRound(sl.round) * M.DAY;
-      if (t < from || t >= to) continue;
-      for (const c of sl.cards) if (c.state === "final" && c.outcome !== "void") rows.push({ player: c.player, round: c.round, pts: c.pts, hit: c.outcome === "hit", lastLegTime: c.settled });
+      if (by === "slot" && (t < from || t >= to)) continue;
+      for (const c of sl.cards) if (c.state === "final" && c.outcome !== "void" && (by === "slot" || (c.settled >= from && c.settled < to))) rows.push({ player: c.player, round: c.round, pts: c.pts, hit: c.outcome === "hit", lastLegTime: c.settled });
     }
     return rows;
   };
+  // Stakes per (week, player): each wallet is read once per week per run, whichever board asks first (audit CC-B6).
   const stakeCache = new Map<number, Map<string, boolean> | null>();
   async function stakes(w: number, who: string[]) {
-    if (!stakeCache.has(w)) { try { stakeCache.set(w, await stakedRead(w, who)); } catch (e) { problems.push(`stakes for week ${w}: ${(e as Error).message}`); stakeCache.set(w, null); } }
-    return stakeCache.get(w)!;
+    let m = stakeCache.get(w);
+    if (m === null) return null;
+    const missing = who.filter((a) => !m || !m.has(a));
+    if (!m || missing.length) {
+      try {
+        const got = await stakedRead(w, missing);
+        if (got === null) { stakeCache.set(w, null); return null; }
+        m = m ?? new Map(); for (const [a, v] of got) m.set(a, v); stakeCache.set(w, m);
+      } catch (e) { problems.push(`stakes for week ${w}: ${(e as Error).message}`); stakeCache.set(w, null); return null; }
+    }
+    return m!;
   }
   const view = async (rows: any[], w: number | null) => {
     const ranked = C.places(C.board(rows));
@@ -259,7 +331,7 @@ export async function run(o: Opts) {
   }
   const board = {
     v: 1, updated: new Date(head.time).toISOString(),
-    today: { day: M.dayOf(head.time), rows: await view(cardRows(day0, day0 + M.DAY), nowW) },
+    today: { day: M.dayOf(head.time), rows: await view(cardRows(day0, day0 + M.DAY, "settled"), nowW) },
     week: { week: nowW, start: M.weekStart(nowW), rows: await view(cardRows(M.weekStart(nowW), M.weekStart(nowW + 1)), nowW) },
     lastWeek,
     allTime: { rows: await view(cardRows(0, Infinity), null) },

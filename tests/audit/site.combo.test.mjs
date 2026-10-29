@@ -248,7 +248,15 @@ test("combo page: sends only a Combo card through the Picks contract's pick, onl
   assert.match(js, /b\.disabled = !cardsLive \|\| sending \|\| !!why \|\| !okCard;/);
   // Stake-only: guests and wallets the Vault says aren't staked are refused before anything is signed.
   assert.match(js, /W\.kind === "guest"\) why = "The Combo Card is a staked game/);
-  assert.match(js, /stake === false\) why = "Stake at least 1 VHP in the Combo Card to play\."/);
+  assert.match(js, /stake === false\) why = "Stake at least 1 VHP in the Combo Card to play\. A stake made this week counts from next week\."/);
+  assert.match(js, /return BigInt\(r\.week_stake \|\| "0"\) >= 100000000n;/, "the stake that counts this week only (CC-C5)");
+  // CC-C1: the slots are replaced only after every read succeeded; unknown slots or a new UTC day block sending;
+  // the target slot is re-read on chain right before signing and must be empty or exactly the card being changed.
+  assert.match(js, /slotsDay = null;\s+\/\/ unknown: Send stays off until a read succeeds/);
+  assert.match(js, /const targetSlot = \(\) => \(slotsDay === null \? null :/);
+  assert.match(js, /if \(slotsDay === null \|\| C\.utcDay\(head\.time\) !== slotsDay\)/);
+  assert.match(js, /if \(!same\(onChain, expected\)\) \{ toast = "Your cards changed on the chain/);
+  assert.match(js, /const round = C\.slotRound\(slotsDay, slot\)/);
   // Browser storage holds only the draft, and every access is wrapped (it can throw in private windows).
   for (const m of js.matchAll(/localStorage\.[a-zA-Z]+\(/g)) {
     const before = js.slice(Math.max(0, m.index - 80), m.index);

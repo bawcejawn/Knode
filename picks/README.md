@@ -24,8 +24,10 @@ the vault pays prizes from the scores.
   `leg_types`, and each leg type has its own lock exactly like a game (target, `lead`, `ahead`, at most a day ahead). The
   chain refuses a card unless every leg is open now (and, for a change, every leg of the card it replaces), with one leg
   per leg type per round and each producer at most once. A card's round is its slot: UTC day × `round_size` + slot, made
-  and changed only on that day. Leg types can only be **added** by the 48-hour announcement; tighten_game can switch one
-  off, lock it earlier, open it later or lower `max_legs`.
+  and changed only on that day. A leg type's code, clock, round size and offset never change, and none is removed or
+  reordered. The 48-hour announcement may add leg types, loosen an existing one or raise `max_legs` (the owner must not
+  add an "alias" code with the same clock as an existing one); tighten_game can switch one off, lock it earlier, open
+  it later or lower `max_legs`. Audit 2026-10-28: `docs/history/AUDIT-2026-10-28-combo.md`.
 
 ## The owner (KnodeGames owner `1635QUr…H717`)
 
@@ -67,7 +69,13 @@ reads the compiled code too) and P-7 (`list_pending`). Fix-check 2026-10-27 (`do
 "ready for testnet"; its one new finding, PF-1 (Low, `list_pending` could come back empty with no cursor), is fixed
 (`next`).
 
-Release candidate sha256 (after the fix-check): `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594` (32,667 bytes).
+v1 release (Block X launch): `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594` (32,667 bytes).
+
+**v2 (CARD type, Combo Card) release candidate:** `92d555d0680157854452e35162c1b1c5c100904996194b8c1c848df50e5e1c3d`
+(37,689 bytes; 67 tests). Formal audit 2026-10-28: contract "ready for mainnet" (`docs/history/AUDIT-2026-10-28-combo.md`).
+Upgrade steps (after Block X launches): `schedule_upgrade` with this sha256 → wait 48 hours → upload (signed by the
+owner) → `schedule_upgrade` with an empty hash, so the same bytes can't be uploaded again (audit CC-A3) → announce
+game 8 (Combo Card) → 48 hours → `apply_game`.
 Tests: 46 contract tests (`npm test`, in the Koinos mock VM), including the auditor's attack tests (`Picks.audit.spec.ts`).
 
 Before announcing anything on mainnet (audit P-5, P-6): check on chain that all three overrides are on and the code's
