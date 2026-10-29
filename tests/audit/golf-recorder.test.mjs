@@ -49,7 +49,8 @@ const ranked = async (_node, who) => new Set(who.filter((a) => a !== FREE));
 /** A previous run's index, so the course already holds the three games from week W (as after a first run in W). */
 function seeded() { const d = tmp("golf-prev-"); write(d, "index.json", { v: 1, updated: "", weeks: [], course: { questions: W, race: W, blockx: W }, stakedFromWeek: 0 }); return d; }
 // Staked rules (ranked field, 5 per hole) unless a test says otherwise; practice weeks have their own test.
-const base = (o) => ({ sources: SOURCES, questionsOf: async () => qWeek(), rankedOf: ranked, p: "main", check: "check", stakedFromWeek: 0, ...(o.prev === undefined && !o.fresh ? { prev: seeded() } : {}), ...o });
+const stakers = async (_node, who) => new Set(who.filter((a) => a !== FREE));   // everyone but FREE staked in Block Golf
+const base = (o) => ({ sources: SOURCES, questionsOf: async () => qWeek(), rankedOf: ranked, golfStakersOf: stakers, p: "main", check: "check", stakedFromWeek: 0, ...(o.prev === undefined && !o.fresh ? { prev: seeded() } : {}), ...o });
 const readOut = (dir, name) => JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"));
 const holeOf = (dir, id, w = 3) => readOut(dir, `W00${w}.json`).holes.find((h) => h.id === id);
 const FINAL_GAMES = () => gamesDir({ last: true, final: true });
@@ -362,4 +363,47 @@ test("the publish job's history check: the first staked week can't change once s
   assert.throws(() => execFileSync("python3", [history, next, old], { stdio: "pipe" }));
   const same = copyDir(old);
   assert.match(execFileSync("python3", [history, same, old], { encoding: "utf8" }), /golf history ok/);
+});
+
+test("staked weeks: a hole's field is the players staked in Block Golf who scored (owner, 2026-10-28)", async () => {
+  // Only P0–P4 are staked in Block Golf; everyone on the race board is ranked there, but that no longer matters
+  const golfers = new Set(P.slice(0, 5));
+  const only = async (_n, who) => new Set(who.filter((a) => golfers.has(a)));
+  const out = tmp("golf-");
+  await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), golfStakersOf: only }));
+  const wf = readOut(out, "W003.json");
+  assert.equal(holeOf(out, "race").field, 5, "the 5 golfers, not the 10 ranked race players");
+  assert.equal(holeOf(out, "questions").status, "skipped", "only P2–P4 staked among the question players: 3 < 5");
+  const p4 = wf.cards.find((c) => c.a === P[4]).holes.find((x) => x[0] === "race");
+  assert.deepEqual([p4[1], p4[2], p4[3]], [6, 5, 5], "last of the 5 golfers");
+  const p6 = wf.cards.find((c) => c.a === P[6]);
+  assert.equal(p6.ranked, false, "not staked in Block Golf: free-play board");
+  assert.equal(p6.holes.find((x) => x[0] === "race")[3], 6, "placed as one more player");
+  assert.equal(wf.cards.find((c) => c.a === P[0]).ranked, true);
+  // Practice weeks don't read stakes at all
+  const out2 = tmp("golf-");
+  await run(base({ stakedFromWeek: null, now: END + 13 * H, out: out2, raceDir: raceDir(), gamesDir: FINAL_GAMES(), golfStakersOf: async () => { throw new Error("must not be read"); } }));
+  assert.equal(readOut(out2, "W003.json").final, true);
+});
+
+test("staked weeks: stakes that can't be read, or that the nodes disagree on, keep the last flags and hold the week", async () => {
+  const prev = tmp("golf-");
+  await run(base({ now: END - H, out: prev, raceDir: raceDir(), gamesDir: gamesDir() }));
+  const out = tmp("golf-");
+  const r = await run(base({ now: END + 13 * H, prev, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), golfStakersOf: async () => { throw new Error("rpc down"); } }));
+  assert.equal(readOut(out, "W003.json").final, false);
+  assert.match(r.problems.join(" "), /Block Golf stakes: rpc down/);
+  assert.equal(holeOf(out, "race").field, 10, "last run's flags stand");
+  const out2 = tmp("golf-");
+  const r2 = await run(base({ now: END + 13 * H, prev, out: out2, raceDir: raceDir(), gamesDir: FINAL_GAMES(), golfStakersOf: async (n, who) => new Set(n === "check" ? who.slice(1) : who) }));
+  assert.equal(readOut(out2, "W003.json").final, false);
+  assert.match(r2.problems.join(" "), /don't agree on who is staked/);
+});
+
+test("the default stake reader refuses until the vault (v6) is live", async () => {
+  const out = tmp("golf-");
+  const o = base({ now: START + DAY, out, raceDir: raceDir(), gamesDir: gamesDir() });
+  delete o.golfStakersOf;
+  const r = await run({ ...o, p: { call: async () => { throw new Error("no node in tests"); } }, check: null });
+  assert.match(r.problems.join(" "), /Block Golf stakes:/);
 });

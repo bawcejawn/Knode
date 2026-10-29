@@ -15,8 +15,8 @@
  *                  60-hour deadline the race board's standings (which count final races only) are used as final.
  *       blockx     games-data/blockx/board.json; final when its last week says final
  *     Survivor, Bracket and the other games add their reader here when they launch (with a test).
- *     The field of a hole is the ranked wallets that scored on it (practice weeks: every wallet that scored); see
- *     golf-math.js.
+ *     The field of a hole: practice weeks, every wallet that scored on it; staked weeks, the wallets staked in Block
+ *     Golf that week (vault v6, game 6, read on two nodes) that scored on it (owner, 2026-10-28). See golf-math.js.
  *  3. Each hole's standings are kept in the week file as they were last read, so a game's board rolling on to a new
  *     week never loses them. A hole that was final once the week ended stays final: a later bad read never undoes it.
  *  4. A week is final 12 hours after it ends once every hole is final and the run read everything without a problem;
@@ -46,7 +46,8 @@ const DEADLINE_MS = 60 * HOUR;                // a hole not final 60 hours after
 const FORCE_MS = 66 * HOUR;                   // after this, a read problem no longer holds the week back (fix-check N1)
 const ONE_VHP = 100000000n;
 const MAX_ROWS = 100000;
-const MAX_PAGES = 2000;                       // question game: up to 100,000 players a week, else the read fails
+const MAX_PAGES = 2000;
+const GOLF_GAME_ID = 6;                       // Block Golf in the vault registry (game id registry, 2026-10-28)                       // question game: up to 100,000 players a week, else the read fails
 const isAddr = (a: unknown): a is string => typeof a === "string" && G.isAddr(a);
 
 export type Row = { a: string; score: number; scored: boolean; ranked: boolean };
@@ -70,6 +71,7 @@ export type Opts = {
   knodeGame?: string | null; vhpContract?: string;
   questionsOf?: (node: any, week: number) => Promise<QWeek>;           // for the tests
   rankedOf?: (node: any, who: string[]) => Promise<Set<string>>;      // for the tests
+  golfStakersOf?: (node: any, who: string[], week: number) => Promise<Set<string>>;   // for the tests
 };
 
 // ── files ──
@@ -189,6 +191,23 @@ async function readRanked(node: any, vhpContract: string, knodeGame: string | nu
   return out;
 }
 
+/** Staked weeks: who is staked in Block Golf for week w (vault v6 get_game_player: the stake that counts for that week,
+ *  at least 1 VHP). A failed read throws; it never quietly drops a player from a field. */
+async function readGolfStakers(node: any, vault: string | null, who: string[], w: number): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!who.length) return out;
+  if (!vault) throw new Error("no vault contract");
+  const c = new Contract({ id: vault, abi: GAME_ABI(), provider: node });
+  const f: any = c.functions;
+  if (typeof f.get_game_player !== "function") throw new Error("the vault (v6) isn't live: its ABI has no get_game_player");
+  for (const a of who) {
+    const r: any = await withRetry(`Block Golf stake of ${a}`, () => f.get_game_player({ player: a, game: GOLF_GAME_ID, week: String(w) }));
+    if (!r || typeof r !== "object") throw new Error(`no answer reading the Block Golf stake of ${a}`);
+    if (BigInt(r.result?.week_stake || "0") >= ONE_VHP) out.add(a);
+  }
+  return out;
+}
+
 // ── the run ──
 export async function run(o: Opts) {
   const now = o.now ?? Date.now();
@@ -255,13 +274,15 @@ export async function run(o: Opts) {
     const R = old && typeof old.practice === "boolean" ? ruleFixed(old.practice) : ruleOf(w);
     // The week's holes are fixed once it has been recorded; until then, the live games that joined by this week.
     const ids: string[] = old && old.holes.length ? old.holes.map((h) => h.id) : G.courseFor(w, course, liveIds);
-    const holes: HoleRec[] = [];
+    // A. Each hole's standings and status (before the field is known).
+    type Draft = { id: string; name: string; status: HoleRec["status"]; why: string; rows: Row[]; keptFinal: HoleRec | null };
+    const drafts: Draft[] = [];
     for (const id of ids) {
       const s = byId.get(id);
       const was = old?.holes.find((h) => h && h.id === id) ?? null;
       const kept = was && Array.isArray(was.rows) && was.rows.length ? was.rows.map(([a, score, scored, ranked]) => ({ a, score, scored: !!scored, ranked: !!ranked })) : null;
-      // Once the week has ended, a hole that was final (or had no game that week) stays as it was.
-      if (was && now >= end && was.status === "final" && Array.isArray(was.rows)) { holes.push({ ...was, why: "" }); continue; }
+      // Once the week has ended, a hole that was final stays exactly as it was.
+      if (was && now >= end && was.status === "final" && Array.isArray(was.rows)) { drafts.push({ id, name: was.name, status: "final", why: "", rows: [], keptFinal: { ...was, why: "" } }); continue; }
       let rd: Read;
       if (!s) rd = { state: "live", rows: [], why: "its game has no reader on this recorder" };
       else {
@@ -277,12 +298,37 @@ export async function run(o: Opts) {
         if (rd.atDeadline === "use" && rows.length) { status = "final"; why = ""; }
         else { status = "skipped"; why = "its results weren't final in time"; }
       }
-      const scored = status === "skipped" ? null : G.scoreHole(rows, R.minField, R.everyone);
+      drafts.push({ id, name: s ? s.name : (was ? was.name : id), status, why, rows: rows.slice(0, MAX_ROWS), keptFinal: null });
+    }
+    // B. Staked weeks: a hole's field is the players staked in Block Golf that week (owner, 2026-10-28), read from the
+    //    vault on two nodes. If it can't be read, the flags from the last run stand and the week waits.
+    if (!R.practice) {
+      const who = [...new Set(drafts.filter((d) => !d.keptFinal).flatMap((d) => d.rows.map((r) => r.a)))].sort();
+      let stakers: Set<string> | null = null;
+      try {
+        const read = o.golfStakersOf ?? ((n: any, list: string[], wk: number) => readGolfStakers(n, KNODE, list, wk));
+        const sa = await read(o.p, who, w), sb = o.check ? await read(o.check, who, w) : sa;
+        if ([...sa].sort().join() !== [...sb].sort().join()) { problems.push(`week ${w}: the two nodes don't agree on who is staked in Block Golf yet`); troubled.add(w); }
+        else stakers = sa;
+      } catch (e) { problems.push(`week ${w}: Block Golf stakes: ${(e as Error).message}`); troubled.add(w); }
+      for (const d of drafts) {
+        if (d.keptFinal) continue;
+        const was = old?.holes.find((h) => h && h.id === d.id);
+        const before = new Map((was?.rows ?? []).map((r) => [r[0], !!r[3]]));
+        d.rows = d.rows.map((r) => ({ ...r, ranked: stakers ? stakers.has(r.a) : before.get(r.a) === true }));
+      }
+    }
+    // C. Score each hole.
+    const holes: HoleRec[] = [];
+    for (const d of drafts) {
+      if (d.keptFinal) { holes.push(d.keptFinal); continue; }
+      let { status, why } = d;
+      const scored = status === "skipped" ? null : G.scoreHole(d.rows, R.minField, R.everyone);
       if (scored && scored.skipped && status === "final") { status = "skipped"; why = scored.why; }
       holes.push({
-        id, name: s ? s.name : (was ? was.name : id), status, why: status === "final" ? "" : why || (scored && scored.skipped ? scored.why : ""),
+        id: d.id, name: d.name, status, why: status === "final" ? "" : why || (scored && scored.skipped ? scored.why : ""),
         field: scored ? scored.field : 0,
-        rows: rows.slice(0, MAX_ROWS).map((r) => [r.a, r.score, r.scored ? 1 : 0, r.ranked ? 1 : 0]),
+        rows: d.rows.map((r) => [r.a, r.score, r.scored ? 1 : 0, r.ranked ? 1 : 0]),
       });
     }
     const scoredHoles = holes.map((h) => {

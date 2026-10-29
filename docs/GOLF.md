@@ -60,9 +60,11 @@ the Race's real week; its first mainnet weeks are practice weeks with no prizes,
 - Until `GOLF_STAKED_FROM_WEEK` is set (a GitHub variable), every week is practice: every player who scored on a game
   counts, and 3 make a hole.
 - When the vault is live, set `GOLF_STAKED_FROM_WEEK` to the first staked week (the number in the W file names, e.g.
-  `6` for `W006.json`). From that week a hole's field is the ranked players who scored, and it needs 5.
-- Before staking opens, decide the sybil rule for staked weeks (audit H5): recommended, a hole's field is the Block
-  Golf stakers who played that game.
+  `6` for `W006.json`). From that week a hole's field is the players **staked in Block Golf** that week (at
+  least 1 VHP, read from the vault on two nodes) who scored on that game, and it needs 5 (owner, 2026-10-28).
+  Players not staked in Block Golf still get a scorecard (Free play board) but never make up a field.
+- The question game hole keeps Block Golf's simple rule (owner, 2026-10-28).
+- Staked weeks need the vault (v6) live: until then the recorder can't read Block Golf stakes and holds the week.
 - The vault takes only scorecards with at least 1 point (a player who played a single hole has it dropped by the
   mulligan and scores 0).
 
