@@ -1,0 +1,172 @@
+# Block Golf recorder: every hour, turns each live game's weekly leaderboard into Block Golf scorecards
+# (bot/games/golf.ts, rules in site/golf-math.js) and publishes them to games-data/golf. It reads the other games'
+# published files (race-data, games-data) and the question game on two nodes; it holds no key and writes nothing on chain.
+#
+# Two jobs, like the other recorders, so repository code never runs next to a write token:
+#   record   runs the recorder with a read-only token and no secrets, and hands the files on.
+#   publish  runs no repository code: it checks the files' shape and pushes games-data/golf (and nothing else).
+# It shares the "knode-games" concurrency group with the other games' recorders, so two never push games-data at once.
+# It never touches main, holds no key, and does not run on pull requests.
+#
+# Turn it on: Settings → Secrets and variables → Actions → Variables: GOLF_ENABLED = true
+name: Block Golf recorder
+
+on:
+  schedule:
+    - cron: "57 * * * *"     # every hour at minute 57 (after the race recorder at :37 and the games recorder at :47)
+  workflow_dispatch: {}
+
+concurrency:
+  group: knode-games
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    if: ${{ vars.GOLF_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      # The other games' published files and Block Golf's last run (public branches; read without a token).
+      # Only plain JSON files with the expected names are taken.
+      - name: Take the games' results and the last run's files
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/prev" "$RUNNER_TEMP/race" "$RUNNER_TEMP/games"
+          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
+            for f in $(git ls-tree --name-only FETCH_HEAD); do
+              if [[ "$f" =~ ^(board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/race/$f"; fi
+            done
+          else echo "No race-data branch yet."; fi
+          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" games-data 2>/dev/null; then
+            for g in blockx survivor bracket; do
+              mkdir -p "$RUNNER_TEMP/games/$g"
+              for f in $(git ls-tree --name-only "FETCH_HEAD:$g" 2>/dev/null); do
+                if [[ "$f" =~ ^(index|board|S[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$g/$f" > "$RUNNER_TEMP/games/$g/$f"; fi
+              done
+            done
+            for f in $(git ls-tree --name-only FETCH_HEAD:golf 2>/dev/null); do
+              if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:golf/$f" > "$RUNNER_TEMP/prev/$f"; fi
+            done
+          else echo "No games-data branch yet."; fi
+      - name: Record Block Golf
+        run: npm run golf
+        env:
+          RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
+          RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
+          GOLF_PREV: ${{ runner.temp }}/prev
+          GOLF_OUT: ${{ runner.temp }}/out/golf
+          RACE_DATA: ${{ runner.temp }}/race
+          GAMES_DATA: ${{ runner.temp }}/games
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: golf-data
+          path: ${{ runner.temp }}/out/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  publish:
+    needs: record
+    if: ${{ vars.GOLF_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write         # push the games-data branch (never main)
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: golf-data
+          path: ${{ runner.temp }}/incoming
+      - name: Push games-data/golf (and nothing else)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IN: ${{ runner.temp }}/incoming
+        run: |
+          set -euo pipefail
+          if [ ! -d "$IN/golf" ]; then echo "Nothing to publish."; exit 0; fi
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/golf" \) -o \( -type f ! -regex "$IN/golf/\(index\|board\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
+          if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
+          big=$(find "$IN" -type f -size +8192k -print)
+          if [ -n "$big" ]; then echo "::error::Refusing to publish files over 8 MB: $big"; exit 1; fi
+          # The content must be the recorder's own shape, not only parse as JSON.
+          /usr/bin/python3 - "$IN/golf" <<'PY'
+          import json, os, re, sys
+          d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          isaddr = lambda x: type(x) is str and addr.fullmatch(x) is not None
+          nat = lambda x: type(x) is int and 0 <= x < 10**16
+          num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
+          gid = re.compile(r"[a-z0-9-]{1,24}")
+          isid = lambda x: type(x) is str and gid.fullmatch(x) is not None
+          small = lambda x: type(x) is int and -10**6 < x < 10**6
+          def hole_ok(h):
+              if type(h) is not dict or set(h) != {"id", "name", "status", "why", "field", "rows"}: return False
+              if not (isid(h["id"]) and type(h["name"]) is str and len(h["name"]) <= 40 and h["status"] in ("final", "live", "skipped") and type(h["why"]) is str and len(h["why"]) <= 200 and nat(h["field"])): return False
+              return type(h["rows"]) is list and len(h["rows"]) <= 100000 and all(type(r) is list and len(r) == 4 and isaddr(r[0]) and num(r[1]) and r[2] in (0, 1) and r[3] in (0, 1) for r in h["rows"])
+          def card_ok(c, ids):
+              keys = {"a", "ranked", "place", "pts", "strokes", "par", "toPar", "lost", "under", "best", "mulligan", "holes"}
+              if type(c) is not dict or set(c) != keys or not isaddr(c["a"]) or type(c["ranked"]) is not bool: return False
+              if not all(small(c[k]) for k in ("place", "pts", "strokes", "par", "toPar", "lost", "under", "best")) or c["place"] < 1 or c["pts"] < 0: return False
+              if c["mulligan"] not in ids or type(c["holes"]) is not list or len(c["holes"]) > 32: return False
+              return all(type(x) is list and len(x) == 4 and x[0] in ids and type(x[1]) is int and 1 <= x[1] <= 7 and (x[2] is None or nat(x[2])) and (x[3] is None or nat(x[3])) for x in c["holes"])
+          def rows_ok(v, extra=()):
+              if type(v) is not dict or type(v.get("rows")) is not list or len(v["rows"]) > 100000: return False
+              keys = {"a", "place", "pts", "toPar", "strokes", "holes", "lost", "ranked"}
+              return all(type(x) is dict and set(x) == keys and isaddr(x["a"]) and type(x["ranked"]) is bool
+                  and all(small(x[k]) for k in ("place", "pts", "toPar", "strokes", "holes", "lost")) for x in v["rows"])
+          for f in os.listdir(d):
+              j = json.load(open(os.path.join(d, f), encoding="utf-8"))
+              if f == "index.json":
+                  assert set(j) == {"v", "updated", "weeks", "course", "minField"} and j["v"] == 1, f
+                  assert type(j["weeks"]) is list and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
+                  assert type(j["course"]) is dict and len(j["course"]) <= 32 and all(isid(k) and type(v) is int and 0 <= v < 10000 for k, v in j["course"].items()), f
+                  assert type(j["minField"]) is int and 1 <= j["minField"] <= 1000, f
+                  continue
+              if f == "board.json":
+                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1, f
+                  assert all(rows_ok(j[k]) for k in ("today", "week", "allTime")), f
+                  assert j["lastWeek"] is None or (rows_ok(j["lastWeek"]) and type(j["lastWeek"].get("final")) is bool), f
+                  continue
+              assert set(j) == {"v", "week", "start", "end", "final", "holes", "cards"} and j["v"] == 1 and f == "W%03d.json" % j["week"], f
+              assert nat(j["start"]) and nat(j["end"]) and j["end"] > j["start"] and type(j["final"]) is bool, f
+              assert type(j["holes"]) is list and len(j["holes"]) <= 32 and all(hole_ok(h) for h in j["holes"]), f
+              ids = {h["id"] for h in j["holes"]}
+              assert type(j["cards"]) is list and len(j["cards"]) <= 100000 and all(card_ok(c, ids) for c in j["cards"]), f
+          print("golf files ok")
+          PY
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          export GIT_AUTHOR_NAME=kpred-bot GIT_AUTHOR_EMAIL=kpred-bot@users.noreply.github.com GIT_COMMITTER_NAME=kpred-bot GIT_COMMITTER_EMAIL=kpred-bot@users.noreply.github.com
+          # Up to 3 tries: another recorder may push games-data between our fetch and our push.
+          for try in 1 2 3; do
+            rm -rf work && git init -q work && cd work
+            parent=""
+            if git fetch -q --depth 1 "$remote" games-data 2>/dev/null; then
+              parent=$(git rev-parse FETCH_HEAD)
+              git read-tree FETCH_HEAD
+            else git read-tree --empty; fi
+            for f in "$IN"/golf/*.json; do
+              [ -e "$f" ] || continue
+              blob=$(git hash-object -w "$f")
+              git update-index --add --cacheinfo 100644 "$blob" "golf/$(basename "$f")"
+            done
+            tree=$(git write-tree)
+            if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi
+            commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "golf: record")
+            if git push -q "$remote" "$commit:refs/heads/games-data"; then echo "Block Golf files published."; exit 0; fi
+            cd ..
+            echo "Push refused (games-data moved); trying again."
+            sleep 5
+          done
+          echo "::error::Couldn't push games-data after 3 tries."; exit 1

@@ -2,7 +2,7 @@
   "name": "kprediction",
   "version": "1.0.0",
   "license": "UNLICENSED",
-  "description": "Kprediction: weekly Koinos block-producer prediction game \u2014 analysis tools, question generator and operator bot",
+  "description": "Kprediction: weekly Koinos block-producer prediction game — analysis tools, question generator and operator bot",
   "type": "module",
   "private": true,
   "scripts": {
@@ -20,6 +20,7 @@
     "race": "tsx bot/race.ts",
     "racepicks": "tsx bot/race-picks.ts",
     "blockx": "tsx bot/games/blockx.ts",
+    "golf": "tsx bot/games/golf.ts",
     "picks": "tsx bot/picks.ts",
     "testnet-site": "node tools/testnet-site.mjs"
   },
