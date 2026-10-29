@@ -754,3 +754,18 @@ body[data-view="welcome"] .foot .eco { display: none; }
 /* Phone More sheet: group headings across the grid. */
 .more-panel .ms-h { grid-column: 1 / -1; margin: 8px 4px 0; font-size: .74rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .more-panel .ms-h:first-child { margin-top: 0; }
+
+/* ── shared "stake in this game" panel (stake-panel.js) ── */
+.kstake h3 { margin: 0 0 10px; }
+.kstake-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
+.kstake-stats > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 14px; min-width: 0; }
+.kstake-stats span { font-size: .8rem; }
+.kstake-stats b { font-size: 1.05rem; overflow-wrap: anywhere; }
+.kstake-status { margin: 6px 0; font-weight: 700; }
+.kstake-explain { margin: 6px 0 12px; }
+.kstake-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.kstake-claims { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 6px; }
+.kstake-claims li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px; }
+.kstake-note { margin: 10px 0 0; }
+.kstake-dialog select { width: 100%; padding: 10px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; }
+@media (max-width: 520px) { .kstake-stats { gap: 6px; } .kstake-stats > div { padding: 8px 10px; } .kstake-stats span { font-size: .72rem; } .kstake-stats b { font-size: .95rem; } }
