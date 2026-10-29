@@ -21,6 +21,17 @@
 .kb .hist td.num, .kb .hist th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .kb .hist tr.top td { font-weight: 700; }
 .kb .hist tr.me td { background: var(--violet-soft); }
+/* Stake in this game (stake-panel.js) */
+.ks h2 { font-family: var(--display); font-size: 20px; margin: 0 0 6px; }
+.ks p { margin: 6px 0; }
+.ks .note { font-size: 13px; color: var(--muted); }
+.ks-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ks-dialog { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; max-width: min(440px, calc(100vw - 32px)); background: var(--surface); color: var(--ink); }
+.ks-dialog::backdrop { background: rgba(20, 33, 61, 0.45); }
+.ks-dialog form { display: grid; gap: 8px; }
+.ks-dialog h3 { font-family: var(--display); margin: 0; }
+.ks-dialog input, .ks-dialog select { font: inherit; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+.ks-err { color: var(--rose); min-height: 1em; }
 @media (max-width: 640px) { .kb .champs { grid-template-columns: 1fr; } .kb .hist .hide-sm { display: none; } .kb .tabs2 { gap: 4px; } .kb .tabs2 button { padding: 6px 9px; } }
 /* Ranked vs Free play: a two-part switch above the period tabs. */
 .kb .kb-kinds { display: inline-flex; gap: 0; padding: 3px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface); margin-bottom: 12px; }

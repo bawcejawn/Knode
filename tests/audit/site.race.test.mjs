@@ -160,7 +160,7 @@ test("the race page shows no odds, no wagers, no payouts", () => {
   for (const f of ["race.js", "race.html", "race-math.js"]) assert.doesNotMatch(read(f), /\bodds\b|\bpays\s+\d|\bpaysFor\b|\bwager|\bbet\b/i, f);
 });
 
-test("the race page sends only one thing: the wallet's own pick on the race contract, through the wallet", () => {
+test("the race page sends only one thing itself: the wallet's own pick on the race contract, through the wallet", () => {
   for (const f of ["race-math.js", "chain-blocks.js"]) assert.doesNotMatch(read(f), /\.send\(|signTransaction|sendTransaction|onlyOperation/, f);
   const js = read("race.js");
   const sends = [...js.matchAll(/\.send\(/g)];
@@ -170,7 +170,46 @@ test("the race page sends only one thing: the wallet's own pick on the race cont
   assert.doesNotMatch(js, /signTransaction|sendTransaction|privateKey|wif/i);
   assert.match(js, /if \(Date\.now\(\) >= M\.raceStart\(index\)\)/, "the page also refuses a started race (the chain enforces it)");
   assert.match(read("race.js"), /localStorage\.removeItem\("pr-guesses-v1"\)/);
-  assert.match(read("race.html"), /<script src="race-math\.js"><\/script>\s*<script src="board\.js"><\/script>\s*<script src="race\.js"><\/script>/);
+  assert.match(read("race.html"), /<script src="race-math\.js"><\/script>\s*<script src="board\.js"><\/script>\s*<script src="stake-panel\.js"><\/script>\s*<script src="race\.js"><\/script>/);
+});
+
+// The shared stake panel (stake-panel.js): the only other thing that sends from a game page.
+test("stake panel: sends only the vault's own stake calls (and the approve for a stake), for the connected wallet, through the wallet", () => {
+  const js = read("stake-panel.js");
+  assert.doesNotMatch(js, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|localStorage|sessionStorage|indexedDB|signTransaction|sendTransaction|privateKey|wif/i);
+  assert.equal([...js.matchAll(/\.send\(/g)].length, 1, "one place sends: W.send");
+  assert.match(js, /await W\.send\(label, ops, \{\}\)/);
+  const ops = [...js.matchAll(/op\((\w+), "(\w+)", \{([^}]*)\}\)/g)].map((m) => [m[1], m[2], m[3].trim()]);
+  assert.deepEqual(ops, [
+    ["vault", "claim_game", "player: who, game: o.game, week: String(w)"],
+    ["t", "approve", "owner: who, spender: dep.contract, value: units.toString()"],
+    ["vault", "deposit_to", "from: who, game: o.game, amount: units.toString(), koin"],
+    ["vault", "withdraw_from", "to: who, game: o.game, amount: units.toString()"],
+    ["vault", "move_stake", "player: who, from_game: o.game, to_game: to, amount: units.toString()"],
+  ], "the player is always the connected wallet; the approve is only for the vault, for the staked amount");
+  assert.match(js, /const who = W\.address/);
+  assert.match(js, /v6_rule_week_plus_one \|\| 0\) > 0\)\) return;/, "hidden until the vault is live");
+  assert.match(js, /if \(!abi\.methods \|\| !abi\.methods\.deposit_to/, "hidden while the site's ABI is still v5");
+  assert.match(js, /W\.kind === "guest"/, "a guest wallet can't stake");
+});
+
+test("stake panel: amounts, the minimum and claims follow the vault's rules", async () => {
+  globalThis.window = globalThis; globalThis.location = { href: "https://knodegames.com/race.html" };
+  await import(`${process.cwd()}/${APP}/stake-panel.js`);
+  const K = globalThis.KStake;
+  assert.deepEqual([K.toUnits("1"), K.toUnits("2.5"), K.toUnits("0.00000001")], [100000000n, 250000000n, 1n]);
+  assert.deepEqual([K.toUnits("1.000000001"), K.toUnits("-1"), K.toUnits("1e3"), K.toUnits(""), K.toUnits(" 3 ")], [null, null, null, null, 300000000n]);
+  assert.equal(K.vhp(250000000n), "2.5"); assert.equal(K.vhp(1234500000000n), "12,345");
+  const cfg = { min_stake: "100000000", min_stake_next: "300000000", min_stake_next_week: 5 };
+  assert.deepEqual([K.minStake(cfg, 4), K.minStake(cfg, 5)], [100000000n, 300000000n]);
+  const gw = { finalized: true, prize_first: "200000000", prize_second: "0", cutoff: 4, rolled_over: false };
+  assert.equal(K.claimable(gw, { prize_place: 1 }), 200000000n);
+  assert.equal(K.claimable(gw, { prize_place: 2 }), null, "2nd gets nothing when 1st is shared");
+  assert.equal(K.claimable(gw, { points: 5 }), 0n, "a staked winner: a share of the bucket");
+  assert.equal(K.claimable(gw, { points: 3 }), null, "under the cutoff");
+  assert.equal(K.claimable({ ...gw, finalized: false }, { prize_place: 1 }), null, "not final yet");
+  assert.equal(K.claimable(gw, { prize_place: 1, claimed: true }), null, "already claimed");
+  assert.equal(K.claimable({ ...gw, rolled_over: true }, { points: 9 }), null, "a rolled-over bucket");
 });
 
 test("the shared leaderboard (board.js) only draws: no network, no storage, no wallet, no HTML from data", () => {

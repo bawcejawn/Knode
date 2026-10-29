@@ -147,7 +147,7 @@ test("picks: a final race records every pick, who picked the winner, and who may
   assert.equal(r.winner, winner);
   const by = Object.fromEntries(r.picks.map((x) => [x[0], x]));
   assert.deepEqual([by[W1][3], by[W2][3], by[W3][3], by[GUEST][3]], [1, 0, 0, 1], "right picks");
-  assert.deepEqual([by[W1][4], by[W2][4], by[W3][4], by[GUEST][4]], [1, 1, 1, 0], "W3 has a stake; the guest has nothing");
+  assert.deepEqual([by[W1][4], by[W2][4], by[W3][4], by[GUEST][4]], [0, 0, 0, 0], "the old \"may be ranked\" field is no longer read (always 0)");
   // Leaderboard: correct first, then picks placed, then Knode answers, then Knode score. The guest is listed but not ranked.
   const board = JSON.parse(fs.readFileSync(path.join(b, "board.json"), "utf8"));
   const wk = board.week.rows;
@@ -504,10 +504,10 @@ test("vault: when the last run's files are missing, no file is written for last 
   assert.equal(vaultOf(out), null);
 });
 
-test("picks: a failed stake read for the real-player test keeps the race unfinished (tried again next run)", async () => {
+test("picks: a race's result needs no wallet reads: a failing question-game node doesn't hold it up", async () => {
   const a = await hourly(U("2026-11-02T05:37Z"), "");
-  const b = await picksRun(U("2026-11-02T06:37Z"), a, { winnerFor: P[0], failFor: GUEST });   // GUEST holds no VHP: its stake is read
-  assert.equal(race(b, "2026-11-02T00").result, null);
+  const b = await picksRun(U("2026-11-02T06:37Z"), a, { winnerFor: P[0], failFor: GUEST });
+  assert.equal(race(b, "2026-11-02T00").result.final, true);
 });
 
 test("publish job: a final file stays locked even when it was stored pretty-printed", async () => {
@@ -544,4 +544,22 @@ test("record job: last run's files are read; a missing branch starts fresh; any 
   assert.ok(got.ok);
   assert.equal(fs.readFileSync(path.join(got.prev, "vault", "W2.json"), "utf8"), fs.readFileSync(path.join(out, "vault", "W2.json"), "utf8"));
   assert.ok(fs.existsSync(path.join(got.prev, "W002.json")) && fs.existsSync(path.join(got.prev, "board.json")));
+});
+
+test("vault: with this repository's v5 contract ABI the stakes can't be read: the file is never final (fails closed)", async () => {
+  const abi = JSON.parse(fs.readFileSync(path.resolve(APP, "game/abi/kpred.koilib.json"), "utf8"));
+  const { NO_V6_ABI } = await import(path.resolve(APP, "bot/race.ts"));
+  const { dir } = await weekTwoDone();
+  const out = tmp();
+  const log = console.log; const lines = []; console.log = (x) => lines.push(String(x));
+  try {
+    // The recorder's own stake reader (no stakedOf), against the made-up chain.
+    await run({ p: node(U("2026-11-09T05:37Z")), check: node(U("2026-11-09T05:37Z")), prev: dir, out, vhpOf, raceContract: "x",
+      picksOf: async () => [] });
+  } finally { console.log = log; }
+  if (abi.methods.get_game_player) return;                          // the v6 ABI has landed: covered by the other tests
+  assert.equal(vaultOf(out).final, false);
+  assert.equal(lines.filter((l) => l.includes(NO_V6_ABI)).length, 1, "one warning a run, not one per wallet");
+  const board = JSON.parse(fs.readFileSync(path.join(out, "board.json"), "utf8"));
+  assert.ok(board.lastWeek.rows.every((r) => r.ranked === false), "the boards show everyone on Free play meanwhile");
 });

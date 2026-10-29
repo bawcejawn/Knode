@@ -391,8 +391,12 @@
   }
 
   // ── leaderboard (the recorder's board.json, shown by the shared Knode Games board in board.js) ──
+  // Stake in the Race (game 7 in the Knode Games Vault): shown only once the vault is live and the Race takes stakes.
+  if (window.KStake) window.KStake.mount($("stake-box"), { game: 7, name: "Producer Race", provider,
+    note: "Staked players share this game's weekly bucket; free players play for the 2 + 1 VHP prize." });
   const lb = window.KBoard ? window.KBoard.create($("race-board"), {
     label: "Race leaderboard",
+    same: (x, y) => x.pts === y.pts && x.correct === y.correct && x.picks === y.picks,   // tied on every measure: a shared place
     columns: [{ key: "pts", label: "Points" }, { key: "correct", label: "Wins" }, { key: "shows", label: "Shows" }, { key: "picks", label: "Picks", wide: true }],
     scored: (r) => (r.pts ?? r.correct) > 0,
     summary: (r) => `${fmt(r.pts ?? 0)} pts · ${fmt(r.correct)} W ${fmt(r.shows ?? 0)} S`,

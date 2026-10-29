@@ -119,13 +119,10 @@ async function heightAt(p: any, headId: string, t: number, lo: number, hi: numbe
 
 /** One pick as recorded: [player, horse, time of the pick (ms)]. */
 type Pick = [string, string, number];
-/** What the game knows about a wallet: stake, and the week's Knode answers and points. */
-type PlayerInfo = { stake: bigint; answers: number; points: number };
 type Opts = {
   p: any; check: any | null; prev?: string; out?: string; vhpOf?: (who: string[]) => Promise<Record<string, string>>;
   raceContract?: string | null;                                       // the picks contract (default: race-data/deployment.json)
   picksOf?: (node: any, race: number) => Promise<Pick[]>;             // for the tests
-  playerOf?: (node: any, who: string, week: number) => Promise<PlayerInfo>;
   stakedOf?: (node: any, who: string, week: number) => Promise<boolean>;   // staked in the Race in the vault (tests)
 };
 
@@ -150,21 +147,18 @@ async function readPicks(node: any, contract: string, raceNo: number): Promise<P
   }
   return out;
 }
-async function readPlayer(node: any, who: string, week: number): Promise<PlayerInfo> {
-  if (!GAME) return { stake: 0n, answers: 0, points: 0 };
-  const c = new Contract({ id: GAME, abi: GAME_ABI(), provider: node });
-  const r: any = await withRetry(`Knode player ${who}`, () => (c.functions as any).get_player({ player: who, week: String(week) }));
-  const p = r?.result?.player ?? {}, e = r?.result?.entry ?? {};
-  return { stake: BigInt(p.stake || "0") + BigInt(p.pending || "0"), answers: Array.isArray(e.answers) ? e.answers.length : 0, points: Number(e.points || 0) };
-}
 /** Staked in the Race (game 7) in the KnodeGames Vault for week w (owner, 2026-10-28), by the vault's own test, the one
  *  its bot applies to free-prize winners: the week's peak stake in the game (entry.peak_stake, or active_stake when the
  *  player has no entry that week) at least that week's minimum stake. A wallet staked at the start of a week stays
  *  staked that week even if it withdraws. Before the vault (v6) is live nobody is staked; a failed read throws. */
 const vaultState = new WeakMap<object, Promise<any>>();
+export const NO_V6_ABI = "game/abi/kpred.koilib.json has no get_game_player (still v5): Race stakes can't be read";
 async function readStaked(node: any, who: string, week: number): Promise<boolean> {
   const abi = GAME_ABI();
-  if (!GAME || !abi.methods?.get_game_player) return false;          // this repository's contract is still v5
+  if (!GAME) return false;
+  // This repository's contract ABI is still v5: it can't tell whether the vault is live, so it can't say who is free.
+  // Throwing keeps the vault file from being final (the boards show everyone on Free play, with one warning a run).
+  if (!abi.methods?.get_game_player) throw new Error(NO_V6_ABI);
   const c = new Contract({ id: GAME, abi, provider: node });
   if (!vaultState.has(node)) vaultState.set(node, withRetry("vault state", () => (c.functions as any).get_state({})));
   const cfg = (await vaultState.get(node))?.result?.config ?? {};
@@ -181,28 +175,12 @@ export function stakedFrom(cfg: any, r: any, week: number): boolean {
   return min > 0n && peak >= min;
 }
 /** One run. Exported for the tests, which pass fake nodes. */
-export async function run({ p, check, prev, out, vhpOf, raceContract, picksOf, playerOf, stakedOf }: Opts) {
+export async function run({ p, check, prev, out, vhpOf, raceContract, picksOf, stakedOf }: Opts) {
   if (prev !== undefined) PREV = prev;
   if (out !== undefined) OUT = out;
   const vhpRead = vhpOf || (async (who: string[]) => (await readVhp(p, MAINNET_VHP, who)).values);
   const picksContract = raceContract === undefined ? defaultRaceContract() : raceContract;
   const picksRead = picksOf || (picksContract ? (node: any, r: number) => readPicks(node, picksContract, r) : null);
-  const playerRead = playerOf || readPlayer;
-  // Who may be ranked: at least 1 VHP, or a Knode stake (the Mana sponsor's "real player" rule). Read once per run.
-  const eligibleCache = new Map<string, boolean>();
-  async function eligible(who: string[]) {
-    const todo = who.filter((a) => !eligibleCache.has(a));
-    if (todo.length) {
-      const vhp = await vhpRead(todo);
-      for (const a of todo) {
-        let ok = BigInt(vhp[a] || "0") >= 100000000n;
-        // A failed read throws: the race stays "checking" and is tried again next run (never wrongly marked 0).
-        if (!ok) ok = (await playerRead(p, a, M.weekOf(Date.now()))).stake > 0n;
-        eligibleCache.set(a, ok);
-      }
-    }
-    return (a: string) => eligibleCache.get(a) === true;
-  }
   const head: any = await withRetry("head", () => p.getHeadInfo());
   const headH = Number(head.head_topology.height), headId = head.head_topology.id, now = Number(head.head_block_time);
   const libH = Number(head.last_irreversible_block), libT = await blockTime(p, headId, libH);
@@ -269,9 +247,10 @@ export async function run({ p, check, prev, out, vhpOf, raceContract, picksOf, p
           const key = (x: Pick[]) => JSON.stringify([...x].sort((u, v) => (u[0] < v[0] ? -1 : 1)));
           if (key(mine) !== key(theirs)) { problems.push(`${race.id}: the two nodes disagree about the race's picks; not final this run`); continue; }
         }
-        const can = await eligible(mine.map((x) => x[0]));
-        // [player, horse, time, won (1/0), may be ranked (1/0), show: 2nd or 3rd (1/0)]
-        picks = mine.map(([who, horse, at]) => [who, horse, at, horse === winner ? 1 : 0, can(who) ? 1 : 0, horse !== winner && showSet.has(horse) ? 1 : 0]);
+        // [player, horse, time, won (1/0), 0, show: 2nd or 3rd (1/0)]. The 5th field was "may be ranked" (1 VHP or a
+        // question-game stake) until 2026-10-28; the Staked / Free play split now comes from the vault, so it is no longer
+        // read (a race's result depends only on its blocks and picks) and is always 0.
+        picks = mine.map(([who, horse, at]) => [who, horse, at, horse === winner ? 1 : 0, 0, horse !== winner && showSet.has(horse) ? 1 : 0]);
       }
       race.result = {
         final: true, checked, heights: [a, b], blocks: B.ts.length, line: M.finishLine(race.cards),
@@ -343,7 +322,14 @@ async function leaderboards(weeks: Map<number, WeekFile>, now: number, problems:
   const stakes = new Map<string, boolean>();
   const staked = async (who: string, week: number) => {
     const k = `${who}|${week}`;
-    if (!stakes.has(k)) { try { stakes.set(k, await stakedOf(who, week)); } catch (e) { problems.push(`Race stake of ${who}: ${(e as Error).message}`); failed.add(`stake:${k}`); stakes.set(k, false); } }
+    if (!stakes.has(k)) {
+      try { stakes.set(k, await stakedOf(who, week)); }
+      catch (e) {
+        const m = (e as Error).message, line = m === NO_V6_ABI ? m : `Race stake of ${who}: ${m}`;
+        if (!problems.includes(line)) problems.push(line);
+        failed.add(`stake:${k}`); stakes.set(k, false);
+      }
+    }
     return stakes.get(k)!;
   };
   if (!anyPicks) return { board: null, vault: await vaultResults(all, wNow - 1, now, [], failed, problems, stakedCheck) };
