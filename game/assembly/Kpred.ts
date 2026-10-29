@@ -2334,6 +2334,7 @@ export class Kpred {
   /** Pay the Mana only for one answer / settle / claim that will succeed, with an rc_limit between the floor and the
    *  cap, canonical arguments, and within the account's weekly budget. Everything else is refused. */
   sponsorOk(): bool {
+    if (safeMode()) return false;                    // withdrawals-only build: it never pays for a call (review of the fixes)
     const c = this.config.get()!;
     if (!isAddress(c.owner) || c.max_sponsor_rc == 0) return false;
     const rcLimit = System.getTransactionField("header.rc_limit")!.uint64_value;

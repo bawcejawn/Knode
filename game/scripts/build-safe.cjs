@@ -7,7 +7,13 @@ const { execSync } = require("child_process");
 const MODE = "assembly/Mode.ts";
 const normal = fs.readFileSync(MODE, "utf8");
 if (!/SAFE_MODE: bool = false;/.test(normal)) throw new Error(`${MODE} must say SAFE_MODE = false before building`);
-const build = () => execSync("npm run build", { stdio: "inherit" });
+// The contract builder sometimes stops with EAGAIN on a busy machine: try again a few times.
+const build = () => {
+  for (let i = 1; ; i++) {
+    try { return execSync("npm run build", { stdio: ["ignore", "inherit", "inherit"] }); }
+    catch (e) { if (i >= 6) throw e; console.log(`build failed (attempt ${i}); trying again`); }
+  }
+};
 let hash = "";
 try {
   fs.writeFileSync(MODE, normal.replace("SAFE_MODE: bool = false;", "SAFE_MODE: bool = true;"));
@@ -18,5 +24,7 @@ try {
 } finally {
   fs.writeFileSync(MODE, normal);
 }
+// Never leave the safe build where the normal one belongs: if the rebuild below fails, there is no release build at all.
+fs.rmSync("build/release/contract.wasm", { force: true });
 build();
 console.log(`\nbuild/safe/contract.wasm: the withdrawals-only build\nsha256 ${hash}\n(build/release is the normal build again)`);

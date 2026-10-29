@@ -7,7 +7,7 @@ mainnet also needs `CONFIRM_MAINNET=yes` in `.env`. Run everything in PowerShell
 |---|---|
 | Contract | `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr` (the game; it becomes the vault, same address) |
 | Live code | `c17066ae988d204fd43d43f662ad87fcdc38170419943c20b5164a5bd34dd784` (v5, uploaded 2026-10-28) |
-| **New code** | **set after the audits' fixes** (today's build after the audit fixes: `5ff7366b…8010`, 85,215 bytes; it changes again only if the fix-check asks for more) |
+| **New code** | **set after the audits' fixes** (after the audit fixes: `5ff7366bbfa64ba2c0e3a41dfcb2d11cb0ab84246e3855ec46d6d4ccd1848010`, 85,215 bytes; final once the fix-check is clean). Emergency withdrawals-only build: `6eebf6777d49be38ee26f9bcd9d14f83d209a82071dcac2644f9f1c2d44f2957`, 83,789 bytes |
 | Timelock | 48 h after `schedule`, then 7 days to upload |
 | Upload paid by | the owner wallet: about **91 KOIN of Mana** (the tool checks it) |
 | Design | `docs/V6-PLAN.md`; owner explainer: the Docs page "KnodeGames Vault: how it works" |
@@ -133,10 +133,10 @@ for the fixed build.
    cd game; npm run build:safe; cd ..
    ```
    It prints `sha256 …` for `game\build\safe\contract.wasm`, and rebuilds the normal build afterwards.
-2. Stop new money at once while the 48 hours run: `npm run bot -- pause on --send`, and `game-stop <id> --send` for any game that misbehaves.
+2. Stop new money at once while the 48 hours run: `npm run bot -- pause on --send`, and `game-stop <id> --send` for any game that misbehaves. Keep the contract's own Mana for withdrawals: `npm run bot -- admin set_sponsor_limit max_sponsor_rc=0 min_sponsor_rc=0 --as owner --send` (the safe build never sponsors a call either).
 3. Announce it: `npm run bot -- upgrade schedule --safe`, then again with `--send`.
 4. 48 hours later: `npm run bot -- upgrade apply --safe`, then again with `--send`.
-5. Tell players on the site: withdraw any time; claims for finished weeks work.
+5. Tell players on the site: withdraw any time; claims for **finalized** weeks work. Weeks that were closed but not yet finalized when the safe build went in wait for the normal build (their rewards stay owed; nothing is lost).
 6. Going back: fix the bug, build normally, and upgrade again the usual way (48 hours).
 
 ## Mana (before announcing, on testnet)

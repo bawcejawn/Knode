@@ -162,9 +162,41 @@ export async function rehearseV6(snap: Snapshot, opts: { weeks?: number; reward?
     const owed = ["total_stake", "seed_vhp", "seed_koin", "owner_share", "creator_fee", "pots_outstanding", "fee_vhp", "games_rolled", "rolled_over"].reduce((n, k) => n + big(t[k]), 0n);
     const held = big(s.vhp_balance) + big(s.koin_balance);
     check(held >= owed, `${when}: holdings ${showKoin(held)} cover everything owed ${showKoin(owed)}`);
+    await books(when);
+  };
+  // The books behind the counters (review of the audit fixes): unpaid rewards cover what every closed week still owes,
+  // and the rolled-over buckets add up to the games' own. If either failed on real data, the new checked subtractions
+  // would refuse closes and claims after the upgrade, so it must hold before it.
+  const books = async (when: string) => {
+    const s = await read("get_state");
+    const t = s.totals ?? {};
+    let owedWeeks = 0n;
+    for (let w = 0; w < num(t.weeks_closed); w++) {
+      const wk = (await read("get_week", { week: String(w) })).week ?? {};
+      const left = (wk.rolled_over ? big(wk.pot_free) : big(wk.pot)) - big(wk.claimed);
+      if (left > 0n) owedWeeks += left;
+    }
+    for (const g of (await read("list_games", {})).games ?? []) {
+      if (num(g.id) === 1) continue;
+      for (let w = 0; w < num(t.weeks_closed); w++) {
+        const gw = (await read("get_game", { game: num(g.id), week: String(w) })).week ?? {};
+        if (!gw.closed) continue;
+        const left = (gw.rolled_over ? big(gw.prize_first) * BigInt(num(gw.first_n)) + big(gw.prize_second) * BigInt(num(gw.second_n))
+          : gw.finalized ? big(gw.bucket) + big(gw.prize) - (big(gw.prize) - big(gw.prize_first) * BigInt(num(gw.first_n)) - big(gw.prize_second) * BigInt(num(gw.second_n)))
+          : big(gw.bucket) + big(gw.prize)) - big(gw.claimed);
+        if (left > 0n) owedWeeks += left;
+      }
+    }
+    let heldGames = 0n;
+    for (const g of (await read("list_games", {})).games ?? []) heldGames += big(g.prize_held);
+    owedWeeks += heldGames;
+    check(big(t.pots_outstanding) >= owedWeeks, `${when}: unpaid rewards ${showKoin(t.pots_outstanding)} cover what every closed week still owes ${showKoin(owedWeeks)}`);
+    const rolled = ((await read("list_games", {})).games ?? []).reduce((n: bigint, g: any) => n + big(g.rolled), 0n);
+    check(big(t.games_rolled) === rolled, `${when}: rolled-over buckets ${showKoin(t.games_rolled)} equal the games' own ${showKoin(rolled)}`);
   };
   const cur = num(snap.state.week);
   let now = t0;
+  await books("on the copy, right after the upgrade");
 
   // ───── 3a. the first v6 write: announce the games (this also sets the switch) ─────
   await send(owner, "propose_game", { game: 2, name: "Who Signs Block X", staked: false, free_prize: true, season_weeks: 1 });

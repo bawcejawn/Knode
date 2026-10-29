@@ -111,7 +111,8 @@ close is overdue.
   `SAFE_MODE` on. It refuses deposits, moves, answers, results, closes and finalizing, and keeps open every way money
   leaves: `withdraw`, `withdraw_from`, claims of finished weeks, the seed withdrawal, the fee, and a later upgrade back
   to a fixed normal build. Rewards that arrive while it runs stay in the vault, owed to nobody yet; the next normal
-  build's first close splits them.
+  build's first close splits them. Weeks closed but not finalized wait for the normal build too. It never sponsors a
+  call (so the vault's Mana stays for the KOIN it may need to burn into VHP for withdrawals).
 
 ## Compatibility
 - `get_player`, `get_state` and every v5 method keep their arguments and results. New fields are appended only.

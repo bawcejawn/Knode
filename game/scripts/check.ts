@@ -21,6 +21,11 @@ const marker = Buffer.from("TEST LEDGER", "utf16le");
 const bin = fs.existsSync(WASM) ? fs.readFileSync(WASM) : Buffer.alloc(0);
 ok(bin.length > 0 && bin.indexOf(marker) === -1, "production build (the test ledger is NOT included)");
 ok(/SAFE_MODE: bool = false;/.test(fs.readFileSync("assembly/Mode.ts", "utf8")), "the normal build, not the withdrawals-only one (assembly/Mode.ts)");
+{
+  const SAFE = "build/safe/contract.wasm";
+  const same = fs.existsSync(SAFE) && bin.length > 0 && Buffer.compare(fs.readFileSync(SAFE), bin) === 0;
+  ok(!same, "build/release is not the withdrawals-only build (build/safe)");
+}
 
 ok(fs.existsSync(ABI), `${ABI} exists`);
 const abi = fs.existsSync(ABI) ? JSON.parse(fs.readFileSync(ABI, "utf8")) : { methods: {} };
