@@ -215,15 +215,16 @@ test("finished weeks with something to claim get a Claim button that sends claim
 
 test("claims: weeks before a restart (from_week moved forward) and up to 52 weeks back are still offered", async () => {
   const gw = { finalized: true, cutoff: 1, first_n: 1, prize_first: String(2n * UNIT), prize_second: String(UNIT) };
+  // (Weeks show as dates: vault week 12 starts Mon 11 Jan 2027, week 9 Mon 21 Dec, week 7 Mon 7 Dec.)
   // Now week 60; the Race was restarted and earns from week 50. Week 12 (before the restart) and week 9 (51 weeks
   // back) still pay; week 7 (53 weeks back) is beyond the window.
   const e = env({ state: { ...LIVE(), week: "60" }, game: GAME({ from_week: "50" }), player: { player: { stake: "0", pending: "0" }, week_stake: "0" },
     weeks: { 12: { gw, e: { prize_place: 1 } }, 9: { gw, e: { prize_place: 1 } }, 7: { gw, e: { prize_place: 1 } } } });
   e.K.mount(e.root, { game: 7 });
   await e.tick();
-  assert.match(e.root.textContent, /Week 12: 2 VHP/);
-  assert.match(e.root.textContent, /Week 9: 2 VHP/);
-  assert.doesNotMatch(e.root.textContent, /Week 7:/);
+  assert.match(e.root.textContent, /Week of 11 Jan: 2 VHP/);
+  assert.match(e.root.textContent, /Week of 21 Dec: 2 VHP/);
+  assert.doesNotMatch(e.root.textContent, /Week of 7 Dec:/);
   // Results are read only for weeks with something in the player's entry, not for all 52.
   assert.equal(e.reads.filter((m) => m === "get_game").length, 1 + 2, "the current week, then weeks 12 and 9 only");
 });
