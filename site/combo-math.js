@@ -39,8 +39,9 @@
  *   Simulated 2026-10-28: removing the cap doesn't change who reaches the top 30%; the week's #1 is then usually
  *   decided by one big card (80% of the leader's week vs 45% with a 150 cap).
  *   Easy legs are worth less than ×1 (down to ×0.25), so stacking near-certain legs is not free points.
- *   For scoring, a leg is worth the LOWER of its worth when the card was sent and its worth on the card in force when
- *   the leg locks (finalWorth; audit CC-B5): a producer whose VHP grows before the lock can't keep a long-shot price.
+ *   For scoring, a leg keeps its worth from when the card was sent unless its worth on the card in force when the leg
+ *   locks is more than 10% lower; then it takes that (finalWorth; audit CC-B5, fix-check FC-2): a producer whose VHP
+ *   grows before the lock can't keep a long-shot price, and the hourly cards' small drift changes nothing.
  *
  * VOID LEGS: a leg whose race or target is void (no card, never recorded), or whose horse is not in the race at all,
  * is dropped. The card scores on the rest with the base for that many legs; with fewer than 2 legs left it is void.
@@ -173,15 +174,17 @@
     return { chance, factor: f, f100: Math.round(f * 100) };
   }
 
-  /** A leg's worth for scoring (hundredths): the LOWER of its worth on the card in force when the card was sent and on
-   *  the card in force when the leg locks (audit CC-B5, 2026-10-28: VHP can move between sending and the lock, so a
+  /** A leg's worth for scoring (hundredths): its worth on the card in force when the card was sent, or on the card in
+   *  force when the leg locks if that is more than 10% lower (audit CC-B5, 2026-10-28: VHP can move between sending and the lock, so a
    *  leg priced as a long shot must not keep that price if its producer has since become big). null if the leg can't
    *  be priced at sending. No lock card (or the horse not on it): the worth at sending. */
   function finalWorth(sendCard, lockCard, leg) {
     const a = priceLeg(sendCard, leg);
     if (!a) return null;
     const b = lockCard ? priceLeg(lockCard, leg) : null;
-    return b ? Math.min(a.f100, b.f100) : a.f100;
+    // Only a real change counts (fix-check FC-2): the hourly cards move chances a little by themselves (block rate,
+    // simulation), so the worth drops only when the lock card's worth is more than 10% below the worth when sent.
+    return b && b.f100 * 10 < a.f100 * 9 ? b.f100 : a.f100;
   }
   /** When a leg locks (ms): race legs 25 minutes before the start; Block X legs about 500 blocks before the block
    *  (targetTime = the recorded time of the target block, else an estimate). */

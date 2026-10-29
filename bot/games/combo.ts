@@ -172,6 +172,9 @@ function racesPast(raceDir: string | undefined, t: number): boolean {
   }
   return false;
 }
+/** A race-data file exists for the week of time t (else: an outage, never a reason to void). */
+const raceWeekKnown = (raceDir: string | undefined, t: number) => { const wf = readJson(raceDir, wName(M.weekOf(t))); return !!(wf && Array.isArray(wf.races)); };
+const bxWeekKnown = (bxDir: string | undefined, t: number) => { const wf = readJson(bxDir, wName(M.weekOf(t))); return !!(wf && Array.isArray(wf.targets)); };
 function cardAtTime(raceDir: string | undefined, t: number): any | null {
   return C.priceCard([...racesAround(raceDir, t), ...racesAround(raceDir, t + 7 * M.DAY)], t);
 }
@@ -187,7 +190,7 @@ export async function run(o: Opts) {
   const PREV = o.prev ?? E.COMBO_PREV ?? "";
   const RACE = o.raceDir ?? E.RACE_DATA ?? "";
   const BX = o.blockxDir ?? E.BLOCKX_DATA ?? "";
-  const problems: string[] = [];
+  const problems: string[] = [], errors: string[] = [];
   const contract = o.picksContract === undefined ? defaultPicksContract() : o.picksContract;
   memo.clear();
   const head = o.head ?? (await headOf(o.p));
@@ -199,7 +202,12 @@ export async function run(o: Opts) {
   console.log(`head ${head.height} (${new Date(head.time).toISOString()}), irreversible ${head.lib} (${new Date(head.libTime).toISOString()})`);
 
   const weeks = new Map<number, WeekFile>();
-  const weekFor = (w: number) => { let f = weeks.get(w); if (!f) { f = loadWeek(PREV, w); weeks.set(w, f); } return f; };
+  // A slot from a previous file counts as fixed only if its day really is irreversibly over on both nodes (FC-3).
+  const weekFor = (w: number) => {
+    let f = weeks.get(w);
+    if (!f) { f = loadWeek(PREV, w); for (const sl of f.slots) if (libTime < (C.dayOfRound(sl.round) + 1) * M.DAY) sl.fixed = false; weeks.set(w, f); }
+    return f;
+  };
   const idx = readJson(PREV, "index.json");
   const known = new Set<number>(Array.isArray(idx?.weeks) ? idx.weeks.filter((w: any) => Number.isInteger(w) && w >= 0 && w < 10000) : []);
   const nowW = M.weekOf(head.time), today = C.utcDay(head.time);
@@ -246,6 +254,8 @@ export async function run(o: Opts) {
     const legs = c.legs.map((l) => ({ code: l[0], round: l[1], producer: l[2] }));
     // The price: the race card in force when the card was sent, once race-data is complete past that moment.
     let send: any = null;
+    // An outage (no race-data file for the week the card was sent) never voids: wait, and warn (audit FC-1).
+    if (!raceWeekKnown(RACE, c.time)) { (late ? errors : problems).push(`slot ${c.round}: no race-data for ${M.dayOf(c.time)}; ${c.player}'s card waits`); continue; }
     if (racesPast(RACE, c.time)) {
       send = cardAtTime(RACE, c.time);
       if (!send) {                                     // sent before any race card existed: nothing to price it with
@@ -255,17 +265,23 @@ export async function run(o: Opts) {
       }
       c.priceAt = send.at;
     } else if (late) {
-      c.outcome = "void"; c.pts = 0;
+      // race-data is there but never caught up past the send time: void, recorded so a recount agrees (FC-1).
+      c.priceAt = null; c.outcome = "void"; c.pts = 0;
+      c.legs.forEach((l) => { l[4] = "void"; });
       if (sl.fixed) { c.state = "final"; c.settled = deadline; }
-      problems.push(`slot ${c.round}: ${c.player}'s card could not be priced by the deadline (race-data missing); void`);
+      problems.push(`slot ${c.round}: ${c.player}'s card could not be priced by the deadline; void`);
       continue;
     } else { continue; }                               // race-data not complete yet: wait
     // Each leg: its result (void if still unknown at the deadline) and its worth (the lower of send and lock).
-    let ready = true, decided = 0;
+    let ready = true, decided = 0, outage = false;
     c.legs.forEach((l, i) => {
       const leg = legs[i], isRace = C.FAMILY[l[0]] === "race", t = isRace ? null : targets.get(l[1]) ?? null;
       let r = isRace ? C.legResult(leg, raceRecord(RACE, l[1]), null) : C.legResult(leg, null, t);
-      if (r === "pending" && late) r = "void";
+      if (r === "pending" && late) {
+        // Void at the deadline only if the source file for that leg is there (an outage waits instead: FC-1).
+        const known = isRace ? raceWeekKnown(RACE, M.raceStart(l[1])) : bxWeekKnown(BX, head.time + (X.target(l[1]) - head.height) * X.BLOCK_MS);
+        if (known) r = "void"; else { errors.push(`slot ${c.round}: no ${isRace ? "race" : "Block X"} file for a leg of ${c.player}'s card; waits`); outage = true; }
+      }
       l[4] = r;
       const sendWorth = C.priceLeg(send, leg);
       if (!sendWorth) { l[3] = 0; return; }                         // a horse not in the field when sent: a miss
@@ -282,7 +298,7 @@ export async function run(o: Opts) {
     const pending = c.legs.some((l) => l[4] === "pending");
     c.outcome = pending ? (c.legs.some((l) => l[4] === "miss" || (l[4] !== "void" && !(l[3] > 0) && l[4] !== "pending")) ? "miss" : null) : r.outcome;
     // Final once the slot is fixed (no more changes), every leg is known and every worth is settled.
-    if (sl.fixed && !pending && ready) { c.state = "final"; c.outcome = r.outcome; c.pts = r.pts; c.settled = decided || c.time; }
+    if (sl.fixed && !pending && ready && !outage) { c.state = "final"; c.outcome = r.outcome; c.pts = r.pts; c.settled = decided || c.time; }
     else c.pts = 0;
   }
 
@@ -354,8 +370,14 @@ export async function run(o: Opts) {
   }
   fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), weeks: [...known].sort((a, b) => a - b), contract: contract || null }) + "\n");
   fs.writeFileSync(path.join(OUT, "board.json"), JSON.stringify(board) + "\n");
+  // FC-4: last week's slots still not fixed a day after the week ended means its Vault file is at risk.
+  if (lw >= 0 && head.time >= M.weekStart(nowW) + M.DAY) {
+    const open = (all.get(lw)?.slots.filter((s) => s.fixed).length ?? 0);
+    if (open < 7 * C.CARDS_PER_DAY) errors.push(`week ${lw}: only ${open} of ${7 * C.CARDS_PER_DAY} card slots are fixed a day after the week ended; check the nodes (the Vault needs the file within 3 days)`);
+  }
   for (const pr of problems) console.log(`::warning::${pr}`);
-  return { problems, weeks, board, vaultWritten };
+  for (const er of errors) console.log(`::error::${er}`);
+  return { problems, errors, weeks, board, vaultWritten };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

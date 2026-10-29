@@ -76,7 +76,7 @@ v1 release (Block X launch): `700c296a1064b904299c156061d6caf8fcabd0b1765968903f
 Upgrade steps (after Block X launches): `schedule_upgrade` with this sha256 → wait 48 hours → upload (signed by the
 owner) → `schedule_upgrade` with an empty hash, so the same bytes can't be uploaded again (audit CC-A3) → announce
 game 8 (Combo Card) → 48 hours → `apply_game`.
-Tests: 46 contract tests (`npm test`, in the Koinos mock VM), including the auditor's attack tests (`Picks.audit.spec.ts`).
+Tests: 67 contract tests (`npm test`, in the Koinos mock VM), including the auditor's attack tests (`Picks.audit.spec.ts`) and the card tests (`Picks.card.spec.ts`).
 
 Before announcing anything on mainnet (audit P-5, P-6): check on chain that all three overrides are on and the code's
 fingerprint matches; on Harbinger, check that a pick's stored height is the height of the block that holds it, that a

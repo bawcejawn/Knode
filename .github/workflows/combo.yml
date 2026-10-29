@@ -45,7 +45,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/prev/combo" "$RUNNER_TEMP/blockx" "$RUNNER_TEMP/race"
-          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" games-data 2>/dev/null; then
+          repo="https://github.com/${GITHUB_REPOSITORY}.git"
+          # A branch that exists but can't be fetched is an outage: stop rather than record without it (audit FC-1).
+          fetch_branch() {
+            if git fetch -q --depth 1 "$repo" "$1" 2>/dev/null; then return 0; fi
+            if git ls-remote --exit-code --heads "$repo" "$1" >/dev/null 2>&1; then echo "::error::Could not fetch the $1 branch; not recording this run."; exit 1; fi
+            return 1
+          }
+          if fetch_branch games-data; then
             for f in $(git ls-tree --name-only FETCH_HEAD:combo 2>/dev/null); do
               if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:combo/$f" > "$RUNNER_TEMP/prev/combo/$f"; fi
             done
@@ -53,7 +60,7 @@ jobs:
               if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git show "FETCH_HEAD:blockx/$f" > "$RUNNER_TEMP/blockx/$f"; fi
             done
           else echo "No games-data branch yet."; fi
-          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
+          if fetch_branch race-data; then
             for f in $(git ls-tree --name-only FETCH_HEAD); do
               if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/race/$f"; fi
             done

@@ -151,14 +151,16 @@ test("a leg whose race is never recorded waits, then is void at the deadline (2 
   assert.equal(a.state, "final"); assert.equal(a.outcome, "void", "1 leg left: the card is void");
 });
 
-test("missing race-data makes cards wait, never void them early; at the deadline they are void", async () => {
+test("missing race-data makes cards wait, never void them: past the deadline it's an outage, reported as an error (FC-1)", async () => {
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), "race-"));
   let { out } = await days(D3, D3 + 2, 12, { raceDir: empty });
   let mon = read(out, "W003.json").slots.find((s) => s.round === C.slotRound(D3, 0));
   assert.ok(mon.cards.every((c) => c.priceAt === null && c.state === "pending"));
-  ({ out } = await days(D3, D3 + 9, 12, { raceDir: empty }));
-  mon = read(out, "W003.json").slots.find((s) => s.round === C.slotRound(D3, 0));
-  assert.ok(mon.cards.every((c) => c.state === "final" && c.outcome === "void"));
+  const r = await days(D3, D3 + 9, 12, { raceDir: empty });
+  mon = read(r.out, "W003.json").slots.find((s) => s.round === C.slotRound(D3, 0));
+  assert.ok(mon.cards.every((c) => c.state === "pending"), "still waiting");
+  assert.ok(r.last.errors.some((e) => /no race-data/.test(e)));
+  assert.equal(fs.existsSync(path.join(r.out, "vault", "W3.json")), false, "no Vault file from incomplete data");
 });
 
 test("a card sent before any race card existed is void (race-data has later cards, none before it)", async () => {
@@ -316,4 +318,45 @@ test("combo.yml's publish check: the recorder's real files pass; a duplicated Va
   assert.ok(bad((d) => { const f = path.join(d, "vault", "W3.json"), j = read(d, "vault/W3.json"); j.rows.push({ ...j.rows[0] }); fs.writeFileSync(f, JSON.stringify(j)); }), "a player twice in the Vault file");
   assert.ok(bad((d) => { const f = path.join(d, "W003.json"), j = read(d, "W003.json"); j.slots.push(j.slots[0]); fs.writeFileSync(f, JSON.stringify(j)); }), "a slot twice");
   assert.ok(bad((d) => { const f = path.join(d, "W003.json"), j = read(d, "W003.json"); j.slots[0].cards[0].legs[0][3] = 301; fs.writeFileSync(f, JSON.stringify(j)); }), "a worth above ×3");
+});
+
+// ── fix-check 2026-10-28 ──
+test("FC-1: a race-data outage after the deadline doesn't void, and a final card keeps its outcome on the next run", async () => {
+  const cut = T(D3, 7), race = raceDir(), bx = blockxDir(), empty = fs.mkdtempSync(path.join(os.tmpdir(), "nr-"));
+  for (const f of fs.readdirSync(race)) { const p = path.join(race, f), j = JSON.parse(fs.readFileSync(p, "utf8"));
+    for (const r of j.races) r.cards = r.cards.map((c) => (c && c.at <= cut ? c : null)); fs.writeFileSync(p, JSON.stringify(j)); }
+  let prev = "";
+  for (let d = D3; d <= D3 + 8; d++) { const out = tmp(); await quiet(() => run({ p: "main", check: "check", prev, out, raceDir: race, blockxDir: bx, picksContract: "1P", cardsOf: cardsOf(), stakedOf, head: headAt(T(d, 13)) })); prev = out; }
+  const mon = (dir) => read(dir, "W003.json").slots.find((s) => s.round === C.slotRound(D3, 0)).cards.find((c) => c.player === ALICE);
+  const o1 = tmp(); const r1 = await quiet(() => run({ p: "main", check: "check", prev, out: o1, raceDir: empty, blockxDir: bx, picksContract: "1P", cardsOf: cardsOf(), stakedOf, head: headAt(T(D3 + 9, 0) + 3000000) }));
+  const o2 = tmp(); await quiet(() => run({ p: "main", check: "check", prev: o1, out: o2, raceDir: race, blockxDir: bx, picksContract: "1P", cardsOf: cardsOf(), stakedOf, head: headAt(T(D3 + 9, 2)) }));
+  assert.notEqual(mon(o1).outcome, "void", "a priced card was voided by a race-data outage");
+  assert.ok(r1.errors.length > 0, "the outage is reported as an error");
+  assert.equal(mon(o1).outcome, mon(o2).outcome, "the outcome doesn't flip on recount");
+});
+test("FC-1: a card voided at the deadline stays void on the next run (its price and legs are recorded as void)", async () => {
+  // race-data exists but never catches up past Monday 01:00 (only Monday 00:00's card), so the card can't be priced.
+  const race = raceDir();
+  for (const f of fs.readdirSync(race)) { const p = path.join(race, f), j = JSON.parse(fs.readFileSync(p, "utf8"));
+    for (const r of j.races) r.cards = r.cards.map((c) => (c && c.at <= T(D3, 0) + 60000 ? c : null)); fs.writeFileSync(p, JSON.stringify(j)); }
+  const { out } = await days(D3, D3 + 10, 13, { raceDir: race });
+  const a = read(out, "W003.json").slots.find((s) => s.round === C.slotRound(D3, 0)).cards.find((c) => c.player === ALICE);
+  assert.equal(a.state, "final"); assert.equal(a.outcome, "void"); assert.equal(a.priceAt, null);
+  assert.ok(a.legs.every((l) => l[4] === "void"));
+});
+test("FC-2: the hourly cards' small drift doesn't lower a worth; a real change (over 10%) does", () => {
+  const leg = { code: C.BLOCK, round: 100, producer: H4 };
+  const send = CARD(0), drift = { ...CARD(1), field: CARD(1).field.map((r) => (r.a === H4 ? { ...r, vhp: r.vhp * 1.05 } : r)) };
+  assert.equal(C.finalWorth(send, drift, leg), C.priceLeg(send, leg).f100, "5% more VHP: the worth when sent");
+  const big = { ...CARD(1), field: CARD(1).field.map((r) => (r.a === H4 ? { ...r, vhp: r.vhp * 3 } : r)) };
+  assert.equal(C.finalWorth(send, big, leg), C.priceLeg(big, leg).f100, "3× the VHP: the lower worth at the lock");
+});
+test("FC-3: a previous file can't mark a slot of a day that isn't over as fixed", async () => {
+  const prev = tmp();
+  const wf = { v: 1, week: 3, start: W3, end: M.weekStart(4), slots: [{ round: C.slotRound(D3 + 1, 0), fixed: true, cards: [] }] };
+  fs.writeFileSync(path.join(prev, "W003.json"), JSON.stringify(wf));
+  const out = tmp();
+  await quiet(() => run({ p: "main", check: "check", prev, out, raceDir: raceDir(), blockxDir: blockxDir(), picksContract: "1P", cardsOf: cardsOf(), stakedOf, head: headAt(T(D3 + 1, 13)) }));
+  const sl = read(out, "W003.json").slots.find((s) => s.round === C.slotRound(D3 + 1, 0));
+  assert.equal(sl.fixed, false); assert.equal(sl.cards.length, 3, "Tuesday's slot was read again");
 });

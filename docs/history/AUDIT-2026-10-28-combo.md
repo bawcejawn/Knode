@@ -64,3 +64,21 @@ separation, file-name checks, push loop. actionlint clean.
 
 ## Test counts after the fixes
 Contract 67 (as-pect); recorder 19; page and math 17 (site.combo); full site/audit suite 426 passing.
+
+## Fix-check (independent, 2026-10-28)
+
+A fourth auditor checked the fixes (diff 7c26e99..7edb604): every original finding fixed except CC-A2 and CC-B7
+(partly), plus one new Medium. Verdict "fix first"; all fixed in the next commit:
+
+| ID | Sev | Finding | Done |
+|---|---|---|---|
+| FC-1 | **Medium** | A race-data download failure in the run where the deadline passed voided already-priced cards; the void left `priceAt` and leg results set, so the next run's recount turned them back into hits (the Vault file changed after it was final). | A missing race-data or Block X file is an outage: cards wait and an `::error::` is raised, never void. A card voided at the deadline is recorded with `priceAt` null and void legs, so a recount agrees. The workflow stops if a branch exists but can't be fetched. Tests: the auditor's reproduction, plus "voided stays void". |
+| FC-2 | Low | The hourly race cards' small drift lowered about 1 in 6 legs' worths with no real VHP change (cards paid ~3% less than shown). | A leg takes the lock card's worth only if it is more than 10% below the worth when sent. Page text updated. Test. |
+| FC-3 | Low | A crafted previous file could mark a slot of a day that isn't over as fixed (never read again). | A slot from a previous file counts as fixed only if its day is irreversibly over on both nodes; otherwise it is read again. Test. Leg results in a previous file are still trusted (as CC-B7: anyone who can push games-data can write the Vault file directly). |
+| FC-4 | Info | If a slot can never be fixed (second node down, nodes disagreeing), the only signal was a warning. | `::error::` when last week's slots aren't all fixed a day after the week ended. |
+| FC-5 | Info | README said 46 contract tests. | 67. |
+
+The auditors' browser tests (CC-C1 and the fix-check's three) are in `tests/browser/` (`npm run test:browser`, needs
+Playwright's Chromium): 5 passing.
+
+**Test counts after the fix-check:** contract 67; recorder 23; page and math 17; full site/audit suite 430; browser 5.
