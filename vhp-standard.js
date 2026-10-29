@@ -18,6 +18,9 @@
  *                 multiplier).
  *    - card totals and the field/paddock split use the AVERAGE effective VHP over the same 7,200 blocks, never the
  *                 maximum: VHP shuffled between one owner's addresses would be counted twice (audit S-2).
+ *    - so on a card: a producer's OWN number (cardVhp, k = expected blocks from cardVhp ÷ the average total) sets its
+ *                 multiplier; anything about OTHER producers (the total, "the top producer", the field) uses averages
+ *                 (`avg`, `kAvg`, `topAvg`). A multiplier from an average-based number reopens S-1 (fix-check F-3).
  *    - baseline:  a producer's effective VHP at the START of a scoring window (e.g. the Bracket's UTC day), for judging
  *                 how it did after the fact. It is expected to sign at its baseline all window long, so moving VHP away
  *                 only lowers its real chances. A block it signs while holding MORE than its baseline counts as
@@ -115,9 +118,11 @@
     }
     return { field, paddock };
   }
-  /** The standard CARD at index i of B: every producer active at i. Each row's `vhp` is its cardVhp (the most effective
-   *  VHP over the CARD_BLOCKS blocks before i), which sets its own multiplier; `avg` is its average over the same blocks,
-   *  and the expected blocks `k` and the field/paddock split come from the averages (audit S-2). Rows sorted by cardVhp. */
+  /** The standard CARD at index i of B: every producer active at i. Each row: `vhp` = its cardVhp (the most effective
+   *  VHP over the CARD_BLOCKS blocks before i) and `k` = RACE_BLOCKS × cardVhp ÷ the total of averages: its OWN numbers,
+   *  for its multiplier; `avg` = its average over the same blocks and `kAvg` = RACE_BLOCKS × avg ÷ that total: for
+   *  anything about the others and for the field/paddock split (≥ MIN_K). Also `topAvg`, the biggest average, for
+   *  "top ÷ yours" style multipliers (audit S-2, fix-check F-3). Rows sorted by cardVhp. */
   function cardAt(B, i, book) {
     const h0 = B.hs[Math.max(0, i - CARD_BLOCKS)], h1 = B.hs[i], rows = [];
     for (const a of activeAt(B, i)) {
@@ -126,11 +131,12 @@
       if (mx > 0) rows.push({ a, vhp: Math.round(mx / 1e6) / 100, avg: Math.round(av / 1e6) / 100 });
     }
     const tot = rows.reduce((t, r) => t + r.avg, 0), field = [], paddock = [];
+    const r2 = (x) => Math.round(x * 100) / 100;
     for (const r of rows.sort((x, y) => y.vhp - x.vhp || (x.a < y.a ? -1 : 1))) {
-      const k = tot > 0 ? RACE_BLOCKS * r.avg / tot : 0;
-      (k >= MIN_K ? field : paddock).push({ ...r, k: Math.round(k * 100) / 100 });
+      const k = tot > 0 ? RACE_BLOCKS * r.vhp / tot : 0, kAvg = tot > 0 ? RACE_BLOCKS * r.avg / tot : 0;
+      (kAvg >= MIN_K ? field : paddock).push({ ...r, k: r2(k), kAvg: r2(kAvg) });
     }
-    return { field, paddock };
+    return { field, paddock, topAvg: rows.reduce((m, r) => Math.max(m, r.avg), 0) };
   }
   /** The CARD CREDIT (audit S-1): what one block signed at height h is worth, as a share of the card multiplier, for a
    *  producer whose cardVhp (VHP, as on the card) was `cardVhp`: min(1, cardVhp ÷ its effective VHP at h). */

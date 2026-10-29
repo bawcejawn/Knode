@@ -111,13 +111,15 @@
       sub.textContent = [weekly && F.prize ? F.prize : "", `Top ${F.show} shown; everyone else stays private.`].filter(Boolean).join(" ");
       podium.replaceChildren();
       const shown = free.slice(0, F.show);
-      body.replaceChildren(...shown.map((r, i) => el("tr", { class: [weekly && i < 2 ? "top" : "", r.a === who ? "me" : ""].join(" ").trim() || null },
-        el("td", { text: weekly && i < 2 ? MEDAL[i] : String(i + 1) }),
+      // a game's own free-play places (ties share) when it gives them; otherwise the row order
+      const pl = (r, i) => (Number.isInteger(r.place) && r.place > 0 ? r.place : i + 1);
+      body.replaceChildren(...shown.map((r, i) => el("tr", { class: [weekly && pl(r, i) <= 2 ? "top" : "", r.a === who ? "me" : ""].join(" ").trim() || null },
+        el("td", { text: weekly && pl(r, i) <= 2 ? MEDAL[pl(r, i) - 1] : String(pl(r, i)) }),
         el("td", { class: "mono" }, el("span", { text: o.name(r.a) })),
         ...o.columns.map((c) => el("td", { class: "num" + (c.wide ? " hide-sm" : ""), text: fmt(r[c.key]) })))));
       if (!shown.length) body.replaceChildren(el("tr", {}, el("td", { colspan: String(2 + o.columns.length), class: "ago", text: "No free-play scores yet." })));
       const row = who && rows.find((r) => r && r.a === who);
-      const place = row && !row.ranked ? free.indexOf(row) + 1 : 0;
+      const place = row && !row.ranked && free.includes(row) ? pl(row, free.indexOf(row)) : 0;
       mine.textContent = !who ? "" : !row ? "You have no finished picks here yet."
         : row.ranked ? `You play on the ${F.main} board.`
         : place ? `You: #${place} in free play${place > F.show ? " (only you see this)" : ""}.` : "No points yet this period.";

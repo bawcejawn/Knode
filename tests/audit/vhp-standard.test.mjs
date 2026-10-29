@@ -136,3 +136,18 @@ test("audit S-2: VHP shuffled between one owner's addresses isn't counted twice 
   assert.ok(all.find((r) => r.a === "1B").vhp > 1000, "the shuffler's own multiplier still uses its most (only its own loss)");
   assert.ok(card.field.some((r) => r.a === "1Small"), "the small producer stays in the field");
 });
+
+test("fix-check F-3: a card multiplier from k uses the producer's own cardVhp; hiding 5 of 6 hours gains nothing", () => {
+  // 21 producers of 100 VHP; 1Hider parks 99.9 of its 100 for blocks 1,000 … 6,999 and is back for the last ~hour
+  const n = 9000, hs = [], ts = [], sig = [], names = Array.from({ length: 21 }, (_, i) => (i ? "1P" + i : "1Hider"));
+  for (let i = 0; i < n; i++) { hs.push(4e6 + i); ts.push(i * 3000); sig.push(i % 21); }
+  const deltas = [{ h: 4e6 + 1800, a: "1Hider", d: -99.9e8 }, { h: 4e6 + 7800, a: "1Hider", d: 99.9e8 }];
+  const anchors = Object.fromEntries(names.map((a) => [a, { h: 4e6 + n - 1, v: 100e8 }]));
+  const book = V.vhpBook(anchors, deltas), B = { hs, ts, sig, signers: names };
+  const card = V.cardAt(B, n - 1, book), all = [...card.field, ...card.paddock];
+  const hid = all.find((r) => r.a === "1Hider"), honest = all.find((r) => r.a === "1P1");
+  assert.ok(hid.avg < 40, "its average shows the hiding");
+  assert.ok(hid.k >= honest.k - 0.01, `its own k (${hid.k}) is no smaller than an honest producer's (${honest.k}): no bigger multiplier`);
+  assert.ok(hid.kAvg < honest.kAvg, "the average-based kAvg is only for the field split");
+  assert.ok(Math.abs(card.topAvg - 100) < 0.5, "topAvg: the biggest average");
+});

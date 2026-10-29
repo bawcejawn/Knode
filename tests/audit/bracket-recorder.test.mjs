@@ -453,3 +453,20 @@ test("audit S-5 forfeit: a seed starting its day under half its seeding VHP lose
   assert.equal(B.results(seeds, 8, [d0], vhp).rounds[0][0], 1, "seed 8 forfeits round 1 to seed 1");
   assert.equal(B.results(seeds, 8, [d0]).rounds[0][0], 8, "(without seeding VHP: no forfeits)");
 });
+
+test("fix-check F-5: a player who withdrew mid-week stays on the Staked board and is never a free-prize winner", async () => {
+  const field = fieldOf(17), signer = signerFn(field);
+  const rows = [{ player: P(1), number: 0, time: 1 }, { player: P(2), number: 5, time: 2 }, { player: P(3), number: 9, time: 3 }];
+  const base = { picksContract: addr(60), nodeOf: nodeOf(signer), picksOf: picksOf(rows) };
+  // P(1) staked; P(2) staked at the start then withdrew (the close read: not staked, but held); P(3) free
+  let closing = false;
+  const stakedOf = async () => (closing ? { staked: [P(1)], held: [P(1), P(2)] } : { staked: [P(1), P(2)], held: [P(1), P(2)] });
+  const d = tmp(), go = (t) => quiet(() => rec.run({ p: "main", check: "check", prev: d, out: d, head: headAt(t), ...base, stakedOf }));
+  await go(B.seedTime(W) + H); await go(B.lockTime(W) + 60000); await go(B.weekStart(W) + H);
+  closing = true; for (let i = 0; i < 40; i++) await go(B.roundDay(W, 4) + 13 * H);
+  assert.equal(readW(d).status, "final");
+  const lw = JSON.parse(fs.readFileSync(path.join(d, "board.json"), "utf8")).week.rows;
+  assert.equal(lw.find((r) => r.a === P(2)).ranked, true, "on the Staked board");
+  const vf = JSON.parse(fs.readFileSync(path.join(d, "vault", `W${W}.json`), "utf8"));
+  assert.ok(!vf.first.includes(P(2)) && !vf.second.includes(P(2)) && !vf.rows.some((r) => r.player === P(2)));
+});

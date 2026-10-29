@@ -58,7 +58,6 @@ const CORRECTION = 12 * HOUR;              // final 12 hours after the last roun
 const MAX_HOURS_PER_RUN = 6;               // a long outage catches up over a few runs (audit A-2)
 const VAULT_DAYS = 3 * DAY;                 // the Vault takes a week's file until 3 days after the week ends
 const MAX_BOARD_ROWS = 1000;               // per leaderboard view (the page shows 50; your own score is in W<week>.json)
-const ONE_VHP = 100000000n;
 const isAddr = (a: unknown): a is string => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
 
 export type RawPick = { player: string; number: number; time: number };
@@ -127,6 +126,8 @@ function loadWeek(dir: string | undefined, w: number): WeekFile {
   f.days = emptyDays(f.seeding ? f.seeding.size : 0);
   if (Array.isArray(old.days)) old.days.forEach((d: any, r: number) => { if (r < f.days.length && Array.isArray(d)) d.forEach((h: any, i: number) => { if (i < 24 && hourOk(h)) f.days[r][i] = h; }); });
   // A final week stays final; its results and points are worked out again from what it recorded (same answer).
+  // (fix-check F-10: so a scoring rule change re-scores past final weeks. Any rule change after launch must apply only
+  //  from a stated week on, e.g. `if (w >= RULE_FROM_WEEK)`. The forfeit rule is in from the start: no week exists yet.)
   if (old.status === "final" && f.status === "waiting" && f.seeding && f.picks) { const sc = scoreWeek(f); if (sc.results && sc.results.done) { f.status = "final"; f.results = sc.results; f.points = sc.points; } }
   return f;
 }
@@ -197,15 +198,21 @@ async function readStaked(node: any, players: string[], w: number): Promise<Stak
   const abi = VAULT_ABI(), vault = defaultVault();
   if (!abi || !abi.methods || !abi.methods.get_game_player || !vault) throw new Error("the Vault's per-game stakes can't be read yet (needs Vault v6)");
   const c = new Contract({ id: vault, abi, provider: node });
+  // the Vault's own minimum stake for week w (fix-check F-8: set_min_stake can change it for later weeks)
+  const st: any = await withRetry("the Vault's settings", () => (c.functions as any).get_state({}));
+  const cf = st && st.result && st.result.config;
+  if (!cf || cf.min_stake === undefined) throw new Error("no answer reading the Vault's minimum stake");
+  const MIN = BigInt(cf.min_stake_next ?? "0") > 0n && w >= Number(cf.min_stake_next_week ?? "0") ? BigInt(cf.min_stake_next) : BigInt(cf.min_stake);
+  if (MIN <= 0n) throw new Error("the Vault's minimum stake reads as 0");
   const staked: string[] = [], held: string[] = [];
   for (const a of players) {
     const r: any = await withRetry(`stake of ${a}`, () => (c.functions as any).get_game_player({ player: a, game: B.GAME_ID, week: String(w) }));
     if (!r || typeof r !== "object" || !("result" in r)) throw new Error(`no answer reading the stake of ${a}`);
     const x = r.result || {};
-    const isStaked = BigInt(x.entry?.stake ?? "0") >= ONE_VHP || BigInt(x.week_stake ?? "0") >= ONE_VHP;
+    const isStaked = BigInt(x.entry?.stake ?? "0") >= MIN || BigInt(x.week_stake ?? "0") >= MIN;
     const peak = BigInt((x.entry ? x.entry.peak_stake : x.active_stake) ?? "0");
     if (isStaked) staked.push(a);
-    if (isStaked || peak >= ONE_VHP) held.push(a);
+    if (isStaked || peak >= MIN) held.push(a);
   }
   return { staked, held };
 }
@@ -227,14 +234,15 @@ export function freeWinners(points: Points[], held: Set<string>) {
   return { first, second: second.length > 10 ? [] : second };
 }
 /** The Vault file's points: every staked player with ≥ 1 point, the bracket's ranking (points, then a right champion,
- *  then right winners) mapped onto whole numbers 1–255 keeping the order and the ties. Over 255 different scores
- *  (can't happen below ~250 players with distinct scores): the plain points, which keep the order but merge some ties. */
+ *  then right winners) mapped onto whole numbers 1–255 keeping the order and the ties. Over 255 different scores: the best 254 exact, the rest share 1. */
 export function vaultRows(points: Points[], staked: Set<string>) {
   const rows = points.filter(([p, pts]) => staked.has(p) && pts >= 1);
   const key = (r: Points) => r[1] * 10000 + r[2] * 1000 + r[3];
   const distinct = [...new Set(rows.map(key))].sort((a, b) => b - a);
-  const map = distinct.length <= 255 ? new Map(distinct.map((k, i) => [k, distinct.length - i])) : null;
-  return rows.map((r) => ({ player: r[0], points: map ? map.get(key(r))! : Math.min(255, r[1]) }))
+  // up to 255 different scores: one value each. More (fix-check F-9): the best 254 keep their exact order and ties,
+  // the rest share 1. The Vault pays the top 30%, so this only matters if the paid part alone holds 254+ scores.
+  const n = distinct.length, map = new Map(distinct.map((k, i) => [k, n <= 255 ? n - i : Math.max(1, 255 - i)]));
+  return rows.map((r) => ({ player: r[0], points: map.get(key(r))! }))
     .sort((x, y) => y.points - x.points || (x.player < y.player ? -1 : 1));
 }
 
@@ -411,10 +419,13 @@ export async function run(o: Opts) {
     const part = (r: boolean) => B.rank(rows.filter((x) => x.ranked === r)).slice(0, MAX_BOARD_ROWS).map((x: any) => ({ a: x.player, place: x.place, pts: x.points, champion: x.champion, correct: x.correct, ranked: r }));
     return [...part(true), ...part(false)];
   };
-  const weekRows = (wf: WeekFile | undefined) => { const st = new Set(wf?.staked?.list ?? []); return wf ? wf.points.map(([player, points, champ, correct]) => ({ player, points, champion: !!champ, correct, ranked: st.has(player) })) : []; };
+  // Staked board: staked that week, or held a stake in the Bracket during it (a withdrawal doesn't move a player to Free
+  // play, where it could never win the prize: fix-check F-5)
+  const stakedSet = (wf: WeekFile | undefined) => new Set([...(wf?.staked?.list ?? []), ...(wf?.staked?.held ?? [])]);
+  const weekRows = (wf: WeekFile | undefined) => { const st = stakedSet(wf); return wf ? wf.points.map(([player, points, champ, correct]) => ({ player, points, champion: !!champ, correct, ranked: st.has(player) })) : []; };
   const wv = (w: number) => { const wf = allW.get(w); return { week: w, start: B.weekStart(w), status: wf ? wf.status : "waiting", final: wf?.status === "final", rows: view(weekRows(wf)) }; };
   const tot = new Map<string, { player: string; points: number; champion: boolean; correct: number; champs: number; ranked: boolean }>();
-  for (const wf of allW.values()) if (wf.status === "final") { const st = new Set(wf.staked?.list ?? []); for (const [player, points, champ, correct] of wf.points) {
+  for (const wf of allW.values()) if (wf.status === "final") { const st = stakedSet(wf); for (const [player, points, champ, correct] of wf.points) {
     const t = tot.get(player) || { player, points: 0, champion: false, correct: 0, champs: 0, ranked: false };
     t.points += points; t.correct += correct; t.champs += champ; t.champion = t.champs > 0; t.ranked = t.ranked || st.has(player); tot.set(player, t);
   } }

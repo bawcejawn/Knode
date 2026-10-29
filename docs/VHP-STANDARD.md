@@ -18,6 +18,9 @@ handicap on top. The full rules are at the top of `vhp-standard.js`; the project
       block). Without it, hiding VHP for 6+ hours and then bringing it back pays (proved: 60 of 60 races won).
     - **totals from averages** (S-2): the card's expected blocks and field/paddock split use each producer's AVERAGE
       over the same 7,200 blocks, so VHP shuffled between one owner's addresses isn't counted twice.
+    - **own numbers vs others' numbers** (fix-check F-3): a producer's multiplier comes from its OWN `vhp` (cardVhp) or
+      `k` (cardVhp ÷ the average total); anything about OTHER producers — the total, the top producer (`topAvg`), the
+      field split (`kAvg`) — uses averages. A multiplier from an average-based number reopens the long-hide problem.
   - `windowStats` / baseline + credit: baseline = effective VHP at a window's start; expected = baseline × Σ 1 ÷ active
     effective VHP; a block signed while holding more than the baseline counts baseline ÷ VHP — for scoring after the fact.
   - `averageCard` / averageVhp: the average over the 28,800 blocks before — for fields and seeding.
