@@ -1,6 +1,6 @@
 # Last Node Standing (Knode Games, game 13): how it works
 
-A staked daily game. Pick a block producer ("node"). Every hour the slowest node is knocked out. If yours goes, you get one jump to a node still standing. Ride the last node standing to win.
+A staked daily game. Pick a block producer ("node"). Every hour the slowest node is knocked out. Before the start you pick your node and an optional backup; if your node goes, the backup takes over (one jump). Ride the last node standing to win.
 
 The live game is not launched. It waits for:
 - the Picks contract (Build 3);
@@ -25,12 +25,11 @@ A testnet practice copy runs on the owner's PC (`docs/lastnode/TESTNET.md`).
   - Gaming: a producer would have to sign fewer blocks for 2 days (losing real block rewards) to look weak, and the boost is capped at 1 ÷ 0.80.
 - **No VHP rebase:** handicaps are fixed for the whole event from the field's card; VHP changes after it are not followed.
 - **The cut:** the node with the fewest handicapped steps since the start goes. Ties: fewer raw blocks, then smaller card VHP, then the address that sorts later. Totals never reset during an event; handicaps and c are fixed per event.
-- **Picks (Picks contract, game 13):**
-  - Settings: one producer, TIME lock, round_size 3,600,000 ms, round_offset 900,000, lead 300,000, ahead 86,400,000, at most 5 changes, at most 30 picks a day.
-  - Every round locks at 10 minutes past its hour.
-  - **Start pick:** the round locking at 13:10 UTC.
-  - **Jump:** if your node is cut at hh:00, your pick for the round locking at hh:10 is your jump, if it names a node still standing. A pick made earlier for that round is a backup and counts the same way.
-  - One jump per event. With no valid jump, or a second cut, you're out.
+- **Picks (Picks contract, game 13; owner, 2026-10-29):**
+  - One pick per event, made before it starts: your node and an optional backup.
+  - Settings: a list of up to 2 producers (kind 2, list_size 2), TIME lock, one round a day (round_size 86,400,000 ms), round_offset 50,100,000 (13:55 UTC), lead 300,000, ahead 86,400,000, at most 5 changes, at most 10 picks a day.
+  - Picks open at 13:55 UTC the day before and lock at 13:50 UTC, 10 minutes before the start. Nothing can be picked or changed during the race.
+  - **Backup:** the first time your node is cut, the backup takes over automatically if it is still standing then (a jump; one per event). No backup, a backup already cut, or a cut of the node you jumped to, and you're out.
 - **Points:**
   - 1 for each cut your node survives;
   - +5 for riding the last node without jumping, +3 after a jump.
@@ -47,19 +46,19 @@ A testnet practice copy runs on the owner's PC (`docs/lastnode/TESTNET.md`).
 ## Where the code is
 | File | What |
 |---|---|
-| `lastnode-math.js` | The rules. Shared by the page and the recorder. `KLastNode` is the real game; `KLastNode.forGame(settings)` gives any timing (the testnet fast game 93). |
+| `lastnode-math.js` | The rules. Shared by the page and the recorder. `KLastNode` is the real game; `KLastNode.forGame(settings)` gives any timing (the testnet fast game 94, and 33 for the real timing). |
 | `bot/games/lastnode.ts` | Recorder. Reads blocks from two nodes, irreversible only; reads picks; writes `D<event>.json`, `index.json`, `board.json`, `vault/W<week>.json`. `--testnet --game N`: picks from the testnet, blocks from mainnet (read only). |
 | `.github/workflows/lastnode.yml` | Record job (no secrets, read-only token). Publish job (runs no repo code; Python shape check; pushes only `games-data/lastnode/`). Off until `LASTNODE_ENABLED=true`. |
 | `lastnode.html`, `lastnode.js`, `lastnode.css` | The live page. Its live cut is worked out from public blocks; the recorder's files are the final word. |
 | `lastnode-testnet.html` | Testnet practice page: testnet wallet only; declares that it reads mainnet blocks. |
-| `bot/picks.ts` | Registers games on the Picks contract. On the testnet: 2, 92, 13 and 93; on mainnet: only Block X so far. |
+| `bot/picks.ts` | Registers games on the Picks contract. On the testnet: 2, 92, 94 and 33 (13 and 93 are the earlier rules, unused); on mainnet: only Block X so far. |
 | `tools/testnet-site.mjs`, `testnet/lastnode.json` | Local test server and testnet settings. |
 | `tools/sim/lastnode/` | The fairness simulations and a real-block replay. |
 | Tests | `tests/audit/lastnode-*.test.mjs`, `tests/audit/site.lastnode.test.mjs`, `tests/audit/picks.tool.test.ts`. |
 
 ## Trust model
 - **Nobody can sign for players except their own wallet.**
-  - The page sends exactly one kind of transaction: a Picks `pick` for game 13 (93 or 13 on the testnet) for the connected wallet.
+  - The page sends exactly one kind of transaction: a Picks `pick` ([start] or [start, backup]) for game 13 (94 or 33 on the testnet) for the connected wallet.
   - It checks the round is still open one minute before its lock.
 - **The recorder holds no keys.** Results come from irreversible blocks that match on two independent mainnet nodes, and picks must match on both nodes. On the testnet there is one testnet node for picks.
 - **The publish job** checks the shape of every file it pushes. It never lets the day list shrink and never replaces a published vault file.

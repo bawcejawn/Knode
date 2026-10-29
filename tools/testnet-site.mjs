@@ -172,8 +172,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const port = s.address().port;
     console.log(`\nBlock X testnet page:  http://127.0.0.1:${port}/blockx-testnet.html#game-92   (fast game)`);
     console.log(`                       http://127.0.0.1:${port}/blockx-testnet.html#game-2    (real settings)`);
-    console.log(`Last Node Standing:    http://127.0.0.1:${port}/lastnode-testnet.html#game-93 (fast test: a cut every 20 minutes)`);
-    console.log(`                       http://127.0.0.1:${port}/lastnode-testnet.html#game-13 (real settings: daily 14:00 UTC)`);
+    console.log(`Last Node Standing:    http://127.0.0.1:${port}/lastnode-testnet.html#game-94 (fast test: a cut every 20 minutes)`);
+    console.log(`                       http://127.0.0.1:${port}/lastnode-testnet.html#game-33 (real timing: daily 14:00 UTC)`);
     console.log("Leave this window open. Stop with Ctrl+C.");
     if (process.argv.includes("--record")) { recordAll(); setInterval(recordAll, 5 * 60000); }
     else console.log("Results: add --record to run the recorder every 5 minutes (or run: npm run blockx -- --testnet --game 92).");

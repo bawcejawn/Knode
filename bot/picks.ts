@@ -10,7 +10,7 @@
  *   npm run picks -- status [--testnet]              the contract on chain: code, overrides, owner, games, announcements
  *   npm run picks -- upload [--testnet] [--send]     put the contract on the PICKS_WIF wallet, all three overrides ON
  *   npm run picks -- announce <id> [--testnet] [--send]   announce a game (owner's key); it can be applied after the wait
- *                                                          (testnet: Block X 2 and 92, Last Node Standing 13 and 93)
+ *                                                          (testnet: Block X 2 and 92, Last Node Standing 94 and 33)
  *   npm run picks -- apply <id> [--testnet] [--send]      put an announced game in force (any key; the tool uses OWNER_WIF)
  *   npm run picks -- pause <id> [--testnet] [--send]      switch a game off at once (owner's key)
  *   npm run picks -- lock-test <id> --testnet --send      send one pick per block across a target's lock, report each
@@ -273,12 +273,13 @@ async function findVhp(p: Provider): Promise<string | null> {
 /** The game_config the contract takes for a Block X game (one producer, locked by block height). Exported for the tests. */
 export function buildGameConfig(g: any, enabled = true) {
   if (Number.isInteger(g.cut)) {
-    // A Last Node Standing game: one producer per round, locked by TIME (ms). Its rules check the contract's limits.
+    // A Last Node Standing game (owner, 2026-10-29): a list of up to 2 producers ([start, backup]), one round per event,
+    // locked by TIME (ms). Its rules check the contract's limits.
     const T = LN.forGame(g);
     if (typeof g.name !== "string" || !g.name || Buffer.byteLength(g.name) > 40) throw new Error("A game needs a name of 1 to 40 bytes.");
     if (!(g.picksPerDay >= 1 && g.picksPerDay <= MAX_PICKS_PER_DAY)) throw new Error("Picks per day must be 1 to 50.");
     if (!(g.maxChanges >= 0 && g.maxChanges <= MAX_CHANGES)) throw new Error("Changes must be 0 to 50.");
-    return { id: g.id, name: g.name, kind: 1, list_size: 1, number_min: "0", number_max: "0", lock_mode: 2, round_size: String(T.CUT), round_offset: String(T.OFFSET),
+    return { id: g.id, name: g.name, kind: 2, list_size: 2, number_min: "0", number_max: "0", lock_mode: 2, round_size: String(T.PERIOD), round_offset: String(T.OFFSET),
       lead: String(T.LEAD), ahead: String(T.AHEAD), max_picks_per_day: g.picksPerDay, max_changes: g.maxChanges, enabled };
   }
   X.forGame(g);   // the contract's own limits for a height game (lead ≥ 100, ahead > lead, ...)
@@ -369,8 +370,9 @@ async function announce(id: number, send: boolean) {
   log(`Announce game ${id} "${g.name}" on ${net.testnet ? "the testnet" : "MAINNET"} (owner ${s.getAddress()}):`);
   if (Number.isInteger(g.cut)) {
     const T = LN.forGame(g), m = (ms: number) => `${ms / 60000} min`;
-    log(`  Last Node Standing (time lock): a cut every ${m(T.CUT)}, an event every ${m(T.PERIOD)}; each round locks ${m(T.JUMP_WINDOW)} after its cut`);
-    log(`  (round_size ${T.CUT}, round_offset ${T.OFFSET}, lead ${T.LEAD}, ahead ${T.AHEAD}). The start pick locks ${m(T.CUT - T.JUMP_WINDOW)} before an event starts.`);
+    log(`  Last Node Standing (time lock): one pick per event, a start node and an optional backup (a list of up to 2 producers);`);
+    log(`  a cut every ${m(T.CUT)}, an event every ${m(T.PERIOD)}; picks lock ${m(T.LOCK_BEFORE)} before each start and open ${m(T.AHEAD)} ahead`);
+    log(`  (kind 2, list_size 2, round_size ${T.PERIOD}, round_offset ${T.OFFSET}, lead ${T.LEAD}, ahead ${T.AHEAD}).`);
   } else log(`  one producer per target; a target every ${g.round} blocks; locks ${g.lead} blocks before; opens ${g.ahead} ahead (${X.forGame(g).openRounds(g.ahead * 10).length} targets open at a time)`);
   log(`  ${g.picksPerDay} picks a day per wallet, ${g.maxChanges} changes per pick. It can be applied ${wait} after it is announced (anyone may apply it).`);
   if (!send) { log("\nDry run only. Nothing was sent. Add --send to send it."); return; }

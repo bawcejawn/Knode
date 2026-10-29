@@ -15,14 +15,14 @@ const page = fs.readFileSync(path.resolve(APP, "lastnode.js"), "utf8");
 const MIN = 60000, MARGIN = MIN;
 
 // ── LN-6: the start picker ──
-test("LN-6 (real game): from 13:09 to 13:15 UTC the next event's picks are 'not open yet', then open", () => {
+test("LN-6 (real game): from 13:49 to 13:55 UTC the next event's picks are 'not open yet', then open", () => {
   const day = Date.UTC(2026, 10, 3);
   const at = (h, m) => L.nextEntry(day + h * 3600000 + m * MIN, {}, MARGIN);
-  const before = at(13, 8);
-  assert.equal(before.day, "2026-11-03"); assert.equal(before.open, true, "today's event until its cut-off");
-  for (const m of [9, 10, 12, 14]) { const e = at(13, m); assert.equal(e.day, "2026-11-04"); assert.equal(e.open, false, `13:${m}: tomorrow isn't open yet`); }
-  const e = at(13, 15); assert.equal(e.day, "2026-11-04"); assert.equal(e.open, true);
-  assert.equal(new Date(e.opens).toISOString(), "2026-11-03T13:15:00.000Z");
+  const before = at(13, 48);
+  assert.equal(before.day, "2026-11-03"); assert.equal(before.open, true, "today's event until its cut-off (13:49)");
+  for (const m of [49, 50, 52, 54]) { const e = at(13, m); assert.equal(e.day, "2026-11-04"); assert.equal(e.open, false, `13:${m}: tomorrow isn't open yet`); }
+  const e = at(13, 55); assert.equal(e.day, "2026-11-04"); assert.equal(e.open, true);
+  assert.equal(new Date(e.opens).toISOString(), "2026-11-03T13:55:00.000Z");
 });
 
 test("LN-6 (both games): the page offers a round only when the contract would take it, and always the earliest one", () => {
@@ -82,13 +82,10 @@ test("LN-5: the page's clock is the chain's (freshest reading of the newest bloc
 
 test("LN-7, LN-15, LN-16, LN-17: node info per event, the Jump note only while the box is open, cut-off countdowns, no redraw storm", () => {
   assert.match(page, /function nodeInfo\(a, df\) \{ return \(df && df\.field && df\.field\.nodes\.find/);
-  assert.match(page, /"", nx\.round, nf\)\)\)/);
-  assert.match(page, /hit \? \(jumpOpen\(df, res, ev\) \? "That was your node\. Jump now!"/);
-  assert.match(page, /return r != null && now < cutoff\(r\) \? r : null;/);
-  assert.match(page, /\$\{dur\(cutoff\(jumpRound\) - now\)\} left/);
+  assert.match(page, /picker\("Your node", nodes, mineNext && mineNext\.start, null, "", kS, nf, false\)/, "node info from the event being picked for");
+  assert.match(page, /hit \? "That was your node: your run ends here"/, "no Jump box to point at any more (owner, 2026-10-29)");
   assert.match(page, /Picks close in \$\{dur\(cutoff\(nx\.round\) - now\)\}/);
-  assert.match(page, /It covers that cut only/);
-  assert.match(fs.readFileSync(path.resolve(APP, "lastnode.html"), "utf8"), /a backup covers the next cut only/);
+  assert.match(fs.readFileSync(path.resolve(APP, "lastnode.html"), "utf8"), /your backup takes over automatically if it's still standing/);
   assert.match(page, /now - lastStale >= 15000/);
 });
 
@@ -161,12 +158,10 @@ test("fix-check: the two mainnet nodes are compared however they are spelled", a
 });
 void os;
 
-test("owner 2026-10-29: a backup for the first cut can be set before the start, on the round the rules read for it", () => {
-  assert.match(page, /const b1 = L\.roundForJump\(nx\.start, 1\), backup = myPicks\.get\(b1\);/);
-  assert.match(page, /sendPick\(b1, a, "your backup for the first cut"\)/);
-  assert.match(page, /new Set\(\[nx\.round, ev\.round, L\.roundForJump\(nx\.start, 1\)\]\)/, "and it is read back");
-  // The rules count a pick for that round as the jump at the first cut.
+test("owner 2026-10-29: the backup is part of the one pick, sent with the start node before the start", () => {
+  assert.match(page, /const producers = isAddr\(backup\) && backup !== start \? \[start, backup\] : \[start\];/);
+  assert.match(page, /myPicks\.set\(r, \{ start: ps\[0\], backup: isAddr\(ps\[1\]\) && ps\[1\] !== ps\[0\] \? ps\[1\] : null \}\)/, "read back from the pick");
+  assert.match(page, /const rounds = new Set\(\[nx\.round, ev\.round\]\);/, "one round per event");
   const ev = L.eventOf(Date.UTC(2026, 10, 3, 12));
-  assert.equal(L.roundForJump(ev.start, 1), ev.round + 2);
-  assert.ok(L.pickable(L.roundForJump(ev.start, 1), ev.lock - 30 * MIN, {}, MARGIN), "open while the start pick is");
+  assert.ok(L.pickable(ev.round, ev.lock - 2 * MIN, {}, MARGIN) && !L.pickable(ev.round, ev.lock - 30000, {}, MARGIN), "until a minute before 13:50");
 });

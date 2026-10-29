@@ -1,4 +1,4 @@
-// Last Node Standing on the testnet: the fast test game (93) recorded with picks from the TESTNET node only and the
+// Last Node Standing on the testnet: the fast test game (94) recorded with picks from the TESTNET node only and the
 // race from two MAINNET nodes; the testnet settings file; and the local test server's allowlist for its files.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -41,13 +41,14 @@ const windowOf = async (node, t0, t1) => {
 };
 // The form's 48 hours before the card (mainnet nodes only): no race cards for them here, so the field has no form.
 const hoursOf = async (node, t0, n) => { assert.ok(node === "main" || node === "check"); assert.equal(t0 + n * 3600000, EV.cardTime); return Array.from({ length: n }, () => ({})); };
-const PICKS = { 0: [[ALICE, N4], [BOB, N3]], 2: [[BOB, N4]] };
+// One pick each for the event: Alice N4; Bob N3 with backup N4.
+const PICKS = { 0: [[ALICE, N4], [BOB, N3, N4]] };
 const picksOf = async (node, round) => {
   assert.equal(node, "testnet", "picks come only from the testnet node");
-  return (PICKS[round - EV.round] || []).map(([w, a]) => [w, a, EV.start - 3600000]);
+  return (PICKS[round - EV.round] || []).map(([w, a, b]) => (b ? [w, a, EV.start - 3600000, b] : [w, a, EV.start - 3600000]));
 };
 
-test("the fast game: field, 20-minute cuts, jump, points; picks from the testnet, blocks from mainnet", async () => {
+test("the fast game: field, 20-minute cuts, backup, points; picks from the testnet, blocks from mainnet", async () => {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "lns-tn-"));
   const r = await run({ p: "main", check: "check", pp: "testnet", pcheck: null, game: L0.FAST_GAME, picksContract: "1PicksPicksPicksPicksPicksPicks",
     raceDir: raceDir(), out, windowOf, hoursOf, picksOf, rankedOf: async (w) => new Set(w), trials: 300, now: { time: EV.start + 70 * 60000, libTime: EV.start + 61 * 60000 } });
@@ -56,17 +57,18 @@ test("the fast game: field, 20-minute cuts, jump, points; picks from the testnet
   assert.equal(d.hours.length, 3); assert.equal(d.winner, N4);
   assert.deepEqual(d.cuts.map((c) => c.a), [N3, N1, N2]);
   const p = Object.fromEntries(d.players.map((x) => [x.a, x]));
-  assert.equal(p[ALICE].points, 3 + 5); assert.equal(p[BOB].jumpTo, N4); assert.equal(p[BOB].points, 2 + 3);
+  assert.equal(p[ALICE].points, 3 + 5); assert.equal(p[BOB].jumpTo, N4, "the backup took over at cut 1"); assert.equal(p[BOB].points, 2 + 3);
   const idx = JSON.parse(fs.readFileSync(path.join(out, "index.json"), "utf8"));
-  assert.equal(idx.game, 93); assert.ok(idx.days.includes("2026-11-03T08"));
+  assert.equal(idx.game, 94); assert.ok(idx.days.includes("2026-11-03T08"));
 });
 
 test("testnet/lastnode.json: the testnet, never mainnet; both games pass the contract's rules", () => {
   const c = readNetConfig(path.resolve(APP, "testnet/lastnode.json"));
   assert.notEqual(c.chainId, MAINNET_CHAIN_ID);
-  assert.deepEqual(c.games.map((g) => g.id).sort(), [13, 93]);
-  const real = c.games.find((g) => g.id === 13), want = L0.PICKS_GAME;
-  assert.equal(real.cut, want.round_size); assert.equal(real.offset, want.round_offset); assert.equal(real.lead, want.lead); assert.equal(real.ahead, want.ahead);
+  assert.deepEqual(c.games.map((g) => g.id).sort((a, b) => a - b), [33, 94]);
+  const real = L0.forGame(c.games.find((g) => g.id === 33)).PICKS_GAME, want = L0.PICKS_GAME;
+  for (const k of ["kind", "list_size", "lock_mode", "round_size", "round_offset", "lead", "ahead"]) assert.equal(real[k], want[k], `real timing ${k} = the live game's`);
+  assert.deepEqual(c.games.find((g) => g.id === 94), { ...L0.FAST_GAME }, "the fast game is the rules' own");
   assert.equal(c.picksFrom, "testnet/blockx.json");
   const bad = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "cfg-")), "x.json");
   fs.writeFileSync(bad, JSON.stringify({ ...c, chainId: MAINNET_CHAIN_ID }));

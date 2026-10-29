@@ -4,17 +4,18 @@
  *
  * Each run, for every event from 3 days ago to tomorrow:
  *  1. The field. From the Producer Race card of the 12:00 UTC leg the day before (race-data; if that leg has none,
- *     the 13:00 leg's if it was taken before picks open at 13:15, never a later one), calibrated once and
- *     kept: nodes at 20+ blocks an hour, their handicaps and the day's c. Published as soon as the card exists, so the
+ *     the 13:00 leg's if it was taken before picks open at 13:55, never a later one), and each node's form (48 hours
+ *     of blocks before the card), calibrated once and kept: nodes at 20+ blocks an hour, their handicaps and the c. Published as soon as the card exists, so the
  *     field is known when picks open (24 hours ahead). An event that has started with no card is void.
  *  2. The hours. Hour i (start + i h to start + (i + 1) h, block timestamps) is recorded once the first block at or
  *     after its end is irreversible, and every block in it matches on two independent nodes (RPC and RPC_CHECK).
  *     Only each field node's block count is kept. After each hour the cut is worked out; the event stops at the last
  *     cut.
- *  3. The picks. With hour i, the picks for the round at offset i + 1 (locked at 10 minutes past hour i, so already
- *     irreversible) are read on both nodes, which must agree; with hour 0 also the start round. These are the start
- *     picks and the jumps (and backups). Other rounds are never read.
- *  4. Every player's event (start, jump, cuts survived, points) and whether the wallet may be ranked (1 VHP or a
+ *  3. The picks. One round per event (owner, 2026-10-29): each wallet's pick is its start node and an optional backup,
+ *     locked 10 minutes before the start. It is read with hour 0 (so it is final and irreversible), on both nodes,
+ *     which must agree. Other rounds are never read.
+ *  4. Every player's event (start, the backup taking over at the first cut of the start node, cuts survived, points)
+ *     and whether the wallet may be ranked (1 VHP or a
  *     Knode stake, as the race board; staked prizes are decided by the vault).
  *  5. Leaderboards (board.json): Today (today's event), This week, Last week (final 12 hours after the week ends when
  *     every event in it is finished or void) and All time.
@@ -50,7 +51,8 @@ const isAddr = (a: unknown) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{
 const isDay = (d: unknown) => typeof d === "string" && !!L.eventOf(d);
 
 /** A recorded pick: [player, producer, pick time (ms)]. */
-type Pick = [string, string, number];
+/** [player, start node, pick time, backup node] (the backup only when the pick names one; owner, 2026-10-29). */
+type Pick = [string, string, number] | [string, string, number, string];
 type Hour = { i: number; from: number; to: number; blocks: Record<string, number>; checked: number };
 type PlayerRow = { a: string; start: string; jumpTo: string | null; out: number; survived: number; rode: boolean; jumped: boolean; points: number; ranked: boolean };
 export type DayFile = {
@@ -104,7 +106,8 @@ function loadDay(dir: string | undefined, day: string): DayFile {
     f.hours.push({ i: k, from: h.from, to: h.to, blocks: Object.fromEntries(Object.entries(h.blocks).filter(([a, n]) => isAddr(a) && Number.isInteger(n) && (n as number) >= 0)) as any, checked: h.checked === 2 ? 2 : 1 });
   }
   if (o.picks && typeof o.picks === "object") for (const [k, rows] of Object.entries(o.picks))
-    if (/^\d{1,2}$/.test(k) && Array.isArray(rows)) f.picks[k] = (rows as any[]).filter((x) => Array.isArray(x) && isAddr(x[0]) && isAddr(x[1]) && Number.isFinite(x[2])).map((x) => [x[0], x[1], Number(x[2])]);
+    if (k === "0" && Array.isArray(rows)) f.picks[k] = (rows as any[]).filter((x) => Array.isArray(x) && (x.length === 3 || (x.length === 4 && isAddr(x[3]) && x[3] !== x[1])) && isAddr(x[0]) && isAddr(x[1]) && Number.isFinite(x[2]))
+      .map((x) => (x.length === 4 ? [x[0], x[1], Number(x[2]), x[3]] : [x[0], x[1], Number(x[2])]) as Pick);
   if (Array.isArray(o.players)) f.players = o.players.filter((x: any) => x && isAddr(x.a) && x.ranked === true).map((x: any) => ({ a: x.a, ranked: true } as any));
   return f;
 }
@@ -230,7 +233,9 @@ async function readPicks(node: any, contract: string, round: number): Promise<Pi
     const rows = r?.result?.rows ?? [];
     for (const x of rows) {
       const ps = x.pick?.producers;
-      if (isAddr(x.player) && Array.isArray(ps) && ps.length === 1 && isAddr(ps[0])) out.push([x.player, ps[0], Number(x.pick.time || 0)]);
+      // One pick per event: [start] or [start, backup] (the contract keeps them distinct).
+      if (isAddr(x.player) && Array.isArray(ps) && (ps.length === 1 || ps.length === 2) && ps.every(isAddr) && ps[0] !== ps[1])
+        out.push(ps.length === 2 ? [x.player, ps[0], Number(x.pick.time || 0), ps[1]] : [x.player, ps[0], Number(x.pick.time || 0)]);
     }
     if (rows.length < 100) break;
     after = rows[rows.length - 1].player;
@@ -413,7 +418,8 @@ export async function run(o: Opts) {
           if (!sameCounts(w, w2)) { problems.push(`${df.day} hour ${i}: the two nodes disagree about the blocks; tried again next run`); break; }
           checked = 2;
         }
-        const offsets = i === 0 ? [0, 1] : [i + 1];
+        // The event's one round, read with its first hour (it locked before the start, so it is final by then).
+        const offsets = i === 0 ? [0] : [];
         const got: Record<string, Pick[]> = {};
         if (picksRead) {
           let ok = true;
@@ -443,10 +449,10 @@ export async function run(o: Opts) {
     if (!df.field || df.void) { df.cuts = []; df.standing = []; df.winner = null; df.players = []; continue; }
     const res = L.cutsFrom(df.field, df.hours);
     df.cuts = res.cuts; df.standing = res.standing; df.winner = res.winner; df.done = res.done;
-    // Each player's picks by offset (the contract keeps one pick per wallet per round).
-    const by = new Map<string, Record<number, string>>();
-    for (const [k, rows] of Object.entries(df.picks)) for (const [who, a] of rows) { let m = by.get(who); if (!m) by.set(who, (m = {})); m[Number(k)] = a; }
-    const entrants = [...by.entries()].filter(([, m]) => m[0]);
+    // Each player's one pick for the event (the contract keeps one pick per wallet per round): start and backup.
+    const by = new Map<string, { start: string; backup: string | null }>();
+    for (const row of df.picks["0"] || []) by.set(row[0], { start: row[1], backup: row[3] ?? null });
+    const entrants = [...by.entries()].filter(([, m]) => m.start);
     // Ranked flags are read again whenever the event moved this run, else kept from the last run.
     const ranked = touched.has(df.day) && entrants.length ? await rankedRead(entrants.map(([a]) => a)) : new Set<string>((df.players || []).filter((p) => p.ranked).map((p) => p.a));
     df.players = entrants.map(([a, m]) => ({ a, r: L.playerResult(df.field, res, m) })).filter((x) => x.r.entered).map(({ a, r }) => ({

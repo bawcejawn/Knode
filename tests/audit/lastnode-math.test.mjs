@@ -1,5 +1,5 @@
 // Last Node Standing shared math (lastnode-math.js): rounds and locks, the field and its calibrated handicap,
-// the hourly cuts and their tie rule, a player's start pick, jump and backup, points, and the leaderboard.
+// the hourly cuts and their tie rule, a player's one pick (start node and optional backup), points, and the leaderboard.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -15,24 +15,21 @@ const FIELD = { at: 0, c: 0, fairness: null, nodes: [
   { a: N1, vhp: 400, kh: 200, h: 1 }, { a: N2, vhp: 200, kh: 100, h: 2 }, { a: N3, vhp: 100, kh: 50, h: 4 }, { a: N4, vhp: 100, kh: 50, h: 4 }] };
 const hour = (o) => ({ blocks: o });
 
-test("rounds lock at 10 past the hour (target hh:15, lead 5 min), open 24 hours ahead (the contract's rule)", () => {
+test("one round per event: picks lock at 13:50 UTC, 10 minutes before the start, and open 24 hours ahead (the contract's rule)", () => {
   const ev = L.eventOf("2026-11-02");
   assert.equal(new Date(ev.start).toISOString(), "2026-11-02T14:00:00.000Z");
-  assert.equal(ev.round, ev.start / L.HOUR - 1, "the start round is the one targeting 13:15");
   const at = (t) => new Date(t).toISOString().slice(11, 16);
-  assert.equal(at(L.lockTime(ev.round)), "13:10", "the start pick locks 50 minutes before the start");
-  assert.equal(ev.lock, L.lockTime(ev.round));
+  assert.equal(at(L.roundTime(ev.round)), "13:55", "the round's target");
+  assert.equal(at(L.lockTime(ev.round)), "13:50", "picks lock 10 minutes before the start");
+  assert.equal(ev.lock, L.lockTime(ev.round)); assert.equal(ev.start - ev.lock, 10 * 60000);
   assert.ok(L.isOpen(ev.round, ev.lock - 1));
   assert.ok(!L.isOpen(ev.round, ev.lock), "locked exactly at the lock");
   assert.equal(L.roundTime(ev.round) - L.LEAD, ev.lock, "the contract's rule: target − lead");
   assert.equal(ev.opens, L.roundTime(ev.round) - L.DAY);
+  assert.equal(new Date(ev.opens).toISOString(), "2026-11-01T13:55:00.000Z", "24 hours before the target");
   assert.ok(!L.isOpen(ev.round, ev.opens - 1), "not open more than 24 h ahead"); assert.ok(L.isOpen(ev.round, ev.opens));
-  // The jump after the cut at hour k locks at start + k h + 10 min: after the cut, 50 minutes before the next one.
-  for (let k = 1; k <= 22; k++) {
-    const r = L.roundForJump(ev.start, k);
-    assert.equal(L.lockTime(r), ev.start + k * L.HOUR + 10 * 60000);
-    assert.equal(r - ev.round, k + 1, "the offset playerResult reads");
-  }
+  assert.equal(L.nextEvent(ev).round, ev.round + 1, "one round a day");
+  assert.ok(!L.isOpen(L.nextEvent(ev).round, ev.lock - 60000), "tomorrow's round opens just after today's locks");
   assert.equal(L.eventOf(ev.start + 3 * L.HOUR).start, ev.start, "a time that day gives that day's event");
   assert.equal(new Date(ev.cardTime).toISOString(), "2026-11-01T12:00:00.000Z", "field from the 12:00 card the day before");
   assert.equal(L.eventOf("not a day"), null);
@@ -74,54 +71,52 @@ test("cuts: fewest handicapped steps since the start, ties by raw blocks, then V
 const HOURS = [hour({ [N1]: 200, [N2]: 100, [N3]: 49, [N4]: 50 }), hour({ [N1]: 190, [N2]: 100, [N4]: 48 }), hour({ [N2]: 45, [N4]: 26 })];
 const RES = L.cutsFrom(FIELD, HOURS); // N3 out at 1, N1 at 2, N2 at 3; N4 wins
 
-test("a player who rides the winner from the start scores every cut + 5", () => {
-  const r = L.playerResult(FIELD, RES, { 0: N4 });
+test("a player who rides the winner from the start scores every cut + 5 (a backup never used costs nothing)", () => {
+  const r = L.playerResult(FIELD, RES, { start: N4 });
   assert.equal(r.survived, 3); assert.equal(r.rode, true); assert.equal(r.points, 3 + 5); assert.equal(r.jumped, false);
+  const b = L.playerResult(FIELD, RES, { start: N4, backup: N2 });
+  assert.equal(b.points, 3 + 5); assert.equal(b.jumped, false); assert.equal(b.backup, N2);
 });
 
-test("no start pick, or a start pick outside the field, is no entry; later picks alone don't enter", () => {
-  assert.equal(L.playerResult(FIELD, RES, {}).entered, false);
-  assert.equal(L.playerResult(FIELD, RES, { 0: A("Z") }).entered, false);
-  assert.equal(L.playerResult(FIELD, RES, { 2: N4 }).entered, false);
+test("no start pick, or a start pick outside the field, is no entry; a backup outside the field is ignored", () => {
+  assert.equal(L.playerResult(FIELD, RES, null).entered, false);
+  assert.equal(L.playerResult(FIELD, RES, { start: A("Z") }).entered, false);
+  assert.equal(L.playerResult(FIELD, RES, { start: null, backup: N4 }).entered, false);
+  const r = L.playerResult(FIELD, RES, { start: N3, backup: A("Z") });
+  assert.equal(r.backup, null); assert.equal(r.out, 1); assert.equal(r.points, 0);
 });
 
-test("the jump: after the cut at hour k, the pick at offset k + 1 if its node still stands; +3 for riding it home", () => {
-  // N3 cut at hour 1; jump picked for the round at offset 2 → N4; survives cuts 2 and 3 and rides home.
-  const r = L.playerResult(FIELD, RES, { 0: N3, 2: N4 });
+test("the backup takes over the first time the start node is cut, if still standing; +3 for riding it home", () => {
+  // N3 cut at cut 1 → backup N4 takes over, survives cuts 2 and 3 and rides home.
+  const r = L.playerResult(FIELD, RES, { start: N3, backup: N4 });
   assert.equal(r.jumped, true); assert.equal(r.jumpTo, N4); assert.equal(r.survived, 2); assert.equal(r.points, 2 + 3);
   assert.deepEqual(r.path, [{ at: 0, a: N3 }, { at: 1, a: N4 }]);
-  // A backup set before the cut is the same pick (the contract keeps one pick per round): it counts the same way.
-  // The pick at offset 1 (the round during hour 0) is not the jump round for the cut at hour 1.
-  const wrong = L.playerResult(FIELD, RES, { 0: N3, 1: N4 });
-  assert.equal(wrong.jumped, false); assert.equal(wrong.out, 1); assert.equal(wrong.points, 0);
+  // N1 cut at cut 2 → backup N2 takes over, then N2 is cut at cut 3 (the last): out, points kept.
+  const s2 = L.playerResult(FIELD, RES, { start: N1, backup: N2 });
+  assert.equal(s2.jumped, true); assert.equal(s2.out, 3); assert.equal(s2.points, 1 + 0); assert.equal(s2.rode, false);
+  // The start node cut at the last cut: the backup is the winner, so it takes over and rides home (+3).
+  const last = L.playerResult(FIELD, RES, { start: N2, backup: N4 });
+  assert.equal(last.jumped, true); assert.equal(last.rode, true); assert.equal(last.points, 2 + 3);
 });
 
-test("a jump to a node already cut, a second cut, a second jump, or a cut at the last cut: out, points kept", () => {
-  // N1 cut at hour 2; jump to N3 (cut at hour 1) is not valid → out at cut 2 with 1 point.
-  const a = L.playerResult(FIELD, RES, { 0: N1, 3: N3 });
+test("no backup, or a backup already cut: out when the start node is cut; one jump only", () => {
+  const a = L.playerResult(FIELD, RES, { start: N1 });
   assert.equal(a.out, 2); assert.equal(a.points, 1);
-  // Jump from N3 to N1, then N1 is cut at hour 2: a second jump is not allowed → out at cut 2.
-  const b = L.playerResult(FIELD, RES, { 0: N3, 2: N1, 3: N4 });
-  assert.equal(b.jumped, true); assert.equal(b.out, 2); assert.equal(b.points, 0); assert.equal(b.rode, false);
-  // N2 is cut at the last cut (2 left → 1): nothing to jump to.
-  const c = L.playerResult(FIELD, RES, { 0: N2, 4: N4 });
-  assert.equal(c.out, 3); assert.equal(c.points, 2); assert.equal(c.rode, false);
-  // A jump to the node cut in the same hour (it's gone) is not valid.
-  const d = L.playerResult(FIELD, RES, { 0: N3, 2: N3 });
-  assert.equal(d.out, 1);
+  // N1 cut at cut 2; backup N3 was cut at cut 1 → no jump, out at cut 2.
+  const b = L.playerResult(FIELD, RES, { start: N1, backup: N3 });
+  assert.equal(b.jumped, false); assert.equal(b.out, 2); assert.equal(b.points, 1);
+  // N3 → backup N1, then N1 is cut at cut 2: a second jump doesn't exist → out at cut 2.
+  const c = L.playerResult(FIELD, RES, { start: N3, backup: N1 });
+  assert.equal(c.jumped, true); assert.equal(c.out, 2); assert.equal(c.points, 0);
+  // The same node as start and backup is just a start.
+  const d = L.playerResult(FIELD, RES, { start: N3, backup: N3 });
+  assert.equal(d.backup, null); assert.equal(d.out, 1);
 });
 
 test("an event still running: cuts so far count, no bonus yet", () => {
   const part = L.cutsFrom(FIELD, HOURS.slice(0, 1));
-  const r = L.playerResult(FIELD, part, { 0: N4 });
+  const r = L.playerResult(FIELD, part, { start: N4 });
   assert.equal(r.points, 1); assert.equal(r.rode, false); assert.equal(r.out, 0);
-});
-
-test("picks by round become offsets from the event's start round; other rounds are dropped", () => {
-  const ev = L.eventOf("2026-11-02");
-  const o = L.byOffset(ev.start, { [ev.round]: N1, [ev.round + 2]: N2, [ev.round - 1]: N3, [ev.round + 1000]: N4 });
-  assert.deepEqual(o, { 0: N1, 2: N2 });
-  assert.equal(L.roundForJump(ev.start, 1), ev.round + 2);
 });
 
 test("leaderboard: points, then rides, then fewer jumps; equal players share the place", () => {
@@ -136,55 +131,49 @@ test("leaderboard: points, then rides, then fewer jumps; equal players share the
   assert.equal(b.find((x) => x.player === P[3]).events, 2);
 });
 
-test("review M-1: a player whose node was just cut can still jump (the page's Jump box), not once the event moves on", () => {
-  const part1 = L.cutsFrom(FIELD, HOURS.slice(0, 1));            // N3 cut at hour 1
-  assert.equal(L.canJump(FIELD, part1, { 0: N3 }), 1, "cut at hour 1, jump round at offset 2 still to come");
-  assert.equal(L.canJump(FIELD, part1, { 0: N3, 2: N4 }), 0, "already jumped (a valid backup)");
-  assert.equal(L.canJump(FIELD, part1, { 0: N4 }), 0, "still standing");
-  const part2 = L.cutsFrom(FIELD, HOURS.slice(0, 2));            // N1 cut at hour 2
-  assert.equal(L.canJump(FIELD, part2, { 0: N3 }), 0, "out at an earlier cut: too late");
-  assert.equal(L.canJump(FIELD, RES, { 0: N2 }), 0, "cut at the last cut: nothing to jump to");
-});
-
-test("review: the field is at most 23 nodes, so an event's rounds never reach the next day's start round", () => {
+test("review: the field is at most 23 nodes, so an event ends before the next day's picks lock", () => {
   const field = Array.from({ length: 30 }, (_, i) => ({ a: "1" + String.fromCharCode(65 + (i % 26)).repeat(32) + (i < 26 ? "A" : "B"), vhp: 1000 - i, k: 300 }));
   const f = L.makeField({ field }, 200);
   assert.equal(f.nodes.length, L.MAX_FIELD); assert.equal(L.MAX_FIELD, 23);
-  // 22 cuts → the last jump round is at offset 22, the next start round is at offset 24.
-  assert.ok(L.MAX_FIELD - 1 < 24);
+  const ev = L.eventOf("2026-11-02");
+  assert.ok(ev.start + (L.MAX_FIELD - 1) * L.HOUR < L.nextEvent(ev).lock, "22 cuts end at 12:00 the next day, before 13:50");
 });
 
 test("fix-check Info 1: the registration values match the rules the page and recorder use", () => {
   const g = L.PICKS_GAME;
-  assert.equal(g.game, L.GAME_ID); assert.equal(g.kind, 1, "one producer"); assert.equal(g.lock_mode, 2, "time lock");
-  assert.equal(g.round_size, L.HOUR); assert.equal(g.round_offset, L.OFFSET); assert.equal(g.lead, L.LEAD); assert.equal(g.ahead, L.AHEAD);
+  assert.equal(g.game, L.GAME_ID); assert.equal(g.kind, 2, "a list"); assert.equal(g.list_size, 2, "start and backup"); assert.equal(g.lock_mode, 2, "time lock");
+  assert.equal(g.round_size, L.DAY, "one round a day"); assert.equal(g.round_offset, 50100000, "13:55 UTC"); assert.equal(g.round_offset, L.OFFSET); assert.equal(g.lead, L.LEAD); assert.equal(g.ahead, L.AHEAD);
   // The contract's own formula gives the same locks as the rules, for any round.
   for (const r of [0, 1, 497774, 498229, 600000]) assert.equal(r * g.round_size + g.round_offset - g.lead, L.lockTime(r));
   assert.ok(g.round_offset < g.round_size && g.lead >= 300000 && g.ahead > g.lead, "accepted by the contract's checks");
 });
 
-test("the fast test game (93): a cut every 20 minutes, events every 4 hours, rounds lock 5 minutes after each cut", () => {
+test("the fast test game (94): a cut every 20 minutes, events every 4 hours, picks lock 10 minutes before each start", () => {
   const F = L.forGame(L.FAST_GAME);
   const at = (t) => new Date(t).toISOString().slice(11, 16);
   const ev = F.eventOf("2026-10-29T04");
   assert.equal(new Date(ev.start).toISOString(), "2026-10-29T04:00:00.000Z");
-  assert.equal(at(ev.lock), "03:45", "the start pick locks 15 minutes before the start");
+  assert.equal(at(ev.lock), "03:50", "picks lock 10 minutes before the start");
+  assert.equal(at(ev.opens), "23:55", "and open 4 hours before the round's target");
   assert.equal(F.eventOf(ev.start + 3 * L.HOUR + 59 * 60000).day, "2026-10-29T04", "a time in the period gives its event");
   assert.equal(F.eventOf("2026-10-29T05"), null, "events start every 4 hours");
-  assert.equal(F.nextEvent(ev).day, "2026-10-29T08");
-  for (let k = 1; k < F.MAX_FIELD - 1; k++) assert.equal(F.lockTime(F.roundForJump(ev.start, k)), ev.start + k * 20 * 60000 + 5 * 60000, `jump after cut ${k}`);
-  assert.equal(F.MAX_FIELD, 11, "a field small enough that the last jump round comes before the next start round");
-  assert.ok(F.roundForJump(ev.start, F.MAX_FIELD - 1) < F.nextEvent(ev).round);
-  assert.equal(F.PICKS_GAME.round_size, 1200000); assert.equal(F.PICKS_GAME.round_offset, 600000); assert.equal(F.PICKS_GAME.lead, 300000);
+  assert.equal(F.nextEvent(ev).day, "2026-10-29T08"); assert.equal(F.nextEvent(ev).round, ev.round + 1);
+  assert.equal(F.MAX_FIELD, 11);
+  assert.ok(ev.start + (F.MAX_FIELD - 1) * F.CUT < F.nextEvent(ev).lock, "an event ends before the next one's picks lock");
+  assert.equal(F.PICKS_GAME.round_size, 14400000); assert.equal(F.PICKS_GAME.round_offset, 14100000); assert.equal(F.PICKS_GAME.lead, 300000);
+  assert.equal(F.PICKS_GAME.kind, 2); assert.equal(F.PICKS_GAME.list_size, 2);
   // The contract's own formula agrees.
-  for (const r of [0, 1, 1497200, 1497300]) assert.equal(r * F.PICKS_GAME.round_size + F.PICKS_GAME.round_offset - F.PICKS_GAME.lead, F.lockTime(r));
+  for (const r of [0, 1, 124700, 124701]) assert.equal(r * F.PICKS_GAME.round_size + F.PICKS_GAME.round_offset - F.PICKS_GAME.lead, F.lockTime(r));
   // Handicaps use blocks per 20-minute window; the field is the same nodes, at most 11.
   const card = { at: 1, field: Array.from({ length: 14 }, (_, i) => ({ a: "1" + String.fromCharCode(65 + i).repeat(33), vhp: 1400 - i * 90, k: 1200 - i * 70 })) };
   const f = F.makeField(card, 2000);
   assert.equal(f.nodes.length, 11); assert.equal(f.nodes[0].h, 1);
   assert.ok(f.fairness[0] > 0.06 && f.fairness[1] < 0.12, `close to fair: ${f.fairness}`);
-  // The real game is unchanged.
-  assert.equal(L.forGame(L.MAINNET_GAME).eventOf("2026-11-02").lock, L.eventOf("2026-11-02").lock);
+  // The real timing on the testnet (33) is the real game's under another id.
+  const T = L.forGame(L.REAL_TEST_GAME);
+  assert.equal(T.GAME_ID, 33); assert.equal(T.eventOf("2026-11-02").lock, L.eventOf("2026-11-02").lock); assert.equal(T.PICKS_GAME.round_offset, L.PICKS_GAME.round_offset);
   assert.throws(() => L.forGame({ ...L.FAST_GAME, lead: 60000 }), /5 minutes/);
-  assert.throws(() => L.forGame({ ...L.FAST_GAME, offset: 1300000 }), /lock after the cut/);
+  assert.throws(() => L.forGame({ ...L.FAST_GAME, lockBefore: 4 * 60000 }), /lockBefore >= lead/);
+  assert.throws(() => L.forGame({ ...L.FAST_GAME, ahead: 5 * L.HOUR }), /one event ahead/);
+  assert.throws(() => L.forGame({ ...L.FAST_GAME, lockBefore: 45 * 60000 }), /two cuts/);
 });

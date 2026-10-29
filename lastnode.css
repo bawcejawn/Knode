@@ -85,6 +85,7 @@ body.ln-arena a { color: var(--violet); }
 .ln-lane.just-out { animation: ln-fall .9s ease-in forwards; }
 
 /* ── your run, picks, jump ── */
+.ln-pick-h { font-size: 15px; margin: 16px 0 8px; color: var(--ln-text); letter-spacing: .02em; }
 .ln-grid2 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-top: 18px; }
 .ln-panel { background: var(--ln-panel); border: 1px solid var(--ln-line); border-radius: 22px; padding: 18px; }
 .ln-panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }

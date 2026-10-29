@@ -119,11 +119,11 @@
 
     <section class="ln-panel explain" id="how" style="margin-top:16px">
       <h2>How it works</h2>
-      <p><b>The event.</b> Every day at 14:00 UTC. One cut every hour on the hour until one node is left: about 9 hours with 10 nodes. Your pick locks at 13:10 UTC (this page sends until 13:09, a minute early to be safe); picks open 24 hours before.</p>
+      <p><b>The event.</b> Every day at 14:00 UTC. One cut every hour on the hour until one node is left: about 9 hours with 10 nodes. Picks open 24 hours before and lock at 13:50 UTC, 10 minutes before the start (this page sends until 13:49, a minute early to be safe).</p>
       <p><b>The field.</b> Producers expected to sign at least 20 blocks an hour, from a Producer Race card taken before picks open.</p>
       <p><b>The handicap.</b> Big nodes sign more blocks, so smaller nodes move further per block. Each node's form (what it actually signed in the 48 hours before the field is set, against its VHP) is built in, and a small luck trim, set for each event, gives every node about the same chance to be last standing. The multipliers are fixed for the whole event.</p>
       <p><b>The cut.</b> At each cut, the node with the fewest steps since the start is knocked out. Ties go to fewer blocks, then less VHP.</p>
-      <p><b>Your run.</b> Drop in on one node. If it's knocked out, jump once to a node still standing, or set a backup in advance and it jumps for you (a backup covers the next cut only). Lose a second node, or miss the jump, and your run ends (your points so far count). If the chain stalls for 10 minutes or more across a cut, that cut's jump can't be made in time.</p>
+      <p><b>Your run.</b> Before the start, pick your node and, if you like, a backup. The first time your node is knocked out, your backup takes over automatically if it's still standing (one jump per event, and riding the last node after a jump scores +3 instead of +5). No backup, a backup that's already out, or losing the node you jumped to, and your run ends (your points so far count). Nothing can be picked or changed once the race starts.</p>
       <p><b>Fair checks.</b> Results come from irreversible blocks that match on two independent Koinos nodes, and the page and the recorder run the same rules file.</p>
     </section>
   </main>

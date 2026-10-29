@@ -4,8 +4,8 @@
    It sends one thing: a pick you confirm in your wallet (your start node, a backup or a jump).
    TESTNET (lastnode-testnet.html, <meta name="kg-network" content="testnet">): picks go to the testnet Picks contract
    (testnet/blockx.json) with the testnet wallet (testnet-wallet.js, test KOIN only); the race is still the real MAINNET
-   producers, read only, because the testnet has a single producer. #game-93 is the fast test game, #game-13 the real
-   settings.
+   producers, read only, because the testnet has a single producer. #game-94 is the fast test game, #game-33 the real
+   timing.
    The rules are lastnode-math.js, the same file the recorder (bot/games/lastnode.ts) runs. The live cut shown here is
    worked out from blocks that may not be irreversible yet; the recorder's file is the final word. */
 (() => {
@@ -14,8 +14,8 @@
   if (!L0 || !M || typeof document === "undefined" || !document.getElementById("track")) return;
   const meta = document.querySelector('meta[name="kg-network"]');
   const TESTNET = !!(meta && meta.getAttribute("content") === "testnet");
-  // Testnet: the fast test game (93) unless the address asks for the real settings (#game-13).
-  const L = TESTNET && location.hash !== "#game-13" ? L0.forGame(L0.FAST_GAME) : L0;
+  // Testnet: the fast test game (94) unless the address asks for the real timing (#game-33).
+  const L = TESTNET ? L0.forGame(location.hash === "#game-33" ? L0.REAL_TEST_GAME : L0.FAST_GAME) : L0;
 
   const lib = window.koilib || window.koinos || window;
   const MAINNET_RPC = ["https://koinos.armana.io", "https://api.koinos.io"];
@@ -240,17 +240,12 @@
       else if (just && !announced.has(`${ev.day}:${res.cuts.length}`) && fresh(just) && announced.add(`${ev.day}:${res.cuts.length}`)) {
         const hit = mine && mine.entered && (mine.path[mine.path.length - 1].a === just.a || (mine.out && mine.out === res.cuts.length));
         const backedUp = mine && mine.jumped && mine.path.some((p) => p.at === just.at);
-        flash(`${nameOf(just.a)} is out`, backedUp ? `Your backup kicked in: now riding ${nameOf(mine.node)}` : hit ? (jumpOpen(df, res, ev) ? "That was your node. Jump now!" : "That was your node.") : mine && mine.entered && !mine.out ? `You survived cut ${res.cuts.length}` : `Cut ${res.cuts.length} of ${n - 1}`, hit || backedUp ? "you" : "");
+        flash(`${nameOf(just.a)} is out`, backedUp ? `Your backup took over: now riding ${nameOf(mine.node)}` : hit ? "That was your node: your run ends here" : mine && mine.entered && !mine.out ? `You survived cut ${res.cuts.length}` : `Cut ${res.cuts.length} of ${n - 1}`, hit || backedUp ? "you" : "");
       }
     }
     if (!holdNote) seen = { day: ev.day, cuts: Math.max(res.cuts.length, seen && seen.day === ev.day ? seen.cuts : 0), done: res.done };
     renderField(df);
     renderMe(ev, df, res, mine);
-  }
-  /** Audit LN-15: the Jump box is open (a jump due and its round before the page's cut-off). */
-  function jumpOpen(df, res, ev, now = nowT()) {
-    const at = L.canJump(df.field, res, picksFor(ev)), r = at ? L.roundForJump(df.start, at) : null;
-    return r != null && now < cutoff(r) ? r : null;
   }
   /** The legend's "Your node": shown when you're in the race on screen. With a pick only for a later event, it says
    *  which one, so a missing highlight isn't a surprise. */
@@ -261,7 +256,7 @@
     let later = null;
     for (let e = L.nextEvent(ev), k = 0; k < 3 && !later; k++, e = L.nextEvent(e)) if (myPicks.has(e.round)) later = e;
     box.hidden = !later;
-    if (later) txt.textContent = `Your pick, ${nameOf(myPicks.get(later.round))}, races in the ${dayTime(later.start)} event, not this one`;
+    if (later) txt.textContent = `Your pick, ${nameOf(myPicks.get(later.round).start)}, races in the ${dayTime(later.start)} event, not this one`;
   }
   function flash(big, small, kind) {
     const box = $("arena");
@@ -302,18 +297,15 @@
   }
 
   // ── you ──
-  function picksFor(ev) {
-    const out = {};
-    for (const [r, a] of myPicks) { const o = r - ev.round; if (o >= 0 && o <= 48) out[o] = a; }
-    return out;
-  }
+  /** Your one pick for an event (owner, 2026-10-29): { start, backup } or null. */
+  const picksFor = (ev) => myPicks.get(ev.round) || null;
   function myState(ev, df, res) {
     if (!me() || !df || !df.field) return null;
     return L.playerResult(df.field, res, picksFor(ev));
   }
   const drafts = new Map();        // round → the node chosen on a card but not sent yet (kept across redraws)
   /** Node cards to choose from, and one button that sends the choice. */
-  function picker(label, options, current, onPick, cls = "", round = null, df = null) {
+  function picker(label, options, current, onPick, cls = "", round = null, df = null, withButton = true) {
     const rel = reliability();
     const want = round != null && drafts.has(round) ? drafts.get(round) : current;
     const cards = el("div", { class: "ln-cards", role: "group", "aria-label": label }, ...options.map((a) => {
@@ -326,6 +318,7 @@
       if (sending) b.disabled = true;
       return b;
     }));
+    if (!withButton) return cards;
     const go = el("button", { class: `ln-go${cls ? " " + cls : ""}`, type: "button", onclick: () => onPick(want) }, want && want !== current ? `${label}: ${nameOf(want)}` : current ? "Tap another node to switch" : "Choose a node");
     if (sending || !want || want === current) go.disabled = true;
     return el("div", { class: "ln-act" }, cards, go);
@@ -336,7 +329,7 @@
     const bonus = st.jumped ? L.BONUS.jumped : L.BONUS.stayed;
     const title = res.done && st.rode ? `You rode ${nameOf(st.node)} home` : st.out ? `Knocked out at cut ${st.out}` : `Riding ${nameOf(st.node)}`;
     const line = res.done ? (st.rode ? `${st.survived} cuts survived + ${bonus} bonus${st.jumped ? " (after a jump)" : ""}.` : `${st.survived} cut${st.survived === 1 ? "" : "s"} survived.`)
-      : st.out ? `${st.survived} cut${st.survived === 1 ? "" : "s"} survived. Your points count.` : `${st.survived} cut${st.survived === 1 ? "" : "s"} survived${st.jumped ? " (after your jump)" : ""}. +${bonus} if it's the last node standing.`;
+      : st.out ? `${st.survived} cut${st.survived === 1 ? "" : "s"} survived. Your points count.` : `${st.survived} cut${st.survived === 1 ? "" : "s"} survived${st.jumped ? " (after your backup took over)" : st.backup ? `; backup ${nameOf(st.backup)} takes over if ${nameOf(st.node)} is cut` : ""}. +${bonus} if it's the last node standing.`;
     return el("div", { class: `ln-runcard${res.done && st.rode ? " won" : st.out ? " out" : ""}${extraCls}` },
       badge(st.node, "lg"),
       el("div", {}, el("h3", { text: title }), el("p", { text: line }), el("div", { class: "ln-pips", "aria-label": `${st.survived} of ${n - 1} cuts survived` }, ...pips)),
@@ -353,45 +346,38 @@
         TESTNET ? el("button", { class: "ln-go", type: "button", onclick: () => walletButton() }, "Play free") : null);
       return;
     }
-    // The event running now: your run, a jump or a backup.
+    // The event running now: your run (nothing can be picked or changed once it starts).
     if (df && df.field && res && now >= ev.start && !res.done) {
-      const jumpRound = st && st.entered ? jumpOpen(df, res, ev, now) : null;
-      const standing = res.standing;
       // Audit LN-4: until your picks have been read, the page doesn't say you're not in (or out).
       if (!mineOk) parts.push(el("p", { class: "note", style: "margin:0", text: mineErr ? "Couldn't read your picks. Retrying…" : "Reading your picks…" }));
       else if (!st || !st.entered) parts.push(el("p", { class: "note", style: "margin:0", text: `You're not in the ${clock(ev.start)} event. Get in the next one below.` }));
-      // Your node is the one just cut and no valid jump is set yet: the Jump box, until the page's cut-off.
-      else if (jumpRound)
-        parts.push(el("div", { class: "ln-jump" }, el("h3", { text: `${nameOf(st.node)} is out. Jump!` }),
-          el("p", { class: "note", style: "margin:0 0 12px", text: `Pick a node still standing before ${clock(cutoff(jumpRound))} (${dur(cutoff(jumpRound) - now)} left). One jump per event.` }),
-          picker("Jump", standing, myPicks.get(jumpRound), (a) => sendPick(jumpRound, a, "your jump"), "storm", jumpRound, df)));
-      else if (st.out) parts.push(runCard(st, df, res), el("p", { class: "note", style: "margin:0", text: `You're out: your node was cut at cut ${st.out}. Points this event: ${st.points}.` }));
-      else {
-        parts.push(runCard(st, df, res));
-        if (!st.jumped) {
-          const nextAt = res.cuts.length + 1, backupRound = L.roundForJump(df.start, nextAt), backup = myPicks.get(backupRound);
-          if (nextAt < df.field.nodes.length - 1 && now < cutoff(backupRound))
-            parts.push(el("div", {}, el("p", { class: "note", style: "margin:0 0 10px", text: (backup ? `Backup set: if ${nameOf(st.node)} goes at ${clock(df.start + nextAt * H)}, you jump to ${nameOf(backup)} (if it's still standing).` : `Set a backup: if ${nameOf(st.node)} goes at ${clock(df.start + nextAt * H)}, you jump to it automatically.`) + ` It covers that cut only; set by ${clock(cutoff(backupRound))}.` }),
-              picker(backup ? "Change backup" : "Set backup", standing.filter((a) => a !== st.node), backup, (a) => sendPick(backupRound, a, "your backup"), "ghost", backupRound, df)));
-        }
-      }
+      else if (st.out) parts.push(runCard(st, df, res), el("p", { class: "note", style: "margin:0", text: `You're out: your node was cut at cut ${st.out}${st.backup && !st.jumped ? ` and your backup ${nameOf(st.backup)} was already out` : ""}. Points this event: ${st.points}.` }));
+      else parts.push(runCard(st, df, res));
     } else if (df && df.field && res && res.done && st && st.entered) parts.push(runCard(st, df, res));
-    // The start pick for the next event that is still open.
-    const startMine = myPicks.get(nx.round);
-    if (nf && nf.field && !nx.open) parts.push(el("p", { class: "note", style: "margin:0", text: `Picks for the ${dayTime(nx.start)} event open at ${clock(nx.opens)} (in ${dur(nx.opens - now)}).` }));
-    else if (nf && nf.field) parts.push(el("div", { class: "ln-act" },
-      el("p", { class: "ln-cta", text: startMine ? `You drop in on ${nameOf(startMine)} at ${clock(nx.start)}` : `Pick your node for the ${clock(nx.start)} drop` }),
-      el("p", { class: "note", style: "margin:0", text: `Picks close in ${dur(cutoff(nx.round) - now)}, at ${clock(cutoff(nx.round))}${startMine ? "; you can switch until then" : ""}. Tip: a node that signs every block it should is hard to knock out.` }),
-      picker(startMine ? "Switch to" : "Drop in", nf.field.nodes.map((x) => x.a), startMine, (a) => sendPick(nx.round, a, `your node for the ${clock(nx.start)} event`), "", nx.round, nf)));
-    // A backup for the first cut, set ahead of the start (owner, 2026-10-29): if your node goes at the first cut, you
-    // jump to it automatically. Later backups are set from "Your run" once the race is on.
-    if (nf && nf.field && nx.open && startMine) {
-      const b1 = L.roundForJump(nx.start, 1), backup = myPicks.get(b1);
-      if (pickable(b1)) parts.push(el("div", { class: "ln-act" },
-        el("p", { class: "note", style: "margin:0 0 10px", text: (backup ? `Backup set: if ${nameOf(startMine)} goes at the first cut (${clock(nx.start + H)}), you jump to ${nameOf(backup)}.` : `Optional backup: if ${nameOf(startMine)} goes at the first cut (${clock(nx.start + H)}), you jump to it automatically.`) + " It covers that cut only; one jump per event." }),
-        picker(backup ? "Change backup" : "Set backup", nf.field.nodes.map((x) => x.a).filter((a) => a !== startMine), backup, (a) => sendPick(b1, a, "your backup for the first cut"), "ghost", b1, nf)));
+    // The pick for the next event that is still open: your start node and an optional backup, sent together.
+    const mineNext = myPicks.get(nx.round) || null;
+    if (!nf || !nf.field) parts.push(el("p", { class: "note", style: "margin:0", text: `The field for the ${dayTime(nx.start)} event appears a few minutes after picks open, at ${clock(nx.opens)}.` }));
+    else if (!nx.open) parts.push(el("p", { class: "note", style: "margin:0", text: `Picks for the ${dayTime(nx.start)} event open at ${clock(nx.opens)} (in ${dur(nx.opens - now)}).` }));
+    else {
+      const nodes = nf.field.nodes.map((x) => x.a), kS = `s:${nx.round}`, kB = `b:${nx.round}`;
+      const start = drafts.has(kS) ? drafts.get(kS) : mineNext && mineNext.start;
+      const backup0 = drafts.has(kB) ? drafts.get(kB) : mineNext && mineNext.backup;
+      const backup = backup0 && backup0 !== start ? backup0 : null;
+      const same = !!mineNext && mineNext.start === start && (mineNext.backup || null) === backup;
+      const go = el("button", { class: "ln-go", type: "button", onclick: () => sendPick(nx.round, start, backup, `your pick for the ${clock(nx.start)} event`) },
+        !start ? "Choose your node" : same ? "Locked in. Tap a card to change it" : `Lock in: ${nameOf(start)}${backup ? `, backup ${nameOf(backup)}` : ", no backup"}`);
+      if (sending || !start || same) go.disabled = true;
+      parts.push(el("div", { class: "ln-act" },
+        el("p", { class: "ln-cta", text: mineNext ? `You drop in on ${nameOf(mineNext.start)} at ${clock(nx.start)}${mineNext.backup ? `, backup ${nameOf(mineNext.backup)}` : ""}` : `Pick your node for the ${clock(nx.start)} drop` }),
+        el("p", { class: "note", style: "margin:0", text: `Picks close in ${dur(cutoff(nx.round) - now)}, at ${clock(cutoff(nx.round))}${mineNext ? "; you can change your pick until then" : ""}. Nothing can be picked or changed once the race starts. Tip: a node that signs every block it should is hard to knock out.` }),
+        el("h3", { class: "ln-pick-h", text: "Your node" }),
+        picker("Your node", nodes, mineNext && mineNext.start, null, "", kS, nf, false),
+        el("h3", { class: "ln-pick-h", text: "Backup (optional)" }),
+        el("p", { class: "note", style: "margin:0 0 8px", text: "The first time your node is cut, your backup takes over automatically if it's still standing. One jump per event; riding the last node after a jump scores +3 instead of +5." }),
+        picker("Backup", nodes.filter((a) => a !== start), backup, null, "ghost", kB, nf, false),
+        backup ? el("button", { class: "btn ghost", type: "button", onclick: () => { drafts.set(kB, null); render(); } }, "No backup") : null,
+        go));
     }
-    else parts.push(el("p", { class: "note", style: "margin:0", text: `The field for the ${dayTime(nx.start)} event appears when picks open, at ${clock(nx.opens)}.` }));
     box.replaceChildren(...parts);
   }
 
@@ -400,7 +386,7 @@
   async function readRegistration() {
     const g = (await picksContract.functions.get_game({ game: L.GAME_ID })).result?.game;
     if (!g) return;                                 // not registered yet: the pick error explains it
-    if (String(g.round_size) !== String(L.PICKS_GAME.round_size) || String(g.round_offset) !== String(L.PICKS_GAME.round_offset) || Number(g.lock_mode) !== 2) {
+    if (String(g.round_size) !== String(L.PICKS_GAME.round_size) || String(g.round_offset) !== String(L.PICKS_GAME.round_offset) || Number(g.lock_mode) !== 2 || Number(g.kind) !== 2 || Number(g.list_size) !== 2) {
       picksContract = null; say("This game's registration in the Picks contract doesn't match this page's rules. Picks are off here.");
       return;
     }
@@ -428,7 +414,7 @@
     const cfg = await fetchJson(new URL("testnet/lastnode.json", ROOT));
     if (!cfg || cfg.network !== "koinos-foundation-testnet" || !cfg.chainId || cfg.chainId === MAINNET_CHAIN_ID) throw new Error("This page's testnet settings are missing or name mainnet.");
     const g = Array.isArray(cfg.games) ? cfg.games.find((x) => x && x.id === L.GAME_ID) : null;
-    if (!g || ["cut", "offset", "lead", "ahead", "period", "phase"].some((k) => g[k] !== L.GAME[k])) throw new Error(`Game ${L.GAME_ID}'s settings don't match the rules on this page.`);
+    if (!g || ["cut", "lockBefore", "lead", "ahead", "period", "phase"].some((k) => g[k] !== L.GAME[k])) throw new Error(`Game ${L.GAME_ID}'s settings don't match the rules on this page.`);
     // Audit LN-28: the faucet link must be an https address.
     if (cfg.faucet != null && !/^https:\/\/[^\s"<>]+$/.test(String(cfg.faucet))) cfg.faucet = null;
     NET = cfg;
@@ -452,7 +438,7 @@
     const box = $("game-tabs");
     if (!box) return;
     box.hidden = false;
-    box.replaceChildren(...games.map((g) => el("a", { href: `#game-${g.id}`, class: "btn" + (g.id === L.GAME_ID ? "" : " ghost"), "aria-current": g.id === L.GAME_ID ? "page" : null, text: g.id === 93 ? "Fast test (cut every 20 min)" : "Real settings (daily, 14:00 UTC)" })));
+    box.replaceChildren(...games.map((g) => el("a", { href: `#game-${g.id}`, class: "btn" + (g.id === L.GAME_ID ? "" : " ghost"), "aria-current": g.id === L.GAME_ID ? "page" : null, text: g.id === 94 ? "Fast test (cut every 20 min)" : "Real timing (daily, 14:00 UTC)" })));
     window.addEventListener("hashchange", () => location.reload());
   }
   // ── test page: the wallet button and "Play free" (a Test wallet in this browser, funded by the local test server) ──
@@ -494,16 +480,15 @@
     const call = ++mineCall, who = me();
     if (who !== mineWho) { drafts.clear(); myPicks.clear(); mineWho = who; mineOk = false; mineErr = false; }
     if (!picksContract || !who) { mineOk = true; return; }
-    const { ev, df } = shownEvent(), nx = nextEntry();
-    const rounds = new Set([nx.round, ev.round, L.roundForJump(nx.start, 1)]);
-    const n = df && df.field ? df.field.nodes.length : 0;
-    for (let o = 2; o <= n; o++) rounds.add(ev.round + o);
+    const { ev } = shownEvent(), nx = nextEntry();
+    // One round per event: the event on screen and the next one open for picks.
+    const rounds = new Set([nx.round, ev.round]);
     try {
       const got = await Promise.all([...rounds].map((r) => picksContract.functions.get_pick({ game: L.GAME_ID, round: String(r), player: who })
-        .then((x) => [r, x.result && x.result.pick && Array.isArray(x.result.pick.producers) ? x.result.pick.producers[0] : null])));
+        .then((x) => [r, x.result && x.result.pick && Array.isArray(x.result.pick.producers) ? x.result.pick.producers : null])));
       if (call !== mineCall || me() !== who) return;      // a newer call (or another wallet) took over
       myPicks.clear();
-      for (const [r, a] of got) if (isAddr(a)) myPicks.set(r, a);
+      for (const [r, ps] of got) if (ps && isAddr(ps[0])) myPicks.set(r, { start: ps[0], backup: isAddr(ps[1]) && ps[1] !== ps[0] ? ps[1] : null });
       mineOk = true; mineErr = false;
     } catch {
       if (call !== mineCall || me() !== who) return;
@@ -531,26 +516,30 @@
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && modal && !modal.hidden && !modal.querySelector(".pk-spin")) closeModal(); });
   const okBtn = (text = "Done") => el("button", { class: "btn", type: "button", onclick: closeModal }, text);
 
-  async function sendPick(round, producer, what) {
+  /** Sends your one pick for an event: [start] or [start, backup] (owner, 2026-10-29). */
+  async function sendPick(round, start, backup, what) {
     const who = me();
     if (!who || !picksContract || sending) return;
-    if (!isAddr(producer)) return pickModal("info", "Choose a node first", ["Choose a node from the list, then press the button."], [okBtn("OK")]);
-    if (myPicks.get(round) === producer) return pickModal("info", "That is already your pick", [`${nameOf(producer)} is ${what}.`], [okBtn("OK")]);
-    if (!pickable(round)) return pickModal("bad", nowT() < openAt(round) ? "Not open yet" : "Too close to the lock", [nowT() < openAt(round) ? `Picks for this round open at ${clock(openAt(round))}.` : "This pick locks in under a minute. It can't be sent safely now."], [okBtn("OK")]);
+    if (!isAddr(start)) return pickModal("info", "Choose a node first", ["Choose your node from the cards, then press the button."], [okBtn("OK")]);
+    const producers = isAddr(backup) && backup !== start ? [start, backup] : [start];
+    const cur = myPicks.get(round);
+    if (cur && cur.start === start && (cur.backup || null) === (producers[1] || null)) return pickModal("info", "That is already your pick", [`${nameOf(start)}${producers[1] ? `, backup ${nameOf(producers[1])}` : ""} is ${what}.`], [okBtn("OK")]);
+    if (!pickable(round)) return pickModal("bad", nowT() < openAt(round) ? "Not open yet" : "Too close to the lock", [nowT() < openAt(round) ? `Picks for this event open at ${clock(openAt(round))}.` : "Picks lock in under a minute. Yours can't be sent safely now."], [okBtn("OK")]);
     sending = true; render();
-    const line = `${nameOf(producer)} as ${what} (round of ${dayTime(L.roundTime(round))}, locks ${clock(lockAt(round))})`;
+    const line = `${nameOf(start)}${producers[1] ? `, backup ${nameOf(producers[1])}` : ", no backup"} as ${what} (locks ${clock(lockAt(round))})`;
     const wallet = W.kind === "guest" ? "your guest wallet" : W.label ? W.label() : "your wallet";
     pickModal("busy", W.kind === "guest" ? "Sending your pick…" : `Confirm in ${wallet}`, [line, TESTNET ? "Testnet: the Mana comes from your test KOIN. Nothing here is real money." : "Free: the KnodeGames Mana sponsor pays the Mana."]);
+    const same = (ps) => Array.isArray(ps) && ps.length === producers.length && ps.every((a, i) => a === producers[i]);
     try {
-      const { operation } = await picksContract.functions.pick({ player: who, game: L.GAME_ID, round: String(round), producers: [producer], number: "0" }, { onlyOperation: true });
-      const id = await W.send(`pick ${nameOf(producer)} as ${what}`, [operation]);
+      const { operation } = await picksContract.functions.pick({ player: who, game: L.GAME_ID, round: String(round), producers, number: "0" }, { onlyOperation: true });
+      const id = await W.send(`pick ${nameOf(start)}${producers[1] ? ` (backup ${nameOf(producers[1])})` : ""} as ${what}`, [operation]);
       pickModal("busy", "Sent. Checking the chain…", [line]);
       let onChain = false;
       for (let t = 0; t < 10 && !onChain; t++) {
-        try { const x = await picksContract.functions.get_pick({ game: L.GAME_ID, round: String(round), player: who }); onChain = !!(x.result && x.result.pick && x.result.pick.producers && x.result.pick.producers[0] === producer); } catch { /* again */ }
+        try { const x = await picksContract.functions.get_pick({ game: L.GAME_ID, round: String(round), player: who }); onChain = !!(x.result && x.result.pick && same(x.result.pick.producers)); } catch { /* again */ }
         if (!onChain) await new Promise((res) => setTimeout(res, 3000));
       }
-      if (onChain) pickModal("ok", "Pick confirmed", [el("p", {}, el("b", { text: nameOf(producer) }), ` is ${what}.`),
+      if (onChain) pickModal("ok", "Pick confirmed", [el("p", {}, el("b", { text: nameOf(start) }), producers[1] ? `, backup ${nameOf(producers[1])},` : "", ` is ${what}.`),
         `You can change it until ${clock(cutoff(round))}.`,
         id ? el("p", { class: "ago mono", text: `Transaction ${String(id).slice(0, 18)}…` }) : null].filter(Boolean), [okBtn()]);
       else pickModal("info", "Sent, not seen on the chain yet", ["Your wallet sent it. It usually shows within a minute; this page updates by itself."], [okBtn("OK")]);
@@ -558,14 +547,14 @@
       const m = String((e && e.message) || e);
       const why = /no such game/i.test(m) ? (TESTNET ? `Game ${L.GAME_ID} isn't switched on in the testnet Picks contract yet. Register it first (in PowerShell: npm run picks -- announce ${L.GAME_ID} --testnet --send, wait 10 minutes, then apply ${L.GAME_ID}).` : "This game isn't open in the Picks contract yet.")
         : /game is closed/i.test(m) ? "This game is switched off in the Picks contract right now."
-        : /locked/i.test(m) ? "That pick is locked: the start of the event (or the jump window) has closed."
+        : /locked/i.test(m) ? "That pick is locked: picks close 10 minutes before the start."
         : /not open yet/i.test(m) ? "That round isn't open yet."
         : /used up/i.test(m) ? "Today's picks are used up (changes count). More after 00:00 UTC."
         : /changed again/i.test(m) ? "That pick has been changed too many times already."
         : /reject|denied|cancel/i.test(m) ? "Cancelled in your wallet. Nothing was sent."
         : `Not sent: ${m.slice(0, 200)}`;
       pickModal(/Cancelled/.test(why) ? "info" : "bad", /Cancelled/.test(why) ? "Cancelled" : "Pick not sent", [why], [okBtn("OK")]);
-    } finally { sending = false; drafts.delete(round); await loadMine(); render(); }
+    } finally { sending = false; drafts.delete(`s:${round}`); drafts.delete(`b:${round}`); await loadMine(); render(); }
   }
 
   // ── leaderboard (the recorder's board.json, shown by the shared board.js) ──

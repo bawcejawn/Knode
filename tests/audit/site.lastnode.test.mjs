@@ -17,7 +17,7 @@ test("lastnode-math.js runs in a plain browser-like context with no network, sto
   assert.doesNotMatch(src, /fetch\(|XMLHttpRequest|localStorage|sessionStorage|indexedDB|document\.|navigator\./);
   assert.equal(typeof L.makeField, "function"); assert.equal(L.MIN_KH, 20); assert.equal(L.START_HOUR, 14);
   assert.equal(L.LEAD, 5 * 60000, "the Picks contract's lead for time games"); assert.equal(L.AHEAD, 24 * 3600000);
-  assert.equal(L.OFFSET, 15 * 60000, "round_offset: rounds lock at 10 minutes past the hour (review H-1)");
+  assert.equal(L.OFFSET, 13 * 3600000 + 55 * 60000, "round_offset: one round a day, locking at 13:50 UTC (owner, 2026-10-29)");
   assert.ok(Number.isInteger(L.GAME_ID) && L.GAME_ID > 0 && L.GAME_ID < 128);
 });
 
@@ -40,11 +40,12 @@ test("lastnode.html: strict CSP (games-data, race-data and blocks-data only), sc
 test("lastnode.js: text only (no HTML sinks), one kind of transaction, and never a round about to lock", () => {
   const js = read("lastnode.js");
   assert.doesNotMatch(js, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|localStorage|sessionStorage/);
-  // The only thing it sends: a pick in this game for the connected wallet, one producer, number 0.
+  // The only thing it sends: a pick in this game for the connected wallet, [start] or [start, backup], number 0.
   const sends = [...js.matchAll(/W\.send\(/g)].length;
   assert.equal(sends, 1, "one send path");
-  assert.match(js, /functions\.pick\(\{ player: who, game: L\.GAME_ID, round: String\(round\), producers: \[producer\], number: "0" \}, \{ onlyOperation: true \}\)/);
-  assert.match(js, /if \(!isAddr\(producer\)\) return/);
+  assert.match(js, /functions\.pick\(\{ player: who, game: L\.GAME_ID, round: String\(round\), producers, number: "0" \}, \{ onlyOperation: true \}\)/);
+  assert.match(js, /const producers = isAddr\(backup\) && backup !== start \? \[start, backup\] : \[start\];/);
+  assert.match(js, /if \(!isAddr\(start\)\) return/);
   // The contract's own rule, a minute early, right before sending.
   assert.match(js, /if \(!pickable\(round\)\) return/);
   assert.match(js, /const pickable = \(r, t = nowT\(\)\) => L\.pickable\(r, t, REG, SEND_MARGIN\)/);
@@ -76,10 +77,11 @@ test("lastnode.html is in the SEO list and the sitemap, and has the shared tab b
   assert.match(read("lastnode.html"), /<nav class="tabbar" aria-label="Main">/);
 });
 
-test("review M-1: the page offers the Jump box (via canJump) before it says you're out, and ignores stale pick reads", () => {
+test("owner 2026-10-29: nothing is picked during the race; the backup is set with the start pick; stale reads ignored", () => {
   const js = read("lastnode.js");
-  const jump = js.indexOf("jumpOpen(df, res, ev, now)"), box = js.indexOf('class: "ln-jump"'), out = js.indexOf("You're out: your node was cut");
-  assert.ok(jump > 0 && box > jump && out > box, "jump check, then the Jump box, then the out message");
+  assert.doesNotMatch(js, /ln-jump|canJump|roundForJump|jumpOpen/, "no Jump box and no mid-race picks");
+  assert.match(js, /el\("h3", \{ class: "ln-pick-h", text: "Backup \(optional\)" \}\)/);
+  assert.match(js, /sendPick\(nx\.round, start, backup, /, "start and backup go in one pick for the next event");
   assert.match(js, /if \(call !== mineCall \|\| me\(\) !== who\) return;/);
   assert.match(js, /if \(who !== mineWho\) \{ drafts\.clear\(\); myPicks\.clear\(\); mineWho = who; mineOk = false; mineErr = false; \}/);
 });

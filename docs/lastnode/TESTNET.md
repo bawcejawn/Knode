@@ -6,8 +6,10 @@
 - **Your picks** go to the testnet Picks contract you already uploaded for Block X (`12xNetHp…VrX5`), paid with free test KOIN.
 - **The race** is the real Koinos producers, read live from mainnet. The testnet has only one block producer, so it can't hold a race. Mainnet is only read: nothing is ever sent there.
 - **Two games:**
-  - **93 Fast test:** a cut every 20 minutes, an event every 4 hours (00:00, 04:00, 08:00 … UTC = 5 pm, 9 pm, 1 am, 5 am, 9 am, 1 pm Pacific). Start picks lock 15 minutes before the start. A jump is open until 5 minutes after your node's cut.
-  - **13 Real settings:** exactly the live game's settings. Daily at 14:00 UTC (7 am Pacific), a cut every hour, start picks lock at 13:10 UTC (6:10 am Pacific), jumps until 10 past the hour.
+  - **94 Fast test:** a cut every 20 minutes, an event every 4 hours (00:00, 04:00, 08:00 … UTC = 5 pm, 9 pm, 1 am, 5 am, 9 am, 1 pm Pacific). Picks open 4 hours ahead and lock 10 minutes before the start.
+  - **33 Real timing:** exactly the live game's settings. Daily at 14:00 UTC (7 am Pacific), a cut every hour; picks open 24 hours ahead and lock at 13:50 UTC (6:50 am Pacific).
+  - **One pick per event (owner, 2026-10-29):** your node and an optional backup, made before the start. The first time your node is cut, the backup takes over automatically if it's still standing. Nothing can be picked or changed once the race starts.
+  - Games 93 and 13, registered on 28 Oct, used the earlier hourly-pick rules. They stay on the testnet contract but are no longer used.
 
 Everything runs in **its own folder, `C:\kprediction-lns`**, a separate copy of the code with only your testnet settings in it. Never check this branch out in `C:\kprediction`: that folder holds your mainnet `.env`, and the scheduled tasks there must keep running the `picks` code (audit LN-3).
 
@@ -53,22 +55,22 @@ Expect:
 ## 3. Register the two games (with the 10-minute wait)
 
 ```powershell
-npm run picks -- announce 93 --testnet
+npm run picks -- announce 94 --testnet
 ```
 
-This is a dry run. It shows `a cut every 20 min, an event every 240 min; each round locks 5 min after its cut` and changes nothing. Then send both:
+This is a dry run. It shows `one pick per event, a start node and an optional backup` and `picks lock 10 min before each start`, and changes nothing. Then send both:
 
 ```powershell
-npm run picks -- announce 93 --testnet --send
-npm run picks -- announce 13 --testnet --send
+npm run picks -- announce 94 --testnet --send
+npm run picks -- announce 33 --testnet --send
 ```
 
 Each ends with `✔ announced`. **Wait 10 minutes**, then:
 
 ```powershell
 npm run picks -- status --testnet
-npm run picks -- apply 93 --testnet --send
-npm run picks -- apply 13 --testnet --send
+npm run picks -- apply 94 --testnet --send
+npm run picks -- apply 33 --testnet --send
 ```
 
 - **Expect:** `status` shows both as `ready now`. Each apply ends with `✔ game … is in force`.
@@ -88,29 +90,28 @@ npm run testnet-site -- --record
 
 The first Last Node Standing run takes a minute or two: it works out the handicap (c) for the field. Then open:
 
-- **Fast test:** http://127.0.0.1:8350/lastnode-testnet.html#game-93
-- **Real settings:** http://127.0.0.1:8350/lastnode-testnet.html#game-13
+- **Fast test:** http://127.0.0.1:8350/lastnode-testnet.html#game-94
+- **Real timing:** http://127.0.0.1:8350/lastnode-testnet.html#game-33
 
 Stop it with **Ctrl+C**. Running it again carries on where it left off.
 
 ## 5. Play
 
 1. Press **Play free** (top right). The page makes a Test wallet in your browser, and your local server sends it 5 test KOIN (about 100 picks).
-2. Under **Your node**, choose a node for the next event and press **Pick node**. Confirm the pop-up says *Pick confirmed*.
-3. Watch the track. The red lane is the node that would go if the cut were now.
-4. **Backup:** while your node is standing, set a backup. If your node goes, the backup is your jump.
-5. **Jump:** if your node is knocked out and you have no valid backup, a red **Jump!** box appears. Pick a node still standing before the time it shows.
+2. For the next event, tap a card under **Your node** and, if you like, one under **Backup (optional)**. Press **Lock in**, then confirm the pop-up says *Pick confirmed*. You can change it until 10 minutes before the start.
+3. Watch the track once the race starts. The red lane is the node that would go if the cut were now.
+4. If your node is knocked out, your backup takes over by itself (if it's still standing). Nothing to tap.
 
 ## What to try (tick off)
 
 - [ ] Play free, then your first pick for the next fast event
 - [ ] Change your pick before it locks; after the lock the chooser moves on to the next event
 - [ ] Watch a cut happen live; a few minutes later the recorder confirms it
-- [ ] Set a backup
-- [ ] Get knocked out and jump (or let a backup jump for you)
+- [ ] Pick a node with a backup, then change the backup before the lock
+- [ ] Get your node knocked out and watch the backup take over
 - [ ] Ride a node to the end; the leaderboard shows your points (cuts survived + 5, or + 3 after a jump)
 - [ ] Phone layout: in Chrome press **F12**, then the phone icon
-- [ ] Tomorrow 6:10 am Pacific: a start pick in the real-settings game (#game-13)
+- [ ] A pick in the real-timing game (#game-33) before 6:50 am Pacific
 
 ## Good to know
 

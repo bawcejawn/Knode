@@ -19,20 +19,21 @@
  * - The cut: at each hour, the node with the fewest handicapped steps since the start is knocked out. Ties: fewer raw
  *   blocks, then smaller VHP on the card, then the address that sorts later.
  *
- * PLAYING (the Picks contract, game LNS: one producer per round; one round an hour, locking at 10 minutes past the
- *   hour; picks open 24 hours ahead)
- * - The start pick is the pick for the round locking at 13:10. A pick on a node outside the field, or none, is no entry.
- * - When your node is cut at hh:00, your pick for the round locking at hh:10 is your jump, if it names a node still
- *   standing after that cut. It may have been made before the cut (a backup). One jump per event. No valid jump, or a
- *   second cut, and you're out. Picks for any other round are ignored.
+ * PLAYING (the Picks contract, game 13: a list of up to 2 producers, one round per event; owner, 2026-10-29)
+ * - One pick per event, made before it starts: your start node and, optionally, a backup. Picks open 24 hours ahead
+ *   and lock at 13:50 UTC, 10 minutes before the start; nothing can be picked or changed during the race. A pick on a
+ *   node outside the field, or none, is no entry; a backup outside the field is ignored.
+ * - The first time your start node is cut, your backup takes over automatically, if it is still standing then (a jump,
+ *   one per event). No backup, a backup already cut, or a cut of the node you jumped to, and your run ends there.
  * - Points: 1 for each cut your node survives (points before a jump are kept), plus a bonus for riding the last node
  *   standing: +5 if you never jumped, +3 if you did.
  * - Leaderboard: points, then last-node rides, then fewer jumps; players equal on all three share the place. Free
  *   players are shown; prizes follow the staked rules in the vault.
  *
  * OTHER TIMINGS (testnet practice). KLastNode is the real game (13). KLastNode.forGame(settings) gives the same rules for
- * another timing: a cut every `cut` ms, events every `period` ms starting `phase` ms into each period, rounds of `cut`
- * locking `offset − lead` after each cut. The fast test game 93 cuts every 20 minutes, with an event every 4 hours. */
+ * another timing: a cut every `cut` ms, events every `period` ms starting `phase` ms into each period, picks locking
+ * `lockBefore` before each start and opening `ahead` before the round's target. The fast test game 94 cuts every
+ * 20 minutes, with an event every 4 hours; game 33 is the real timing on the testnet. */
 (function (root) {
   "use strict";
   const HOUR = 3600000, DAY = 24 * HOUR, WEEK = 7 * DAY, MIN = 60000;
@@ -47,12 +48,17 @@
 
   /** The real game: game 13, a cut every hour from 14:00 UTC daily; rounds target hh:15 and lock at hh:10 (lead 5 min);
    *  picks open 24 hours ahead. Its Picks registration never changes once made, so these are registered exactly. */
-  const MAINNET_GAME = Object.freeze({ id: 13, name: "Last Node Standing", cut: HOUR, offset: 15 * MIN, lead: 5 * MIN, ahead: DAY,
-    period: DAY, phase: 14 * HOUR, picksPerDay: 30, maxChanges: 5 });
-  /** Testnet practice: game 93, a cut every 20 minutes, an event every 4 hours (00, 04, … UTC); rounds lock 5 minutes
-   *  after each cut (target cut + 10 min, lead 5 min); picks open 4 hours ahead. */
-  const FAST_GAME = Object.freeze({ id: 93, name: "Last Node Standing fast test", cut: 20 * MIN, offset: 10 * MIN, lead: 5 * MIN, ahead: 4 * HOUR,
+  /** The real game (owner, 2026-10-29): one pick per event, a start node and an optional backup, made before the start.
+   *  Picks open 24 hours ahead and lock 10 minutes before the 14:00 UTC start (lockBefore); the contract's lead is
+   *  5 minutes, so each daily round's target is 13:55 UTC. */
+  const MAINNET_GAME = Object.freeze({ id: 13, name: "Last Node Standing", cut: HOUR, lockBefore: 10 * MIN, lead: 5 * MIN, ahead: DAY,
+    period: DAY, phase: 14 * HOUR, picksPerDay: 10, maxChanges: 5 });
+  /** Testnet practice: game 94, a cut every 20 minutes, an event every 4 hours (00, 04, … UTC), picks lock 10 minutes
+   *  before each start and open 4 hours ahead. (Games 93 and 13 on the testnet are the earlier, hourly-pick rules.) */
+  const FAST_GAME = Object.freeze({ id: 94, name: "Last Node Standing fast test", cut: 20 * MIN, lockBefore: 10 * MIN, lead: 5 * MIN, ahead: 4 * HOUR,
     period: 4 * HOUR, phase: 0, picksPerDay: 50, maxChanges: 5 });
+  /** Testnet practice with the real game's timing (daily at 14:00 UTC): the same settings under testnet id 33. */
+  const REAL_TEST_GAME = Object.freeze({ ...MAINNET_GAME, id: 33, name: "Last Node Standing real timing", picksPerDay: 30 });
 
   // ── seeded random numbers (the same generator as race-math.js) ──
   function rng(seed) {
@@ -137,26 +143,27 @@
    *  event's rounds reach the next event's start round. */
   function forGame(g) {
     const ok = (x) => Number.isInteger(x) && x > 0;
-    if (!g || !ok(g.id) || g.id >= 128 || !ok(g.cut) || !ok(g.lead) || !ok(g.offset) || !ok(g.ahead) || !ok(g.period) || !Number.isInteger(g.phase))
+    if (!g || !ok(g.id) || g.id >= 128 || !ok(g.cut) || !ok(g.lead) || !ok(g.lockBefore) || !ok(g.ahead) || !ok(g.period) || !Number.isInteger(g.phase))
       throw new Error("Last Node Standing: incomplete game settings");
     if (g.lead < 5 * MIN) throw new Error("the Picks contract needs a lead of at least 5 minutes");
-    if (!(g.offset > g.lead && g.offset < g.cut)) throw new Error("rounds must lock after the cut and before the next one (lead < offset < cut)");
-    if (!(g.ahead > g.lead && g.ahead <= 35 * DAY)) throw new Error("ahead must be above lead and at most 35 days");
+    if (g.lockBefore < g.lead) throw new Error("picks must lock at least the contract's lead before the start (lockBefore >= lead)");
+    if (!(g.ahead > g.lockBefore && g.ahead <= g.period)) throw new Error("picks open at most one event ahead (lockBefore < ahead <= period)");
     if (g.period % g.cut || g.phase % g.cut || g.phase < 0 || g.phase >= g.period || DAY % g.period || HOUR % g.cut && g.cut % HOUR)
       throw new Error("events must start on cut boundaries, a whole number of events a day");
     // Audit LN-14: an event's id is its UTC day, or its UTC hour, so every event must start on the hour.
     if (g.period < HOUR || g.period % HOUR || g.phase % HOUR) throw new Error("events must start on the hour (a period of at least 1 hour)");
-    const CUT = g.cut, OFFSET = g.offset, LEAD = g.lead, AHEAD = g.ahead, PERIOD = g.period, PHASE = g.phase;
-    /** At most 23 nodes, and fewer than the rounds between two event starts, so rounds never overlap the next event. */
+    const CUT = g.cut, LEAD = g.lead, AHEAD = g.ahead, PERIOD = g.period, PHASE = g.phase, LOCK_BEFORE = g.lockBefore;
+    /** At most 23 nodes, and fewer than the cuts that fit in a period, so an event ends before the next one's picks lock. */
     const MAX_FIELD = Math.min(23, PERIOD / CUT - 1);
+    if (LOCK_BEFORE >= 2 * CUT) throw new Error("picks must lock less than two cuts before the start");
     const KSCALE = CUT / HOUR;       // expected blocks per cut = kh × KSCALE
 
     // ── time ──
-    /** Round r's target (the contract's r × round_size + round_offset) is r × cut + offset; it locks lead earlier,
-     *  offset − lead after its cut. The start pick is the round locking just before the start; the jump after the cut
-     *  at cut k is the round locking offset − lead after it, so a jumper sees only that much of the deciding window. */
-    const roundOf = (t) => Math.floor((t - OFFSET) / CUT);
-    const roundTime = (r) => r * CUT + OFFSET;
+    /** One round per event (the contract's round_size = the period). Round r's target is r × period + offset, chosen so
+     *  that the round locks (lead before its target) exactly lockBefore before its event's start. */
+    const OFFSET = (((PHASE - LOCK_BEFORE + LEAD) % PERIOD) + PERIOD) % PERIOD;
+    const roundOf = (t) => Math.floor((t - OFFSET) / PERIOD);
+    const roundTime = (r) => r * PERIOD + OFFSET;
     const lockTime = (r) => roundTime(r) - LEAD;
     /** Is round r open for a pick in a block made at time t? Exactly the contract's rule (time games). */
     const isOpen = (r, t) => roundTime(r) > LEAD && t < lockTime(r) && roundTime(r) - t <= AHEAD;
@@ -175,7 +182,8 @@
         start = Math.floor((x - PHASE) / PERIOD) * PERIOD + PHASE;
         if (PERIOD === DAY) start = Math.floor(x / DAY) * DAY + PHASE;   // the UTC day's event, as before
       }
-      const r = roundOf(start), opens = roundTime(r) - AHEAD;
+      // The event's round: its target is lead after the lock, lockBefore before the start.
+      const r = roundOf(start - LOCK_BEFORE + LEAD), opens = roundTime(r) - AHEAD;
       return { day: idOf(start), start, round: r, lock: lockTime(r), opens, cardTime: Math.floor((opens - HOUR) / HOUR) * HOUR };
     }
     /** The event after ev. */
@@ -247,52 +255,39 @@
     }
 
     // ── a player's event ──
-    /** picks: { [offset]: producer }, the player's pick for the round at start round + offset (0 = the start pick; the
-     *  jump after cut k is the pick at offset k + 1, locked offset − lead after that cut).
-     *  Returns { entered, start, node, jumped, jumpTo, out (cut number or 0), survived, rode, points, path }. */
-    function playerResult(field, result, picks) {
+    /** choice: { start, backup } (the one pick a player made before the start; backup may be null). The backup takes
+     *  over automatically the first time the start node is cut, if it is still standing then (a jump; one per event).
+     *  Otherwise, or when the node ridden after a jump is cut, the run ends there.
+     *  Returns { entered, start, backup, node, jumped, jumpTo, out (cut number or 0), survived, rode, points, path }. */
+    function playerResult(field, result, choice) {
       const inField = new Set(field.nodes.map((x) => x.a));
-      const start = picks && picks[0];
-      const r = { entered: false, start: null, node: null, jumped: false, jumpTo: null, out: 0, survived: 0, rode: false, points: 0, path: [] };
+      const start = choice && choice.start, backup = choice && choice.backup;
+      const r = { entered: false, start: null, backup: null, node: null, jumped: false, jumpTo: null, out: 0, survived: 0, rode: false, points: 0, path: [] };
       if (!start || !inField.has(start)) return r;
       r.entered = true; r.start = start; r.node = start; r.path.push({ at: 0, a: start });
-      const standing = new Set(inField), lastCut = field.nodes.length - 1;
+      if (backup && backup !== start && inField.has(backup)) r.backup = backup;
+      const standing = new Set(inField);
       for (let k = 0; k < result.cuts.length; k++) {
         const cut = result.cuts[k], at = cut.at;
         standing.delete(cut.a);
         if (r.out) continue;
         if (cut.a !== r.node) { r.survived++; continue; }
-        const j = picks && picks[at + 1];
-        if (!r.jumped && k + 1 < lastCut && j && standing.has(j)) { r.jumped = true; r.jumpTo = j; r.node = j; r.path.push({ at, a: j }); }
+        if (!r.jumped && r.backup && standing.has(r.backup)) { r.jumped = true; r.jumpTo = r.backup; r.node = r.backup; r.path.push({ at, a: r.backup }); }
         else r.out = k + 1;
       }
       if (result.done && !r.out && r.node === result.winner) { r.rode = true; r.points = r.survived + (r.jumped ? BONUS.jumped : BONUS.stayed); }
       else r.points = r.survived;
       return r;
     }
-    /** Can this player still jump? Their node is the latest cut, they haven't jumped, and it wasn't the last cut.
-     *  Returns the number of that cut (the jump is the pick at offset at + 1), or 0. */
-    function canJump(field, result, picks) {
-      const st = playerResult(field, result, picks);
-      if (!st.entered || st.jumped || !st.out || st.out !== result.cuts.length || st.out >= field.nodes.length - 1) return 0;
-      return result.cuts[st.out - 1].at;
-    }
-    /** Picks by absolute round { [round]: producer } → by offset from the event's start round (other rounds dropped). */
-    function byOffset(start, byRound, maxOffset = MAX_FIELD) {
-      const r0 = roundOf(start), out = {};
-      for (const [rs, a] of Object.entries(byRound || {})) { const o = Number(rs) - r0; if (Number.isInteger(o) && o >= 0 && o <= maxOffset) out[o] = a; }
-      return out;
-    }
-    /** The round a jump after cut `at` is picked in. */
-    const roundForJump = (start, at) => roundOf(start) + at + 1;
-    /** The game's registration in the Picks contract (announce_game): one producer, time lock. */
-    const PICKS_GAME = Object.freeze({ game: g.id, kind: 1, lock_mode: 2, round_size: CUT, round_offset: OFFSET, lead: LEAD, ahead: AHEAD, max_changes: g.maxChanges, max_picks_per_day: g.picksPerDay });
+    /** The game's registration in the Picks contract (announce_game): a list of up to 2 producers ([start, backup]),
+     *  time lock, one round per event. */
+    const PICKS_GAME = Object.freeze({ game: g.id, kind: 2, list_size: 2, lock_mode: 2, round_size: PERIOD, round_offset: OFFSET, lead: LEAD, ahead: AHEAD, max_changes: g.maxChanges, max_picks_per_day: g.picksPerDay });
 
     return {
-      GAME: g, GAME_ID: g.id, PICKS_GAME, CUT, LEAD, OFFSET, AHEAD, PERIOD, PHASE, MAX_FIELD, JUMP_WINDOW: OFFSET - LEAD,
+      GAME: g, GAME_ID: g.id, PICKS_GAME, CUT, LEAD, OFFSET, AHEAD, PERIOD, PHASE, LOCK_BEFORE, MAX_FIELD,
       HOUR, DAY, WEEK, GENESIS, MIN_KH, FORM_HOURS, FORM_MIN, FORM_MAX, FORM_MIN_HOURS, formOf, BONUS, SEED, TRIALS, H_SCALE, START_HOUR: PERIOD === DAY ? PHASE / HOUR : null,
       roundOf, roundTime, lockTime, isOpen, eventOf, nextEvent, pickable, nextEntry, weekOf, weekStart, rng, handicapOf, calibrate, makeField, hInt,
-      cutsFrom, playerResult, canJump, byOffset, roundForJump, board, places, forGame, MAINNET_GAME, FAST_GAME,
+      cutsFrom, playerResult, board, places, forGame, MAINNET_GAME, FAST_GAME, REAL_TEST_GAME,
     };
   }
 

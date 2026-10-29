@@ -143,8 +143,9 @@ jobs:
                   if type(h) is not dict or set(h) != {"i", "from", "to", "blocks", "checked"} or h["i"] != i or not nat(h["from"]) or not nat(h["to"]) or h["to"] < h["from"] or h["checked"] not in (1, 2): return False
                   if type(h["blocks"]) is not dict or not all(a in names and nat(n) and n <= 10000 for a, n in h["blocks"].items()): return False
               pk = j["picks"]
-              if type(pk) is not dict or not all(re.fullmatch(r"\d{1,2}", k) and type(v) is list and len(v) <= 100000 and all(
-                  type(x) is list and len(x) == 3 and isa(x[0]) and isa(x[1]) and nat(x[2]) for x in v) for k, v in pk.items()): return False
+              # One pick per event (2026-10-29): [player, start, time] or [player, start, time, backup].
+              if type(pk) is not dict or not all(k == "0" and type(v) is list and len(v) <= 100000 and all(
+                  type(x) is list and len(x) in (3, 4) and isa(x[0]) and isa(x[1]) and nat(x[2]) and (len(x) == 3 or (isa(x[3]) and x[3] != x[1])) for x in v) for k, v in pk.items()): return False
               if "void" in j and (j["cuts"] != [] or j["players"] != [] or j["winner"] is not None): return False
               if "void" not in j and (j["field"] is None or type(j["cuts"]) is not list or len(j["cuts"]) != len(hs) or len(hs) > len(names) - 1): return False
               if type(j["cuts"]) is not list or not all(

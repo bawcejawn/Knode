@@ -1,5 +1,5 @@
 // Last Node Standing recorder (bot/games/lastnode.ts): the field from the card of the 12:00 leg the day before,
-// hours recorded only once irreversible and matching on two nodes, picks for the start and jump rounds agreeing on
+// hours recorded only once irreversible and matching on two nodes, each wallet's one pick (start and backup) agreeing on
 // both nodes, cuts and players' points, a run that continues the last one, void events, and last-run files that don't
 // have the recorder's shape. Offline: fake nodes and fake race files.
 import { test } from "node:test";
@@ -44,6 +44,8 @@ function countsAt(i) {
 }
 function windowOf({ tamperHour = null } = {}) {
   return async (node, t0, t1) => {
+    // The form's 48 hours before the card: no race cards for them in these tests, so the field has no form.
+    if (t0 < EV.start) return { from: 0, to: 0, counts: {} };
     const i = (t0 - EV.start) / H;
     assert.ok(Number.isInteger(i) && t1 === t0 + H, "whole hours from the start");
     const counts = countsAt(i);
@@ -51,16 +53,17 @@ function windowOf({ tamperHour = null } = {}) {
     return { from: 1000 + i * 1200, to: 1000 + i * 1200 + 1199, counts };
   };
 }
-// Picks by offset from the start round. Alice: N4 all the way. Bob: N3, jumps to N4 after the cut at hour 1.
-// Carol: N1 with a backup N4 for the cut at hour 2 (made before it). Dave: N2, no jump. Eve: only a jump, no start.
-const PICKS = { 0: [[ALICE, N4], [BOB, N3], [CAROL, N1], [DAVE, N2]], 2: [[BOB, N4], [EVE, N4]], 3: [[CAROL, N4]] };
+// One pick per wallet for the event (owner, 2026-10-29): [start] or [start, backup]. Alice: N4 all the way. Bob: N3
+// with backup N4 (takes over at cut 1). Carol: N1 with backup N4 (takes over at cut 2). Dave: N2, no backup. Eve picks
+// for another round only.
+const PICKS = { 0: [[ALICE, N4], [BOB, N3, N4], [CAROL, N1, N4], [DAVE, N2]], 1: [[EVE, N4]] };
 const seen = [];
 function picksOf({ tamperOffset = null } = {}) {
   return async (node, round) => {
     const off = round - EV.round;
     seen.push(off);
-    const rows = (PICKS[off] || []).map(([who, a]) => [who, a, EV.start - H]);
-    if (node === "check" && off === tamperOffset && rows.length) rows[0] = [rows[0][0], N2, rows[0][2]];
+    const rows = (PICKS[off] || []).map(([who, a, b]) => (b ? [who, a, EV.start - H, b] : [who, a, EV.start - H]));
+    if (node === "check" && off === tamperOffset && rows.length) rows[1] = [rows[1][0], rows[1][1], rows[1][2], N2];
     return rows;
   };
 }
@@ -83,9 +86,10 @@ test("a whole event: field from the day-before card, three cuts, players' points
   const p = Object.fromEntries(d.players.map((x) => [x.a, x]));
   assert.equal(p[ALICE].points, 3 + 5); assert.equal(p[ALICE].rode, true);
   assert.equal(p[BOB].points, 2 + 3); assert.equal(p[BOB].jumpTo, N4);
-  assert.equal(p[CAROL].points, 2 + 3, "the backup counted as the jump");
+  assert.equal(p[CAROL].points, 2 + 3, "the backup took over at cut 2"); assert.equal(p[CAROL].jumpTo, N4);
   assert.equal(p[DAVE].points, 2); assert.equal(p[DAVE].out, 3); assert.equal(p[DAVE].ranked, false);
-  assert.equal(p[EVE], undefined, "a jump without a start pick is no entry");
+  assert.equal(p[EVE], undefined, "a pick for another round is no entry");
+  assert.deepEqual(d.picks["0"].find((x) => x[0] === BOB), [BOB, N3, EV.start - H, N4], "the backup is kept with the pick");
   const b = JSON.parse(fs.readFileSync(path.join(out, "board.json"), "utf8"));
   assert.deepEqual(b.today.rows.map((x) => [x.a, x.place, x.pts]), [[ALICE, 1, 8], [BOB, 2, 5], [CAROL, 2, 5], [DAVE, 4, 2]]);
   const idx = JSON.parse(fs.readFileSync(path.join(out, "index.json"), "utf8"));
@@ -109,10 +113,10 @@ test("only irreversible hours; a later run continues from the last run's files",
   assert.equal(d2.players.find((x) => x.a === BOB).points, 5);
 });
 
-test("the start round and the jump rounds are read, never the rest", async () => {
+test("only the event's one round is read, never another", async () => {
   seen.length = 0;
   await go({ out: tmp(), now: { time: EV.start + 5 * H, libTime: EV.start + 5 * H } });
-  assert.deepEqual([...new Set(seen)].sort((a, b) => a - b), [0, 1, 2, 3]);
+  assert.deepEqual([...new Set(seen)], [0]);
 });
 
 test("not recorded when the two nodes disagree about an hour's blocks or its picks", async () => {
@@ -121,9 +125,9 @@ test("not recorded when the two nodes disagree about an hour's blocks or its pic
   assert.ok(r.problems.some((p) => p.includes("hour 1") && p.includes("blocks")));
   assert.equal(dayFile(out).hours.length, 1);
   const out2 = tmp();
-  const r2 = await go({ out: out2, picksOf: picksOf({ tamperOffset: 2 }), now: { time: EV.start + 4 * H, libTime: EV.start + 4 * H } });
-  assert.ok(r2.problems.some((p) => p.includes("hour 1") && p.includes("picks")));
-  assert.equal(dayFile(out2).hours.length, 1);
+  const r2 = await go({ out: out2, picksOf: picksOf({ tamperOffset: 0 }), now: { time: EV.start + 4 * H, libTime: EV.start + 4 * H } });
+  assert.ok(r2.problems.some((p) => p.includes("hour 0") && p.includes("picks")), "a different backup on the check node");
+  assert.equal(dayFile(out2).hours.length, 0);
 });
 
 test("the field is published the day before, when picks open; no card by the lock → void", async () => {

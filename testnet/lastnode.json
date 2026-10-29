@@ -1,7 +1,7 @@
 {
   "v": 1,
   "network": "koinos-foundation-testnet",
-  "note": "Last Node Standing on the Koinos TESTNET (Koinos Foundation testnet). Picks go to the testnet Picks contract named in testnet/blockx.json (the same contract as Who Signs Block X), with test KOIN only. The race itself is run on the real MAINNET producers, read only: the testnet has a single block producer, so it can not hold a race. Nothing here sends anything to mainnet.",
+  "note": "Last Node Standing on the Koinos TESTNET (Koinos Foundation testnet). Picks go to the testnet Picks contract named in testnet/blockx.json (the same contract as Who Signs Block X), with test KOIN only. The race itself is run on the real MAINNET producers, read only: the testnet has a single block producer, so it can not hold a race. Nothing here sends anything to mainnet. Games 94 (fast test) and 33 (real timing) use the one-pick rules of 2026-10-29: a start node and an optional backup, made before the start. Games 93 and 13 registered earlier on the testnet use the old hourly-pick rules and are no longer used.",
   "rpc": "https://testnet.koinosfoundation.org",
   "chainId": "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==",
   "koin": "1FaSvLjQJsCJKq5ybmGsMMQs8RQYyVv8ju",
@@ -15,10 +15,10 @@
   "faucet": "https://t.me/KoinosTestnetFaucetBot",
   "games": [
     {
-      "id": 93,
+      "id": 94,
       "name": "Last Node Standing fast test",
       "cut": 1200000,
-      "offset": 600000,
+      "lockBefore": 600000,
       "lead": 300000,
       "ahead": 14400000,
       "period": 14400000,
@@ -27,10 +27,10 @@
       "maxChanges": 5
     },
     {
-      "id": 13,
-      "name": "Last Node Standing",
+      "id": 33,
+      "name": "Last Node Standing real timing",
       "cut": 3600000,
-      "offset": 900000,
+      "lockBefore": 600000,
       "lead": 300000,
       "ahead": 86400000,
       "period": 86400000,
