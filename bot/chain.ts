@@ -258,6 +258,13 @@ export class SimChain implements Chain {
     return { ok: true, txId: "0x" + crypto.randomBytes(8).toString("hex") };
   }
 
+  /** Writes one object straight into the contract's storage (space id, key bytes, value bytes), as the contract itself
+   *  would have stored it. Used to rebuild a copy of a live contract's state for the rehearsal (bot/rehearse-v6.ts). */
+  putContractObject(spaceId: number, key: Uint8Array, value: Uint8Array) {
+    this.vm.db.putObject({ system: false, id: spaceId, zone: utils.decodeBase58(this.contractId) }, key, value);
+    this.vm.db.commitTransaction();
+  }
+
   // ───── the simulated token ledger inside the test build (storage space 90: tag 1 KOIN, 2 VHP, 3 Mana) ─────
   private ledgerKey(tag: number, who: string) {
     const a = utils.decodeBase58(who);

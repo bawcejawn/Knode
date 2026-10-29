@@ -14,6 +14,8 @@
  *   npm run bot -- chain-check                read-only: code fingerprints, switches, owners, chain id
  *   npm run bot -- verify-results [--days 3]  on your PC: recount posted results from YOUR OWN node (127.0.0.1 only)
  *   npm run bot -- games                      the vault's games (v6), their stakes, weeks and announcements
+ *   npm run bot -- vault-snapshot [--out f]   read-only: save the live contract's state to a file (for rehearse-v6)
+ *   npm run bot -- rehearse-v6 [--snapshot f] [--weeks 3] [--reward 90]   the v6 upgrade on a copy of that state
  *   Vault v6 commands (dry run unless --send; bot/README.md has the details):
  *     owner     game-add <id> "<name>" [--staked] [--free] [--season <weeks>] · game-apply <id> · game-stop <id>
  *               game-correct <id> <week> <player> <points> · game-unprize <id> <week> <player> · game-void <id> <week>
@@ -2054,6 +2056,9 @@ async function main() {
   if (cmd === "verify-results") return verifyResults(Number(opt("--days", "3")), opt("--rpc"));
   if (await friendly(cmd, rest, flag("--send"))) return;
   if (cmd === "rehearse") { const { rehearse } = await import("./rehearse.ts"); return rehearse({ weeks: Number(opt("--weeks", "3")), verbose: flag("--verbose") }); }
+  // Vault v6: copy the live contract's state to a file (read-only, no key), and rehearse the upgrade on that copy.
+  if (cmd === "vault-snapshot") { const { snapshotCommand } = await import("./rehearse-v6.ts"); return snapshotCommand(gameChain(), opt("--out", "v5-snapshot.json")!); }
+  if (cmd === "rehearse-v6") { const { rehearseCommand } = await import("./rehearse-v6.ts"); return rehearseCommand(opt("--snapshot", "v5-snapshot.json")!, Number(opt("--weeks", "3")), opt("--reward")); }
   throw new Error(`Unknown command "${cmd}". See bot/README.md for the list of commands.`);
 }
 
