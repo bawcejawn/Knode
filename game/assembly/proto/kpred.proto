@@ -638,6 +638,7 @@ message list_games_arguments {}
 
 message list_games_result {
   repeated game_object games = 1;
+  repeated game_proposal_object proposals = 2;        // games announced and not yet applied (the bot alerts on them)
 }
 
 // @description A player's stake and week in a game other than the question game.

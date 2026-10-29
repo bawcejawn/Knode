@@ -2449,6 +2449,11 @@
                 "rule": "repeated",
                 "type": "game_object",
                 "id": 1
+              },
+              "proposals": {
+                "rule": "repeated",
+                "type": "game_proposal_object",
+                "id": 2
               }
             }
           },

@@ -2183,6 +2183,8 @@ export class Kpred {
   list_games(args: kpred.list_games_arguments): kpred.list_games_result {
     const r = new kpred.list_games_result();
     r.games = this.gamesList();
+    const ps = this.gproposals.getMany(new Uint8Array(0), 50);
+    for (let i = 0; i < ps.length; i++) r.proposals.push(ps[i].value);
     return r;
   }
 

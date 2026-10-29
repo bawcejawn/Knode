@@ -101,6 +101,56 @@ Changes that stay true (a new owner, an announcement) email you once, not every 
 
 Any of these ends the hourly run as *failed*, and GitHub emails you.
 
+## The KnodeGames Vault (game v6)
+
+These commands work once v6 is live; on v5 they say so and stop. Each one is a dry run until you add `--send`.
+
+```
+npm run bot -- games                                  every game: stake, this week's count, last week's bucket and prize
+npm run bot -- game-add <id> "<name>" --staked|--free [--season <weeks>] [--send]   announce a game (48 h notice)
+npm run bot -- game-apply <id> [--send]               after the 48 h, within 7 days: the game starts next Monday
+npm run bot -- game-stop <id> [--send]                no new stakes; it earns through this week (withdrawals stay open)
+npm run bot -- game-post <id> <week> [<folder or branch:folder>] [--send]   operator: post a week's results, then seal
+npm run bot -- game-seal <id> <week> / game-finalize <id> <week> [--send]  operator (the hourly bot does both itself)
+npm run bot -- game-correct <id> <week> <player> <points> [--send]   owner, until 24 h after the seal (0 removes)
+npm run bot -- game-unprize <id> <week> <player> [--send]            owner: take a prize place away
+npm run bot -- game-void <id> <week> [--send]                        owner: the week rolls over, its prize returns
+npm run bot -- claim-fee-vhp [to] [VHP|all] [--send]                 owner: the 5% fee, in VHP
+npm run bot -- stake <id> <VHP> / stake-koin <id> <KOIN> / unstake <id> <VHP|all> [--send]   (player, other games)
+npm run bot -- move <from id> <to id> <VHP|all> / claim-game <id> <week> [--send]           (player)
+```
+
+Example, adding Who Signs Block X (game 2, free prize):
+`npm run bot -- game-add 2 "Who Signs Block X" --free`, then again with `--send`; 48 hours later
+`npm run bot -- game-apply 2 --send`. Survivor adds `--season 2` (its prize is paid once every 2 weeks).
+
+**Results files.** The hourly bot posts each game's week once that game's recorder has published it as final, then
+seals it. The owner then has 24 hours to correct anything, and anyone can finalize 12 hours after the seal and the
+last correction. Results are due 3 days after the week ends; a week with none by then rolls over. Each game says
+where its files are in `game-data/deployment.json`:
+
+```json
+"vaultGames": { "2": { "name": "Who Signs Block X", "results": "games-data:blockx/vault" } }
+```
+
+`"<branch>:<folder>"` reads `<folder>/W<week>.json` from that branch; a plain folder reads files on disk. A file:
+
+```json
+{ "game": 2, "week": 57, "final": true,
+  "rows":   [ { "player": "1Abc…", "points": 12 } ],
+  "first":  [ "1Abc…" ], "second": [ "1Def…" ] }
+```
+
+- `week` is the vault's week number. Week 0 began at the contract's genesis, Mon 19 Oct 2026 00:00 UTC.
+- `rows` (staked games) lists every staked player with 1–255 points; only the order matters.
+- `first` and `second` (free-prize games) list the winners, ties included, at most 10 each, posted with the last week of
+  the game's prize season.
+- The bot checks every row against the chain first. Rows the vault would refuse (a wallet not staked in that game, a
+  prize winner who was staked there) are left out and reported.
+
+**More health alarms (v6):** a game is announced; the game list changes; the owner corrects or voids a game's week; a
+game's results are still missing 12 hours before their deadline.
+
 ## The rehearsal
 
 The rehearsal runs the **real contract code**, the **real bot** and the **real question generator**

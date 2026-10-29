@@ -156,6 +156,9 @@ describe("v6 game registry", () => {
     expect(() => { gK!.propose_game(new kpred.propose_game_arguments(2, "", true, false)); }).toThrow();
     expect(() => { gK!.propose_game(new kpred.propose_game_arguments(2, "X", false, false)); }).toThrow();
     k.propose_game(new kpred.propose_game_arguments(2, "Fantasy", true, false));
+    const pend = k.list_games(new kpred.list_games_arguments()).proposals;
+    expect(pend.length).toBe(1);
+    expect(pend[0].game!.id).toBe(2);
     at(110 + LOCK - 1);
     as(OWNER);
     expect(() => { gK!.apply_game(new kpred.apply_game_arguments(2)); }).toThrow();
@@ -163,6 +166,7 @@ describe("v6 game registry", () => {
     as(OWNER);
     expect(k.apply_game(new kpred.apply_game_arguments(2)).from_week).toBe(1);
     expect(k.list_games(new kpred.list_games_arguments()).games.length).toBe(2);
+    expect(k.list_games(new kpred.list_games_arguments()).proposals.length).toBe(0);
     // a running game can't be re-announced
     expect(() => { gK!.propose_game(new kpred.propose_game_arguments(2, "Again", true, false)); }).toThrow();
   });
