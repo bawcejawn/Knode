@@ -32,7 +32,12 @@
  *   - Block X: the producer's share of all VHP on the card (field and paddock).
  *   A race leg on a horse that is not in the price card's field can't be priced: it counts as a miss (the page never
  *   offers it). A Block X leg on a producer missing from the card gets the top factor, 3 (as in Block X).
- *   Points = min(150, base × all factors), base by legs: 2 → 3, 3 → 7, 4 → 15, 5 → 30, 6 → 60. Kept in hundredths.
+ *   Points = base × all factors, with NO cap (owner, 2026-10-28: "if they can build it they can win it"), base by legs:
+ *   2 → 3, 3 → 7, 4 → 15, 5 → 30, 6 → 60, 7 → 120, 8 → 240, 9 → 480, 10 → 960 (each leg roughly doubles it, so a
+ *   fairly priced leg keeps a card's expected points level). Kept in hundredths. The game runs at up to 6 legs
+ *   (MAX_LEGS); the contract allows up to 10 (HARD_MAX_LEGS), opened with 48 hours' notice when more games add legs.
+ *   Simulated 2026-10-28: removing the cap doesn't change who reaches the top 30%; the week's #1 is then usually
+ *   decided by one big card (80% of the leader's week vs 45% with a 150 cap).
  *   Easy legs are worth less than ×1 (down to ×0.25), so stacking near-certain legs is not free points.
  *
  * VOID LEGS: a leg whose race or target is void (no card, never recorded), or whose horse is not in the race at all,
@@ -52,8 +57,9 @@
   const NAMES = { 1: "Win", 2: "Show", 3: "Top half", 4: "Block X" };
   const FAMILY = { 1: "race", 2: "race", 3: "race", 4: "block" };
   const MIN_LEGS = 2, MAX_LEGS = 6;
-  const BASE = { 2: 3, 3: 7, 4: 15, 5: 30, 6: 60 };
-  const CAP = 150;                         // points per card
+  const BASE = { 2: 3, 3: 7, 4: 15, 5: 30, 6: 60, 7: 120, 8: 240, 9: 480, 10: 960 };
+  const HARD_MAX_LEGS = 10;                // the Picks contract's limit (list_size)
+  const CAP = null;                        // no cap on a card's points (owner, 2026-10-28)
   const PREF = 0.5, F_MIN = 0.25, F_MAX = 3;
   const CARDS_PER_DAY = 3, MAX_CHANGES = 3, BEST = 10;
   const RACE_LEAD_MS = 25 * 60000, RACE_AHEAD_MS = 24 * M.HOUR;
@@ -164,15 +170,15 @@
     return { chance, factor: f, f100: Math.round(f * 100) };
   }
 
-  /** Points (hundredths) for legs with these factors (hundredths): min(150, base × product), rounded down. Exact
-   *  (BigInt), so the page and the recorder never differ by a rounding. */
+  /** Points (hundredths) for legs with these factors (hundredths): base × product, rounded down, no cap. Exact
+   *  (BigInt), so the page and the recorder never differ by a rounding. Up to 10 legs (the contract's limit): the
+   *  most a card can score is 960 × 3^10 = 56,687,040 points, well inside exact integers. */
   function pointsFor(f100s) {
     const n = f100s.length;
-    if (n < MIN_LEGS || n > MAX_LEGS) return 0;
+    if (n < MIN_LEGS || n > HARD_MAX_LEGS) return 0;
     let num = BigInt(BASE[n] * 100), den = 1n;
     for (const f of f100s) { num *= BigInt(f); den *= 100n; }
-    const p = Number(num / den);
-    return Math.min(CAP * 100, p);
+    return Number(num / den);
   }
   /** What a card would pay if every leg hits (hundredths), and each leg's price. null if a leg can't be priced. */
   function potential(card, legs) {
@@ -248,7 +254,7 @@
   }
 
   root.KCombo = {
-    GAME_ID, WIN, SHOW, HALF, BLOCK, CODES, NAMES, FAMILY, MIN_LEGS, MAX_LEGS, BASE, CAP, PREF, F_MIN, F_MAX,
+    GAME_ID, WIN, SHOW, HALF, BLOCK, CODES, NAMES, FAMILY, MIN_LEGS, MAX_LEGS, HARD_MAX_LEGS, BASE, CAP, PREF, F_MIN, F_MAX,
     CARDS_PER_DAY, MAX_CHANGES, BEST, RACE_LEAD_MS, RACE_AHEAD_MS, BLOCK_LEAD, BLOCK_AHEAD,
     isWindow, slotKey, slotRound, dayOfRound, utcDay, lockOf, legOpen, cardLockTime, cardProblem,
     priceCard, raceChances, factorOf, priceLeg, pointsFor, potential, legResult, scoreCard, board, places, shareText,

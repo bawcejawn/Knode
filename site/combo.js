@@ -36,7 +36,6 @@
   const dayTime = (t) => new Date(t).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
   const dur = (ms) => { const m = Math.max(0, Math.ceil(ms / 60000)); return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min` : `${m} min`; };
   const say = (t) => { $("status").textContent = t; };
-  const capFor = (n) => (typeof C.capFor === "function" ? C.capFor(n) : C.CAP);
   async function fetchJson(url) { const r = await fetch(url, { cache: "no-cache" }); if (!r.ok) throw new Error(String(r.status)); return r.json(); }
 
   let head = null;                  // { height, time } of the chain's head block
@@ -249,12 +248,11 @@
       el("button", { type: "button", "aria-label": `Remove ${legTitle(l)}`, "data-k": `rm:${legId(l)}`, onclick: () => toggleLeg(l) }, "×"))));
     if (!n) $("legs").replaceChildren(el("li", { class: "empty", text: "Tap a price on the left to add a leg." }));
     lastAdded = "";
-    const ready = n >= C.MIN_LEGS && !pot.unpriced, cap = capFor(Math.max(n, C.MIN_LEGS));
+    const ready = n >= C.MIN_LEGS && !pot.unpriced;
     $("chain").textContent = n >= C.MIN_LEGS ? `${C.BASE[n]} base × ${pot.prices.map((p) => (p ? fmt(p.factor, 2) : "–")).join(" × ")}` : n === 1 ? "One more leg and your card can pay." : "";
     if (ready) countTo(pot.pts); else { cancelAnimationFrame(anim); shownPts = 0; $("pays").textContent = "–"; }
+    $("pays").classList.toggle("long", ready && pts(pot.pts).length > 6);
     $("pays-unit").textContent = ready ? "pts if every leg hits" : "pts";
-    $("capbar").style.width = ready ? `${Math.min(100, (pot.pts / (cap * 100)) * 100)}%` : "0";
-    $("capnote").textContent = !ready ? `A card of ${n || 2} legs can pay up to ${fmt(cap)} points.` : pot.pts >= cap * 100 ? `At the ${fmt(cap)}-point cap for ${n} legs.` : `of the ${fmt(cap)}-point cap for ${n} legs`;
     $("chance").textContent = !ready || chance == null ? "–" : `about ${chance >= 0.0001 ? pct(chance) : "<0.01%"}`;
     const lock = n && head ? C.cardLockTime(legs, head) : null;
     $("locks").textContent = lock ? `${clock(lock)}, in ${dur(lock - Date.now())}` : "–";
@@ -353,8 +351,7 @@
     const ns = []; for (let k = C.MIN_LEGS; k <= C.MAX_LEGS; k++) ns.push(k);
     $("base-table").replaceChildren(
       el("tr", {}, el("th", { text: "Legs" }), ...ns.map((k) => el("td", { text: String(k) }))),
-      el("tr", {}, el("th", { text: "Base" }), ...ns.map((k) => el("td", { text: String(C.BASE[k]) }))),
-      el("tr", {}, el("th", { text: "Cap" }), ...ns.map((k) => el("td", { text: fmt(capFor(k)) }))));
+      el("tr", {}, el("th", { text: "Base" }), ...ns.map((k) => el("td", { text: String(C.BASE[k]) }))));
   })();
 
   // ── leaderboard (games-data/combo/board.json once the recorder runs) ──

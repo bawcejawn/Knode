@@ -141,12 +141,10 @@
     .perf::before { left: -30px; } .perf::after { right: -30px; }
     .t-pay { padding: 14px 20px 18px; }
     .chain { font-family: var(--num); font-stretch: 100%; font-size: 14px; color: var(--navy-muted); font-variant-numeric: tabular-nums; min-height: 1.3em; overflow-wrap: anywhere; }
-    .pays { display: flex; align-items: baseline; gap: 8px; margin: 2px 0 6px; }
+    .pays { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 8px; margin: 2px 0 14px; }
     .pays b { font-family: var(--num); font-weight: 900; font-stretch: 125%; font-size: clamp(40px, 5vw, 52px); line-height: 1; color: var(--sun); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
     .pays span { font-size: 15px; color: var(--navy-muted); }
-    .capbar { height: 6px; border-radius: 99px; background: rgba(255, 255, 255, .1); overflow: hidden; margin: 0 0 4px; }
-    .capbar i { display: block; height: 100%; width: 0; background: var(--sun); border-radius: 99px; transition: width .3s ease; }
-    .capnote { font-size: 12px; color: var(--navy-muted); margin: 0 0 12px; }
+    .pays b.long { font-size: clamp(30px, 3.6vw, 38px); }
     .facts { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 14px; margin: 0 0 14px; }
     .facts span { color: var(--navy-muted); }
     .facts b { text-align: right; font-variant-numeric: tabular-nums; }
@@ -164,7 +162,7 @@
     .acts { display: flex; gap: 8px; flex-wrap: wrap; }
     .acts .go { flex: 1 1 100%; font: 800 16px/1 var(--body); padding: 15px; border-radius: 99px; border: 0; background: var(--tang); color: var(--tang-ink); cursor: pointer; }
     .acts .go:disabled { background: rgba(255, 255, 255, .1); color: var(--navy-muted); cursor: not-allowed; }
-    .acts .sm { flex: 1; font: 700 14px/1 var(--body); padding: 11px 10px; border-radius: 99px; border: 1.5px solid rgba(255, 255, 255, .22); background: transparent; color: var(--navy-ink); cursor: pointer; text-align: center; text-decoration: none; }
+    .acts .sm { flex: 1 1 auto; white-space: nowrap; font: 700 14px/1 var(--body); padding: 11px 10px; border-radius: 99px; border: 1.5px solid rgba(255, 255, 255, .22); background: transparent; color: var(--navy-ink); cursor: pointer; text-align: center; text-decoration: none; }
     .acts .sm:hover { border-color: var(--navy-ink); }
     .acts button:focus-visible, .acts a:focus-visible, .legs button:focus-visible, .slip-bar:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
     .rules { font-size: 12px; color: var(--muted); margin: 12px 4px 0; }
@@ -185,7 +183,7 @@
     .base th, .base td { padding: 5px 10px; border-bottom: 1px solid var(--line); text-align: center; }
     #build, #share, #board-box, #how { scroll-margin-top: 84px; }
 
-    @media (prefers-reduced-motion: reduce) { .legs li.fresh { animation: none; } .capbar i, .price { transition: none; } }
+    @media (prefers-reduced-motion: reduce) { .legs li.fresh { animation: none; } .price { transition: none; } }
 
     /* ── phones: the slip folds into a bar above the tab bar and opens as a sheet ── */
     @media (max-width: 900px) {
@@ -291,8 +289,6 @@
           <div class="t-pay">
             <div class="chain" id="chain" aria-hidden="true"></div>
             <div class="pays"><b id="pays">–</b><span id="pays-unit">if every leg hits</span></div>
-            <div class="capbar" aria-hidden="true"><i id="capbar"></i></div>
-            <p class="capnote" id="capnote"></p>
             <div class="facts">
               <span>Chance every leg hits</span><b id="chance">–</b>
               <span>Card locks</span><b id="locks">–</b>
@@ -336,7 +332,7 @@
       <p><b>What a leg is worth.</b> Each leg is priced from its chance, using the Producer Race's latest handicap card when your card is sent:</p>
       <p><span class="formula">leg worth = 0.5 ÷ chance, from ×0.25 to ×3</span></p>
       <p>A leg that hits half the time is worth ×1. An easy leg, like a big producer finishing in the top half, is worth less than ×1; a hard one up to ×3. Race chances come from 4,000 simulated races on the card; Block X from each producer's share of VHP.</p>
-      <p><b>The card.</b> Points = the base for its number of legs × every leg's worth, up to the card's cap.</p>
+      <p><b>The card.</b> Points = the base for its number of legs × every leg's worth. There's no cap: if you can build it, you can win it.</p>
       <table class="base" id="base-table"></table>
       <p><b>Fair rules.</b> A race takes up to 3 legs, one of each type, on different horses; a block takes one. Each producer can be on your card only once, since one good day would carry all its legs together. If a race or block is void, that leg is dropped and the card scores on the rest (with at least 2 legs). A card is final when every leg is final; results come from irreversible blocks that match on two independent nodes.</p>
       <p><b>The week.</b> Your best 10 cards count. The page and the recorder run the same scoring file, so the points shown are the points paid.</p>

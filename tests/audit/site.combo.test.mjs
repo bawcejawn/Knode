@@ -122,14 +122,17 @@ test("leg prices: factor = clamp(0.5 / chance, 0.25, 3); Block X by VHP share; u
   assert.equal(C.potential(CARD, [leg(C.SHOW, R, PADDOCK), leg(C.BLOCK, B)]).unpriced, true);
 });
 
-test("points: base by legs × factors, exact hundredths, capped at 150", () => {
-  assert.deepEqual([2, 3, 4, 5, 6].map((n) => C.pointsFor(new Array(n).fill(100))), [300, 700, 1500, 3000, 6000]);
+test("points: base by legs × factors, exact hundredths, no cap; up to the contract's 10 legs", () => {
+  assert.deepEqual([2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => C.pointsFor(new Array(n).fill(100))), [300, 700, 1500, 3000, 6000, 12000, 24000, 48000, 96000]);
   assert.equal(C.pointsFor([300, 300]), 2700);
-  assert.equal(C.pointsFor([300, 300, 300]), 15000, "7 × 27 = 189 → capped at 150");
-  assert.equal(C.pointsFor(new Array(6).fill(300)), 15000);
+  assert.equal(C.pointsFor([300, 300, 300]), 18900, "7 × 27 = 189: no cap");
+  assert.equal(C.pointsFor(new Array(6).fill(300)), 4374000, "60 × 3^6 = 43,740 points");
+  assert.equal(C.pointsFor(new Array(10).fill(300)), 5668704000, "960 × 3^10 = 56,687,040 points, still an exact integer");
+  assert.ok(Number.isSafeInteger(C.pointsFor(new Array(10).fill(300)) * 10), "a week of 10 such cards stays exact");
   assert.equal(C.pointsFor(new Array(6).fill(25)), 1, "60 × 0.25^6 = 0.0146 points = 1.46 hundredths, rounded down");
   assert.equal(C.pointsFor([33, 33, 33]), Math.floor(700 * 33 * 33 * 33 / 1e6));
-  assert.equal(C.pointsFor([100]), 0); assert.equal(C.pointsFor(new Array(7).fill(100)), 0);
+  assert.equal(C.pointsFor([100]), 0); assert.equal(C.pointsFor(new Array(11).fill(100)), 0);
+  assert.equal(C.CAP, null); assert.equal(C.MAX_LEGS, 6); assert.equal(C.HARD_MAX_LEGS, 10);
 });
 
 test("results for every leg type: hit / miss / void / pending", () => {
