@@ -20,7 +20,7 @@
  *     (holds 1 VHP or has a Knode stake when the target is recorded) or Free play (everyone else).
  *  4. Leaderboards (board.json): Today, This week, Last week and All time, by site/blockx-math.js, the same file the
  *     page runs, for the two boards of site/board.js (Staked / Free play). A week is final 12 hours after it ends (the
- *     correction window) when every target in it is recorded. Prizes (2 / 1 VHP to the top 2 of the Free play board,
+ *     correction window) when every target in it is recorded. Prizes (2 / 1 VHP to the week's top 2: every Block X player is a free player,
  *     picks on 3+ days, ≥ 1 point) are listed only for weeks from PRIZES_FROM_WEEK: none until the Knode Games vault is
  *     live (owner, 2026-10-28). The vault pays them; this file only records.
  *  5. Writes index.json, W<week>.json, board.json (and cards.json with CARDS=self); the publish job puts them on the
@@ -361,10 +361,12 @@ export async function run(o: Opts) {
     const wf = all.get(lw);
     const complete = !!wf && wf.targets.length > 0 && targetsCover(wf, M.weekStart(lw), M.weekStart(nowW), all);
     const final = head.time >= M.weekStart(nowW) + CORRECTION_MS && complete;
-    // Prizes: the Free play board's top 2 (owner, 2026-10-28), only from PRIZES_FROM_WEEK (none until the vault).
-    const rk = rankedSet(rows);
+    // Prizes: the top 2 (picks on 3 days, ties share), only from PRIZES_FROM_WEEK (none until the vault).
+    // Player rule (owner, 2026-10-28, every game): a wallet is a staked player in a game only with VHP staked IN that
+    // game. Nobody can stake in Block X, so every player is a free player here and may win, whatever it holds or
+    // stakes elsewhere. (The page's two boards stay as they are until the owner decides on one board or two.)
     const prizeWeek = PRIZES_FROM !== null && lw >= PRIZES_FROM;
-    lastWeek = { week: lw, start: M.weekStart(lw), final, rows: view(rows), prizes: final && prizeWeek ? X.prizes(rows.filter((x) => !rk.has(x.player))) : [] };
+    lastWeek = { week: lw, start: M.weekStart(lw), final, rows: view(rows), prizes: final && prizeWeek ? X.prizes(rows) : [] };
     // Audit BX-5: a final week's prizes are written once (P<week>.json) and never recomputed: later runs, and the page,
     // use that file, so a target recorded late can't change a prize list that was already final.
     const frozen = readJson(PREV, pName(lw));
@@ -392,6 +394,14 @@ export async function run(o: Opts) {
   fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), weeks: [...known].sort((a, b) => a - b), contract: contract || null, game: G.GAME_ID, prizesFromWeek: PRIZES_FROM }) + "\n");
   fs.writeFileSync(path.join(OUT, "board.json"), JSON.stringify(board) + "\n");
   if (freeze) fs.writeFileSync(path.join(OUT, pName(freeze.week)), JSON.stringify(freeze) + "\n");
+  // The Vault (v6) results file for the week just ended, once final (from the frozen prize list, so it never changes):
+  // <OUT>/vault/W<week>.json, read by the hourly bot from games-data:blockx/vault (deployment.json vaultGames["2"]).
+  if (lastWeek && lastWeek.final) {
+    const vf = vaultFile(G.GAME_ID, lastWeek.week, lastWeek.prizes);
+    for (const pr of vf.problems) problems.push(pr);
+    fs.mkdirSync(path.join(OUT, "vault"), { recursive: true });
+    fs.writeFileSync(path.join(OUT, "vault", `W${lastWeek.week}.json`), JSON.stringify(vf.file) + "\n");
+  }
   if (CARDS === "self") fs.writeFileSync(path.join(OUT, "cards.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), startHeight, cards }) + "\n");
   for (const pr of problems) console.log(`::warning::${pr.replace(/[\r\n]+/g, " ").replace(/::/g, ": ")}`);
   return { problems, weeks, board, cards };
@@ -415,6 +425,20 @@ export function targetsCover(wf: WeekFile, from: number, to: number, all: Map<nu
 }
 
 // ── the testnet config (testnet/blockx.json), read and checked ──
+/** The Vault's file for a free-prize game (bot/vault.ts on vault-v6): who is 1st and who is 2nd. Block X is a free
+ *  game, so `rows` (staked players) is always empty. From the prize list (X.prizes: ties share, 2+ tied for 1st
+ *  cover 2nd too, so 2nd is then empty). The Vault takes at most 10 wallets per place and refuses a whole place with
+ *  more; such a place is left empty here (its prize goes back to the pool) and reported. Exported for the tests. */
+export const VAULT_MAX_PER_PLACE = 10;
+export function vaultFile(game: number, week: number, prizes: { player: string; place: number }[]) {
+  const problems: string[] = [];
+  const at = (n: number) => [...new Set(prizes.filter((x) => x.place === n).map((x) => x.player))].sort();
+  let first = at(1), second = first.length >= 2 ? [] : prizes.filter((x) => x.place !== 1).map((x) => x.player).filter((a, i, l) => l.indexOf(a) === i).sort();
+  if (first.length > VAULT_MAX_PER_PLACE) { problems.push(`vault week ${week}: ${first.length} wallets tied for 1st (the Vault takes at most ${VAULT_MAX_PER_PLACE}); 1st left empty`); first = []; }
+  if (second.length > VAULT_MAX_PER_PLACE) { problems.push(`vault week ${week}: ${second.length} wallets tied for 2nd (the Vault takes at most ${VAULT_MAX_PER_PLACE}); 2nd left empty`); second = []; }
+  return { file: { game, week, final: true, rows: [] as { player: string; points: number }[], first, second }, problems };
+}
+
 export type NetConfig = { v: 1; network: "koinos-foundation-testnet"; chainId: string | null; rpc: string; koin: string; picks: string | null; vhp: string | null; prizesFromWeek: number | null;
   data: string; games: { id: number; name: string; round: number; offset: number; lead: number; ahead: number; picksPerDay: number; maxChanges: number }[] };
 export const MAINNET_CHAIN_ID = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";

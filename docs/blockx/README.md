@@ -2,7 +2,7 @@
 
 **A free prediction game on Koinos.** Every 2,400th block (about every 2 hours) is a *target*. Before it is made, you
 pick the block producer you think will sign it. Get it right and you score points. The less likely your producer was
-to sign, the more points, up to ×3. The weekly Free play leaderboard's top 2 win 2 VHP and 1 VHP (paid by the Knode
+to sign, the more points, up to ×3. The week's top 2 players win 2 VHP and 1 VHP (paid by the Knode
 Games vault once it is live).
 
 It is the first game on the **Picks** contract, a small contract that **holds no tokens and has no way to move any**.
@@ -16,7 +16,7 @@ It only keeps everyone's picks and makes the chain enforce the rules.
 | Wallet | your Knode wallet (Kondor, guest) | a Test wallet kept in that browser, or Kondor switched to the testnet |
 | Mana | paid by the Knode Mana sponsor | your test wallet pays its own (free test KOIN) |
 | Results | `games-data` branch | `testnet-data` branch (or your own computer, see [TESTNET.md](TESTNET.md)) |
-| Prizes | Free play top 2, from when the vault (v6) is live | listed for testing, never paid |
+| Prizes | the week's top 2 (everyone is a free player in Block X), from when the vault (v6) is live | listed for testing, never paid |
 
 ## How to play
 
@@ -64,7 +64,10 @@ the prize rule below (picks on 3 days, ties share), and last week's come from th
 (audit BX-14). The "×N if right" next to a producer is from the current card; the card taken at or before the lock
 decides the score.
 
-**Prizes:** the top 2 of the Free play board each week win 2 VHP and 1 VHP. To win, a wallet needs at least one point
+**Prizes:** the week's top 2 players win 2 VHP and 1 VHP. Player rule (owner, 2026-10-28, every game): only VHP
+staked *in a game* makes a staked player there; nobody can stake in Block X, so every player is a free player and may
+win, on either board. The Vault (v6) pays them: the recorder publishes `blockx/vault/W<week>.json` on `games-data`
+once the week is final (1st and 2nd, ties included, at most 10 per place). To win, a wallet needs at least one point
 and picks on **3 different days** that week (so one visit can't win). Ties share the prizes of the places they cover.
 A week becomes final 12 hours after it ends. Prizes are listed only from the week the Knode Games vault (v6) goes live.
 Nothing is owed for earlier weeks.

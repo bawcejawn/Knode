@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 const APP = process.env.APP || ".";
-const { run } = await import(path.resolve(APP, "bot/games/blockx.ts"));
+const { run, vaultFile } = await import(path.resolve(APP, "bot/games/blockx.ts"));
 const M = globalThis.KRaceMath, X = globalThis.KBlockX;
 const plain = (x) => JSON.parse(JSON.stringify(x));
 
@@ -114,16 +114,17 @@ test("no prizes are listed until PRIZES_FROM_WEEK (prizes start with the vault, 
   assert.deepEqual(later.board.lastWeek.prizes, [], "week 3 is before the first prize week 4");
 });
 
-test("prizes, from the first prize week: only after the 12-hour correction window, and only the Free play board's top 2", async () => {
+test("prizes, from the first prize week: only after the 12-hour correction window; every Block X player may win (player rule)", async () => {
   const early = await weekThenLook(picksGuest, 6, { prizesFromWeek: 3 });
   assert.equal(early.board.lastWeek.week, 3);
   assert.equal(early.board.lastWeek.final, false, "6 h after the week: still in the correction window");
   assert.deepEqual(early.board.lastWeek.prizes, []);
   const late = await weekThenLook(picksGuest, 13, { prizesFromWeek: 3 });
   assert.equal(late.board.lastWeek.final, true);
-  // The guest is Free play and right every time: 1st, the whole 2 + 1 VHP? No: a lone winner takes 1st (2 VHP); Bob is
-  // Staked, so the Free play board has nobody else and 2nd stays unpaid.
-  assert.deepEqual(plain(late.board.lastWeek.prizes).map((x) => [x.player, x.vhp]), [[GUEST, 2]]);
+  // Player rule (owner, 2026-10-28): only VHP staked IN a game makes a staked player there, and nobody can stake in
+  // Block X, so Bob (on the Staked board because he holds VHP) is a free player here too. The guest, right every
+  // time, is 1st (2 VHP); Bob, with fewer points, is 2nd (1 VHP).
+  assert.deepEqual(plain(late.board.lastWeek.prizes).map((x) => [x.player, x.vhp]), [[GUEST, 2], [BOB, 1]]);
   const rows = late.board.lastWeek.rows;
   assert.equal(rows.find((x) => x.a === GUEST).ranked, false, "Free play board");
   assert.equal(rows.find((x) => x.a === BOB).ranked, true, "Staked board");
@@ -213,7 +214,7 @@ test("testnet workflow: publishes only to testnet-data, off by default, and its 
   assert.equal(ok.status, 0, ok.stderr);
   assert.match(ok.stdout, /testnet games files ok/);
   assert.notEqual(check(out, 2).status, 0, "files for game 92 can't be published as game 2");
-  const bad = tmp(); for (const f of fs.readdirSync(out)) fs.copyFileSync(path.join(out, f), path.join(bad, f));
+  const bad = tmp(); fs.cpSync(out, bad, { recursive: true });
   const c = JSON.parse(fs.readFileSync(path.join(bad, "cards.json"), "utf8")); c.cards[0].field[0].a = "<script>"; fs.writeFileSync(path.join(bad, "cards.json"), JSON.stringify(c));
   assert.notEqual(check(bad, 92).status, 0, "a card with a bad address is refused");
   void execFileSync;
@@ -340,10 +341,18 @@ test("BX-5 / BX-23: a final week's prizes are frozen once (P###.json); the mainn
   assert.deepEqual(frozen.prizes, r.board.lastWeek.prizes);
   const ok = check(out);
   assert.equal(ok.status, 0, ok.stderr);
+  // The Vault (v6) results file for the week, from the frozen prize list (handoff 2026-10-28): vault/W3.json.
+  const vf = JSON.parse(fs.readFileSync(path.join(out, "vault", "W3.json"), "utf8"));
+  assert.deepEqual(vf, { game: 2, week: 3, final: true, rows: [], first: frozen.prizes.filter((x) => x.place === 1).map((x) => x.player).sort(), second: frozen.prizes.filter((x) => x.place === 2).map((x) => x.player).sort() });
+  assert.ok(vf.first.length === 1, "one winner in 1st");
+  for (const broken of [{ ...vf, rows: [{ player: GUEST, points: 3 }] }, { ...vf, week: 4 }, { ...vf, second: [vf.first[0]] }, { ...vf, first: Array(11).fill(0).map((_, i) => "1" + String.fromCharCode(65 + i).repeat(33)) }]) {
+    const d = tmp(); fs.cpSync(out, d, { recursive: true }); fs.writeFileSync(path.join(d, "vault", "W3.json"), JSON.stringify(broken));
+    assert.notEqual(check(d).status, 0, JSON.stringify(broken).slice(0, 80));
+  }
   // A later run uses the frozen list and doesn't write it again.
   const out2 = tmp();
   fs.copyFileSync(path.join(out, "P003.json"), path.join(out2, "P003.json"));
-  for (const f of fs.readdirSync(out)) if (!fs.existsSync(path.join(out2, f))) fs.copyFileSync(path.join(out, f), path.join(out2, f));
+  fs.cpSync(out, out2, { recursive: true });
   const changed = { ...frozen, prizes: frozen.prizes.slice(0, 1) };
   fs.writeFileSync(path.join(out2, "P003.json"), JSON.stringify(changed));
   const out3 = tmp();
@@ -351,12 +360,29 @@ test("BX-5 / BX-23: a final week's prizes are frozen once (P###.json); the mainn
   assert.deepEqual(r3.board.lastWeek.prizes, changed.prizes, "later runs use the frozen list");
   assert.ok(!fs.existsSync(path.join(out3, "P003.json")), "and never write it again");
   // Exact shapes: an extra key anywhere is refused.
-  const bad = tmp(); for (const f of fs.readdirSync(out)) fs.copyFileSync(path.join(out, f), path.join(bad, f));
+  const bad = tmp(); fs.cpSync(out, bad, { recursive: true });
   const b = JSON.parse(fs.readFileSync(path.join(bad, "board.json"), "utf8")); b.today.extra = "x".repeat(1000); fs.writeFileSync(path.join(bad, "board.json"), JSON.stringify(b));
   assert.notEqual(check(bad).status, 0);
-  const bad2 = tmp(); for (const f of fs.readdirSync(out)) fs.copyFileSync(path.join(out, f), path.join(bad2, f));
+  const bad2 = tmp(); fs.cpSync(out, bad2, { recursive: true });
   const i = JSON.parse(fs.readFileSync(path.join(bad2, "index.json"), "utf8")); i.updated = "<script>"; fs.writeFileSync(path.join(bad2, "index.json"), JSON.stringify(i));
   assert.notEqual(check(bad2).status, 0);
   const wf = fs.readFileSync(path.resolve(APP, ".github/workflows/games.yml"), "utf8");
-  assert.match(wf, /P\[0-9\]\{3\}\\\.json\$ \]\] && git cat-file -e/, "the publish step never replaces a published prize file");
+  assert.match(wf, /\(\/P\[0-9\]\{3\}\|\/vault\/W\[0-9\]\+\)\\\.json\$ \]\] && git cat-file -e/, "the publish step never replaces a published prize file or Vault file");
+});
+
+test("Vault results file (handoff 2026-10-28): ties share a place, 2+ tied for 1st leave 2nd empty, more than 10 tied leave that place empty, nobody qualifying gives empty lists", () => {
+  const a = (c) => "1" + c.repeat(33);
+  const f = (prizes) => vaultFile(2, 57, prizes);
+  assert.deepEqual(f([]).file, { game: 2, week: 57, final: true, rows: [], first: [], second: [] }, "nobody qualifies");
+  assert.deepEqual(f([{ player: a("A"), place: 1, vhp: 2 }, { player: a("B"), place: 2, vhp: 1 }]).file.second, [a("B")]);
+  const tied1 = f([{ player: a("B"), place: 1, vhp: 1.5 }, { player: a("A"), place: 1, vhp: 1.5 }]).file;
+  assert.deepEqual([tied1.first, tied1.second], [[a("A"), a("B")], []], "two tied for 1st share all 3 VHP; no 2nd");
+  const tied2 = f([{ player: a("A"), place: 1, vhp: 2 }, { player: a("B"), place: 2, vhp: 0.5 }, { player: a("C"), place: 2, vhp: 0.5 }]).file;
+  assert.deepEqual([tied2.first, tied2.second], [[a("A")], [a("B"), a("C")]], "1st untied, two tied for 2nd share 1 VHP");
+  const many = "ABCDEFGHJKLM".split("").map((c) => ({ player: a(c), place: 1, vhp: 0.25 }));
+  const r = f(many);
+  assert.deepEqual([r.file.first, r.file.second], [[], []], "12 tied for 1st: more than the Vault's 10, so the place goes back to the pool");
+  assert.ok(r.problems.some((x) => /12 wallets tied for 1st/.test(x)));
+  const ten = f(many.slice(0, 10)).file;
+  assert.equal(ten.first.length, 10, "exactly 10 is fine");
 });
