@@ -65,7 +65,11 @@ function readEnv(f) {
 const ENV = readEnv(path.join(HOME, ".env.testnet"));
 const FRESH = process.argv.includes("--fresh");
 const BX_FILE = path.join(HOME, "testnet", "blockx.json"), FRESH_FILE = path.join(HOME, "testnet", "combo.json");
-const BX = fs.existsSync(BX_FILE) ? JSON.parse(fs.readFileSync(BX_FILE, "utf8")) : fail(`${BX_FILE} not found.`);
+// blockx.json is tracked on the picks branch only, so it disappears while C:\kprediction has another branch checked out.
+// Once the fresh contract exists, combo.json carries the same node and chain id, so the fresh route can do without it.
+const BX = fs.existsSync(BX_FILE) ? JSON.parse(fs.readFileSync(BX_FILE, "utf8"))
+  : FRESH && fs.existsSync(FRESH_FILE) ? {}
+  : fail(`${BX_FILE} not found. It is on the picks branch: in ${HOME} run  git checkout picks  (or, after upload --fresh, use --fresh).`);
 // --fresh: the Combo-only contract (testnet\combo.json, written by upload --fresh); its node and chain from blockx.json.
 const CFG = FRESH ? { ...BX, picks: null, picksSha256: null, games: [], ...(fs.existsSync(FRESH_FILE) ? JSON.parse(fs.readFileSync(FRESH_FILE, "utf8")) : {}) } : BX;
 const CFG_FILE = FRESH ? FRESH_FILE : BX_FILE;
