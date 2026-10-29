@@ -40,20 +40,22 @@ code from its own key: the address, its KOIN, its settings and today's counters 
 Block X pick: about 0.05 Mana). But the sponsor says yes *before* the transaction runs, so it has to count the most
 the transaction may use (its limit) against the player's 50 a day and everyone's 5,000. Until now every action asked
 for 1 Mana, so one pick used up 1 of a player's 50 and 1 of everyone's 5,000 though it really cost 0.05. Now each
-kind of action gets its own limit, about 1.5 times the most it has ever used (a pick: about 0.08). The sponsor
+kind of action gets its own limit, about twice the most it has ever used (a pick: about 0.1; 0.15 to start, from the
+testnet number). The sponsor
 refuses a transaction asking for more than its actions' limits, and the website asks for exactly that.
 
 **The Mana adjuster** keeps the limits right:
 `npm run sponsor -- mana-report` reads the sponsored transactions on mainnet (what each really used), and suggests a
-limit for each action. It never sets a limit below 1.25 times the most an action has used, so a transaction never
-runs short, and a new report never lowers a limit below an older maximum. Run it weekly or after any upgrade.
+limit for each action. It never sets a limit below 1.25 times the most an action has used, never lowers a limit,
+and doubles the limit of any action seen to run out of Mana. The website is updated first with limits that fit both
+the old and the new ones, so a player's transaction is never refused for its limit. Run it weekly or after any upgrade.
 
 **What v3 does not change:** only the sponsor wallet's key changes its settings or moves its KOIN; `disable` still
 stops it at once; it still pays only listed player actions, signed by the player alone.
 
 **Status:** first audit (no Critical/High/Medium), fix-check ("ready for mainnet from the code"), then today's 5,000
 ceiling and per-action limits, reviewed by an independent reviewer (see the review notes), **to be audited by Repo
-Lens with the Picks contract**, then a testnet trial.
+Lens with the Picks contract**, then a testnet trial. Review notes: docs/history/REVIEW-2026-10-28-sponsor-mana-limits.md.
 
 ## 3. Website and recorder
 
@@ -67,8 +69,9 @@ Lens with the Picks contract**, then a testnet trial.
 1. Repo Lens audit of 1 and 2 → Claude fixes → Repo Lens fix-check.
 2. Sponsor v3 on the testnet (trial).
 3. Sponsor v3 on mainnet: upload, `config` with the new caps, check `status`.
-4. Picks contract on mainnet (docs/blockx/MAINNET-LAUNCH.md), then `npm run sponsor -- config --send` again so the
-   sponsor pays Block X picks, and `mana-limit picks:pick 0.0477 --source testnet --save` for its first limit.
+4. Picks contract on mainnet (docs/blockx/MAINNET-LAUNCH.md). Then `npm run sponsor -- mana-limit picks:pick 0.0477
+   --source testnet --save` for its first limit, `site-limits --send` (commit, push, wait), and `config --send` so the
+   sponsor pays Block X picks.
 5. Announce game 2, wait 48 hours, apply.
 6. Claude publishes the site (merge `picks` → `main`), the recorder starts.
-7. After a day of play: `npm run sponsor -- mana-report --save`, then `config --send`.
+7. After a day of play: `npm run sponsor -- mana-report --save`, `site-limits --send` (commit, push), `config --send`.

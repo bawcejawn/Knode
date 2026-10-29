@@ -84,8 +84,9 @@ the fixes are still in place.
    check be bypassed, overflow, or make the sponsor pay for anything it shouldn't? Can a too-low row make players'
    transactions fail, and what is lost then?
 3. The Mana adjuster (`bot/mana-limits.ts`, `bot/sponsor.ts` mana-report / mana-limit / config): limits from
-   measured `rc_used` (1.5 ×, floor 0.02, never below 1.25 × the most used, never lowered below an older maximum).
-   Is the math right (bigint rounding, batches split per operation)? Can the website's copy of the limits
+   measured `rc_used` of single-action transactions (2 ×, 3 × for a typed-in number, floor 0.05, never below 1.25 ×
+   the most used, never lowered, doubled after a run-out; `site-limits` updates the website first). Is it wide enough
+   when Mana prices move with load? Can the website's copy of the limits
    (`sponsor.rcLimits` in game-data/desk-data deployment.json, used by `site/wallet.js` `rcFor`) disagree with the
    chain in a way that hurts players (guests have no Mana to fall back on)?
 4. The allowlist row for the Picks `pick` (built by `bot/sponsor.ts`): the sponsor and the Picks contract must read

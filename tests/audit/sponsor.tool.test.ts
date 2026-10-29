@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildConfig, setPayer, syncSiteLimits, DEFAULT_CAPS, SPONSOR_SHA256, SPONSOR_V3_CANDIDATE, allowedBuilds } from "../../bot/sponsor.ts";
-import { summarize, suggest, merge, checkRows, siteMap, chainRows, key } from "../../bot/mana-limits.ts";
+import { summarize, suggest, merge, checkRows, siteMap, chainRows, key, transitionRows, siteFits } from "../../bot/mana-limits.ts";
 
 const GAME = { contract: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", vhp: "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", koin: "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK" };
 const DESK = { contract: "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR", vhp: GAME.vhp, koin: GAME.koin };
@@ -118,25 +118,36 @@ test("v3: the Picks contract is allowlisted as free play in the Picks argument s
   for (const bad of [GAME.contract, DESK.contract, GAME.vhp, GAME.koin, RACE]) assert.throws(() => buildConfig(GAME, DESK, DEFAULT_CAPS, true, RACE, bad), /Picks contract must differ/);
 });
 
-// ── the Mana adjuster (bot/mana-limits.ts, owner 2026-10-28) ──
+// ── the Mana adjuster (bot/mana-limits.ts, owner 2026-10-28; hardened after the review the same day) ──
 const PICKS_C = "1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW", PICK_E = 0x8ce33c6c, ANSWER_E = 0x0db52f40;
 const sat = (m: number) => BigInt(Math.round(m * 1e8));
-test("adjuster: groups measured use by action; batches count per operation; reverted and mixed transactions are skipped", () => {
+const stat = (o: any) => ({ contract: PICKS_C, entry: PICK_E, name: "pick", count: 3, typicalSat: o.maxSat, ...o });
+test("adjuster: only single-action transactions are measured (a batch hides the fixed cost); reverted ones don't count", () => {
   const st = summarize([
     { contract: PICKS_C, entry: PICK_E, rcUsed: sat(0.0477), ops: 1, reverted: false },
     { contract: PICKS_C, entry: PICK_E, rcUsed: sat(0.2197), ops: 7, reverted: false },
-    { contract: PICKS_C, entry: PICK_E, rcUsed: sat(0.9), ops: 1, reverted: true },
+    { contract: PICKS_C, entry: PICK_E, rcUsed: sat(0.9), ops: 1, reverted: true, rcLimit: sat(1) * 2n },
     { contract: GAME.contract, entry: ANSWER_E, rcUsed: sat(0.31), ops: 1, reverted: false },
   ], { [key(PICKS_C, PICK_E)]: "KnodeGames Picks pick" });
   const p = st.find((x) => x.entry === PICK_E)!;
   assert.equal(p.name, "KnodeGames Picks pick");
-  assert.equal(p.count, 2);
-  assert.equal(p.maxSat, sat(0.0477), "the most one pick used (the reverted one doesn't count)");
-  assert.equal(st.find((x) => x.entry === ANSWER_E)!.maxSat, sat(0.31));
+  assert.equal(p.count, 1, "the 7-pick batch is not a measurement");
+  assert.equal(p.maxSat, sat(0.0477));
+  assert.equal(p.ranOut, 0, "reverted with Mana to spare: not a run-out");
 });
-test("adjuster: limit = 1.5 × the most used, at least 0.02, rounded up to 0.01, at most the per-transaction cap", () => {
-  assert.equal(suggest(sat(0.0477), sat(1)), sat(0.08));
-  assert.equal(suggest(sat(0.001), sat(1)), sat(0.02), "floor");
+test("adjuster: a transaction that used all of its limit and reverted 'ran out', and raises that action's limit", () => {
+  const st = summarize([{ contract: PICKS_C, entry: PICK_E, rcUsed: sat(0.06), rcLimit: sat(0.06), ops: 1, reverted: true },
+    { contract: PICKS_C, entry: PICK_E, rcUsed: sat(0.03), ops: 1, reverted: false }]);
+  assert.equal(st[0].ranOut, 1);
+  const old = merge([], [stat({ maxSat: sat(0.03) })], sat(1), "a", "t");
+  assert.equal(old[0].max_mana, sat(0.06).toString());
+  const after = merge(old, st, sat(1), "b", "t");
+  assert.equal(after[0].max_mana, sat(0.12).toString(), "at least twice the old limit");
+});
+test("adjuster: limit = 2 × the most used (3 × typed in or from the testnet), at least 0.05, at most the per-transaction cap", () => {
+  assert.equal(suggest(sat(0.0477), sat(1)), sat(0.1));
+  assert.equal(suggest(sat(0.0477), sat(1), true), sat(0.15), "a testnet number gets 3 ×");
+  assert.equal(suggest(sat(0.001), sat(1)), sat(0.05), "floor");
   assert.equal(suggest(sat(0.9), sat(1)), sat(1), "never above the per-transaction cap");
 });
 test("adjuster: refuses a limit that could make transactions fail (below 1.25 × the most used), 0, too high, or twice", () => {
@@ -148,25 +159,39 @@ test("adjuster: refuses a limit that could make transactions fail (below 1.25 ×
   assert.throws(() => checkRows([row(sat(2))], sat(1)), /per-transaction cap/);
   assert.throws(() => checkRows([row(sat(0.1)), row(sat(0.2))], sat(1)), /twice/);
 });
-test("adjuster: a new report never lowers a limit below what was seen before, and keeps actions it didn't see", () => {
-  const first = merge([], [{ contract: PICKS_C, entry: PICK_E, name: "pick", count: 3, maxSat: sat(0.08), typicalSat: sat(0.05) }], sat(1), "a", "t1");
-  assert.equal(first[0].max_mana, sat(0.12).toString());
-  const second = merge(first, [{ contract: PICKS_C, entry: PICK_E, name: "pick", count: 3, maxSat: sat(0.03), typicalSat: sat(0.03) }], sat(1), "b", "t2");
-  assert.equal(second[0].max_mana, sat(0.12).toString(), "the older maximum still counts");
+test("adjuster: a report never lowers a limit, keeps actions it didn't see, and a heavy action gets no row (review L4)", () => {
+  const first = merge([], [stat({ maxSat: sat(0.08) })], sat(1), "a", "t1");
+  assert.equal(first[0].max_mana, sat(0.16).toString());
+  const second = merge(first, [stat({ maxSat: sat(0.03) })], sat(1), "b", "t2");
+  assert.equal(second[0].max_mana, sat(0.16).toString(), "never lowered");
   assert.equal(second[0].observed!.count, 6);
-  const third = merge(second, [{ contract: GAME.contract, entry: ANSWER_E, name: "answer", count: 1, maxSat: sat(0.3), typicalSat: sat(0.3) }], sat(1), "c", "t3");
-  assert.equal(third.length, 2, "the pick row stays");
+  const skipped: string[] = [];
+  const third = merge(second, [{ contract: GAME.contract, entry: ANSWER_E, name: "heavy", count: 1, maxSat: sat(0.9), typicalSat: sat(0.9) }], sat(1), "c", "t3", skipped);
+  assert.equal(third.length, 1, "the pick row stays; the heavy action has no row (it keeps the 1 Mana cap)");
+  assert.match(skipped[0], /heavy: too heavy/);
+});
+test("adjuster: the website goes first with limits that fit both the old and the new chain rows (review L1)", () => {
+  const next = merge([], [stat({ maxSat: sat(0.05) })], sat(1), "a", "t");          // new row 0.1
+  assert.deepEqual(siteMap(transitionRows([], next, sat(1))), { [key(PICKS_C, PICK_E)]: sat(0.1).toString() }, "no chain row yet: the new one (below 1)");
+  const raised = transitionRows([{ contract: PICKS_C, entry_point: PICK_E, max_mana: sat(0.06).toString() }], next, sat(1));
+  assert.equal(raised[0].max_mana, sat(0.06).toString(), "raising: the site keeps the lower old row until the chain has the new one");
+  assert.deepEqual(siteFits({ [key(PICKS_C, PICK_E)]: sat(0.2).toString() }, chainRows(next), sat(1)), [key(PICKS_C, PICK_E)], "a site row above the chain's is caught");
+  assert.deepEqual(siteFits({ [key(PICKS_C, PICK_E)]: sat(0.1).toString() }, chainRows(next), sat(1)), []);
 });
 test("adjuster: the limits go on chain (mana_caps) and into the website's sponsor block (rcLimits)", () => {
-  const rows = merge([], [{ contract: PICKS_C, entry: PICK_E, name: "pick", count: 3, maxSat: sat(0.0477), typicalSat: sat(0.04) }], sat(1), "t", "t");
+  const rows = merge([], [stat({ maxSat: sat(0.0477) })], sat(1), "t", "t");
   const c: any = buildConfig(GAME, DESK, DEFAULT_CAPS, true, undefined, undefined, rows);
   assert.deepEqual(c.mana_caps, chainRows(rows));
-  assert.deepEqual(chainRows(rows)[0], { contract: PICKS_C, entry_point: PICK_E, max_mana: sat(0.08).toString() });
-  assert.deepEqual(siteMap(rows), { [`${PICKS_C}:8ce33c6c`]: sat(0.08).toString() });
+  assert.deepEqual(chainRows(rows)[0], { contract: PICKS_C, entry_point: PICK_E, max_mana: sat(0.1).toString() });
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "sp-")), g = path.join(d, "g.json"), k = path.join(d, "k.json");
   fs.writeFileSync(g, JSON.stringify({ contract: "x", sponsor: { address: "s" } })); fs.writeFileSync(k, JSON.stringify({ contract: "y" }));
   assert.equal(syncSiteLimits(rows, { game: g, desk: k }), true);
   assert.deepEqual(JSON.parse(fs.readFileSync(g, "utf8")).sponsor.rcLimits, siteMap(rows));
   assert.equal(JSON.parse(fs.readFileSync(k, "utf8")).sponsor, undefined, "a file without a sponsor block is left alone");
   assert.throws(() => buildConfig(GAME, DESK, { ...DEFAULT_CAPS, perTx: "0.05", perPlayerDay: "50" }, true, undefined, undefined, rows), /per-transaction cap/);
+});
+test("mana-limit refuses an implausibly small number and needs a source (review L3)", () => {
+  const src = fs.readFileSync("bot/sponsor.ts", "utf8");
+  assert.match(src, /Number\(most\) < 0\.01 && !a\.includes\("--force"\)/);
+  assert.match(src, /\|\| !source\)/);
 });

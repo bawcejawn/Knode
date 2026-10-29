@@ -85,7 +85,7 @@ it from the sponsor wallet in Kondor, like any wallet.
 - Mana amounts: 1 Mana = 1 KOIN's worth (100000000 units). A wallet's Mana is its KOIN balance and refills over about
   5 days.
 - The caps count each transaction's **Mana limit**, not what it really used (the sponsor approves a transaction before
-  it runs). With v3's per-action limits the site asks for each action's own limit (a Block X pick about 0.08), so the
+  it runs). With v3's per-action limits the site asks for each action's own limit (a Block X pick about 0.1), so the
   counts stay close to the Mana really spent. Actions without a limit yet ask for the old 1 Mana (answers) or 3 (others).
 - Knode's settings (owner's decisions 2026-10-28): **1** per transaction, **50** per player per day and **300** per
   player per week, **5,000** for everyone per day (v3's ceiling, `CAP_LIMIT`; v2's was 1,000), of which at most
@@ -104,8 +104,8 @@ it from the sponsor wallet in Kondor, like any wallet.
   sponsor refuses is never included and costs nothing. So the caps are exact upper bounds.
 - Near 00:00 UTC a transaction can be accepted with today's counts and then dropped from the block (mempool expiry);
   the page may already say "Sent". The player simply tries again.
-- Free play: anyone can make new wallets, so empty wallets can use up the free total (2,000 a day: at 0.08 a pick that
-  is about 25,000 picks, at 50 Mana per wallet at least 40 wallets). Then free wallets pay their own Mana until the
+- Free play: anyone can make new wallets, so empty wallets can use up the free total (2,000 a day: at 0.1 a pick that
+  is about 20,000 picks, at 50 Mana per wallet at least 40 wallets). Then free wallets pay their own Mana until the
   next UTC day, while players with VHP or a stake keep the other 3,000 (they still count against everyone's 5,000). If
   spam appears, lower `--free-per-day`.
 - Everything else needs real VHP (or a stake) in every wallet: using up the rest takes many wallets each holding the
@@ -167,17 +167,23 @@ claim's Mana with the answers' 1 Mana limit, not `rcLimitOther`.
   count the transaction's Mana *limit*. With one 1-Mana limit for everything, a 0.05-Mana pick used up 1 Mana of the
   player's day and of everyone's day. Now a transaction's limit must be at most the sum of its operations' rows (an
   operation with no row counts as the per-transaction cap, as before), and the website asks for exactly that sum.
-- **The Mana adjuster** sets the rows from what each action really used on chain, with a margin, and never so tight
-  that a transaction could run out:
+- **The Mana adjuster** sets the rows from what each action really used on chain, with a wide margin, so a
+  transaction never runs short:
   ```
-  npm run sponsor -- mana-report            reads the last day of sponsored transactions; shows each action's use and a safe limit
+  npm run sponsor -- mana-report            reads the last day of sponsored transactions; each action's use and a safe limit
   npm run sponsor -- mana-report --save     writes sponsor-data/mana-limits.json (public)
   npm run sponsor -- mana-limit picks:pick 0.0477 --source "testnet 2026-10-28" --save    one action measured elsewhere
-  npm run sponsor -- config                 dry run: shows the caps and every limit; then --send (it also updates the website's copy)
+  npm run sponsor -- site-limits --send     step 1: the website gets limits that fit the old AND the new ones; commit, push, wait
+  npm run sponsor -- config --send          step 2: the new limits on chain; then commit and push the website files again
   ```
-  Rule: limit = 1.5 × the most that action has ever used (at least 0.02, at most the per-transaction cap), rounded up
-  to 0.01; the tool refuses any limit below 1.25 × the most used, and a new report never lowers a limit below an
-  older maximum. Run it weekly, or after a contract upgrade.
+  Rule (after the review of 2026-10-28): limit = 2 × the most that action used in a single-action transaction
+  (3 × for a number typed in or measured on the testnet), at least 0.05 Mana, rounded up to 0.01, at most the
+  per-transaction cap. Never below 1.25 × the most used (an action too heavy for that gets no row and keeps the
+  per-transaction cap), never lowered by a later report, and doubled for an action seen to run out of Mana. Why so
+  wide: Mana prices move with how busy the chain is, and a transaction has a fixed cost on top of its action.
+  `config --send` refuses while the website would ask for more than the new limits. Run the report weekly or after
+  any upgrade. `would_pay` doesn't know the operations, so it can't check these limits; the site and the tool keep
+  the website's copy in step (review L2, accepted).
 
 Release candidate sha256 (v3 with the above): `21bec82583e1a7decbb2c70376f4b08e026f617c32bca268ab700f50e9aef2df`
 (33,210 bytes). Not yet audited: the upload tool allows it on the testnet only.

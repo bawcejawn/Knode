@@ -7,8 +7,10 @@
  *   npm run sponsor -- config [--per-tx 1] [--per-player-day 50] [--per-player-week 300] [--per-day 5000] [--free-per-day 2000] [--min-vhp 1] [--send]
  *                                                   set the caps (in Mana; 1 Mana = 1 KOIN of Mana) and the per-action
  *                                                   Mana limits (sponsor-data/mana-limits.json); keeps on/off as is
- *   npm run sponsor -- mana-limit <game|desk|race|picks>:<action> <most used> [--source text] [--save]
- *                                                   add one action measured elsewhere (e.g. picks:pick 0.0477, testnet)
+ *   npm run sponsor -- mana-limit <game|desk|race|picks>:<action> <most used> --source <text> [--save]
+ *                                                   add one action measured elsewhere (e.g. picks:pick 0.0477 --source testnet)
+ *   npm run sponsor -- site-limits [--send]         step 1 of a limits change: give the website limits that fit both
+ *                                                   the sponsor's current and new limits (commit and push them)
  *   npm run sponsor -- mana-report [--blocks 28800] [--save]
  *                                                   the Mana adjuster: what each sponsored action really used (read
  *                                                   from the chain), and a safe limit for each; --save writes them to
@@ -32,7 +34,7 @@ import { KoinosChain, showKoin, toSat } from "./chain.ts";
 import { tokenAbi } from "./token-abi.ts";
 import { contractMetadata } from "./chaincheck.ts";
 import { units, isMainnet, pinDeployment, PINNED_MAINNET } from "./bot.ts";
-import { readLimits, summarize, merge, chainRows, siteMap, actionNames, checkRows, toMana, key, LIMITS_FILE, type Sample } from "./mana-limits.ts";
+import { readLimits, summarize, merge, chainRows, siteMap, actionNames, checkRows, toMana, key, transitionRows, siteFits, LIMITS_FILE, MARGIN, type Sample } from "./mana-limits.ts";
 
 const E = process.env;
 const log = (...a: any[]) => console.log(...a);
@@ -246,13 +248,20 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
     log(`  per-action Mana limits (${LIMITS_FILE}; any other action: ${caps.perTx} per transaction):`);
     for (const r of limits.rows) log(`    ${r.name.padEnd(32)} ${toMana(r.max_mana)} Mana${r.observed ? `   (has used up to ${toMana(r.observed.max)}, ${r.observed.count} seen, ${r.observed.source})` : ""}`);
   } else log(`  per-action Mana limits: none yet (every action may ask for up to ${caps.perTx}; run mana-report)`);
+  // Review L1: the website must never ask for more than the sponsor accepts, before or after this change.
+  const site = readJson(GAME_DEP)?.sponsor?.rcLimits ?? {};
+  const perTxNew = BigInt(units(caps.perTx));
+  const misfitNew = siteFits(site, chainRows(limits.rows), perTxNew), misfitNow = siteFits(site, cur.mana_caps ?? [], BigInt(cur.max_mana_per_tx && cur.max_mana_per_tx !== "0" ? cur.max_mana_per_tx : perTxNew));
+  if (misfitNew.length) log(`  ⚠ the website would ask for more than the new limits for: ${misfitNew.join(", ")}. First: npm run sponsor -- site-limits --send, commit and push.`);
   if (!send) { log("\nDry run only. Nothing was sent. Add --send to send it."); return; }
+  if (misfitNew.length) throw new Error("Not sent: give the website the safe limits first (npm run sponsor -- site-limits --send, then commit and push, then wait a few minutes).");
+  void misfitNow;
   const chain = new KoinosChain(rpc, A);
   const r = await chain.send([{ contract: A, abi: loadAbi(), method: "set_config", args: { config } }], [s], { payer: A, rcLimitKoin: 2 });
   log(r.ok ? `✔ done (Mana used ${showKoin(r.rcUsed)})  transaction ${r.txId}` : `✖ ${r.error}`);
   if (!r.ok) { process.exitCode = 1; return; }
   // The website asks for the same limits the sponsor now accepts.
-  if (syncSiteLimits(limits.rows)) log(`Updated the per-action limits in ${GAME_DEP} and ${DESK_DEP}: commit and push them.`);
+  if (syncSiteLimits(limits.rows)) log(`Updated the per-action limits in ${GAME_DEP} and ${DESK_DEP} to the new ones: commit and push them (any limit that went up is used once the site updates).`);
 }
 
 /** Copies the per-action limits into the website's sponsor block (game and desk deployment files), if it has one. */
@@ -268,11 +277,16 @@ export function syncSiteLimits(rows: ReturnType<typeof readLimits>["rows"], file
 }
 
 // ═══════════════════════════════ the Mana adjuster ═══════════════════════════════
-/** One action measured elsewhere (the testnet, before it is sponsored on mainnet): adds it with the usual margin. */
-function manaLimit(a: string[]) {
-  const [what, most] = a.filter((x) => !x.startsWith("--") && x !== flag(a, "--source", "\u0000"));
+/** One action measured elsewhere (the testnet, before it is sponsored on mainnet): adds it with the manual margin (3 ×). */
+async function manaLimit(a: string[]) {
+  const source = flag(a, "--source", "");
+  const pos = a.filter((x, i) => !x.startsWith("--") && a[i - 1] !== "--source");
+  const [what, most] = pos;
   const m = /^(game|desk|race|picks):([a-z_]+)$/.exec(what ?? "");
-  if (!m || !(Number(most) > 0)) throw new Error('Usage: npm run sponsor -- mana-limit picks:pick 0.0477 [--source "testnet 2026-10-28"] [--save]');
+  if (!m || !/^\d+(\.\d{1,8})?$/.test(most ?? "") || !(Number(most) > 0) || !source)
+    throw new Error('Usage: npm run sponsor -- mana-limit picks:pick 0.0477 --source "testnet 2026-10-28" [--save]');
+  // Review L3: a missing zero would set a limit far too low; a Knode action uses at least about 0.01 Mana.
+  if (Number(most) < 0.01 && !a.includes("--force")) throw new Error(`${most} Mana is less than any Knode action uses (about 0.01 and up). Check the number; add --force only if it is right.`);
   const k = knode();
   const contract = ({ game: k.game.contract, desk: k.desk.contract, race: k.race, picks: k.picks } as any)[m[1]];
   if (!contract) throw new Error(`No ${m[1]} contract yet (its deployment.json is missing).`);
@@ -280,13 +294,33 @@ function manaLimit(a: string[]) {
   const hit = Object.entries(names).find(([kk, n]) => kk.startsWith(contract + ":") && n.endsWith(" " + m[2]));
   if (!hit) throw new Error(`${m[2]} is not a sponsored action of the ${m[1]} contract.`);
   const entry = parseInt(hit[0].split(":")[1], 16);
-  const perTx = BigInt(units(DEFAULT_CAPS.perTx)), old = readLimits(), at = new Date().toISOString();
-  const rows = merge(old.rows, [{ contract, entry, name: hit[1], count: 1, maxSat: BigInt(units(String(most))), typicalSat: BigInt(units(String(most))) }], perTx, flag(a, "--source", "measured by hand"), at);
-  const r = rows.find((x) => x.contract === contract && x.entry_point === entry)!;
-  log(`${r.name}: has used up to ${toMana(r.observed!.max)} Mana → limit ${toMana(r.max_mana)} Mana (1.5 ×, rounded up).`);
+  const perTx = await chainPerTx(), old = readLimits(), at = new Date().toISOString(), skipped: string[] = [];
+  const rows = merge(old.rows, [{ contract, entry, name: hit[1], count: 1, maxSat: BigInt(units(String(most))), typicalSat: BigInt(units(String(most))), manual: true }], perTx, source, at, skipped);
+  for (const x of skipped) log(`⚠ ${x}`);
+  const r = rows.find((x) => x.contract === contract && x.entry_point === entry);
+  if (!r) return;
+  log(`${r.name}: has used up to ${toMana(r.observed!.max)} Mana (${source}) → limit ${toMana(r.max_mana)} Mana (3 × for a number measured elsewhere, at least 0.05).`);
   if (!a.includes("--save")) { log("Nothing saved. Add --save."); return; }
-  writeJson(LIMITS_FILE, { v: 1, updated: at, margin: 1.5, rows });
-  log(`✔ saved ${LIMITS_FILE}. Next: npm run sponsor -- config (dry run), then --send.`);
+  writeJson(LIMITS_FILE, { v: 1, updated: at, margin: MARGIN, rows });
+  log(`✔ saved ${LIMITS_FILE}. Next: npm run sponsor -- site-limits --send (commit and push), then config --send.`);
+}
+/** The per-transaction cap the sponsor has on chain now (else the default). */
+async function chainPerTx(): Promise<bigint> {
+  const cur = await currentChainConfig();
+  return BigInt(cur.max_mana_per_tx && cur.max_mana_per_tx !== "0" ? cur.max_mana_per_tx : units(DEFAULT_CAPS.perTx));
+}
+async function currentChainConfig(): Promise<any> {
+  try { const { rpc } = knode(); const address = readJson(STATE)?.address ?? PINNED_MAINNET.sponsor; return await readSponsor(new Provider([rpc]), address, "get_config"); } catch { return {}; }
+}
+/** Step 1 of a limits change (review L1): the website gets, for each action, the lower of the sponsor's current limit
+ *  and the new one, so whatever the page asks for is accepted before and after the chain changes. */
+async function siteLimits(send: boolean) {
+  const cur = await currentChainConfig();
+  const perTx = BigInt(cur.max_mana_per_tx && cur.max_mana_per_tx !== "0" ? cur.max_mana_per_tx : units(DEFAULT_CAPS.perTx));
+  const rows = transitionRows(cur.mana_caps ?? [], readLimits().rows, perTx);
+  for (const r of rows) log(`  ${r.name.padEnd(32)} the website will ask for ${toMana(r.max_mana)} Mana`);
+  if (!send) { log("\nDry run only. Add --send to write game-data/ and desk-data/deployment.json."); return; }
+  log(syncSiteLimits(rows) ? `✔ written. Commit and push ${GAME_DEP} and ${DESK_DEP}, wait for the site to update (a few minutes), then: npm run sponsor -- config --send` : "No sponsor block in the deployment files yet (npm run sponsor -- payer sponsor --send).");
 }
 
 /** Reads sponsored transactions from the last `blocks` blocks: what each action used (read-only). */
@@ -314,7 +348,7 @@ async function manaReport(a: string[]) {
         if (!calls.length || calls.length !== (tx.operations ?? []).length) continue;
         const k0 = key(calls[0].contract_id, calls[0].entry_point >>> 0);
         if (!calls.every((c: any) => key(c.contract_id, c.entry_point >>> 0) === k0)) continue;   // mixed: can't split fairly
-        samples.push({ contract: calls[0].contract_id, entry: calls[0].entry_point >>> 0, rcUsed: BigInt(rec.rc_used ?? 0), ops: calls.length, reverted: !!rec.reverted });
+        samples.push({ contract: calls[0].contract_id, entry: calls[0].entry_point >>> 0, rcUsed: BigInt(rec.rc_used ?? 0), rcLimit: BigInt(rec.rc_limit ?? tx.header?.rc_limit ?? 0), ops: calls.length, reverted: !!rec.reverted });
       }
     }
     if ((h - from) % 5000 < 100) process.stdout.write(`  …block ${h}\r`);
@@ -324,20 +358,23 @@ async function manaReport(a: string[]) {
   const names = actionNames({ game: game.contract, desk: desk.contract, race, picks, tokens: [game.vhp ?? PINNED_MAINNET.vhp, game.koin ?? PINNED_MAINNET.koin] });
   const stats = summarize(samples, names);
   const old = readLimits();
-  log(`\n${seenTx} sponsored transactions, ${samples.length} measured (single-action, not reverted).`);
+  log(`\n${seenTx} sponsored transactions; ${samples.filter((x) => x.ops === 1 && !x.reverted).length} single-action ones measured.`);
+  for (const x of stats) if (x.ranOut) log(`⚠ ${x.name}: ${x.ranOut} transaction(s) ran out of Mana: its limit goes up.`);
   log(`${"Action".padEnd(32)} ${"seen".padStart(5)} ${"typical".padStart(9)} ${"most".padStart(9)} ${"limit now".padStart(10)} ${"suggested".padStart(10)}`);
   const at = new Date().toISOString();
-  const rows = merge(old.rows, stats, perTx, `mainnet blocks ${from}-${top}`, at);
+  const skipped: string[] = [];
+  const rows = merge(old.rows, stats, perTx, `mainnet blocks ${from}-${top}`, at, skipped);
+  for (const x of skipped) log(`⚠ ${x}`);
   for (const r of rows) {
     const s = stats.find((x) => key(x.contract, x.entry) === key(r.contract, r.entry_point));
     const now = old.rows.find((x) => key(x.contract, x.entry_point) === key(r.contract, r.entry_point));
     log(`${r.name.padEnd(32)} ${String(s?.count ?? "–").padStart(5)} ${(s ? toMana(s.typicalSat) : "–").padStart(9)} ${(s ? toMana(s.maxSat) : "–").padStart(9)} ${(now ? toMana(now.max_mana) : toMana(perTx)).padStart(10)} ${toMana(r.max_mana).padStart(10)}`);
   }
-  log(`\nRule: limit = 1.5 × the most an action has used (at least 0.02, at most the ${toMana(perTx)} per-transaction cap), never below 1.25 ×.`);
+  log(`\nRule: limit = 2 × the most an action has used in one transaction (at least 0.05, at most the ${toMana(perTx)} per-transaction cap), never lowered, never below 1.25 ×.`);
   if (!a.includes("--save")) { log(`Nothing saved. Add --save to write ${LIMITS_FILE}, then: npm run sponsor -- config --send (and commit both).`); return; }
   fs.mkdirSync("sponsor-data", { recursive: true });
-  writeJson(LIMITS_FILE, { v: 1, updated: at, margin: 1.5, rows });
-  log(`✔ saved ${LIMITS_FILE}. Next: npm run sponsor -- config (dry run), then --send; commit ${LIMITS_FILE} and the deployment files.`);
+  writeJson(LIMITS_FILE, { v: 1, updated: at, margin: MARGIN, rows });
+  log(`✔ saved ${LIMITS_FILE}. Next: npm run sponsor -- site-limits --send (commit and push), then config --send; commit ${LIMITS_FILE} too.`);
 }
 
 // ═══════════════════════════════ website payer ═══════════════════════════════
@@ -383,6 +420,7 @@ async function main() {
     case "disable": return setConfig(a, send, false);
     case "mana-report": return manaReport(a);
     case "mana-limit": return manaLimit(a);
+    case "site-limits": return siteLimits(send);
     case "payer": {
       const choice = a[0];
       if (choice !== "sponsor" && choice !== "self") throw new Error('payer sponsor | payer self');
@@ -398,7 +436,7 @@ async function main() {
       log(`Edited ${GAME_DEP} and ${DESK_DEP}. Commit and push them (git add game-data/deployment.json desk-data/deployment.json, git commit, git push): the site follows within a few minutes.`);
       return;
     }
-    default: throw new Error(`Unknown command "${cmd}". Commands: status, upload, config, enable, disable, mana-report, mana-limit, payer sponsor|self`);
+    default: throw new Error(`Unknown command "${cmd}". Commands: status, upload, config, enable, disable, mana-report, mana-limit, site-limits, payer sponsor|self`);
   }
 }
 
