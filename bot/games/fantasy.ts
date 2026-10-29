@@ -232,7 +232,9 @@ export async function run(o: Opts) {
     const last = weeks.get(w - 1) || (w > 0 ? load(w - 1) : null);
     const carried = new Map<string, string[]>((last?.players || []).filter((x) => x.days?.[6]?.team).map((x) => [x.a, x.days[6].team as string[]]));
     for (const a of carried.keys()) if (!byPlayer.has(a)) byPlayer.set(a, {});
-    const rows = [...byPlayer].map(([a, picks]) => { const s = F.scoreWeek(wf.sheet, recs, picks, carried.get(a) || null); return { a, points: s.points, vault: F.vaultPoints(s.points), full: s.full, days: s.days }; });
+    const rows = [...byPlayer].map(([a, picks]) => { const s = F.scoreWeek(wf.sheet, recs, picks, carried.get(a) || null); return { a, points: s.points, vault: 0, full: s.full, days: s.days }; });
+    const vp = F.vaultPoints(rows);
+    for (const r of rows) r.vault = vp.get(r.a) || 0;
     wf.players = F.rank(rows.filter((r) => r.days.some((d: any) => d.team)));
     const allFinal = recs.every((d: any) => d.final);
     if (allFinal && now >= wf.end + correction && (wf.rivals || !picksRead)) {

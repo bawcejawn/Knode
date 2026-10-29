@@ -15,12 +15,15 @@
  *   the pool; a smaller pool's budget is raised to what its 5 cheapest cost).
  *   The sheet is made on Sunday 12:00 UTC for the next week; its pool is the race field on the card in force then.
  * - A team is picked for a UTC day and locks before that day starts (the Picks contract enforces the lock).
- *   From one day to the next, a team may make one change: swap one producer, or move the captaincy. A swapped-in
- *   producer may take the captaincy of the one it replaced as part of that one change. A day with no new pick keeps
- *   yesterday's team. An invalid pick (not 5 different pool producers, over budget, more than one change) is ignored
- *   and yesterday's team stays. Days before a player's first valid team score 0.
- * - Week points = the sum of the 7 days. The vault takes whole points 1 to 255: round(points ÷ 25), at least 1 for any
- *   player who scored.
+ *   Each week starts fresh: Monday's team may be any valid team on the new price list. From one day to the next after
+ *   that, a team may make one change: swap one producer, or move the captaincy. A swapped-in producer may take the
+ *   captaincy of the one it replaced as part of that one change. A day with no new pick keeps yesterday's team; last
+ *   week's team carries into Monday only if it fits the new list (all 5 still on it, within the budget). An invalid
+ *   pick (not 5 different pool producers, over budget, more than one change) is ignored and yesterday's team stays.
+ *   Days before a player's first valid team score 0.
+ * - Week points = the sum of the 7 days. The vault takes whole points 1 to 255 and uses only their ORDER (rank weights
+ *   and the top-30% headcount; docs/V6-PLAN.md on branch vault-v6), so the best week gets 255, the next distinct
+ *   score 254, and so on, keeping every tie; players below the 255th distinct score all get 1. Only scores above 0.
  * - Weekly Rival: a player may challenge one other player for the week. The match counts only when both had a team on
  *   all 7 days. More week points wins; equal is a draw. Two players who challenge each other play one match.
  *   A record keeps challenges made and challenges received apart. Rivals carry no prize money.
@@ -33,7 +36,8 @@
  * - Team: a list of 5 producers, captain first; round = the day number (target = the day's start); locks 5 minutes
  *   before the day starts; opens 7 days ahead. The contract checks 1 to 5 distinct valid addresses; this file checks the
  *   rest (exactly 5, the pool, the budget, one change a day).
- * - Rival: one address (any wallet); round = the week (target = the week's start); locks 5 minutes before it. */
+ * - Rival: one address (any wallet); round = the first day of its week (target = the week's start); locks 5 minutes
+ *   before it. Rounds that aren't a week's first day are never used. */
 (function (root) {
   "use strict";
   const R = root.KRaceMath;
@@ -42,7 +46,7 @@
   const TEAM = 5, BUDGET = 100, DAY_CAP = 130, CAPTAIN = 2;
   const PRICE = { base: 20, per: 1.5, min: 8, max: 40, none: 20 };
   const FORM_DAYS = 7;                           // form = the index over the 7 days before the sheet's day
-  const VAULT_DIV = 25, VAULT_MAX = 255;
+  const VAULT_MAX = 255;
   const LEAD_MS = 5 * 60000;                     // picks lock 5 minutes before their day (or week) starts
   const GAMES = Object.freeze({ team: 4, rival: 5 });
   const isAddr = (a) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
@@ -68,10 +72,10 @@
     /** When the price sheet for week w is made (real clock: Sunday 12:00 UTC before it), and the form days it uses. */
     const sheetTime = (w) => weekStart(w) - C.sheetBefore;
     const formDays = (w) => { const last = dayNo(sheetTime(w)) - 1; return Array.from({ length: FORM_DAYS }, (_, i) => last - FORM_DAYS + 1 + i); };
-    /** The Picks rounds: a team pick's round is its day; a rival pick's round is its week, counted from rivalOffset. */
-    const rivalOffset = ((C.genesis % WEEK) + WEEK) % WEEK;
-    const rivalRound = (w) => (weekStart(w) - rivalOffset) / WEEK;
-    const weekOfRivalRound = (r) => (r * WEEK + rivalOffset - C.genesis) / WEEK;
+    /** The Picks rounds: a team pick's round is its day. A rival pick's round is the first day of its week, in a game
+     *  whose rounds are days too, so the game's settings never depend on when week 0 began (only week starts are used). */
+    const rivalRound = (w) => dayNo(weekStart(w));
+    const weekOfRivalRound = (r) => (dayStart(r) - C.genesis) % WEEK === 0 && dayStart(r) >= C.genesis ? (dayStart(r) - C.genesis) / WEEK : null;
     /** When a day's team (or a week's rival) locks: 5 minutes before it starts. */
     const lockOfDay = (d) => dayStart(d) - LEAD_MS;
     const lockOfWeek = (w) => weekStart(w) - LEAD_MS;
@@ -79,7 +83,7 @@
     const games = (ids = GAMES, perDay = 20) => ({
       team: { id: ids.team, kind: 2, list_size: TEAM, number_min: "0", number_max: "0", lock_mode: 2, round_size: String(C.day), round_offset: "0",
         lead: String(LEAD_MS), ahead: String(WEEK), max_picks_per_day: perDay, max_changes: 20, enabled: true },
-      rival: { id: ids.rival, kind: 1, list_size: 1, number_min: "0", number_max: "0", lock_mode: 2, round_size: String(WEEK), round_offset: String(rivalOffset),
+      rival: { id: ids.rival, kind: 1, list_size: 1, number_min: "0", number_max: "0", lock_mode: 2, round_size: String(C.day), round_offset: "0",
         lead: String(LEAD_MS), ahead: String(WEEK), max_picks_per_day: 10, max_changes: 5, enabled: true },
     });
 
@@ -171,11 +175,17 @@
       return out + (capMoved ? 1 : 0);
     }
     /** The team in force on each of the 7 days of a week. picks: { [dayNo]: list } (the player's last pick for that day,
-     *  as the Picks contract holds it). start: the team carried in from before the week, or null.
+     *  as the Picks contract holds it). start: the team carried in from before the week, or null: it plays Monday only
+     *  if there's no valid Monday pick and it fits this week's list. Monday's pick may change any number of producers.
      *  Returns [{ day, team (or null), note? }] for the 7 days. */
     function teamsForWeek(sheet, days, picks, start = null) {
       let cur = start && checkTeam(sheet, start).ok ? start : null;
-      return days.map((d) => {
+      return days.map((d, i) => {
+        if (i === 0) {
+          const p = picks?.[d];
+          if (Array.isArray(p)) { const c = checkTeam(sheet, p); if (c.ok) cur = [...p]; else return { day: d, team: cur ? [...cur] : null, note: `ignored: ${c.why}` }; }
+          return { day: d, team: cur ? [...cur] : null };
+        }
         const p = picks?.[d];
         let note;
         if (Array.isArray(p) && !(cur && p.length === cur.length && p.every((a, i) => a === cur[i]))) {
@@ -200,8 +210,13 @@
       const rows = teams.map((t, i) => ({ ...t, score: dayScore(t.team, dayRecords[i]) }));
       return { days: rows, points: round(rows.reduce((s, r) => s + r.score, 0), 2), full: rows.every((r) => r.team) };
     }
-    /** The vault's whole points: round(points ÷ 25), at least 1 for any score above 0, at most 255. */
-    const vaultPoints = (p) => (p > 0 ? Math.min(VAULT_MAX, Math.max(1, Math.round(p / VAULT_DIV))) : 0);
+    /** The vault's whole points for a week's players: 255 for the best score, one less for each lower distinct score
+     *  (ties keep the same points), never below 1; a score of 0 gets nothing. Returns a Map address → points. */
+    function vaultPoints(rows) {
+      const scores = [...new Set(rows.filter((r) => r.points > 0).map((r) => r.points))].sort((x, y) => y - x);
+      const at = new Map(scores.map((p, i) => [p, Math.max(1, VAULT_MAX - i)]));
+      return new Map(rows.filter((r) => r.points > 0).map((r) => [r.a, at.get(r.points)]));
+    }
     /** Rank players by week points (more first); equal points share a place. Returns rows with place. */
     function rank(rows) {
       const s = [...rows].sort((x, y) => y.points - x.points || (x.a < y.a ? -1 : 1));
@@ -245,9 +260,9 @@
     }
 
     return {
-      TEAM, BUDGET, DAY_CAP, CAPTAIN, PRICE, FORM_DAYS, VAULT_DIV, VAULT_MAX, LEAD_MS, GAMES, isAddr,
+      TEAM, BUDGET, DAY_CAP, CAPTAIN, PRICE, FORM_DAYS, VAULT_MAX, LEAD_MS, GAMES, isAddr,
       clock: Object.freeze({ ...C, week: WEEK }), DAY_MS: C.day, WEEK_MS: WEEK,
-      dayNo, dayStart, weekOf, weekStart, weekDays, sheetTime, formDays, rivalOffset, rivalRound, weekOfRivalRound, lockOfDay, lockOfWeek, games,
+      dayNo, dayStart, weekOf, weekStart, weekDays, sheetTime, formDays, rivalRound, weekOfRivalRound, lockOfDay, lockOfWeek, games,
       cardAt, sharesOf, dayIndex, spanIndex, priceOf, medianOf, makeSheet, sheetText,
       checkTeam, changes, teamsForWeek, dayScore, scoreWeek, vaultPoints, rank,
       matches, addRecords, recordLine,

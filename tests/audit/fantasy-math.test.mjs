@@ -135,13 +135,19 @@ test("week teams: first valid team starts; invalid or 2-change picks are ignored
   assert.deepEqual(t[6].team, [B, A, C, D, G]);
 });
 
-test("week teams: a team carried in from last week counts as yesterday's for Monday", () => {
-  const t = F.teamsForWeek(sheet, DAYS, { [DAYS[0]]: [A, B, C, D, G] }, [A, B, C, D, E]);
-  assert.deepEqual(t[0].team, [A, B, C, D, G]);
-  const t2 = F.teamsForWeek(sheet, DAYS, { [DAYS[0]]: [G, X, C, D, E] }, [A, B, C, D, E]);
-  assert.deepEqual(t2[0].team, [A, B, C, D, E], "two changes from the carried team: ignored");
+test("week teams: Monday starts fresh (any valid team); last week's team plays Monday only if it fits the new list", () => {
+  const t = F.teamsForWeek(sheet, DAYS, { [DAYS[0]]: [X, A, B, C, D] }, [A, B, C, D, E]);
+  assert.ok(F.checkTeam(sheet, [X, A, B, C, D]).ok === false, "(X+A+B+C+D is over budget)");
+  assert.deepEqual(t[0].team, [A, B, C, D, E], "an invalid Monday pick is ignored: the carried team plays");
+  const fresh = [B, C, D, E, G];
+  const t1 = F.teamsForWeek(sheet, DAYS, { [DAYS[0]]: fresh }, [A, X, C, D, E]);
+  assert.deepEqual(t1[0].team, fresh, "Monday: a whole new team is fine");
+  const t2 = F.teamsForWeek(sheet, DAYS, {}, [A, B, C, D, E]);
+  assert.deepEqual(t2[6].team, [A, B, C, D, E], "no picks: the carried team plays all week");
   const t3 = F.teamsForWeek({ ...sheet, pool: sheet.pool.filter((p) => p.a !== E) }, DAYS, {}, [A, B, C, D, E]);
   assert.equal(t3[0].team, null, "a carried team that no longer fits this week's sheet doesn't carry");
+  const t4 = F.teamsForWeek(sheet, DAYS, { [DAYS[1]]: [B, C, D, E, G] }, [A, B, C, D, E]);
+  assert.match(t4[1].note, /more than one change/, "after Monday, one change a day again (A out, G in, captain to B = 2)");
 });
 
 test("day score: index capped at 130 per producer, captain double, unknown or null index scores 0", () => {
@@ -151,17 +157,17 @@ test("day score: index capped at 130 per producer, captain double, unknown or nu
   assert.equal(F.dayScore(null, day), 0);
 });
 
-test("score week: sum of days, full only with a team on all 7 days; vault points round(÷25), at least 1, at most 255", () => {
+test("score week: sum of days, full only with a team on all 7 days; vault points keep the order and the ties", () => {
   const recs = DAYS.map((d) => ({ day: d, producers: Object.fromEntries([A, B, C, D, E].map((a) => [a, [0, 0, 100]])) }));
   const full = F.scoreWeek(sheet, recs, { [DAYS[0]]: [A, B, C, D, E] });
   assert.equal(full.points, 7 * 600); assert.equal(full.full, true);
   const late = F.scoreWeek(sheet, recs, { [DAYS[3]]: [A, B, C, D, E] });
   assert.equal(late.points, 4 * 600); assert.equal(late.full, false, "late joiner: days before score 0, not full");
-  assert.equal(F.vaultPoints(4200), 168);
-  assert.equal(F.vaultPoints(3), 1);
-  assert.equal(F.vaultPoints(0), 0);
-  assert.equal(F.vaultPoints(7 * 6 * 130), 218, "the most a week can score fits under 255");
-  assert.equal(F.vaultPoints(1e9), 255);
+  const vp = F.vaultPoints([{ a: A, points: 4200.5 }, { a: B, points: 3000 }, { a: C, points: 4200.5 }, { a: D, points: 0 }, { a: E, points: 2999.99 }]);
+  assert.deepEqual([...vp.entries()].sort(), [[A, 255], [B, 254], [C, 255], [E, 253]].sort(), "order and ties kept; 0 points posts nothing");
+  const many = Array.from({ length: 300 }, (_, i) => ({ a: `1${String(i).padStart(33, "Q")}`, points: 1000 - i }));
+  const vm = F.vaultPoints(many);
+  assert.equal(vm.get(many[0].a), 255); assert.equal(vm.get(many[254].a), 1); assert.equal(vm.get(many[299].a), 1, "below the 255th score: 1");
 });
 
 test("rank: more points first; equal points share a place", () => {
@@ -210,6 +216,8 @@ test("clock: the real clock is the game week (Monday 00:00 UTC) and its Picks ga
   assert.ok(Number.isInteger(rr));
   assert.equal(rr * Number(g.rival.round_size) + Number(g.rival.round_offset), F.weekStart(W));
   assert.equal(F.weekOfRivalRound(rr), W);
+  assert.equal(F.weekOfRivalRound(rr + 1), null, "a round that isn't a week's first day is no week");
+  assert.equal(g.rival.round_size, String(R.DAY)); assert.equal(g.rival.round_offset, "0");
 });
 
 test("clock: the fast test clock (1 test day = 1 hour) runs the same rules in a 7-hour week", () => {
@@ -228,8 +236,9 @@ test("clock: the fast test clock (1 test day = 1 hour) runs the same rules in a 
   const g = T.games({ team: 94, rival: 95 }, 50);
   assert.equal(g.team.round_size, String(R.HOUR)); assert.equal(g.team.ahead, String(7 * R.HOUR));
   assert.equal(g.team.max_picks_per_day, 50);
-  assert.ok(Number(g.rival.round_offset) < Number(g.rival.round_size));
   assert.equal(T.rivalRound(1) * Number(g.rival.round_size) + Number(g.rival.round_offset), T.weekStart(1));
+  const g2 = F.withClock({ day: R.HOUR, genesis: genesis + 3 * R.HOUR, sheetBefore: 30 * 60000 }).games({ team: 94, rival: 95 }, 50);
+  assert.deepEqual(g2, g, "the Picks settings don't depend on when week 0 starts (a new test week needs no new game)");
   // The day index of a 1-hour day uses that hour's blocks and the card in force at its start.
   const ts = [], sig = [], t0 = T.dayStart(days[0]);
   for (let i = 0; i < 100; i++) { ts.push(t0 + i * 36000); sig.push(i < 50 ? 0 : i < 80 ? 1 : 2); }

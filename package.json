@@ -22,7 +22,8 @@
     "blockx": "tsx bot/games/blockx.ts",
     "picks": "tsx bot/picks.ts",
     "testnet-site": "node tools/testnet-site.mjs",
-    "fantasy": "tsx bot/games/fantasy.ts"
+    "fantasy": "tsx bot/games/fantasy.ts",
+    "fantasy-test": "tsx bot/fantasy-test.ts"
   },
   "dependencies": {
     "koilib": "9.4.1"

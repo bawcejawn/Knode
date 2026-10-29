@@ -1,0 +1,6 @@
+/* Fantasy Producers TESTNET practice page only (served by the local practice server). */
+.tn-bar { position: sticky; top: 0; z-index: 50; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 8px 16px; background: #b3261e; color: #fff; font-size: 14px; }
+.tn-bar b { letter-spacing: .08em; }
+.tn-bar label { margin-left: auto; display: flex; gap: 6px; align-items: center; font-weight: 700; }
+.tn-bar select { font: inherit; padding: 3px 6px; border-radius: 6px; border: 0; }
+.btn-wallet, .hw-btn, [data-header-wallet] { display: none !important; }

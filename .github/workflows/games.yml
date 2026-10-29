@@ -1,12 +1,14 @@
 # KnodeGames recorders: every hour, records each game's results from the chain (irreversible blocks only, two nodes
-# must agree). Today: Who Signs Block X (bot/games/blockx.ts). Each game has its own folder on the games-data branch.
+# must agree). Who Signs Block X (bot/games/blockx.ts) and, once FANTASY_ENABLED is true, Fantasy Producers
+# (bot/games/fantasy.ts). Each game has its own folder on the games-data branch.
 #
 # Two jobs, like the race and the main bot, so repository code never runs next to a write token:
 #   record   runs the recorders with a read-only token and no secrets (they only read the chain), and hands the files on.
 #   publish  runs no repository code: it checks the files' shape and pushes them to the games-data branch.
 # It never touches main, holds no key, and does not run on pull requests.
 #
-# Turn it on: Settings → Secrets and variables → Actions → Variables: GAMES_ENABLED = true
+# Turn it on: Settings → Secrets and variables → Actions → Variables: GAMES_ENABLED = true (and FANTASY_ENABLED = true
+# once Picks games 4 and 5 are registered).
 name: KnodeGames recorders
 
 on:
@@ -42,10 +44,13 @@ jobs:
       - name: Take the last run's files and the race cards
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/prev/blockx" "$RUNNER_TEMP/race"
+          mkdir -p "$RUNNER_TEMP/prev/blockx" "$RUNNER_TEMP/prev/fantasy" "$RUNNER_TEMP/race"
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" games-data 2>/dev/null; then
             for f in $(git ls-tree --name-only FETCH_HEAD:blockx 2>/dev/null); do
               if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:blockx/$f" > "$RUNNER_TEMP/prev/blockx/$f"; fi
+            done
+            for f in $(git ls-tree --name-only FETCH_HEAD:fantasy 2>/dev/null); do
+              if [[ "$f" =~ ^(index|board|days|rivals|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:fantasy/$f" > "$RUNNER_TEMP/prev/fantasy/$f"; fi
             done
           else echo "No games-data branch yet."; fi
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
@@ -60,6 +65,15 @@ jobs:
           RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
           BLOCKX_PREV: ${{ runner.temp }}/prev/blockx
           BLOCKX_OUT: ${{ runner.temp }}/games-data/blockx
+          RACE_DATA: ${{ runner.temp }}/race
+      - name: Record Fantasy Producers
+        if: ${{ vars.FANTASY_ENABLED == 'true' }}
+        run: npm run fantasy
+        env:
+          RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
+          RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
+          FANTASY_PREV: ${{ runner.temp }}/prev/fantasy
+          FANTASY_OUT: ${{ runner.temp }}/games-data/fantasy
           RACE_DATA: ${{ runner.temp }}/race
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -88,7 +102,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/fantasy" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/fantasy/\(index\|board\|days\|rivals\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           big=$(find "$IN" -type f -size +2048k -print)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
@@ -130,6 +144,51 @@ jobs:
               assert type(j["targets"]) is list and len(j["targets"]) <= 100 and all(target_ok(t) for t in j["targets"]), f
           print("games files ok")
           PY
+          if [ -d "$IN/fantasy" ]; then /usr/bin/python3 - "$IN/fantasy" <<'PY'
+          import json, os, re, sys
+          d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
+          nat = lambda x: type(x) is int and 0 <= x < 10**16
+          A = lambda x: type(x) is str and addr.fullmatch(x) is not None
+          team = lambda t: t is None or (type(t) is list and len(t) == 5 and all(A(a) for a in t) and len(set(t)) == 5)
+          def ix_ok(p):
+              return type(p) is dict and len(p) <= 500 and all(A(a) and type(v) is list and len(v) == 3 and nat(v[0]) and num(v[1]) and (v[2] is None or num(v[2])) for a, v in p.items())
+          def day_ok(x, final):
+              return type(x) is dict and set(x) <= {"day", "final", "checked", "heights", "blocks", "producers", "upTo"} and nat(x["day"]) and x["final"] is final and ix_ok(x["producers"]) and nat(x["blocks"])
+          for f in os.listdir(d):
+              j = json.load(open(os.path.join(d, f), encoding="utf-8"))
+              assert type(j) is dict and j.get("v") == 1, f
+              if f == "index.json":
+                  assert set(j) == {"v", "updated", "weeks", "contract", "games", "clock"} and all(nat(w) for w in j["weeks"]), f
+                  assert j["contract"] is None or A(j["contract"]), f
+                  assert j["games"] == {"team": 4, "rival": 5} and j["clock"]["day"] == 86400000, f
+              elif f == "days.json":
+                  assert set(j) == {"v", "days", "live"} and type(j["days"]) is list and len(j["days"]) <= 30 and all(day_ok(x, True) and x["checked"] in (1, 2) for x in j["days"]), f
+                  assert j["live"] is None or day_ok(j["live"], False), f
+              elif f == "rivals.json":
+                  assert set(j) == {"v", "weeks", "records"} and all(nat(w) for w in j["weeks"]), f
+                  assert all(A(a) and set(r) == {"made", "received"} and all(type(r[k]) is list and len(r[k]) == 3 and all(nat(n) for n in r[k]) for k in r) for a, r in j["records"].items()), f
+              elif f == "board.json":
+                  assert set(j) == {"v", "updated", "week", "lastWeek", "rivals", "mostChallenged"}, f
+                  for k in ("week", "lastWeek"):
+                      b = j[k]
+                      assert b is None or (nat(b["week"]) and type(b["final"]) is bool and all(A(r["a"]) and num(r["points"]) and nat(r["place"]) and type(r["full"]) is bool for r in b["rows"])), f
+                  assert type(j["rivals"]) is list and all(A(r["a"]) for r in j["rivals"]) and all(A(x["a"]) and nat(x["n"]) for x in j["mostChallenged"]), f
+              else:
+                  assert re.fullmatch(r"W\d{3}\.json", f) and f == "W%03d.json" % j["week"], f
+                  assert set(j) == {"v", "week", "start", "end", "final", "sheet", "sha256", "picks", "rivals", "players", "matches"}, f
+                  s = j["sheet"]
+                  assert s is None or (s["week"] == j["week"] and nat(s["budget"]) and len(s["pool"]) <= 200 and all(A(p["a"]) and nat(p["price"]) and 8 <= p["price"] <= 40 for p in s["pool"])), f
+                  assert j["sha256"] is None or re.fullmatch(r"[0-9a-f]{64}", j["sha256"]), f
+                  assert all(re.fullmatch(r"\d+", k) and all(A(p[0]) and type(p[1]) is list and 1 <= len(p[1]) <= 5 and all(A(a) for a in p[1]) and nat(p[2]) for p in v) for k, v in j["picks"].items()), f
+                  assert j["rivals"] is None or all(A(a) and A(b) for a, b in j["rivals"]), f
+                  for r in j["players"]:
+                      assert A(r["a"]) and num(r["points"]) and nat(r["vault"]) and r["vault"] <= 255 and type(r["full"]) is bool and nat(r["place"]), f
+                      assert len(r["days"]) == 7 and all(team(x["team"]) and num(x["score"]) for x in r["days"]), f
+                  assert all(A(m["a"]) and A(m["b"]) and m["result"] in ("a", "b", "draw") for m in j["matches"]), f
+          print("fantasy files ok")
+          PY
+          fi
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git init -q work && cd work
           parent=""
@@ -137,9 +196,12 @@ jobs:
             parent=$(git rev-parse FETCH_HEAD)
             git read-tree FETCH_HEAD
           else git read-tree --empty; fi
-          for f in "$IN"/blockx/*.json; do
-            blob=$(git hash-object -w "$f")
-            git update-index --add --cacheinfo 100644 "$blob" "blockx/$(basename "$f")"
+          for g in blockx fantasy; do
+            [ -d "$IN/$g" ] || continue
+            for f in "$IN"/$g/*.json; do
+              blob=$(git hash-object -w "$f")
+              git update-index --add --cacheinfo 100644 "$blob" "$g/$(basename "$f")"
+            done
           done
           tree=$(git write-tree)
           if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi

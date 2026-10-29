@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- Only these sources may run scripts, load data or be framed. 'unsafe-eval' is needed by koilib (its protobuf
+       encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://raw.githubusercontent.com/bawcejawn/Knode/blocks-data/ https://raw.githubusercontent.com/bawcejawn/Knode/race-data/ https://raw.githubusercontent.com/bawcejawn/Knode/games-data/ https://koinvault.app; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fantasy Producers · Draft five Koinos block producers</title>
+  <!-- Not in the sitemap or the menus until Fantasy launches (claude/launch-order.md). -->
+  <meta name="robots" content="noindex">
+  <meta name="description" content="Draft five Koinos block producers under a salary cap, pick a captain, and score on how reliably they sign their blocks. Weekly league and Weekly Rival.">
+  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="media/icon-180.png">
+  <meta name="theme-color" content="#14213D">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Archivo:wdth,wght@62..125,600;62..125,800;62..125,900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="fantasy.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href="./" aria-label="Knode home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="brand-name">Knode</span>
+      </a>
+      <nav class="tabs" aria-label="Sections">
+        <details class="dd">
+          <summary>Games</summary>
+          <div class="dd-menu">
+            <a href="games.html">All games</a>
+            <a href="index.html#play">Daily Questions</a>
+            <a href="race.html">Producer Race</a>
+          </div>
+        </details>
+        <a href="index.html#leaderboard">Leaderboards</a>
+        <a href="index.html#results">Results</a>
+        <details class="dd">
+          <summary>Tools</summary>
+          <div class="dd-menu">
+            <a href="swap.html">Swap VHP → KOIN</a>
+            <a href="burn.html">Burn KOIN</a>
+            <a href="mana.html">Mana levels</a>
+            <a href="node.html">Producer lookup</a>
+            <a href="pulse.html">Network pulse</a>
+          </div>
+        </details>
+        <a href="index.html#how">Rules</a>
+        <a href="start.html" class="tab-start">New to Koinos?</a>
+        <details class="dd">
+          <summary>Info</summary>
+          <div class="dd-menu">
+            <a href="get.html">Get VHP</a>
+            <a href="index.html#welcome">New here? Quick tour</a>
+            <a href="install.html">Install app</a>
+            <a href="trust.html">Trust</a>
+            <a href="terms.html">Terms &amp; risks</a>
+          </div>
+        </details>
+      </nav>
+      <a class="btn btn-wallet" href="./#play">Play Knode</a>
+    </div>
+  </header>
+
+  <main class="fx">
+    <div class="fx-intro">
+      <h1>Fantasy Producers</h1>
+      <p>Draft five Koinos block producers under a salary cap and pick a captain. Every day they score on how reliably they sign their share of blocks. One change a day. Weekly league, and a Weekly Rival to beat.</p>
+    </div>
+    <p class="status" id="status" role="status">Loading…</p>
+
+    <section class="fx-sheet" id="sheet" aria-label="Your team">
+      <div class="fx-sheet-top">
+        <span id="fx-for">Your team</span>
+        <span class="fx-lock" id="fx-lock"></span>
+      </div>
+      <div class="fx-slots" id="fx-slots"></div>
+      <div class="fx-budget"><span>Spent <b id="fx-spent">0</b> of <b id="fx-budget">100</b></span><div class="fx-bar" id="fx-bar"><i></i></div><span id="fx-left"></span></div>
+      <p class="fx-check" id="fx-check" aria-live="polite"></p>
+      <div class="fx-sheet-foot">
+        <span class="fx-saved" id="fx-saved"></span>
+        <span><button type="button" class="fx-ghost" id="fx-reset">Undo changes</button> <button type="button" class="fx-save" id="fx-save">Save team</button></span>
+      </div>
+    </section>
+
+    <div class="fx-you" id="you" hidden>
+      <div><b id="you-pts">0</b><span>points this week</span></div>
+      <div><b id="you-rank">–</b><span>your place this week</span></div>
+      <div><b id="you-today">–</b><span>today so far</span></div>
+      <div><b id="you-rival">–</b><span>this week's rival</span></div>
+    </div>
+
+    <section class="fx-panel fx-sec" id="pool-box">
+      <div class="fx-head"><h2>Price list</h2><p id="pool-sub"></p></div>
+      <div class="fx-filter" role="group" aria-label="Sort the price list">
+        <button type="button" data-sort="price" aria-pressed="true">Price</button>
+        <button type="button" data-sort="form" aria-pressed="false">Form</button>
+        <button type="button" data-sort="today" aria-pressed="false">Today</button>
+        <button type="button" data-sort="vhp" aria-pressed="false">Size</button>
+      </div>
+      <table class="fx-t" id="fx-pool">
+        <thead><tr><th>Producer</th><th class="num">Form</th><th class="num hide-sm">Yesterday</th><th class="num hide-sm">Today</th><th class="num">Price</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="note" id="pool-note"></p>
+      <p class="fx-disclose" id="fx-disclose">Two producers in the pool are Knode's own nodes (marked <span class="fx-own">Knode</span>). They are drafted and scored like any other: their blocks come from the chain, not from us.</p>
+    </section>
+
+    <section class="fx-panel fx-sec" id="week-box">
+      <div class="fx-head"><h2>Your week</h2><p id="week-sub"></p></div>
+      <div class="fx-days" id="fx-days"></div>
+      <p class="note" id="week-note"></p>
+    </section>
+
+    <div class="fx-cols">
+      <section class="fx-panel" id="league-box">
+        <div class="fx-head"><h2>League</h2><p id="league-sub"></p></div>
+        <div class="fx-filter" role="group" aria-label="Which week">
+          <button type="button" data-week="now" aria-pressed="true">This week</button>
+          <button type="button" data-week="last" aria-pressed="false">Last week</button>
+        </div>
+        <table class="fx-t" id="fx-league"><thead><tr><th class="num">#</th><th>Player</th><th class="num">Points</th><th class="num hide-sm">Vault</th></tr></thead><tbody></tbody></table>
+        <p class="note" id="league-note"></p>
+      </section>
+
+      <section class="fx-panel" id="rival-box">
+        <div class="fx-head"><h2>Weekly Rival</h2><p>Bragging rights, no prize money.</p></div>
+        <div id="fx-match"></div>
+        <h3>Your record</h3>
+        <div class="fx-rec" id="fx-rec"></div>
+        <h3 id="ch-title">Challenge someone for next week</h3>
+        <div class="fx-challenge">
+          <select id="fx-rival-pick" aria-label="Choose a rival"></select>
+          <input id="fx-rival-addr" placeholder="or paste a wallet address" aria-label="Rival wallet address" autocomplete="off" spellcheck="false">
+          <button type="button" class="btn btn-tang" id="fx-rival-send">Challenge</button>
+        </div>
+        <p class="note" id="rival-note"></p>
+        <h3 class="fx-gap">Best rival records</h3>
+        <table class="fx-t" id="fx-rivals"><thead><tr><th>Player</th><th class="num">W–L–D</th><th class="num">Win %</th></tr></thead><tbody></tbody></table>
+        <p class="note" id="rivals-note"></p>
+      </section>
+    </div>
+
+    <details class="fx-how" id="how">
+      <summary>How it works</summary>
+      <div class="explain" id="how-text">
+        <p><b>Your team.</b> Five different producers from the week's price list, within a budget of 100. The first one is your captain and scores double. Save a team for the next <span data-fx="day">day</span>; it carries on until you change it.</p>
+        <p><b>A fresh start every week.</b> New prices come out before each week, and Monday's team can be any team that fits them. Last week's team carries into Monday only if it still fits (all five on the list, within 100).</p>
+        <p><b>Then one change a <span data-fx="day">day</span>.</b> From one <span data-fx="day">day</span> to the next you may swap one producer, or move the captain's armband. A new producer can take the armband of the one it replaces as part of that one swap. A team with more changes, over the budget, or with a producer not on the list is ignored, and yesterday's team plays.</p>
+        <p><b>Points.</b> Koinos picks who signs each block in proportion to VHP, so every producer has a fair share of blocks. Each <span data-fx="day">day</span> a producer scores</p>
+        <p><span class="formula">100 × blocks it signed ÷ blocks it was expected to sign</span></p>
+        <p>(at most 130), with the expected share from the Producer Race's hourly VHP card. 100 means it signed exactly its share; a node that misses blocks scores less. Your week is the sum of your <span data-fx="day">days</span>; a <span data-fx="day">day</span> before you join scores 0.</p>
+        <p><b>Prices.</b> The price list comes out <span data-fx="sheet">Sunday 12:00 UTC</span> for the next week. A producer's price follows its form over the 7 <span data-fx="day">days</span> before: 20 for the middle of the pool, up to 40 for the most reliable, down to 8 for the least. Its fingerprint (sha256) is published with it, so nobody can change it later.</p>
+        <p><b>Locks.</b> The Picks contract refuses a team 5 minutes before its <span data-fx="day">day</span> starts, so nobody can pick knowing the blocks.</p>
+        <p><b>Prizes.</b> Fantasy is a staked game: the Fantasy share of the Knode Games vault's weekly reward goes to the top 30% of Fantasy stakers with at least 1 point. A week is final <span data-fx="half">12 hours</span> after it ends.</p>
+        <p><b>Weekly Rival.</b> Challenge one player for the coming week. Whoever scores more that week wins. Your record counts the challenges you made and those you received. A match counts only if both of you had a team on all 7 <span data-fx="day">days</span>, so nobody piles up wins against empty wallets.</p>
+        <p><b>Fair checks.</b> Days are scored from irreversible blocks that match on two independent nodes. The page and the recorder run the same scoring file (fantasy-math.js).</p>
+      </div>
+    </details>
+  </main>
+
+  <nav class="tabbar" aria-label="Main">
+    <a href="games.html"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect></svg>Games</a>
+    <a href="index.html#leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg>Leaders</a>
+    <a href="index.html#results"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg>Results</a>
+    <a href="swap.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4L3 8l4 4"></path><path d="M3 8h14"></path><path d="M17 20l4-4-4-4"></path><path d="M21 16H7"></path></svg>Swap</a>
+    <button type="button" class="tb-more" aria-expanded="false" aria-controls="more-sheet"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>More</button>
+  </nav>
+  <div class="more-sheet" id="more-sheet" hidden>
+    <nav class="more-panel" aria-label="More pages">
+      <p class="ms-h">Play</p>
+      <a href="index.html#play"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.6 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg><span>Daily Questions</span></a>
+      <a href="race.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 21V4"></path><path d="M5 4h12l-2.5 4L17 12H5"></path></svg><span>Producer Race</span></a>
+      <a href="index.html#how"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"></path><path d="M9 9h6M9 13h6"></path></svg><span>Rules</span></a>
+      <p class="ms-h">Tools</p>
+      <a href="burn.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 21c-4 0-6.5-2.6-6.5-6 0-3.5 3-5.5 3.5-9 2 1.5 3 3 3 5 1-1 1.5-2 1.5-3.5 2.5 2 4.5 4.6 4.5 7.5 0 3.4-2.5 6-6 6z"></path></svg><span>Burn KOIN</span></a>
+      <a href="mana.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M13 3L5 14h6l-1 7 8-11h-6z"></path></svg><span>Mana levels</span></a>
+      <a href="node.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg><span>Producer lookup</span></a>
+      <a href="pulse.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12h4l2-5 4 10 2-5h6"></path></svg><span>Network pulse</span></a>
+      <p class="ms-h">Learn</p>
+      <a href="start.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg><span>New to Koinos?</span></a>
+      <a href="index.html#welcome"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg><span>New here? Quick tour</span></a>
+      <a href="get.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8M8 12h8"></path></svg><span>Get VHP</span></a>
+      <p class="ms-h">About</p>
+      <a href="install.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v11"></path><path d="M7.5 10.5L12 15l4.5-4.5"></path><path d="M5 20h14"></path></svg><span>Install app</span></a>
+      <a href="trust.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z"></path></svg><span>Trust</span></a>
+      <a href="terms.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"></path><path d="M10 12h5M10 16h5"></path></svg><span>Terms &amp; risks</span></a>
+    </nav>
+  </div>
+
+  <footer class="foot">
+    <div class="wrap">
+      <div class="foot-row">
+        <span>Knode runs fully on Koinos. Open source.</span>
+        <span class="foot-links"><a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a> · <a href="install.html">Install app</a> · <a href="https://github.com/bawcejawn/Knode" target="_blank" rel="noopener">Source code</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js" integrity="sha384-IAL9o3r4bQJvWhvszkorFINY2ct4LBA/LvyXE9NSOPCyYB25BsFV12JITA7Gxbk6" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js" integrity="sha384-WOeNFfSdOron0s4x9jdzLtA7Ic7RSqZCXZAaeQd6HRL6WezQp0KAtIF2XSa+11TL" crossorigin="anonymous"></script>
+  <script src="guest.js"></script>
+  <script src="wallet.js"></script>
+  <script src="header-wallet.js"></script>
+  <script src="nav.js"></script>
+  <script src="race-math.js"></script>
+  <script src="fantasy-math.js"></script>
+  <script src="fantasy.js"></script>
+</body>
+</html>

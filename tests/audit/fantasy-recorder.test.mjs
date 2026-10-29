@@ -133,7 +133,8 @@ test("a week: teams scored day by day, final after the 12 h window, rivals count
   const dayRecs = read(fin.out, "days.json").days;
   const recs = days.map((d) => dayRecs.find((x) => x.day === d));
   assert.equal(row(pa).points, F.scoreWeek(sheet, recs, { [days[0]]: best }).points);
-  assert.equal(row(pa).vault, F.vaultPoints(row(pa).points));
+  assert.equal(row(pa).vault, 255, "the best week posts 255");
+  assert.ok(row(pb).vault < 255 && row(pb).vault >= 1);
   assert.ok(row(pa).points > row(pb).points, "the reliable captain beats the unreliable one");
   assert.equal(w.players[0].a, pa);
   // Rivals: pa↔pb mutual = 1 match; pc and pd had no full week, so their challenges don't count.
