@@ -120,7 +120,7 @@
         ...o.columns.map((c) => el("td", { class: "num" + (c.wide ? " hide-sm" : ""), text: fmt(r[c.key]) })))));
       if (!shown.length) body.replaceChildren(el("tr", {}, el("td", { colspan: String(2 + o.columns.length), class: "ago", text: "No free-play scores yet." })));
       const row = who && rows.find((r) => r && r.a === who);
-      const place = row && !row.ranked ? free.indexOf(row) + 1 : 0;
+      const place = row && !row.ranked && free.includes(row) ? (row.boardPlace || free.indexOf(row) + 1) : 0;
       mine.textContent = !who ? "" : !row ? "You have no finished picks here yet."
         : row.ranked ? `You play on the ${F.main} board.`
         : place ? `You: #${place} in free play${place > F.show ? " (only you see this)" : ""}.` : "No points yet this period.";

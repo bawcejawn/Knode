@@ -179,6 +179,7 @@ test("stake panel: sends only the vault's own stake calls (and the approve for a
   assert.doesNotMatch(js, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|localStorage|sessionStorage|indexedDB|signTransaction|sendTransaction|privateKey|wif/i);
   assert.equal([...js.matchAll(/\.send\(/g)].length, 1, "one place sends: W.send");
   assert.match(js, /await W\.send\(label, ops, \{\}\)/);
+  assert.match(js, /if \(!W \|\| W\.address !== who\) \{ say\("Your wallet changed: nothing was sent/, "it never signs for a wallet other than the one shown");
   const ops = [...js.matchAll(/op\((\w+), "(\w+)", \{([^}]*)\}\)/g)].map((m) => [m[1], m[2], m[3].trim()]);
   assert.deepEqual(ops, [
     ["vault", "claim_game", "player: who, game: o.game, week: String(w)"],
@@ -187,10 +188,12 @@ test("stake panel: sends only the vault's own stake calls (and the approve for a
     ["vault", "withdraw_from", "to: who, game: o.game, amount: units.toString()"],
     ["vault", "move_stake", "player: who, from_game: o.game, to_game: to, amount: units.toString()"],
   ], "the player is always the connected wallet; the approve is only for the vault, for the staked amount");
-  assert.match(js, /const who = W\.address/);
+  assert.match(js, /const who = me\.who/);
   assert.match(js, /v6_rule_week_plus_one \|\| 0\) > 0\)\) return;/, "hidden until the vault is live");
+  assert.match(js, /const canStake = \(\) => !!\(game && game\.active && game\.staked && !cfg\.paused\)/, "only Stake waits for an active, unpaused game");
+  assert.match(js, /disabled: me\.total === 0n \}, "Withdraw"\)/, "Withdraw is there whenever there's a stake, active game or not");
   assert.match(js, /if \(!abi\.methods \|\| !abi\.methods\.deposit_to/, "hidden while the site's ABI is still v5");
-  assert.match(js, /W\.kind === "guest"/, "a guest wallet can't stake");
+  assert.match(js, /if \(kind === "guest"\) \{/, "a guest wallet gets no stake buttons");
 });
 
 test("stake panel: amounts, the minimum and claims follow the vault's rules", async () => {
@@ -203,13 +206,27 @@ test("stake panel: amounts, the minimum and claims follow the vault's rules", as
   const cfg = { min_stake: "100000000", min_stake_next: "300000000", min_stake_next_week: 5 };
   assert.deepEqual([K.minStake(cfg, 4), K.minStake(cfg, 5)], [100000000n, 300000000n]);
   const gw = { finalized: true, prize_first: "200000000", prize_second: "0", cutoff: 4, rolled_over: false };
-  assert.equal(K.claimable(gw, { prize_place: 1 }), 200000000n);
-  assert.equal(K.claimable(gw, { prize_place: 2 }), null, "2nd gets nothing when 1st is shared");
-  assert.equal(K.claimable(gw, { points: 5 }), 0n, "a staked winner: a share of the bucket");
-  assert.equal(K.claimable(gw, { points: 3 }), null, "under the cutoff");
-  assert.equal(K.claimable({ ...gw, finalized: false }, { prize_place: 1 }), null, "not final yet");
-  assert.equal(K.claimable(gw, { prize_place: 1, claimed: true }), null, "already claimed");
-  assert.equal(K.claimable({ ...gw, rolled_over: true }, { points: 9 }), null, "a rolled-over bucket");
+  assert.equal(K.claimable(gw, [], { prize_place: 1 }), 200000000n);
+  assert.equal(K.claimable(gw, [], { prize_place: 2 }), 0n, "2nd gets nothing when 1st is shared");
+  assert.equal(K.claimable(gw, [], { points: 3 }), 0n, "under the cutoff");
+  assert.equal(K.claimable({ ...gw, finalized: false }, [], { prize_place: 1 }), 0n, "not final yet");
+  assert.equal(K.claimable(gw, [], { prize_place: 1, claimed: true }), 0n, "already claimed");
+  assert.equal(K.claimable({ ...gw, rolled_over: true }, [], { points: 9 }), 0n, "a rolled-over bucket");
+  // A staked winner: the vault's rewardOfG, exactly. Two winners in the 5-point bucket (weight 30), stakes 4 and 20 VHP.
+  const V = 100000000n;
+  const week = { ...gw, pot_a: String(40n * V), pot_b: String(60n * V), aw_lo: String(60n * 14n * V), aw_hi: "0", bw_lo: String(60n * 24n * V), bw_hi: "0" };
+  const buckets = []; buckets[5] = { players: 2, sum_w: "60" };
+  const a = K.claimable(week, buckets, { points: 5, stake: String(4n * V) }), b = K.claimable(week, buckets, { points: 5, stake: String(20n * V) });
+  // Basket A counts stakes up to 10: 4 and 10 of 14; basket B 4 and 20 of 24.
+  assert.equal(a, (40n * V * (60n * 4n * V / 2n)) / (60n * 14n * V) + (60n * V * (60n * 4n * V / 2n)) / (60n * 24n * V));
+  assert.equal(a + b <= 100n * V, true, "never more than the bucket");
+  assert.equal(K.claimable({ ...week, pot_a: "0", pot_b: "0" }, buckets, { points: 5, stake: String(4n * V) }), 0n, "an empty bucket: no claim offered");
+  assert.equal(K.rewardOf(week, [], { points: 5, stake: "1" }), 0n, "no bucket: nothing (never divides by zero)");
+  // Where a wallet stands this week, by the vault's rules.
+  const min = V;
+  assert.equal(K.standing({ active_stake: String(2n * V), week_stake: String(2n * V) }, min), "staked");
+  assert.equal(K.standing({ entry: { peak_stake: String(5n * V) }, week_stake: String(V / 2n) }, min), "neither", "withdrew below the minimum mid-week");
+  assert.equal(K.standing({ active_stake: String(V / 2n), week_stake: "0" }, min), "free");
 });
 
 test("the shared leaderboard (board.js) only draws: no network, no storage, no wallet, no HTML from data", () => {

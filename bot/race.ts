@@ -155,13 +155,14 @@ const vaultState = new WeakMap<object, Promise<any>>();
 export const NO_V6_ABI = "game/abi/kpred.koilib.json has no get_game_player (still v5): Race stakes can't be read";
 async function readStaked(node: any, who: string, week: number): Promise<boolean> {
   const abi = GAME_ABI();
-  if (!GAME) return false;
+  if (!GAME) throw new Error("game-data/deployment.json gives no contract: Race stakes can't be read");
   // This repository's contract ABI is still v5: it can't tell whether the vault is live, so it can't say who is free.
   // Throwing keeps the vault file from being final (the boards show everyone on Free play, with one warning a run).
   if (!abi.methods?.get_game_player) throw new Error(NO_V6_ABI);
   const c = new Contract({ id: GAME, abi, provider: node });
   if (!vaultState.has(node)) vaultState.set(node, withRetry("vault state", () => (c.functions as any).get_state({})));
-  const cfg = (await vaultState.get(node))?.result?.config ?? {};
+  const cfg = (await vaultState.get(node))?.result?.config;
+  if (!cfg) { vaultState.delete(node); throw new Error("the vault's get_state came back empty"); }
   if (!(Number(cfg.v6_rule_week_plus_one || 0) > 0)) return false;   // the contract on chain isn't v6 yet
   const r: any = await withRetry(`Race stake of ${who}`, () => (c.functions as any).get_game_player({ player: who, game: VAULT_GAME, week: String(week) }));
   return stakedFrom(cfg, r?.result ?? {}, week);
