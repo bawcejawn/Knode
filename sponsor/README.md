@@ -140,7 +140,7 @@ v3 adds three things. With no `allowed` rows it behaves as v2, except for the tw
   free player (a guest too) can collect a free-game prize.
 - **Fixcheck L-3**: a stake counts as a real player from `min_vhp` up (active and pending together), like held VHP.
 
-Allowlisted calls and free claims are refused above 400 argument bytes (Picks audit P-3; the largest Picks pick is 317).
+Allowlisted calls and free claims are refused above 640 argument bytes (400 before the Combo Card; the largest Block X pick is 317).
 Audit 2026-10-27 (`docs/history/AUDIT-2026-10-27-sponsor-v3.md`): "ready for testnet; fix S3-1 and S3-2 before mainnet",
 no Critical, High or Medium. Fixed: S3-1 (a 16 KB buffer, so 10 picks fit in one transaction), S3-2 (allowlisted
 arguments must have no nested messages: documented, and `npm run check` confirms it for the Picks row), S3-7 (the Picks
@@ -185,8 +185,32 @@ claim's Mana with the answers' 1 Mana limit, not `rcLimitOther`.
   any upgrade. `would_pay` doesn't know the operations, so it can't check these limits; the site and the tool keep
   the website's copy in step (review L2, accepted).
 
-Release candidate sha256 (v3 with the above): `21bec82583e1a7decbb2c70376f4b08e026f617c32bca268ab700f50e9aef2df`
-(33,210 bytes). Not yet audited: the upload tool allows it on the testnet only.
+## Sponsor v3 after the Repo Lens audit (2026-10-28, report @ 148c00f)
+
+- **A real player has a stake** (audit SP-2; owner: "users must be staked in the game"): at least `min_vhp` of ACTIVE
+  stake in the Knode vault, in the question game, or (for a call whose allowlist row names `game_arg`, and race picks:
+  game 7) in that game this week (`get_game_player` week stake). Holding VHP, or a pending stake, no longer counts:
+  one VHP passed from wallet to wallet made each a "player". A new staker's first week pays its own Mana for
+  real-players-only actions (answers and picks stay free play).
+- **The free pool is released by the hour** (audit SP-3): 1/24 of `max_mana_free_day` at 00:00 UTC and 1/24 more each
+  hour (all of it from 23:00), so a burst of empty wallets can only use what has been released so far today.
+- **Repeated fields** (audit SP-16): `arg_types` marks a repeated field with 0x10; any other field may appear once.
+  The Picks row is `0x0301011301` (producers repeated), `game_arg` 2.
+- **640 argument bytes** (was 400) so Combo cards up to 10 legs fit. Combo cards (field 6, legs) are a settings change
+  when Picks v2 is live: `"cards": true` in `picks-data/deployment.json` makes the row `0x030101130113`.
+- **Alerts**: `npm run sponsor -- status` and the hourly bot (`npm run sponsor -- watch`) warn when the free pool (as
+  released so far) or everyone's total passes 80% of today's.
+- The tool (audit SP-1, SP-5 to SP-8, SP-11 to SP-14, SP-17 to SP-20): `config` uses the owner's caps unless a flag
+  says otherwise (never what happens to be on chain) and shows old → new; stops on a failed settings read, and on
+  mainnet when two nodes disagree; `disable` is never blocked by website checks; v3 settings only to v3 code; the
+  Picks row is never dropped silently; the website check reads the DEPLOYED knodegames.com files, fallbacks included;
+  `mana-report` matches receipts by id, drops missing ones, re-reads them on a second node, needs 20 measurements per
+  action, and never sets a limit after a run-out at the per-transaction cap; other actions ask 1 Mana (the cap); exact
+  Mana values; the network is decided by chain id and the testnet keeps its own files; v2 stays allowed as a rollback.
+
+Release candidate sha256 (v3 with the above): `3cdab1a75f066f0c65b09597ad8f35cf1b6e02fc2a37327bbf479db9a03b71a3`
+(34,374 bytes; 162 contract tests). Superseded: `21bec825…` (33,210 bytes). Not yet fix-checked: the upload tool
+allows it on the testnet only. Rollback: v2 `fa4659e6…` stays an allowed build.
 
 ## Build
 

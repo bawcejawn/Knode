@@ -10,6 +10,15 @@ import { sponsor } from "../proto/sponsor";
 import { picks } from "./picks_proto";
 import { F } from "./fixtures";
 
+/** Extra reads for the vault game check (v3, SP-2: race picks and game_arg rows ask get_game_player too): a failed
+ *  read with no answer, which counts as "no stake in that game". */
+function padReads(r: system_calls.exit_arguments[]): system_calls.exit_arguments[] {
+  const out: system_calls.exit_arguments[] = [];
+  for (let i = 0; i < r.length; i++) out.push(r[i]);
+  for (let i = 0; i < 4; i++) out.push(new system_calls.exit_arguments(0, new chain.result()));
+  return out;
+}
+
 const SELF = Base58.decode(F.SELF);
 const USER = Base58.decode(F.USER);
 const OTHER = Base58.decode(F.OTHER);
@@ -25,11 +34,12 @@ const PICK: u32 = 0x8ce33c6c;
 const STAKED_ENTRY: u32 = 0x12345678;
 
 const MANA: u64 = 100000000;
-const T0: u64 = 1700000000000;
+const T0: u64 = 1700003600000;   // 23:13 UTC: the free pool is fully released at hour 23 (v3, SP-3)
 const NONE = new Uint8Array(0);
 
 /** The Picks contract's pick_arguments: player bytes, game varint, round varint, producers bytes, number varint. */
-function picksTypes(): Uint8Array { const b = new Uint8Array(5); b[0] = 3; b[1] = 1; b[2] = 1; b[3] = 3; b[4] = 1; return b; }
+// v3: the Picks v1 shape (player, game, round, producers repeated: 0x13, number), as the tool sets it for Block X.
+function picksTypes(): Uint8Array { const b = new Uint8Array(5); b[0] = 3; b[1] = 1; b[2] = 1; b[3] = 0x13; b[4] = 1; return b; }
 function bytes(a: u8[]): Uint8Array { const b = new Uint8Array(a.length); for (let i = 0; i < a.length; i++) b[i] = a[i]; return b; }
 function one(p: Uint8Array): Uint8Array[] { const a = new Array<Uint8Array>(); a.push(p); return a; }
 function pickArgs(player: Uint8Array): Uint8Array {
@@ -65,11 +75,11 @@ function gamePlayer(stake: u64, pending: u64): system_calls.exit_arguments {
   return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(r, sponsor.game_get_player_result.encode)));
 }
 let READS: system_calls.exit_arguments[] = [];
-function emptyWallet(): void { READS = [vhpBalance(0), gamePlayer(0, 0)]; }
-function holder(): void { READS = [vhpBalance(10 * MANA)]; }
+function emptyWallet(): void { READS = [gamePlayer(0, 0)]; }
+function holder(): void { READS = [gamePlayer(10 * MANA, 0)]; }
 function pays(): bool {
   apply();
-  MockVM.setCallContractResults(READS);
+  MockVM.setCallContractResults(padReads(READS));
   return new Sponsor().authorize(new authority.authorize_arguments(authority.authorization_type.transaction_application)).value;
 }
 function doPays(): void { pays(); }
@@ -80,7 +90,7 @@ function refused(message: string): void {
 }
 function asOwner(): void { MockVM.setAuthorities([new MockVM.MockAuthority(authority.authorization_type.contract_call, SELF, true)]); }
 
-function picksRow(): sponsor.allowed_call { return new sponsor.allowed_call(PICKS, PICK, true, picksTypes()); }
+function picksRow(): sponsor.allowed_call { return new sponsor.allowed_call(PICKS, PICK, true, picksTypes(), 2); }
 function stakedRow(): sponsor.allowed_call { return new sponsor.allowed_call(STAKED, STAKED_ENTRY, false, bytes([3, 1])); }
 /** per tx 1, per player 5/day 30/week, everyone 100/day, free 50/day; race set; the Picks contract allowlisted as free play. */
 function v3Config(): sponsor.config {
@@ -245,7 +255,10 @@ describe("V3 AUDIT S3-2: a row whose later field is a nested MESSAGE can be read
     for (let i = 0; i < 17; i++) a.push(0);           // 17 filler (inner copies 0x2c + these 17 = 18 bytes)
     a.push(0x0a); a.push(25); for (let i = 0; i < 25; i++) a.push(OTHER[i]);   // outer field 1 again for the decoder
     const b = bytes(a);
-    const types = bytes([3, 3]);
+    // v3 (SP-16): field 2 twice is refused unless the row marks it repeated (0x13); marked repeated, the two readings
+    // remain (S3-2: rows must never have nested messages, which npm run check confirms for the Picks row).
+    expect(argsPlayer(b, bytes([3, 3])) == null).toBe(true);
+    const types = bytes([3, 0x13]);
     const seen = argsPlayer(b, types);
     expect(seen != null && Arrays.equal(seen!, USER)).toBe(true);
     const d = Protobuf.decode<picks.pick_row>(b, picks.pick_row.decode);

@@ -30,7 +30,7 @@
       "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK"
     ],
     "rcLimit": "100000000",
-    "rcLimitOther": "300000000",
+    "rcLimitOther": "100000000",
     "guest": true
   },
   "v1UploadTx": "0x122054bac9c483a15f641c8553b3be541ae876eb7583a7299251e078500f005d6aee",

@@ -28,7 +28,7 @@ const ATTACKER = Base58.decode("16ixK5DgvcojcZLvxyYWhHFcRXfhfrHbpL");
 const MANA: u64 = 100000000;
 const DAY_MS: u64 = 86400000;
 // 2023-11-14 22:13 UTC, a Tuesday.
-const T0: u64 = 1700000000000;
+const T0: u64 = 1700003600000;   // 23:13 UTC: the free pool is fully released at hour 23 (v3, SP-3)
 // 2023-11-19 23:00 UTC (Sunday) and 2023-11-20 00:00 UTC (the next Monday).
 const SUNDAY_LATE: u64 = 1700434800000;
 const NEXT_MONDAY: u64 = 1700438400000;
@@ -112,8 +112,8 @@ export function failedRead(): system_calls.exit_arguments {
 }
 /** By default the payee holds 10 VHP. Tests change READS before calling pays() / wouldPay(). */
 let READS: system_calls.exit_arguments[] = [];
-function holder(): void { READS = [vhpBalance(10 * MANA)]; }
-function queueReads(): void { MockVM.setCallContractResults(READS); }
+function holder(): void { READS = [gamePlayer(10 * MANA, 0)]; }
+function queueReads(): void { MockVM.setCallContractResults(padReads(READS)); }
 
 function wouldPay(account: Uint8Array, rc: u64): sponsor.would_pay_result {
   queueReads();
@@ -197,10 +197,19 @@ function freeConfig(free: u64): void {
   MockVM.commitTransaction();
 }
 
-function emptyWallet(): void { READS = [vhpBalance(0), gamePlayer(0, 0)]; }
+function emptyWallet(): void { READS = [gamePlayer(0, 0)]; }
 
 // ═══════════════════════ AUDIT 2026-10-27: Sponsor v2 race picks ═══════════════════════
 import { race } from "./race_proto";
+
+/** Extra reads for the vault game check (v3, SP-2: race picks and game_arg rows ask get_game_player too): a failed
+ *  read with no answer, which counts as "no stake in that game". */
+function padReads(r: system_calls.exit_arguments[]): system_calls.exit_arguments[] {
+  const out: system_calls.exit_arguments[] = [];
+  for (let i = 0; i < r.length; i++) out.push(r[i]);
+  for (let i = 0; i < 4; i++) out.push(new system_calls.exit_arguments(0, new chain.result()));
+  return out;
+}
 
 const RACE = Base58.decode("15CM9Qr4GKREDgqnyXJ8tckPj2biERTM1T");
 const HORSE = Base58.decode("15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ");

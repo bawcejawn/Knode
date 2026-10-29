@@ -10,6 +10,15 @@ import { sponsor } from "../proto/sponsor";
 import { picks } from "./picks_proto";
 import { F } from "./fixtures";
 
+/** Extra reads for the vault game check (v3, SP-2: race picks and game_arg rows ask get_game_player too): a failed
+ *  read with no answer, which counts as "no stake in that game". */
+function padReads(r: system_calls.exit_arguments[]): system_calls.exit_arguments[] {
+  const out: system_calls.exit_arguments[] = [];
+  for (let i = 0; i < r.length; i++) out.push(r[i]);
+  for (let i = 0; i < 4; i++) out.push(new system_calls.exit_arguments(0, new chain.result()));
+  return out;
+}
+
 const SELF = Base58.decode(F.SELF);
 const USER = Base58.decode(F.USER);
 const OTHER = Base58.decode(F.OTHER);
@@ -25,11 +34,12 @@ const PICK: u32 = 0x8ce33c6c;
 const STAKED_ENTRY: u32 = 0x12345678;
 
 const MANA: u64 = 100000000;
-const T0: u64 = 1700000000000;
+const T0: u64 = 1700003600000;   // 23:13 UTC: the free pool is fully released at hour 23 (v3, SP-3)
 const NONE = new Uint8Array(0);
 
 /** The Picks contract's pick_arguments: player bytes, game varint, round varint, producers bytes, number varint. */
-function picksTypes(): Uint8Array { const b = new Uint8Array(5); b[0] = 3; b[1] = 1; b[2] = 1; b[3] = 3; b[4] = 1; return b; }
+// v3: player, game, round, producers (repeated: 0x13), number, legs (Combo Card, repeated: 0x13).
+function picksTypes(): Uint8Array { const b = new Uint8Array(6); b[0] = 3; b[1] = 1; b[2] = 1; b[3] = 0x13; b[4] = 1; b[5] = 0x13; return b; }
 function bytes(a: u8[]): Uint8Array { const b = new Uint8Array(a.length); for (let i = 0; i < a.length; i++) b[i] = a[i]; return b; }
 function one(p: Uint8Array): Uint8Array[] { const a = new Array<Uint8Array>(); a.push(p); return a; }
 function pickArgs(player: Uint8Array): Uint8Array {
@@ -65,11 +75,11 @@ function gamePlayer(stake: u64, pending: u64): system_calls.exit_arguments {
   return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(r, sponsor.game_get_player_result.encode)));
 }
 let READS: system_calls.exit_arguments[] = [];
-function emptyWallet(): void { READS = [vhpBalance(0), gamePlayer(0, 0)]; }
-function holder(): void { READS = [vhpBalance(10 * MANA)]; }
+function emptyWallet(): void { READS = [gamePlayer(0, 0)]; }
+function holder(): void { READS = [gamePlayer(10 * MANA, 0)]; }
 function pays(): bool {
   apply();
-  MockVM.setCallContractResults(READS);
+  MockVM.setCallContractResults(padReads(READS));
   return new Sponsor().authorize(new authority.authorize_arguments(authority.authorization_type.transaction_application)).value;
 }
 function doPays(): void { pays(); }
@@ -80,7 +90,7 @@ function refused(message: string): void {
 }
 function asOwner(): void { MockVM.setAuthorities([new MockVM.MockAuthority(authority.authorization_type.contract_call, SELF, true)]); }
 
-function picksRow(): sponsor.allowed_call { return new sponsor.allowed_call(PICKS, PICK, true, picksTypes()); }
+function picksRow(): sponsor.allowed_call { return new sponsor.allowed_call(PICKS, PICK, true, picksTypes(), 2); }
 function stakedRow(): sponsor.allowed_call { return new sponsor.allowed_call(STAKED, STAKED_ENTRY, false, bytes([3, 1])); }
 /** per tx 1, per player 5/day 30/week, everyone 100/day, free 50/day; race set; the Picks contract allowlisted as free play. */
 function v3Config(): sponsor.config {
@@ -195,12 +205,14 @@ describe("v3 argument shape: the sponsor reads the player exactly as the target 
     expect(argsPlayer(with_([0x10]), t) == null).toBe(true);                          // varint cut off
     expect(argsPlayer(with_([0x10, 2, 0x18, 3, 0x22, 0, 0x22, 0, 0x28, 4]), t) != null).toBe(true);   // in order, repeated field 4 side by side
     expect(argsPlayer(with_([0x22, 0, 0x10, 2]), t) == null).toBe(true);              // field 2 after field 4
-    // Picks audit P-3: at most 400 bytes; a full 10-producer pick (317 bytes) fits.
+    expect(argsPlayer(with_([0x10, 2, 0x10, 3]), t) == null).toBe(true);              // SP-16: single field 2 twice
+    expect(argsPlayer(with_([0x10, 2, 0x32, 0, 0x32, 0]), t) != null).toBe(true);     // repeated legs (field 6) side by side
+    // Picks audit P-3 / Combo Card: at most 640 bytes; a full 10-producer pick (317 bytes) fits.
     const ten: u8[] = [0x10, 2, 0x18, 0xa0, 0x9c, 0x01];
     for (let i = 0; i < 10; i++) { ten.push(0x22); ten.push(25); for (let j = 0; j < 25; j++) ten.push(H1[j]); }
     ten.push(0x28); ten.push(1);
     expect(argsPlayer(with_(ten), t) != null).toBe(true);
-    const big: u8[] = [0x22, 0xf8, 0x02]; for (let i = 0; i < 376; i++) big.push(0);   // 27 + 3 + 376 = 406 bytes
+    const big: u8[] = [0x22, 0x80, 0x05]; for (let i = 0; i < 640; i++) big.push(0);   // 27 + 3 + 640 = 670 bytes
     expect(argsPlayer(with_(big), t) == null).toBe(true);
   });
   it("fuzz: whenever the sponsor accepts arguments, the Picks contract's decoder reads the same player", () => {
@@ -253,7 +265,7 @@ describe("v3 set_config: the allowlist's own rules", () => {
     CFG = v3Config(); CFG.allowed = [new sponsor.allowed_call(PICKS, PICK, true, NONE)];
     badConfig("SPONSOR: arg_types must be 1 to 16 bytes, field 1 the player (3)");
     CFG = v3Config(); CFG.allowed = [new sponsor.allowed_call(PICKS, PICK, true, bytes([3, 4]))];
-    badConfig("SPONSOR: arg_types bytes must be 0, 1, 2, 3 or 6");
+    badConfig("SPONSOR: arg_types bytes must be 0, 1, 2, 3 or 6, plus 0x10 for a repeated field (not the player)");
     CFG = v3Config(); CFG.allowed = [picksRow(), picksRow()];
     badConfig("SPONSOR: duplicate allowlisted call");
     CFG = v3Config(); setConfig(); MockVM.commitTransaction();     // the good one is accepted
@@ -298,12 +310,12 @@ describe("v3: a free player collects their own free-game prize; L-3: a stake cou
   it("a stake below min_vhp is not a real player; at min_vhp it is", () => {
     start();
     OPS = [call(STAKED, STAKED_ENTRY, claimArgs(USER, 1))];
-    READS = [vhpBalance(0), gamePlayer(MANA / 2, 0)];
+    READS = [gamePlayer(MANA / 2, 0)];
     refused(NOT_A_PLAYER);
-    READS = [vhpBalance(0), gamePlayer(MANA / 2, MANA / 2)];
-    expect(pays()).toBe(true);
-    MockVM.rollbackTransaction();
-    READS = [vhpBalance(0), gamePlayer(MANA, 0)];
+    // v3 (audit SP-2): a pending stake doesn't count, so half active + half pending is not a real player either.
+    READS = [gamePlayer(MANA / 2, MANA / 2)];
+    refused(NOT_A_PLAYER);
+    READS = [gamePlayer(MANA, 0)];
     expect(pays()).toBe(true);
   });
 });
@@ -393,5 +405,100 @@ describe("v3 per-action Mana limits", () => {
     OPS = [call(PICKS, PICK, pickArgs(USER))];
     RC = MANA;
     expect(pays()).toBe(true);
+  });
+});
+
+// ── v3 fix-check (2026-10-28): audit SP-2, SP-3, SP-16, Combo Card's 640 bytes ──
+function gameWeekStake(v: u64): system_calls.exit_arguments {
+  return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.game_get_game_player_result(v), sponsor.game_get_game_player_result.encode)));
+}
+function claimish(): Uint8Array { const a = new Uint8Array(27 + 2); a[0] = 0x0a; a[1] = 25; a.set(USER, 2); a[27] = 0x10; a[28] = 7; return a; }
+
+describe("v3 SP-2: only a stake makes a real player (holding VHP, or a pending stake, does not)", () => {
+  it("1 VHP in the wallet (passed from wallet to wallet) is not a stake: refused for real-players-only actions", () => {
+    start();
+    READS = [gamePlayer(0, 0)];                  // holds VHP, staked nowhere: v3 never even asks the VHP token
+    OPS = [call(STAKED, STAKED_ENTRY, claimish())];
+    expect(() => { doPays(); }).toThrow();
+    expect(MockVM.getErrorMessage()).toBe(NOT_A_PLAYER);
+    const asked = MockVM.getCallContractArguments();
+    for (let i = 0; i < asked.length; i++) expect(Arrays.equal(asked[i].contract_id!, VHP)).toBe(false);
+    MockVM.rollbackTransaction();
+  });
+  it("a stake in the question game counts", () => {
+    start();
+    READS = [gamePlayer(MANA, 0)];
+    OPS = [call(STAKED, STAKED_ENTRY, claimish())];
+    expect(pays()).toBe(true);
+  });
+  it("a Block X pick by a wallet staked IN Block X (game 2, this week) is a real player's: not counted as free", () => {
+    start();
+    READS = [gamePlayer(0, 0), gameWeekStake(2 * MANA)];
+    OPS = [call(PICKS, PICK, pickArgs(USER))];
+    expect(pays()).toBe(true);
+    MockVM.commitTransaction();
+    expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day).toBe(0);
+    const args = MockVM.getCallContractArguments();
+    const last = Protobuf.decode<sponsor.game_get_game_player_args>(args[args.length - 1].args!, sponsor.game_get_game_player_args.decode);
+    expect(last.game).toBe(2);
+  });
+  it("a stake below the minimum in that game is free play", () => {
+    start();
+    READS = [gamePlayer(0, 0), gameWeekStake(MANA - 1)];
+    OPS = [call(PICKS, PICK, pickArgs(USER))];
+    expect(pays()).toBe(true);
+    MockVM.commitTransaction();
+    expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day).toBe(MANA);
+  });
+  it("set_config: game_arg must name a single varint field", () => {
+    start();
+    CFG = v3Config(); CFG.allowed = [new sponsor.allowed_call(PICKS, PICK, true, picksTypes(), 4)];   // field 4: repeated bytes
+    badConfig("SPONSOR: game_arg must name a single varint field");
+    CFG = v3Config(); CFG.allowed = [new sponsor.allowed_call(PICKS, PICK, true, picksTypes(), 9)];
+    badConfig("SPONSOR: game_arg must name a single varint field");
+  });
+});
+
+describe("v3 SP-3: the free pool is released by the hour", () => {
+  it("at 00:30 UTC only 1/24 of the free pool can be used; more each hour; all of it by 23:00", () => {
+    start();
+    CFG = v3Config(); CFG.max_mana_free_day = 24 * MANA; CFG.max_mana_per_account_day = 30 * MANA; setConfig(); MockVM.commitTransaction();
+    const day0: u64 = T0 - T0 % 86400000 + 86400000;            // the next UTC day, 00:00
+    MockVM.setHeadInfo(new chain.head_info(null, day0 + 1800000, 0));
+    MockVM.commitTransaction();
+    emptyWallet(); OPS = [call(PICKS, PICK, pickArgs(USER))];
+    expect(pays()).toBe(true); MockVM.commitTransaction();           // 1 of the 1 released
+    emptyWallet(); OPS = [call(PICKS, PICK, pickArgs(USER))];
+    refused(FREE_USED_UP);                                          // the 2nd waits for 01:00
+    MockVM.setHeadInfo(new chain.head_info(null, day0 + 3600000 + 60000, 0)); MockVM.commitTransaction();
+    emptyWallet(); OPS = [call(PICKS, PICK, pickArgs(USER))];
+    expect(pays()).toBe(true); MockVM.commitTransaction();
+    // would_pay agrees with what is left right now.
+    emptyWallet();
+    MockVM.setCallContractResults(padReads(READS));
+    const r = new Sponsor().would_pay(new sponsor.would_pay_arguments(OTHER, MANA, true));
+    expect(r.left_free_today).toBe(0);
+  });
+});
+
+describe("v3 SP-16 and Combo Card: repeated fields only where marked; up to 640 argument bytes", () => {
+  it("a single field twice is refused; a repeated one is fine", () => {
+    BASE = [0x0a, 25]; for (let i = 0; i < 25; i++) BASE.push(USER[i]);
+    expect(argsPlayer(with_([0x10, 2, 0x10, 3]), picksTypes()) == null).toBe(true);
+    expect(argsPlayer(with_([0x10, 2, 0x22, 0, 0x22, 0]), picksTypes()) != null).toBe(true);
+  });
+  it("a 10-leg card (516 bytes) fits; 641 bytes do not", () => {
+    BASE = [0x0a, 25]; for (let i = 0; i < 25; i++) BASE.push(USER[i]);
+    const card: u8[] = [0x10, 8]; while (card.length + 27 < 516 - 2) { card.push(0x32); card.push(45); for (let i = 0; i < 45; i++) card.push(1); }
+    expect(argsPlayer(with_(card), picksTypes()) != null).toBe(true);
+    const big: u8[] = [0x32, 0xe4, 0x04]; for (let i = 0; i < 612; i++) big.push(0);   // 27 + 3 + 612 = 642 bytes
+    expect(argsPlayer(with_(big), picksTypes()) == null).toBe(true);
+  });
+  it("arg_types: 0x10 marks a repeated field; never on the player or an absent field", () => {
+    start();
+    CFG = v3Config(); CFG.allowed = [new sponsor.allowed_call(PICKS, PICK, true, bytes([0x13, 1]), 0)];
+    badConfig("SPONSOR: arg_types must be 1 to 16 bytes, field 1 the player (3)");
+    CFG = v3Config(); CFG.allowed = [new sponsor.allowed_call(PICKS, PICK, true, bytes([3, 0x10]), 0)];
+    badConfig("SPONSOR: arg_types bytes must be 0, 1, 2, 3 or 6, plus 0x10 for a repeated field (not the player)");
   });
 });

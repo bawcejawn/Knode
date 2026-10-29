@@ -236,6 +236,15 @@
   const RESTORE_WARN = "Only paste a key you backed up yourself. Anyone who gives you a key can take it back.";
   // Audit (guest) L-3: what a guest sees when the sponsor won't pay (never Kondor or KOIN Vault advice).
   const GUEST_NO_FREE = "Free answers are used up for today — try again after 00:00 UTC (5pm PT), or connect a wallet.";
+  // Audit SP-18: say which limit it was. The free pool is released by the hour (sponsor v3), so "this hour" first.
+  const guestRefusal = (m) =>
+    /free-player|free answers|FREE_USED_UP|free play/i.test(m) ? "Today's free play is used up for this hour — more opens on the hour (UTC). Try again then, or connect a wallet."
+      : /this player's daily/i.test(m) ? "This guest has used its free Mana for today — try again after 00:00 UTC (5pm PT)."
+      : /weekly/i.test(m) ? "This guest has used its free Mana for this week — try again Monday (00:00 UTC)."
+      : /today's sponsored mana is used up/i.test(m) ? GUEST_NO_FREE
+      : /mana limit above|per-transaction cap|what these actions may ask/i.test(m) ? "The page asked for more Mana than the sponsor allows for this action (the site is being updated). Try again in a few minutes."
+      : /insufficient|\brc\b|rc_limit|resource/i.test(m) ? "The network turned this down for lack of Mana. Nothing happened; try again in a few minutes."
+      : GUEST_NO_FREE;
   // Audit (guest) L-5: on Koinos mainnet a guest only ever names the live Knode Games sponsor as payer and only answers on the
   // Knode Games question game, whatever deployment.json says (pinned like the chain id).
   const PINNED_SPONSOR = "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8", PINNED_GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr";
@@ -422,7 +431,7 @@
       // Never retried with the guest's own Mana (it has none). A sponsor refusal gets the guest message; a game error
       // (e.g. "answers for this question are closed") is shown as is.
       const m = String((e && e.message) || e);
-      if (/SPONSOR|insufficient|\brc\b|rc_limit|mana|payer|authori[sz]/i.test(m)) throw new Error(GUEST_NO_FREE);
+      if (/SPONSOR|insufficient|\brc\b|rc_limit|mana|payer|authori[sz]/i.test(m)) throw new Error(guestRefusal(m));
       throw e;
     }
     if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "the contract refused it"));
@@ -508,8 +517,8 @@
       || (sp.race && o.call_contract.contract_id === sp.race && Number(o.call_contract.entry_point) === PICK)
       || (sp.picks && o.call_contract.contract_id === sp.picks && Number(o.call_contract.entry_point) === PICK)));
     // Answers are light (rcLimit, 1 Mana); staking, withdrawing, swapping and claiming do much more in one transaction
-    // (approve, transfer, burn, stake), so they ask for rcLimitOther (default 3 Mana).
-    const rcLimit = sp ? rcFor(sp, ops, String(answerOnly ? (sp.rcLimit || "100000000") : (sp.rcLimitOther || "300000000"))) : null;
+    // (approve, transfer, burn, stake), so they ask for rcLimitOther (audit SP-17: the sponsor's per-transaction cap, 1 Mana).
+    const rcLimit = sp ? rcFor(sp, ops, String(answerOnly ? (sp.rcLimit || "100000000") : (sp.rcLimitOther || "100000000"))) : null;
     if (sp && await sponsorSaysYes(sp, rcLimit, answerOnly)) {
       try { return await sendKondorWith(label, ops, { ...opts, sponsor: sp.address, rcLimit }); }
       catch (e) {

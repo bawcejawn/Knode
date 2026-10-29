@@ -32,13 +32,16 @@ const STEP_SAT = 1000000n;                     // limits are rounded up to 0.01 
 export const LIMITS_FILE = "sponsor-data/mana-limits.json";
 
 /** One measured action: what it is and what it used. */
-export type Sample = { contract: string; entry: number; rcUsed: bigint; ops: number; reverted: boolean; rcLimit?: bigint };
+export type Sample = { contract: string; entry: number; rcUsed: bigint; ops: number; reverted: boolean; rcLimit?: bigint; outOfRc?: boolean };
+/** Audit SP-6: an action needs this many measured transactions before a report suggests a limit for it. */
+export const MIN_SAMPLES = 20;
 export type ActionStat = { contract: string; entry: number; name: string; count: number; maxSat: bigint; typicalSat: bigint; ranOut?: number; manual?: boolean };
 export type LimitRow = { name: string; contract: string; entry_point: number; max_mana: string; observed?: { count: number; max: string; typical: string; source: string; at: string } };
 export type LimitsFile = { v: 1; updated: string; margin: number; rows: LimitRow[] };
 
 const roundUp = (x: bigint) => ((x + STEP_SAT - 1n) / STEP_SAT) * STEP_SAT;
-export const toMana = (sat: bigint | string) => (Number(sat) / 1e8).toFixed(Number(sat) % 1000000 ? 4 : 2);
+// Audit SP-20: exact (8 decimals, trailing zeros trimmed), so a number shown can be typed back without rounding.
+export const toMana = (sat: bigint | string) => { const v = BigInt(sat), w = v / 100000000n, f = (v % 100000000n).toString().padStart(8, "0").replace(/0+$/, ""); return f ? `${w}.${f}` : `${w}`; };
 export const key = (contract: string, entry: number) => `${contract}:${(entry >>> 0).toString(16).padStart(8, "0")}`;
 
 /** Group samples by action. Only transactions with ONE operation are measured (a transaction's fixed cost would be
@@ -50,8 +53,10 @@ export function summarize(samples: Sample[], names: Record<string, string> = {})
     if (s.ops !== 1) continue;
     const k = key(s.contract, s.entry);
     const a = by.get(k) ?? { used: [], ranOut: 0 };
-    if (s.reverted) { if (s.rcLimit !== undefined && s.rcLimit > 0n && s.rcUsed * 100n >= s.rcLimit * 99n) a.ranOut++; }
-    else a.used.push(s.rcUsed);
+    // Audit SP-11: a run-out is a reverted transaction whose receipt says it ran out of resources, or (no such log)
+    // one that used 99% of its limit or more. Audit SP-6: a successful transaction that used 0 (no receipt) is no sample.
+    if (s.reverted) { if (s.outOfRc || (s.rcLimit !== undefined && s.rcLimit > 0n && s.rcUsed * 100n >= s.rcLimit * 99n)) a.ranOut++; }
+    else if (s.rcUsed > 0n) a.used.push(s.rcUsed);
     by.set(k, a);
   }
   return [...by.entries()].filter(([, v]) => v.used.length || v.ranOut).map(([k, v]) => {
@@ -96,6 +101,10 @@ export function merge(old: LimitRow[], stats: ActionStat[], perTxSat: bigint, so
   const out = new Map(old.map((r) => [key(r.contract, r.entry_point), { ...r }]));
   for (const s of stats) {
     const k = key(s.contract, s.entry), prev = out.get(k);
+    // Audit SP-7: an action that ran out with no row of its own ran out at the per-transaction cap: it gets no row.
+    if (s.ranOut && !prev) { skipped.push(`${s.name}: ran out of Mana at the per-transaction cap; it gets no row of its own (keeps the cap)`); continue; }
+    // Audit SP-6: too few measurements (a number typed in, from mana-limit, is one on purpose).
+    if (!s.manual && !s.ranOut && s.count < MIN_SAMPLES) { skipped.push(`${s.name}: only ${s.count} measured transaction(s) (need ${MIN_SAMPLES}); no change`); continue; }
     const prevMax = prev?.observed ? BigInt(prev.observed.max) : 0n;
     const max = s.maxSat > prevMax ? s.maxSat : prevMax;
     let lim = suggest(max, perTxSat, !!s.manual);
@@ -124,6 +133,17 @@ export function transitionRows(chainNow: { contract: string; entry_point: number
 export function siteFits(site: Record<string, string>, chainRowsNow: { contract: string; entry_point: number; max_mana: string }[], perTxSat: bigint): string[] {
   const cur = new Map(chainRowsNow.map((r) => [key(r.contract, Number(r.entry_point)), BigInt(r.max_mana)]));
   return Object.entries(site).filter(([k, v]) => BigInt(v) > (cur.get(k) ?? perTxSat)).map(([k]) => k);
+}
+
+/** Audit SP-8: what the DEPLOYED website will ask for, against the chain's rows. For every chain row, the site's entry
+ *  (or, with none, its fallback limit) must be at most the row; and every site entry at most its row or the cap. */
+export function siteMisfits(site: Record<string, string>, chainRowsNow: { contract: string; entry_point: number; max_mana: string }[], perTxSat: bigint, fallbackSat: bigint): string[] {
+  const bad = new Set(siteFits(site, chainRowsNow, perTxSat));
+  for (const r of chainRowsNow) {
+    const k = key(r.contract, Number(r.entry_point)), want = site[k] !== undefined ? BigInt(site[k]) : fallbackSat;
+    if (want > BigInt(r.max_mana)) bad.add(k);
+  }
+  return [...bad];
 }
 
 export function readLimits(file = LIMITS_FILE): LimitsFile {

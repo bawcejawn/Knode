@@ -39,7 +39,7 @@
       "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK"
     ],
     "rcLimit": "100000000",
-    "rcLimitOther": "300000000",
+    "rcLimitOther": "100000000",
     "guest": true
   }
 }

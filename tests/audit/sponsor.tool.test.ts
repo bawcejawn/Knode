@@ -113,7 +113,7 @@ test("audit L-4: an unset free cap defaults to 300 but never above everyone's da
 test("v3: the Picks contract is allowlisted as free play in the Picks argument shape, and must be a new contract", () => {
   const PICKS = "1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW", RACE = "15CM9Qr4GKREDgqnyXJ8tckPj2biERTM1T";
   const c: any = buildConfig(GAME, DESK, DEFAULT_CAPS, true, RACE, PICKS);
-  assert.deepEqual(c.allowed, [{ contract: PICKS, entry_point: 0x8ce33c6c, free_play: true, arg_types: "0x0301010301" }]);
+  assert.deepEqual(c.allowed, [{ contract: PICKS, entry_point: 0x8ce33c6c, free_play: true, arg_types: "0x0301011301", game_arg: 2 }]);
   assert.equal("allowed" in buildConfig(GAME, DESK, DEFAULT_CAPS, true, RACE), false);
   for (const bad of [GAME.contract, DESK.contract, GAME.vhp, GAME.koin, RACE]) assert.throws(() => buildConfig(GAME, DESK, DEFAULT_CAPS, true, RACE, bad), /Picks contract must differ/);
 });
@@ -121,7 +121,7 @@ test("v3: the Picks contract is allowlisted as free play in the Picks argument s
 // ── the Mana adjuster (bot/mana-limits.ts, owner 2026-10-28; hardened after the review the same day) ──
 const PICKS_C = "1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW", PICK_E = 0x8ce33c6c, ANSWER_E = 0x0db52f40;
 const sat = (m: number) => BigInt(Math.round(m * 1e8));
-const stat = (o: any) => ({ contract: PICKS_C, entry: PICK_E, name: "pick", count: 3, typicalSat: o.maxSat, ...o });
+const stat = (o: any) => ({ contract: PICKS_C, entry: PICK_E, name: "pick", count: 20, typicalSat: o.maxSat, ...o });
 test("adjuster: only single-action transactions are measured (a batch hides the fixed cost); reverted ones don't count", () => {
   const st = summarize([
     { contract: PICKS_C, entry: PICK_E, rcUsed: sat(0.0477), ops: 1, reverted: false },
@@ -143,6 +143,10 @@ test("adjuster: a transaction that used all of its limit and reverted 'ran out',
   assert.equal(old[0].max_mana, sat(0.06).toString());
   const after = merge(old, st, sat(1), "b", "t");
   assert.equal(after[0].max_mana, sat(0.12).toString(), "at least twice the old limit");
+  // Audit SP-7: a run-out with no row of its own ran out at the per-transaction cap: no row (never 0.05 or 2 x lighter ones).
+  const skipped: string[] = [];
+  assert.deepEqual(merge([], st, sat(1), "c", "t", skipped), []);
+  assert.match(skipped[0], /ran out of Mana at the per-transaction cap/);
 });
 test("adjuster: limit = 2 × the most used (3 × typed in or from the testnet), at least 0.05, at most the per-transaction cap", () => {
   assert.equal(suggest(sat(0.0477), sat(1)), sat(0.1));
@@ -164,9 +168,9 @@ test("adjuster: a report never lowers a limit, keeps actions it didn't see, and 
   assert.equal(first[0].max_mana, sat(0.16).toString());
   const second = merge(first, [stat({ maxSat: sat(0.03) })], sat(1), "b", "t2");
   assert.equal(second[0].max_mana, sat(0.16).toString(), "never lowered");
-  assert.equal(second[0].observed!.count, 6);
+  assert.equal(second[0].observed!.count, 40);
   const skipped: string[] = [];
-  const third = merge(second, [{ contract: GAME.contract, entry: ANSWER_E, name: "heavy", count: 1, maxSat: sat(0.9), typicalSat: sat(0.9) }], sat(1), "c", "t3", skipped);
+  const third = merge(second, [{ contract: GAME.contract, entry: ANSWER_E, name: "heavy", count: 20, maxSat: sat(0.9), typicalSat: sat(0.9) }], sat(1), "c", "t3", skipped);
   assert.equal(third.length, 1, "the pick row stays; the heavy action has no row (it keeps the 1 Mana cap)");
   assert.match(skipped[0], /heavy: too heavy/);
 });
@@ -194,4 +198,41 @@ test("mana-limit refuses an implausibly small number and needs a source (review 
   const src = fs.readFileSync("bot/sponsor.ts", "utf8");
   assert.match(src, /Number\(most\) < 0\.01 && !a\.includes\("--force"\)/);
   assert.match(src, /\|\| !source\)/);
+});
+
+test("audit SP-6 / SP-11 / SP-20: no sample from a missing receipt (0 used); too few measurements change nothing; an out-of-resources log is a run-out; exact Mana values", async () => {
+  const { MIN_SAMPLES, toMana } = await import("../../bot/mana-limits.ts");
+  const st = summarize([{ contract: PICKS_C, entry: PICK_E, rcUsed: 0n, ops: 1, reverted: false }, { contract: PICKS_C, entry: PICK_E, rcUsed: sat(0.02), rcLimit: sat(1), ops: 1, reverted: true, outOfRc: true }]);
+  assert.equal(st[0].count, 0, "a transaction with no receipt (0 used) is not a measurement");
+  assert.equal(st[0].ranOut, 1, "the receipt said it ran out of resources");
+  const skipped: string[] = [];
+  assert.deepEqual(merge([], [stat({ count: MIN_SAMPLES - 1, maxSat: sat(0.05) })], sat(1), "a", "t", skipped), []);
+  assert.match(skipped[0], /only 19 measured/);
+  assert.equal(toMana(4774581n), "0.04774581"); assert.equal(toMana(sat(5)), "5");
+});
+test("audit SP-8: the deployed site must ask for at most each chain row, its fallback included", async () => {
+  const { siteMisfits } = await import("../../bot/mana-limits.ts");
+  const rows = [{ contract: PICKS_C, entry_point: PICK_E, max_mana: sat(0.15).toString() }];
+  assert.deepEqual(siteMisfits({}, rows, sat(1), sat(1)), [key(PICKS_C, PICK_E)], "the site has no entry: it asks its 1 Mana fallback, above the row");
+  assert.deepEqual(siteMisfits({ [key(PICKS_C, PICK_E)]: sat(0.15).toString() }, rows, sat(1), sat(1)), []);
+  assert.deepEqual(siteMisfits({ [key(PICKS_C, PICK_E)]: sat(0.2).toString() }, rows, sat(1), sat(1)), [key(PICKS_C, PICK_E)]);
+});
+
+test("audit SP-1 / SP-5 / SP-14 / SP-17: config uses the owner's caps, stops on a failed read, checks the code, and the site's other-actions limit fits the cap", async () => {
+  const src = fs.readFileSync("bot/sponsor.ts", "utf8");
+  const body = src.slice(src.indexOf("async function setConfig("), src.indexOf("/** Copies the per-action limits"));
+  assert.match(body, /flag\(a, "--per-day", DEFAULT_CAPS\.perDay\)/, "the owner's 5,000, not the chain's value");
+  assert.ok(!/fromSat\(cur\.max_mana_per_day, DEFAULT_CAPS/.test(body), "no fallback to what is on chain");
+  assert.match(src, /Couldn't read the sponsor's settings from/, "a failed read stops (never 'nothing set': switched off)");
+  assert.match(body, /show different sponsor settings/, "two nodes on mainnet");
+  assert.match(body, /const stopping = enabledArg === false;/, "disable --send skips the website checks");
+  assert.match(body, /V3_BUILDS\.includes\(code\)/);
+  assert.match(body, /would drop them\. Nothing was sent/);
+  const { siteProblems, usageAlerts } = await import("../../bot/sponsor.ts");
+  const p = siteProblems({ game: { sponsor: { rcLimit: "100000000", rcLimitOther: "300000000", rcLimits: {} } }, desk: {} }, [], 100000000n);
+  assert.ok(p.some((x: string) => /other actions ask 3 Mana/.test(x)));
+  const a = usageAlerts({ used_day: String(4100n * 100000000n) }, { used_day: "0" }, { max_mana_per_day: String(5000n * 100000000n), max_mana_free_day: String(2000n * 100000000n) }, Date.UTC(2026, 10, 2, 12));
+  assert.ok(a.some((x: string) => /82% used/.test(x)), "everyone's total over 80%");
+  const f = usageAlerts({ used_day: "0" }, { used_day: String(900n * 100000000n) }, { max_mana_per_day: String(5000n * 100000000n), max_mana_free_day: String(2400n * 100000000n) }, Date.UTC(2026, 10, 2, 9, 30));
+  assert.ok(f.some((x: string) => /free play has used 90%/.test(x)), "at 09:30, 1,000 of 2,400 is released; 900 used is 90%");
 });
