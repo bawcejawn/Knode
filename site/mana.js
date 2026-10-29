@@ -40,7 +40,7 @@
   if (typeof document === "undefined" || !document.getElementById("addr")) return;   // loaded by a test
 
   const lib = window.koilib || window.koinos || window;
-  const RPC = "https://api.koinos.io";
+  const RPC = "https://koinos.armana.io";
   const KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK";
   const SPONSOR = "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8";
   const EXPLORER = "https://koinosscan.com/address/";
@@ -125,7 +125,7 @@
     if (g.empty) {
       $("r-status").textContent = "This wallet holds no KOIN, so it has no Mana of its own.";
       $("r-full").textContent = "–"; $("r-full-in").textContent = "";
-      $("r-uses").textContent = "Knode's sponsor (below) can still pay for its game answers.";
+      $("r-uses").textContent = "Knode Games' sponsor (below) can still pay for its game answers.";
       return;
     }
     if (g.full) { $("r-full").textContent = "Now"; $("r-full-in").textContent = "The tank is full"; $("r-status").textContent = "Full tank."; }
@@ -150,7 +150,7 @@
       $("r-addr").textContent = "";
       const a = document.createElement("a");
       a.href = EXPLORER + addr; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = addr;
-      $("r-addr").append(a, addr === SPONSOR ? " · Knode's Mana sponsor" : "");
+      $("r-addr").append(a, addr === SPONSOR ? " · Knode Games' Mana sponsor" : "");
       render();
       if (typeof renderPlan === "function") renderPlan();
       store.set(LAST, addr);

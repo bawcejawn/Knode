@@ -1,4 +1,4 @@
-/* Knode extras: things that run only in the visitor's browser and send nothing anywhere.
+/* Knode Games extras: things that run only in the visitor's browser and send nothing anywhere.
    - buildIcs(): a calendar file with a reminder Monday to Saturday at 12:00 UTC, when the day's questions come out.
    - shareLines() / drawShare(): the "share my week" picture, drawn on a canvas on this device. The wallet address is
      left out unless the player ticks "show my address".
@@ -41,13 +41,13 @@
       `DTSTART:${icsDate(start)}`,
       "DURATION:PT15M",
       "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA",
-      `SUMMARY:${icsText("Knode: today's questions are out")}`,
-      `DESCRIPTION:${icsText(`Today's Knode questions are out. Answers close at 00:00 UTC${closeLocal ? ` (${closeLocal} your time)` : ""}. ${siteUrl}`)}`,
+      `SUMMARY:${icsText("Knode Games: today's questions are out")}`,
+      `DESCRIPTION:${icsText(`Today's Knode Games questions are out. Answers close at 00:00 UTC${closeLocal ? ` (${closeLocal} your time)` : ""}. ${siteUrl}`)}`,
       `URL:${siteUrl}`,
       "BEGIN:VALARM",
       "ACTION:DISPLAY",
       "TRIGGER:PT0M",
-      `DESCRIPTION:${icsText("Knode questions are out")}`,
+      `DESCRIPTION:${icsText("Knode Games questions are out")}`,
       "END:VALARM",
       "END:VEVENT",
       "END:VCALENDAR",

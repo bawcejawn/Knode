@@ -242,3 +242,39 @@ test("guests make KnodeGames picks only on the pinned Picks contract (empty unti
   ctx.check(tx(PICKS, PICK), { ...want, picks: PICKS });
   assert.throws(() => ctx.check(tx(PICKS, 0x94871b42), { ...want, picks: PICKS }), /only game answers/, "only pick, never apply_game");
 });
+
+test("every page with the wallet button offers guest play: guest.js before wallet.js, koilib allowed and loaded", () => {
+  for (const p of fs.readdirSync(`${APP}/site`).filter((f) => f.endsWith(".html"))) {
+    const h = fs.readFileSync(`${APP}/site/${p}`, "utf8");
+    if (!/<script src="header-wallet\.js"><\/script>/.test(h)) continue;
+    const g = h.indexOf('<script src="guest.js"></script>'), wlt = h.indexOf('<script src="wallet.js"></script>');
+    assert.ok(g > 0 && g < wlt, `${p}: guest.js before wallet.js`);
+    assert.match(h, /<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/koilib@9\.4\.1\/dist\/koinos\.min\.js" integrity=/, `${p}: koilib with SRI`);
+    const csp = h.match(/script-src ([^;]*)/)[1];
+    assert.ok(csp.includes("'self'") && !csp.includes("'none'"), `${p}: the page may run its own scripts`);
+  }
+});
+
+// Pages that set the wallet up without the sponsor (swap, burn, info pages): the header passes deployment.json's
+// switch with setGuestConfig. The guest option appears, but the page's own payer never changes, and anything a guest
+// may not sign is refused with "connect a real wallet" before any sponsor or network step.
+test("a page without the sponsor offers guest play through the header's switch, and refuses a guest's swap clearly", async () => {
+  const w = world({ payer: "self", guest: false });
+  assert.equal(w.find(/Play as a guest/).length, 0);
+  w.KW.connect();
+  assert.ok(!w.find(/Play as a guest/).length || "disabled" in w.find(/Play as a guest/)[0].attrs, "off until the header passes the switch");
+  w.win.KWallet.setGuestConfig({ payer: "sponsor", sponsor: { address: SPONSOR, guest: true } });
+  const addr = await connectAsGuest(w);
+  assert.equal(w.KW.kind, "guest"); assert.equal(w.KW.address, addr);
+  const before = w.net.filter(([m]) => m === "sendTransaction").length;
+  await assert.rejects(w.KW.send("swap", [w.op(DESK, 0x12345678, "")]), /Guests can only answer|connect a real wallet|Connect KOIN Vault or Kondor|A guest/i);
+  assert.equal(w.net.filter(([m]) => m === "sendTransaction").length, before, "nothing sent");
+});
+
+test("the header's guest switch stays off while deployment.json says the player pays (payer self)", () => {
+  const w = world({ payer: "self", guest: false });
+  w.win.KWallet.setGuestConfig({ payer: "self", sponsor: { address: SPONSOR, guest: true } });
+  w.KW.connect();
+  const btn = w.find(/Play as a guest/)[0];
+  assert.ok(btn && "disabled" in btn.attrs);
+});

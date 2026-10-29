@@ -2,13 +2,13 @@
 (() => {
   "use strict";
   const lib = window.koilib || window.koinos || window;
-  const RPC = "https://api.koinos.io";
+  const RPC = "https://koinos.armana.io";
   const KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK";
   const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq";
   const EXPLORER = "https://koinosscan.com/address/";
   const UNIT = 1e8, MAX_BLOCKS = 201600, WORKERS = 6, REORG = 60, STORE = "nd-blocks-v2";
-  const NAMES = { "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "Knode pool" };
-  const QUICK = [["Knode pool", "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr"]];
+  const NAMES = { "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "Knode Games pool" };
+  const QUICK = [["Knode Games pool", "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr"]];
   try { localStorage.removeItem("nd-blocks-v1"); } catch {}
 
   const provider = new lib.Provider([RPC]);
@@ -253,7 +253,7 @@
 
       $("tiles").replaceChildren(
         tile("Share of active VHP", share > 0 ? `${fmt(share * 100, share < 0.01 ? 3 : 2)}%` : "0%", `${fmt(myVhp, 0)} VHP of ${fmt(activeVhp / 1e6, 1)}M producing`),
-        tile(`Blocks, ${mode === "week" ? "this Knode week" : winName.toLowerCase()}`, `${fmt(mine)}`, expWin > 0 ? `expected ${sig(expWin)} · ${fmt(luck * 100, 0)}% of expected` : "no VHP, so no blocks expected", !Number.isFinite(luck) || expWin < 3 ? "" : luck >= 0.8 ? "good" : luck < 0.5 ? "bad" : ""),
+        tile(`Blocks, ${mode === "week" ? "this Knode Games week" : winName.toLowerCase()}`, `${fmt(mine)}`, expWin > 0 ? `expected ${sig(expWin)} · ${fmt(luck * 100, 0)}% of expected` : "no VHP, so no blocks expected", !Number.isFinite(luck) || expWin < 3 ? "" : luck >= 0.8 ? "good" : luck < 0.5 ? "bad" : ""),
         tile("Last block", lastTs ? `${dur(since)} ago` : "none in window", Number.isFinite(every) ? `usually one every ${dur(every)}${late ? " · overdue, check the node" : ""}` : "", late && share > 0 ? "bad" : ""),
       );
 
@@ -266,7 +266,7 @@
           el("td", { class: "r" }, m > 0 ? (lo === hi ? fmt(lo) : `${fmt(lo)} – ${fmt(hi)}`) : "—"), el("td", { class: "r" }, sig(m * reward)));
       }));
       const apr = myVhp > 0 ? share * perDay * reward * 365 / myVhp * 100 : NaN;
-      $("fc-sub").textContent = `${name}, if VHP stays as it is now. Knode's block questions use windows of 5,000–20,000 blocks.${Number.isFinite(apr) ? ` Earnings ≈ ${fmt(apr, 1)}% a year on its VHP (${fmt(reward, 3)} KOIN a block).` : ""}`;
+      $("fc-sub").textContent = `${name}, if VHP stays as it is now. Knode Games' block questions use windows of 5,000–20,000 blocks.${Number.isFinite(apr) ? ` Earnings ≈ ${fmt(apr, 1)}% a year on its VHP (${fmt(reward, 3)} KOIN a block).` : ""}`;
 
       chart(t0, t1, mineTs, share * perDay / 24, spanH);
 

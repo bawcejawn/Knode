@@ -2,7 +2,7 @@
 (() => {
   "use strict";
   const lib = window.koilib || window.koinos || window;
-  const RPC = "https://api.koinos.io";
+  const RPC = "https://koinos.armana.io";
   const POB = "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv"; // Koinos Proof-of-Burn system contract (mainnet)
   const ABI = {
     methods: {
