@@ -41,5 +41,11 @@
     "rcLimit": "100000000",
     "rcLimitOther": "300000000",
     "guest": true
+  },
+  "vaultGames": {
+    "13": {
+      "name": "Last Node Standing",
+      "results": "games-data:lastnode/vault"
+    }
   }
 }
