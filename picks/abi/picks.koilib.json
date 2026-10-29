@@ -163,6 +163,72 @@
               }
             }
           },
+          "leg_type": {
+            "fields": {
+              "code": {
+                "type": "uint32",
+                "id": 1
+              },
+              "lock_mode": {
+                "type": "uint32",
+                "id": 2
+              },
+              "round_size": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "round_offset": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "lead": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "ahead": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "enabled": {
+                "type": "bool",
+                "id": 7
+              }
+            }
+          },
+          "leg": {
+            "fields": {
+              "code": {
+                "type": "uint32",
+                "id": 1
+              },
+              "round": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "producer": {
+                "type": "bytes",
+                "id": 3,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
           "game_config": {
             "fields": {
               "id": {
@@ -238,6 +304,15 @@
               "enabled": {
                 "type": "bool",
                 "id": 14
+              },
+              "leg_types": {
+                "rule": "repeated",
+                "type": "leg_type",
+                "id": 15
+              },
+              "max_legs": {
+                "type": "uint32",
+                "id": 16
               }
             }
           },
@@ -297,6 +372,11 @@
               "changes": {
                 "type": "uint32",
                 "id": 5
+              },
+              "legs": {
+                "rule": "repeated",
+                "type": "leg",
+                "id": 6
               }
             }
           },
@@ -363,6 +443,11 @@
                 "options": {
                   "jstype": "JS_STRING"
                 }
+              },
+              "legs": {
+                "rule": "repeated",
+                "type": "leg",
+                "id": 6
               }
             }
           },
@@ -418,6 +503,11 @@
               "change": {
                 "type": "bool",
                 "id": 8
+              },
+              "legs": {
+                "rule": "repeated",
+                "type": "leg",
+                "id": 9
               }
             }
           },

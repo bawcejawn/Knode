@@ -19,6 +19,13 @@ the vault pays prizes from the scores.
 - **The choice fits the game.** One producer (kind 1), a list of distinct producers up to `list_size` (kind 2), or a
   number from `number_min` to `number_max` (kind 3). A producer is any valid address.
 - **Signed by the player** in the player's own transaction (not through another contract).
+- **Cards (kind 4, the Combo Card; added 2026-10-28, not yet uploaded).** A pick is a card of 2 to `max_legs` legs
+  (`max_legs` at most `list_size`, at most 10). Each leg is `{code, round, producer}`; its `code` names one of the game's
+  `leg_types`, and each leg type has its own lock exactly like a game (target, `lead`, `ahead`, at most a day ahead). The
+  chain refuses a card unless every leg is open now (and, for a change, every leg of the card it replaces), with one leg
+  per leg type per round and each producer at most once. A card's round is its slot: UTC day × `round_size` + slot, made
+  and changed only on that day. Leg types can only be **added** by the 48-hour announcement; tighten_game can switch one
+  off, lock it earlier, open it later or lower `max_legs`.
 
 ## The owner (KnodeGames owner `1635QUr…H717`)
 

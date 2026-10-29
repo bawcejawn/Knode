@@ -62,7 +62,15 @@
     .group-h span { font-size: 13px; color: var(--muted); }
 
     .ev { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); margin: 0 0 12px; overflow: hidden; }
-    .ev-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    .ev-h { display: flex; align-items: center; justify-content: space-between; gap: 8px 10px; padding: 12px 14px; flex-wrap: wrap; }
+    details.rc > summary { list-style: none; cursor: pointer; }
+    details.rc > summary::-webkit-details-marker { display: none; }
+    details.rc > summary::after { content: "▾"; color: var(--violet); font-weight: 700; }
+    details.rc[open] > summary { border-bottom: 1px solid var(--line); }
+    details.rc[open] > summary::after { content: "▴"; }
+    details.rc > summary:focus-visible { outline: 3px solid var(--violet); outline-offset: -3px; }
+    .ev-h .picks { display: flex; gap: 6px; flex-wrap: wrap; flex: 1 1 100%; order: 3; }
+    .ev .ev-h > div:first-child { flex: 1; }
     .ev-h b { font-family: var(--display); font-size: 17px; }
     .ev-h .when { font-size: 13px; color: var(--muted); }
     .ev-h .lock { font-size: 13px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -167,6 +175,10 @@
     .share-acts { display: flex; gap: 8px; flex-wrap: wrap; }
     .explain { font-size: 15px; color: var(--muted); max-width: 70ch; }
     .explain p { margin: 8px 0; }
+    #how > summary { cursor: pointer; list-style: none; }
+    #how > summary::-webkit-details-marker { display: none; }
+    #how > summary::after { content: " ▾"; color: var(--violet); }
+    #how[open] > summary::after { content: " ▴"; }
     .explain b { color: var(--ink); }
     .formula { font-family: var(--num); font-size: 15px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; display: inline-block; color: var(--ink); }
     table.base { border-collapse: collapse; font-size: 14px; margin: 6px 0; font-variant-numeric: tabular-nums; }
@@ -255,7 +267,7 @@
 
   <main class="pr">
     <h1>Combo Card</h1>
-    <p class="lede">Stack 2 to 6 calls on one card from the next day's races and Block X targets. Every leg has to hit. Harder legs and longer cards pay more points.</p>
+    <p class="lede">Stack 2 to 6 calls on one card from the next day's races and Block X targets. Every leg has to hit. Harder legs and longer cards pay more points. A staked game: stake at least 1 VHP in the Combo Card to play.</p>
     <p class="soon" id="cards-soon"><b>Preview.</b> Build and share cards now. Sending them opens when the Combo upgrade of the Knode Games Picks contract is live.</p>
     <p class="status" id="status" role="status">Reading the chain…</p>
 
@@ -318,8 +330,8 @@
       <p class="note">A week is the sum of your best 10 cards. Ties go to more cards that hit, then the earlier last hit. The top 30% of staked players with at least 1 point share the Combo Card bucket. A week is final 12 hours after it ends, once every leg is final.</p>
     </section>
 
-    <section class="card explain" id="how">
-      <h2 style="color:var(--ink)">How it works</h2>
+    <details class="card explain" id="how">
+      <summary><h2 style="color:var(--ink);display:inline">How it works</h2></summary>
       <p><b>The legs.</b> <b>Win</b>: the horse wins the race. <b>Show</b>: it finishes in the top 3. <b>Top half</b>: it finishes in the top half of the field. <b>Block X</b>: the producer signs that block (every 2,400th block). A horse must sign at least one block to count. More games add their own legs as they launch.</p>
       <p><b>What a leg is worth.</b> Each leg is priced from its chance, using the Producer Race's latest handicap card when your card is sent:</p>
       <p><span class="formula">leg worth = 0.5 ÷ chance, from ×0.25 to ×3</span></p>
@@ -328,7 +340,7 @@
       <table class="base" id="base-table"></table>
       <p><b>Fair rules.</b> A race takes up to 3 legs, one of each type, on different horses; a block takes one. Each producer can be on your card only once, since one good day would carry all its legs together. If a race or block is void, that leg is dropped and the card scores on the rest (with at least 2 legs). A card is final when every leg is final; results come from irreversible blocks that match on two independent nodes.</p>
       <p><b>The week.</b> Your best 10 cards count. The page and the recorder run the same scoring file, so the points shown are the points paid.</p>
-    </section>
+    </details>
   </main>
 
   <nav class="tabbar" aria-label="Main">

@@ -28,6 +28,7 @@ export const EXPIRY_MS: u64 = 7 * DAY_MS;                  // an announcement ca
 export const KIND_PRODUCER: u32 = 1;
 export const KIND_LIST: u32 = 2;
 export const KIND_NUMBER: u32 = 3;
+export const KIND_CARD: u32 = 4;
 export const LOCK_HEIGHT: u32 = 1;
 export const LOCK_TIME: u32 = 2;
 
@@ -44,6 +45,13 @@ export const MAX_GAMES: u32 = 32;
 export const MAX_GAME_ID: u32 = 1000000;
 export const MAX_NAME_BYTES: i32 = 40;
 export const MAX_LIST: u32 = 100;
+/** CARD games: 2 to 10 legs a card, up to 16 leg types, 1 to 10 cards a day, leg codes 1 to 255, legs at most a day ahead. */
+export const MIN_CARD_LEGS: u32 = 2;
+export const MAX_CARD_LEGS: u32 = 10;
+export const MAX_LEG_TYPES: i32 = 16;
+export const MAX_CARDS_PER_DAY: u64 = 10;
+export const MAX_LEG_CODE: u32 = 255;
+export const MAX_LEG_AHEAD_BLOCKS: u64 = 28800;
 
 /** The owner before the first handover: the KnodeGames owner and treasury (CLAUDE.md "Fixed facts"). */
 export const INITIAL_OWNER: Uint8Array = Base58.decode("1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717");
@@ -56,6 +64,13 @@ export const USED_UP = "PICKS: today's picks for this game are used up";
 export const NO_CHANGES = "PICKS: this pick can't be changed again";
 export const SAME = "PICKS: that is already your pick";
 export const NOT_SIGNED = "PICKS: the player must sign";
+export const CARD_DAY = "PICKS: a card is made or changed only on its own UTC day";
+export const CARD_SIZE = "PICKS: a card has 2 to max_legs legs";
+export const LEG_UNKNOWN = "PICKS: unknown or switched-off leg type";
+export const LEG_TWICE = "PICKS: one leg per leg type per round";
+export const PRODUCER_TWICE = "PICKS: a producer can be on a card only once";
+export const LEG_LOCKED = "PICKS: a leg of this card is locked";
+export const LEG_TOO_EARLY = "PICKS: a leg of this card is not open yet";
 export const BAD_CHOICE = "PICKS: the choice doesn't fit this game";
 export const OWNER_ONLY = "PICKS: owner only";
 export const SHAPE_FIXED = "PICKS: a game's shape can't change";
@@ -126,21 +141,32 @@ export class Picks {
     const head = System.getHeadInfo();
     const now = head.head_block_time;
     const height: u64 = head.head_topology != null ? head.head_topology!.height : 0;
-    const pos: u64 = game.lock_mode == LOCK_HEIGHT ? height : now;
-    System.require(args.round <= (u64.MAX_VALUE - game.round_offset) / game.round_size, LOCKED);
-    const target = args.round * game.round_size + game.round_offset;
-    // Picks are accepted only while pos < target - lead (a target closer than lead to 0 is always locked).
-    System.require(target > game.lead && pos < target - game.lead, LOCKED);
-    System.require(target - pos <= game.ahead, TOO_EARLY);
-
-    checkChoice(game, args.producers, args.number);
+    const card = game.kind == KIND_CARD;
+    if (card) {
+      // A card's round is its slot: UTC day * round_size + slot. It is made or changed only on that day; each leg
+      // carries its own lock, checked below.
+      const day = now / DAY_MS;
+      System.require(args.round / game.round_size == day, CARD_DAY);
+      checkCard(game, args.producers, args.number, args.legs, height, now);
+    } else {
+      const pos: u64 = game.lock_mode == LOCK_HEIGHT ? height : now;
+      System.require(args.round <= (u64.MAX_VALUE - game.round_offset) / game.round_size, LOCKED);
+      const target = args.round * game.round_size + game.round_offset;
+      // Picks are accepted only while pos < target - lead (a target closer than lead to 0 is always locked).
+      System.require(target > game.lead && pos < target - game.lead, LOCKED);
+      System.require(target - pos <= game.ahead, TOO_EARLY);
+      System.require(args.legs.length == 0, BAD_CHOICE);
+      checkChoice(game, args.producers, args.number);
+    }
 
     const key = pickKey(args.game, args.round, player);
     const old = this.entries.get(key);
     const had = old != null;
     if (had) {
-      System.require(!sameChoice(old!, args.producers, args.number), SAME);
+      System.require(!(sameChoice(old!, args.producers, args.number) && sameLegs(old!.legs, args.legs)), SAME);
       System.require(old!.changes < game.max_changes, NO_CHANGES);
+      // A card can be changed only while every leg of the card it replaces is still open.
+      if (card) for (let i = 0; i < old!.legs.length; i++) System.require(legOpenAt(game, old!.legs[i], height, now) == 0, LEG_LOCKED);
     }
 
     const day = now / DAY_MS;
@@ -150,9 +176,9 @@ export class Picks {
     System.require(count < game.max_picks_per_day, USED_UP);
     this.days.put(dkey, new picks.day_count(day, count + 1));
 
-    const stored = new picks.pick_object(copyList(args.producers), args.number, height, now, had ? old!.changes + 1 : 0);
+    const stored = new picks.pick_object(copyList(args.producers), args.number, height, now, had ? old!.changes + 1 : 0, copyLegs(args.legs));
     this.entries.put(key, stored);
-    const ev = new picks.pick_event(player, args.game, args.round, copyList(args.producers), args.number, height, now, had);
+    const ev = new picks.pick_event(player, args.game, args.round, copyList(args.producers), args.number, height, now, had, copyLegs(args.legs));
     System.event("picks.pick_event", Protobuf.encode(ev, picks.pick_event.encode), [player]);
     return new picks.empty_object();
   }
@@ -289,7 +315,7 @@ export class Picks {
     System.require(
       n.lead >= g.lead && n.ahead <= g.ahead && n.ahead > n.lead &&
         n.max_picks_per_day >= 1 && n.max_picks_per_day <= g.max_picks_per_day &&
-        n.max_changes <= g.max_changes && (g.enabled || !n.enabled),
+        n.max_changes <= g.max_changes && (g.enabled || !n.enabled) && cardTighter(g, n),
       NOT_TIGHTER
     );
     checkGame(n);
@@ -414,9 +440,12 @@ function checkGame(g: picks.game_config): void {
     System.require(g.list_size >= 2 && g.list_size <= MAX_LIST_SIZE && g.number_min == 0 && g.number_max == 0, "PICKS: a list game has list_size 2 to 10 and no number range");
   } else if (g.kind == KIND_NUMBER) {
     System.require(g.list_size == 0 && g.number_min <= g.number_max, "PICKS: a number game has list_size 0 and number_min <= number_max");
+  } else if (g.kind == KIND_CARD) {
+    checkCardGame(g);
   } else {
-    System.require(false, "PICKS: kind must be 1, 2 or 3");
+    System.require(false, "PICKS: kind must be 1, 2, 3 or 4");
   }
+  if (g.kind != KIND_CARD) System.require(g.leg_types.length == 0 && g.max_legs == 0, "PICKS: only a card game has leg types");
   System.require(g.lock_mode == LOCK_HEIGHT || g.lock_mode == LOCK_TIME, "PICKS: lock_mode must be 1 or 2");
   System.require(g.round_size >= 1 && g.round_offset < g.round_size, "PICKS: round_size must be at least 1 and above round_offset");
   const minLead = g.lock_mode == LOCK_HEIGHT ? MIN_LEAD_BLOCKS : MIN_LEAD_MS;
@@ -430,7 +459,105 @@ function checkGame(g: picks.game_config): void {
 /** The parts of a game that define what a round and a choice mean. They never change once registered. */
 function sameShape(a: picks.game_config, b: picks.game_config): bool {
   return a.id == b.id && a.kind == b.kind && a.list_size == b.list_size && a.number_min == b.number_min &&
-    a.number_max == b.number_max && a.lock_mode == b.lock_mode && a.round_size == b.round_size && a.round_offset == b.round_offset;
+    a.number_max == b.number_max && a.lock_mode == b.lock_mode && a.round_size == b.round_size && a.round_offset == b.round_offset &&
+    legTypesKept(a, b);
+}
+
+/** A card game's leg types are part of its shape: b keeps every leg type of a, in order, with the same code, clock,
+ *  round size and offset (b may add more after them). */
+function legTypesKept(a: picks.game_config, b: picks.game_config): bool {
+  if (b.leg_types.length < a.leg_types.length) return false;
+  for (let i = 0; i < a.leg_types.length; i++) {
+    const x = a.leg_types[i], y = b.leg_types[i];
+    if (x.code != y.code || x.lock_mode != y.lock_mode || x.round_size != y.round_size || x.round_offset != y.round_offset) return false;
+  }
+  return true;
+}
+
+/** tighten_game on a card game: the same leg types (none added), each locking no later and opening no earlier, none
+ *  switched back on, and max_legs no higher. Other games: nothing more to check. */
+function cardTighter(g: picks.game_config, n: picks.game_config): bool {
+  if (g.kind != KIND_CARD) return true;
+  if (n.leg_types.length != g.leg_types.length || n.max_legs > g.max_legs) return false;
+  for (let i = 0; i < g.leg_types.length; i++) {
+    const x = g.leg_types[i], y = n.leg_types[i];
+    if (y.lead < x.lead || y.ahead > x.ahead || (!x.enabled && y.enabled)) return false;
+  }
+  return true;
+}
+
+/** A card game's settings: list_size (the most legs a card can ever have) 2 to 10, max_legs 2 to list_size, 1 to 10
+ *  cards a day (round_size), a time clock with the fixed unused lead and ahead, and 1 to 16 leg types with distinct
+ *  codes, each with a valid lock at most a day ahead. */
+function checkCardGame(g: picks.game_config): void {
+  System.require(g.list_size >= MIN_CARD_LEGS && g.list_size <= MAX_CARD_LEGS && g.max_legs >= MIN_CARD_LEGS && g.max_legs <= g.list_size &&
+    g.number_min == 0 && g.number_max == 0, "PICKS: a card game has list_size 2 to 10, max_legs 2 to list_size and no number range");
+  System.require(g.lock_mode == LOCK_TIME && g.round_offset == 0 && g.round_size >= 1 && g.round_size <= MAX_CARDS_PER_DAY &&
+    g.lead == MIN_LEAD_MS && g.ahead == DAY_MS, "PICKS: a card game has 1 to 10 cards a day, lock_mode 2, offset 0, lead 5 minutes, ahead 1 day");
+  const n = g.leg_types.length;
+  System.require(n >= 1 && n <= MAX_LEG_TYPES, "PICKS: a card game has 1 to 16 leg types");
+  for (let i = 0; i < n; i++) {
+    const t = g.leg_types[i];
+    System.require(t.code >= 1 && t.code <= MAX_LEG_CODE, "PICKS: leg codes are 1 to 255");
+    for (let j = 0; j < i; j++) System.require(g.leg_types[j].code != t.code, "PICKS: leg codes must be distinct");
+    System.require(t.lock_mode == LOCK_HEIGHT || t.lock_mode == LOCK_TIME, "PICKS: a leg's lock_mode must be 1 or 2");
+    System.require(t.round_size >= 1 && t.round_offset < t.round_size, "PICKS: a leg's round_size must be at least 1 and above its offset");
+    const minLead = t.lock_mode == LOCK_HEIGHT ? MIN_LEAD_BLOCKS : MIN_LEAD_MS;
+    const maxAhead = t.lock_mode == LOCK_HEIGHT ? MAX_LEG_AHEAD_BLOCKS : DAY_MS;
+    System.require(t.lead >= minLead && t.ahead > t.lead && t.ahead <= maxAhead, "PICKS: a leg locks at least 100 blocks (5 minutes) ahead and opens at most a day ahead");
+  }
+}
+
+/** A card fits the game: no producers or number, 2 to max_legs legs, each of a known switched-on leg type, a valid
+ *  producer, open now; one leg per leg type per round; each producer once. */
+function checkCard(g: picks.game_config, producers: Uint8Array[], n: u64, legs: picks.leg[], height: u64, now: u64): void {
+  System.require(producers.length == 0 && n == 0, BAD_CHOICE);
+  System.require(<u32>legs.length >= MIN_CARD_LEGS && <u32>legs.length <= g.max_legs && <u32>legs.length <= g.list_size, CARD_SIZE);
+  for (let i = 0; i < legs.length; i++) {
+    const l = legs[i];
+    const t = legTypeOf(g, l.code);
+    System.require(t != null && t!.enabled, LEG_UNKNOWN);
+    System.require(isAddress(l.producer), BAD_CHOICE);
+    for (let j = 0; j < i; j++) {
+      System.require(!(legs[j].code == l.code && legs[j].round == l.round), LEG_TWICE);
+      System.require(!Arrays.equal(legs[j].producer!, l.producer!), PRODUCER_TWICE);
+    }
+    const st = legOpenAt(g, l, height, now);
+    System.require(st != 1, LEG_LOCKED);
+    System.require(st != 2, LEG_TOO_EARLY);
+  }
+}
+
+function legTypeOf(g: picks.game_config, code: u32): picks.leg_type | null {
+  for (let i = 0; i < g.leg_types.length; i++) if (g.leg_types[i].code == code) return g.leg_types[i];
+  return null;
+}
+
+/** 0 if the leg is open now by its leg type's clock, 1 if locked (or its type is gone), 2 if not open yet. The same
+ *  rule as a game's round: target = round * round_size + round_offset; open while pos < target - lead and
+ *  target - pos <= ahead. */
+function legOpenAt(g: picks.game_config, l: picks.leg, height: u64, now: u64): i32 {
+  const t = legTypeOf(g, l.code);
+  if (t == null) return 1;
+  const lt = t!;
+  if (l.round > (u64.MAX_VALUE - lt.round_offset) / lt.round_size) return 1;
+  const target = l.round * lt.round_size + lt.round_offset;
+  const pos: u64 = lt.lock_mode == LOCK_HEIGHT ? height : now;
+  if (!(target > lt.lead && pos < target - lt.lead)) return 1;
+  if (target - pos > lt.ahead) return 2;
+  return 0;
+}
+
+function sameLegs(a: picks.leg[], b: picks.leg[]): bool {
+  if (a.length != b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i].code != b[i].code || a[i].round != b[i].round || !Arrays.equal(a[i].producer!, b[i].producer!)) return false;
+  return true;
+}
+
+function copyLegs(a: picks.leg[]): picks.leg[] {
+  const out = new Array<picks.leg>();
+  for (let i = 0; i < a.length; i++) out.push(new picks.leg(a[i].code, a[i].round, a[i].producer));
+  return out;
 }
 
 /** The choice fits the game: one valid producer, a list of distinct valid producers, or a number in range. */

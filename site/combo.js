@@ -17,7 +17,7 @@
   const NAMES = { "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "Knode pool", "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR": "Knode Swap" };
   const DRAFT_KEY = "kg.combo.draft.v1";
   const CARD_STALE_MS = 65 * 60000;     // race cards come every hour; older than this, a new one is due
-  const SHOW_HORSES = 6;                // horses shown per race before "Show all"
+  const SHOW_HORSES = 5;                // horses shown per race before "Show all"
   // Games that will add legs when they launch (shown as "soon"; owner, 2026-10-28).
   const SOON = [["🛡️", "Survivor"], ["🏁", "Last Node"], ["🏆", "Bracket"], ["⛳", "Block Golf"]];
   const provider = lib.Provider ? new lib.Provider([RPC]) : null;
@@ -45,7 +45,8 @@
   let filter = "all";               // which games the board shows
   let legs = [];                    // the card being built: [{ code, round, producer }]
   let toast = "", lastAdded = "";
-  const allHorses = new Set(), openBlocks = new Set();
+  const allHorses = new Set(), openBlocks = new Set(), openRaceSet = new Set();
+  let racesOpened = false;          // the first open race starts unfolded, once
   let board = null;
   const me = () => (W && W.address) || null;
   const legId = (l) => `${l.code}:${l.round}:${l.producer}`;
@@ -167,10 +168,10 @@
     const usedIdx = Math.max(-1, ...mine.map((l) => field.findIndex((h) => h.a === l.producer)));
     const all = allHorses.has(r) || usedIdx >= SHOW_HORSES;
     const shown = all ? field : field.slice(0, SHOW_HORSES);
-    return el("article", { class: `ev${mine.length ? " has" : ""}`, "aria-label": `Race of ${dayTime(start)}` },
-      el("div", { class: "ev-h" },
+    const d = el("details", { class: `ev rc${mine.length ? " has" : ""}`, "data-k": `race:${r}` },
+      el("summary", { class: "ev-h" },
         el("div", {}, el("b", { text: `Race · ${dayTime(start)}` }), el("div", { class: "when", text: `6 hours, to ${clock(start + M.RACE)}` })),
-        mine.length ? el("div", {}, ...mine.map((l) => el("span", { class: "picked", text: `${C.NAMES[l.code]}: ${nameOf(l.producer)}` }))) : null,
+        mine.length ? el("div", { class: "picks" }, ...mine.map((l) => el("span", { class: "picked", text: `${C.NAMES[l.code]}: ${nameOf(l.producer)}` }))) : null,
         el("span", { class: `lock${lockAt - Date.now() < 30 * 60000 ? " soon-lock" : ""}`, text: `locks in ${dur(lockAt - Date.now())}` })),
       el("table", { class: "px" },
         el("thead", {}, el("tr", {}, el("th", { text: "Horse" }), el("th", { text: "Win" }), el("th", { text: "Show" }), el("th", { text: "Top half" }))),
@@ -179,6 +180,9 @@
           ...[C.WIN, C.SHOW, C.HALF].map((code) => el("td", { class: "p" }, priceBtn({ code, round: r, producer: h.a }))))))),
       field.length > SHOW_HORSES ? el("button", { type: "button", class: "more", "data-k": `more:${r}`, "aria-expanded": String(all),
         onclick: () => { if (allHorses.has(r)) allHorses.delete(r); else allHorses.add(r); render(); } }, all ? "Show fewer horses" : `Show all ${field.length} horses`) : null);
+    if (openRaceSet.has(r)) d.open = true;
+    d.addEventListener("toggle", () => { if (d.open) openRaceSet.add(r); else openRaceSet.delete(r); });
+    return d;
   }
   function blockCard(list) {
     const { m } = X.vhpOf(card), total = [...m.values()].reduce((s, v) => s + v, 0);
@@ -203,6 +207,7 @@
     else {
       if (filter !== "block") {
         const rs = openRaces();
+        if (!racesOpened && rs.length) { openRaceSet.add(rs[0]); racesOpened = true; }
         out.push(el("div", { class: "group-h" }, el("h2", { text: "Races" }), el("span", { text: "Up to 3 legs a race: a Win, a Show and a Top half" })));
         out.push(...(rs.length ? rs.map(raceCard) : [el("p", { class: "note", text: head ? "No race is open right now." : "Reading the chain…" })]));
       }
@@ -376,7 +381,7 @@
     loadBoard();
     setInterval(() => {
       if (document.hidden) return;
-      readHead().then(() => { say(""); dropLocked(); if (!document.querySelector(".bx[open] :focus, #board :focus")) render(); else renderSlip(); })
+      readHead().then(() => { say(""); dropLocked(); if (!document.querySelector("#board :focus")) render(); else renderSlip(); })
         .catch(() => say("Reconnecting to the Koinos network…"));
     }, 20000);
     setInterval(() => { if (!document.hidden) loadRaces().then(render); }, 300000);

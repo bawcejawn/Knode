@@ -306,7 +306,7 @@ describe("games: 48-hour notice to add or loosen, immediate to tighten", () => {
     g = blockX(); g.id = 0; refusedAnnounce(g, "PICKS: game id must be 1 to 1,000,000");
     g = blockX(); g.name = ""; refusedAnnounce(g, "PICKS: name must be 1 to 40 bytes");
     g = blockX(); g.name = "12345678901234567890123456789012345678901"; refusedAnnounce(g, "PICKS: name must be 1 to 40 bytes");
-    g = blockX(); g.kind = 4; refusedAnnounce(g, "PICKS: kind must be 1, 2 or 3");
+    g = blockX(); g.kind = 5; refusedAnnounce(g, "PICKS: kind must be 1, 2, 3 or 4");
     g = blockX(); g.list_size = 2; refusedAnnounce(g, "PICKS: a one-producer game has list_size 1 and no number range");
     g = blockX(); g.round_size = 0; refusedAnnounce(g, "PICKS: round_size must be at least 1 and above round_offset");
     g = blockX(); g.round_offset = 2400; refusedAnnounce(g, "PICKS: round_size must be at least 1 and above round_offset");
