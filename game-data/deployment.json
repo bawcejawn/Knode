@@ -41,5 +41,23 @@
     "rcLimit": "100000000",
     "rcLimitOther": "300000000",
     "guest": true
+  },
+  "vaultGames": {
+    "4": {
+      "name": "Fantasy Producers",
+      "results": "games-data:fantasy/vault"
+    },
+    "8": {
+      "name": "Combo Card",
+      "results": "games-data:combo/vault"
+    },
+    "9": {
+      "name": "Producer Bracket",
+      "results": "games-data:bracket/vault"
+    },
+    "13": {
+      "name": "Last Node Standing",
+      "results": "games-data:lastnode/vault"
+    }
   }
 }

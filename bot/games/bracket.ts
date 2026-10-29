@@ -195,7 +195,7 @@ type Stakes = { staked: string[]; held: string[] };
 /** For week w, from the Vault's get_game_player (Vault v6): staked = at least 1 VHP staked in game 9 for that week
  *  (rows); held = also every player the Vault would refuse a free prize: its own check, peak stake that week (or,
  *  without an entry, the stake now) of at least 1 VHP. */
-async function readStaked(node: any, players: string[], w: number): Promise<Stakes> {
+export async function readStaked(node: any, players: string[], w: number): Promise<Stakes> {
   const abi = VAULT_ABI(), vault = defaultVault();
   if (!abi || !abi.methods || !abi.methods.get_game_player || !vault) throw new Error("the Vault's per-game stakes can't be read yet (needs Vault v6)");
   const c = new Contract({ id: vault, abi, provider: node });
