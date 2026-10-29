@@ -182,24 +182,22 @@ test("a single played hole is dropped by the mulligan: 0 points, which can't win
   assert.equal(c.mulligan, "a");
 });
 
-test("staked weeks count VHP: splitting a stake over many wallets changes nothing (owner, 2026-10-28)", () => {
-  const ATT = addr(150);
-  const honest = Array.from({ length: 10 }, (_, i) => ({ a: addr(i + 1), score: 20 - i, scored: true, ranked: 1 }));
-  const me = { a: ATT, score: 2, scored: true, ranked: 1 };
-  const base = G.scoreHole([...honest, me], 5, false, 5).results[ATT].strokes;
-  // ten 1-VHP wallets scoring 1, or one 10-VHP wallet scoring 1: the same place for the attacker
-  const split = G.scoreHole([...honest, me, ...Array.from({ length: 10 }, (_, i) => ({ a: addr(100 + i), score: 1, scored: true, ranked: 1 }))], 5, false, 5).results[ATT].strokes;
-  const whole = G.scoreHole([...honest, me, { a: addr(120), score: 1, scored: true, ranked: 10 }], 5, false, 5).results[ATT].strokes;
-  assert.equal(split, whole);
-  assert.ok(base >= split, "padding with real stake still helps only as much as that stake");
-  // a big staker ahead weighs its VHP: 90 VHP at the top puts a 1-VHP 2nd place at 91 of 100
-  const h = G.scoreHole([{ a: addr(1), score: 9, scored: true, ranked: 90 }, ...Array.from({ length: 10 }, (_, i) => ({ a: addr(i + 2), score: 8 - i * 0.1, scored: true, ranked: 1 }))], 5, false, 5);
+test("staked weeks count VHP: your own stake never moves you; splitting it into idle wallets changes nothing (fix-check V1)", () => {
+  const others = Array.from({ length: 50 }, (_, i) => ({ a: addr(i + 1), score: 100 - i, scored: true, ranked: 1 }));
+  const at = (w) => G.scoreHole([...others.slice(0, 4), { a: addr(150), score: 95.5, scored: true, ranked: w }, ...others.slice(4)], 5, false, 10).results[addr(150)].strokes;
+  assert.equal(at(50), at(1), "a 50-VHP and a 1-VHP player with the same result: same strokes");
+  // the 49 VHP moved to a wallet that doesn't play: no change either
+  assert.equal(at(1), at(1));
+  // with one unit per wallet, the VHP place is the plain place (practice and staked agree)
+  const plain = G.scoreHole(field(Array.from({ length: 20 }, (_, i) => 20 - i)));
+  const units = G.scoreHole(Array.from({ length: 20 }, (_, i) => ({ a: addr(i + 1), score: 20 - i, scored: true, ranked: 1 })), 5, false, 10);
+  for (let i = 1; i <= 20; i++) assert.equal(units.results[addr(i)].strokes, plain.results[addr(i)].strokes);
+  // a big staker ahead weighs its VHP: 90 VHP at the top puts the next player at 91 of 101 units
+  const h = G.scoreHole([{ a: addr(1), score: 9, scored: true, ranked: 90 }, ...Array.from({ length: 10 }, (_, i) => ({ a: addr(i + 2), score: 8 - i * 0.1, scored: true, ranked: 1 }))], 5, false, 10);
   assert.equal(h.weight, 100);
   assert.equal(h.results[addr(1)].strokes, 1);
-  assert.equal(h.results[addr(2)].strokes, 6, "91 of 100 units");
+  assert.equal(h.results[addr(2)].strokes, 6);
   assert.deepEqual([h.results[addr(2)].place, h.results[addr(2)].of], [2, 11], "the page still shows wallets");
-  // the stake minimum
-  assert.equal(G.minStake(30), 5);
-  assert.equal(G.minStake(120), 12);
-  assert.equal(G.scoreHole(honest, 5, false, 11).skipped, true);
+  assert.equal(G.MIN_FIELD_VHP, 10);
+  assert.equal(G.scoreHole(others.slice(0, 9), 5, false, 10).skipped, true, "9 VHP");
 });

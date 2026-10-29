@@ -335,11 +335,9 @@ export async function run(o: Opts) {
         d.rows = d.rows.map((r) => ({ ...r, ranked: stakers ? stakers.get(r.a) ?? 0 : G.weightOf(before.get(r.a)) }) as any);
       }
     }
-    // C. Score each hole. Staked weeks: a hole's field needs MIN_FIELD_VHP and MIN_SHARE% of the week's Block Golf
-    //    stake among its golfers (counted from every hole's rows, kept ones too).
-    const weekStake = new Map<string, number>();
-    if (!R.practice) for (const d of drafts) for (const [a, w2] of d.keptFinal ? d.keptFinal.rows.map((r) => [r[0], G.weightOf(r[3])] as [string, number]) : d.rows.map((r) => [r.a, G.weightOf(r.ranked)] as [string, number])) weekStake.set(a, Math.max(weekStake.get(a) ?? 0, w2));
-    const minW = R.practice ? 0 : G.minStake([...weekStake.values()].reduce((t, x) => t + x, 0));
+    // C. Score each hole. Staked weeks: a hole's field needs MIN_FIELD_VHP of Block Golf stake among its scorers (a
+    //    fixed number, so nobody can move it and a final hole always scores the same: fix-check V2, V3).
+    const minW = R.practice ? 0 : G.MIN_FIELD_VHP;
     const holes: HoleRec[] = [];
     for (const d of drafts) {
       if (d.keptFinal) { holes.push(d.keptFinal); continue; }
@@ -387,8 +385,12 @@ export async function run(o: Opts) {
   // Block Golf is staked only, so it has no free-prize winners. Practice weeks have no vault file.
   for (const [w, wf] of weeks) {
     if (!wf.final || wf.practice || !wf.holes.length) continue;
+    const vf = vaultFile(wf);
+    // Nobody to pay (every hole skipped, or no staked scorer): no file, so the Vault rolls the week over in the game;
+    // the owner is told (fix-check V5).
+    if (!vf.rows.length) { problems.push(`week ${w}: no staked Block Golf scorecards; no vault file written`); continue; }
     fs.mkdirSync(path.join(OUT, "vault"), { recursive: true });
-    fs.writeFileSync(path.join(OUT, "vault", `W${w}.json`), JSON.stringify(vaultFile(wf)) + "\n");
+    fs.writeFileSync(path.join(OUT, "vault", `W${w}.json`), JSON.stringify(vf) + "\n");
   }
   const weekList = [...known].sort((a, b) => a - b);
   fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), weeks: weekList, course, stakedFromWeek: STAKED_FROM }) + "\n");

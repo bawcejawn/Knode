@@ -65,8 +65,10 @@ the Race's real week; its first mainnet weeks are practice weeks with no prizes,
 - When the vault is live, set `GOLF_STAKED_FROM_WEEK` to the first staked week (the number in the W file names, e.g.
   `6` for `W006.json`). From that week a hole's field is the players **staked in Block Golf** that week (at
   least 1 VHP, read from the vault on two nodes) who scored on that game, **counted by whole VHP staked, not by
-  wallets** (owner, 2026-10-28): splitting a stake over many wallets changes nothing. A hole needs at least 5 VHP and
-  10% of the week's Block Golf stake among its scorers. Players not staked in Block Golf still get a scorecard (Free
+  wallets** (owner, 2026-10-28). Your own stake never moves you (you count as one unit among the others' stake), so
+  moving VHP into idle wallets changes nothing. A hole needs at least 10 VHP of Block Golf stake among its scorers (a
+  fixed number nobody can move; `MIN_FIELD_VHP` in `site/golf-math.js`). A week with no staked scorecards gets no vault
+  file, so the Vault rolls that week's bucket over in Block Golf. Players not staked in Block Golf still get a scorecard (Free
   play board) but never make up a field.
 - The question game hole keeps Block Golf's simple rule (owner, 2026-10-28).
 - Staked weeks need the vault (v6) live and merged: the recorder refuses to start if `GOLF_STAKED_FROM_WEEK` is set

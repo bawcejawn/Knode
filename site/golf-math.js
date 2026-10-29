@@ -21,8 +21,9 @@
  * - STAKED weeks count VHP, not wallets (owner, 2026-10-28): the field is the players staked in Block Golf that week,
  *   each weighted by the whole VHP they have staked in it, so 10 VHP split over ten wallets counts exactly like one
  *   10-VHP wallet. A place is a position in VHP: "top 25%" means a quarter of the field's Block Golf stake is at or
- *   ahead of you. A hole needs at least MIN_FIELD_VHP staked among its scorers AND at least MIN_SHARE% of the week's
- *   Block Golf stake (so a hole few golfers play can't be filled with a player's own extra wallets).
+ *   ahead of you. Your own stake never moves you: you are placed as one unit among everyone else's stake (fix-check
+ *   V1), so a 50-VHP player and a 1-VHP player with the same result get the same strokes. A hole needs at least
+ *   MIN_FIELD_VHP of Block Golf stake among its scorers, a fixed number nobody can move after the fact (fix-check V2).
  * - Players on the same score share the middle of their places, so tied players are treated alike.
  * - A hole whose field is too small is skipped for everyone. A hole whose results aren't final in time is skipped for
  *   everyone too, never guessed.
@@ -40,7 +41,7 @@
  */
 (function (root) {
   "use strict";
-  const PAR = 4, LOST = 7, MIN_FIELD = 5, PRACTICE_MIN_FIELD = 3, MIN_FIELD_VHP = 5, MIN_SHARE = 10;
+  const PAR = 4, LOST = 7, MIN_FIELD = 5, PRACTICE_MIN_FIELD = 3, MIN_FIELD_VHP = 10;
   // [percent (inclusive), strokes]; a place at exactly the limit gets the better score.
   const BANDS = [[5, 2], [25, 3], [65, 4], [90, 5], [100, 6]];
   const NAMES = Object.freeze({ 1: "Hole in one", 2: "Eagle", 3: "Birdie", 4: "Par", 5: "Bogey", 6: "Double bogey", 7: "Lost ball" });
@@ -52,12 +53,12 @@
   const isAddr = (a) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
 
   /** Strokes for a place, counted in units (a wallet in practice weeks, a whole VHP of Block Golf stake in staked
-   *  weeks). better: units strictly ahead; same: units on the same score (with this player's own when in the field);
-   *  n: all the field's units; inField: is this player in it (an outsider counts as one more unit); scored: did they
-   *  score anything (only a scoring player can hole in one). */
-  function strokesFor(better, same, n, inField, scored) {
+   *  weeks). The player counts as ONE unit among everyone else's: better = other players' units strictly ahead,
+   *  same = other players' units on the same score, others = all other players' units in the field. With one unit
+   *  per wallet this is the plain place. scored: did they score anything (only a scoring player can hole in one). */
+  function strokesFor(better, same, others, scored) {
     if (better === 0 && scored) return 1;
-    const size = inField ? same : same + 1, N = inField ? n : n + 1;
+    const size = same + 1, N = others + 1;
     // The middle place of the group, doubled to stay an integer: places better+1 … better+size.
     const place2 = 2 * better + size + 1;
     for (const [pct, s] of BANDS) if (place2 * 100 <= pct * 2 * N) return s;
@@ -91,9 +92,9 @@
     const results = {};
     for (const r of all) {
       let better = 0, same = 0, ahead = 0;
-      for (const f of field) { if (f.score > r.score) { better += f.w; ahead++; } else if (f.score === r.score) same += f.w; }
+      for (const f of field) { if (f === r) continue; if (f.score > r.score) { better += f.w; ahead++; } else if (f.score === r.score) same += f.w; }
       const inField = r.w > 0 && r.scored;
-      const strokes = r.scored ? strokesFor(better, same, units, inField, true) : 6;
+      const strokes = r.scored ? strokesFor(better, same, units - (inField ? r.w : 0), true) : 6;
       results[r.a] = { place: ahead + 1, of: inField ? n : n + 1, strokes };
     }
     return { skipped: false, why: "", field: n, weight: units, results };
@@ -159,11 +160,10 @@
     const practice = !(Number.isInteger(stakedFrom) && week >= stakedFrom);
     return { practice, everyone: practice, minField: practice ? PRACTICE_MIN_FIELD : MIN_FIELD };
   }
-  /** Staked weeks: the VHP a hole's field needs, given the week's whole Block Golf stake among its golfers. */
-  const minStake = (weekStake) => Math.max(MIN_FIELD_VHP, Math.ceil((weekStake * MIN_SHARE) / 100));
+
 
   root.KGolf = {
-    PAR, LOST, MIN_FIELD, PRACTICE_MIN_FIELD, MIN_FIELD_VHP, MIN_SHARE, rule, minStake, weightOf, BANDS, NAMES, SHORT, ICON, COURSE_ORDER,
+    PAR, LOST, MIN_FIELD, PRACTICE_MIN_FIELD, MIN_FIELD_VHP, rule, weightOf, BANDS, NAMES, SHORT, ICON, COURSE_ORDER,
     strokesFor, scoreHole, card, cards, toParText, shareText, courseFor, orderOf, isAddr,
   };
 })(typeof window !== "undefined" ? window : globalThis);
