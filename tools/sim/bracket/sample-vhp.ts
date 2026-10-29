@@ -38,10 +38,22 @@ async function decode(e: any): Promise<Partial<Ev>> {
   catch { return { raw: e.data }; }
 }
 
-async function range(node: Provider, headId: string, from: number, to: number) {
-  const r: any = await withRetry(`blocks ${from}-${to}`, () => node.call("block_store.get_blocks_by_height",
-    { head_block_id: headId, ancestor_start_height: String(from), num_blocks: to - from + 1, return_block: true, return_receipt: true }));
-  return (r?.block_items ?? []) as any[];
+const progress: string[] = [];
+const note = (m: string) => { progress.push(`${new Date().toISOString()} ${m}`); console.log(m); };
+/** Blocks from..to with receipts. A batch that errors is split in two (a node may refuse a large answer). */
+async function range(node: Provider, headId: string, from: number, to: number): Promise<any[]> {
+  try {
+    const r: any = await withRetry(`blocks ${from}-${to}`, () => node.call("block_store.get_blocks_by_height",
+      { head_block_id: headId, ancestor_start_height: String(from), num_blocks: to - from + 1, return_block: true, return_receipt: true }), 3);
+    const items = (r?.block_items ?? []) as any[];
+    if (items.length) return items;
+    throw new Error(`no blocks returned at ${from}`);
+  } catch (e) {
+    if (to <= from) throw e;
+    const mid = Math.floor((from + to) / 2);
+    note(`split ${from}-${to}: ${String((e as Error).message).slice(0, 160)}`);
+    return [...(await range(node, headId, from, mid)), ...(await range(node, headId, mid + 1, to))];
+  }
 }
 
 async function main() {
@@ -53,7 +65,7 @@ async function main() {
   const n = top - from + 1, signer: string[] = new Array(n), ts: number[] = new Array(n), ids: string[] = new Array(n);
   const events: Ev[] = [], census = new Map<string, number>(), samples = new Map<string, any>();
   const queue: [number, number][] = [];
-  for (let s = from; s <= top; s += 100) queue.push([s, Math.min(top, s + 99)]);
+  for (let s = from; s <= top; s += 50) queue.push([s, Math.min(top, s + 49)]);
   const spot: [number, number][] = queue.filter((_, i) => i % 25 === 7);
   let done = 0;
   const worker = async () => {
@@ -79,7 +91,7 @@ async function main() {
           k++;
         }
       }
-      if (++done % 200 === 0) console.log(`${done} ranges, ${events.length} events, ${Math.round((Date.now() - t0) / 1000)} s`);
+      if (++done % 400 === 0) note(`${done} ranges, ${events.length} events, ${Math.round((Date.now() - t0) / 1000)} s`);
     }
   };
   await Promise.all(Array.from({ length: 4 }, worker));
@@ -143,9 +155,14 @@ async function main() {
   fs.mkdirSync(OUT, { recursive: true });
   fs.writeFileSync(path.join(OUT, "vhp-sample.json.gz"), zlib.gzipSync(JSON.stringify(sample), { level: 9 }));
   const summary = { made: sample.made, from, top, lib, blocks: n, events: events.length, tail: tail.length, signers: signers.length,
-    census: sample.census, spot: { ranges: spotResult.ranges, mismatches: spotResult.mismatches.slice(0, 50) },
+    census: sample.census, progress: progress.slice(-100), spot: { ranges: spotResult.ranges, mismatches: spotResult.mismatches.slice(0, 50) },
     balancesAgree: balC ? Object.keys(balP.values).every((a) => balP.values[a] === balC.values[a]) : null, seconds: Math.round((Date.now() - t0) / 1000) };
   fs.writeFileSync(path.join(OUT, "summary.json"), JSON.stringify(summary, null, 1) + "\n");
   console.log(JSON.stringify(summary, null, 1));
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+// Never fail without a reason anyone can read: the error goes into summary.json, which is published either way.
+main().catch((e) => {
+  console.error(e);
+  fs.mkdirSync(OUT, { recursive: true });
+  fs.writeFileSync(path.join(OUT, "summary.json"), JSON.stringify({ made: new Date().toISOString(), error: String((e as Error)?.stack || e).slice(0, 4000), progress: progress.slice(-200) }, null, 1) + "\n");
+});
