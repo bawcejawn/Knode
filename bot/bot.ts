@@ -1303,6 +1303,12 @@ async function upgrade(sub: string | undefined, send: boolean, botPays = false, 
   if (send && mainnet && E.CONFIRM_MAINNET !== "yes") throw new Error("MAINNET: add CONFIRM_MAINNET=yes to .env first.");
   if (!fs.existsSync(WASM_FILE)) throw new Error(`${WASM_FILE} not found — in the game folder run: ${safe ? "npm run build:safe" : "npm test && npm run check"}`);
   const wasm = fs.readFileSync(WASM_FILE);
+  // Fix-check VN-10: the normal upgrade never ships the withdrawals-only build, and the safe one only the pinned one.
+  const sha = (b: Buffer) => crypto.createHash("sha256").update(b).digest("hex");
+  if (!safe && fs.existsSync(SAFE_WASM) && sha(fs.readFileSync(SAFE_WASM)) === sha(wasm))
+    throw new Error(`${WASM} is the withdrawals-only build. In the game folder run: npm run build, then npm run check.`);
+  if (safe && dep.safeWasmSha256 && sha(wasm) !== dep.safeWasmSha256)
+    throw new Error(`${SAFE_WASM} has sha256 ${sha(wasm)}, not the pinned withdrawals-only build ${dep.safeWasmSha256} (game-data/deployment.json safeWasmSha256).`);
   if (wasm.indexOf(Buffer.from("TEST LEDGER", "utf16le")) !== -1) throw new Error("This is the TEST build (simulated token ledger). Run `npm run build` in the game folder.");
   const local = "0x" + sha256hex(wasm);
   const chain = new KoinosChain(rpc, dep.contract);

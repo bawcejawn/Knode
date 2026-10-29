@@ -108,10 +108,14 @@ close is overdue.
 - The vault refuses to schedule the game's code from before the vault (v3 `917708a7…`, v5 `c17066ae…`): that code
   can't see stakes in other games or the fee and rollovers owed in VHP. **Never roll back to v5.**
 - The emergency target is the **withdrawals-only build** (`npm run build:safe`): the same storage and code with
-  `SAFE_MODE` on. It refuses deposits, moves, answers, results, closes and finalizing, and keeps open every way money
-  leaves: `withdraw`, `withdraw_from`, claims of finished weeks, the seed withdrawal, the fee, and a later upgrade back
-  to a fixed normal build. Rewards that arrive while it runs stay in the vault, owed to nobody yet; the next normal
-  build's first close splits them. Weeks closed but not finalized wait for the normal build too. It never sponsors a
+  `SAFE_MODE` on. It refuses deposits, moves, answers, new questions, closes and finalizing, and keeps open every way
+  money leaves: `withdraw`, `withdraw_from`, claims of finished weeks, the seed withdrawal, the fee, and a later
+  upgrade back to a fixed normal build. Recording results stays open (settle, resolving and correcting questions,
+  posting, sealing, correcting and voiding other games' results): their deadlines keep running, so freezing them
+  would change who gets paid (fix-check VN-1). Rewards that arrive while it runs stay in the vault, owed to nobody
+  yet; the next normal build's first close splits them. Weeks closed but not finalized wait for the normal build.
+- **The seed takes the first loss** (fix-check VN-2): a seed withdrawal pays at most what the vault holds beyond
+  everything owed to others, in both builds. It never sponsors a
   call (so the vault's Mana stays for the KOIN it may need to burn into VHP for withdrawals).
 
 ## Compatibility

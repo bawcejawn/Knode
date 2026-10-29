@@ -9,11 +9,13 @@
  *   - no counter has wrapped (each stays below 2^63);
  *   - the ghost stakes add up to the contract's total_stake and stake_other;
  *   - every game week's claims stay within its bucket plus prize, and every question week's within its pot.
- * A withdrawal of a stake the ghost ledger says a player holds must always succeed. At the end everyone takes
+ * A withdrawal of a stake the ghost ledger says a player holds must always succeed; so must finalizing a closed week
+ * once it is ready, and every claim a finalized week owes; claiming them all must leave only rounding dust. (Not
+ * covered here: the question game's answers, v5 weeks, paged finalizing; the as-pect specs and the rehearsal cover them.) At the end everyone takes
  * everything out (stakes, seed, fee) and what is left equals exactly what is still owed, plus rounding dust.
  *
  * Run (after `npm run build:sim` in game/): node --import tsx --test bot/vault-fuzz.test.ts   (from the repo root)
- * About 95 s per seed. More seeds: FUZZ_SEEDS=20 node --import tsx --test bot/vault-fuzz.test.ts
+ * About 6 s per seed. More seeds: FUZZ_SEEDS=50 node --import tsx --test bot/vault-fuzz.test.ts
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -28,7 +30,7 @@ const HOUR = 3_600_000, DAY = 24 * HOUR, WEEK = 7 * DAY;
 const GENESIS = 1_800_000_000_000 - (1_800_000_000_000 % DAY);
 const T0 = GENESIS - DAY, H0 = 50_000_000;
 const WRAP = 1n << 63n;
-const SEEDS = Number(process.env.FUZZ_SEEDS ?? 1);
+const SEEDS = Number(process.env.FUZZ_SEEDS ?? 4);
 const WEEKS = Number(process.env.FUZZ_WEEKS ?? 7);
 
 const key = (s: string) => Signer.fromSeed(`vault-fuzz ${s}`);
@@ -51,7 +53,11 @@ async function run(seed: number) {
   await sim.init();
   let now = T0;
   const at = (t: number) => { now = Math.max(now, t); sim.setHeight(H0 + Math.floor((now - T0) / 3000), now); };
-  const send = async (who: string, method: string, args: any) => (await sim.sendAs([{ method, args }], [who])).ok;
+  const send = async (who: string, method: string, args: any) => {
+    const ok = (await sim.sendAs([{ method, args }], [who])).ok;
+    if (process.env.FUZZ_TRACE && ok && /result|winners|seal|void|finalize_game/.test(method)) console.log("TRACE", now, method, JSON.stringify(args));
+    return ok;
+  };
   const must = async (who: string, method: string, args: any) => {
     const res = await sim.sendAs([{ method, args }], [who]);
     assert.ok(res.ok, `seed ${seed}: ${method} ${JSON.stringify(args)}: ${res.error}`);
@@ -168,19 +174,50 @@ async function run(seed: number) {
     // finalize after the owner's day (or the results deadline for unsealed weeks), in pages
     at(end + 3 * DAY + HOUR);
     for (const g of [2, 3, 13]) {
+      // Every closed week is ready by now (a day after any seal; past the results deadline otherwise): finalizing
+      // must never be refused (fix-check VN-6: an unexpected revert fails the fuzz).
       for (let i = 0; i < 30; i++) {
         const gw = (await read("get_game", { game: g, week: String(w) })).week ?? {};
         if (!gw.closed || gw.finalized) break;
-        if (!(await send(addr(operator), "finalize_game_week", { game: g, week: String(w) }))) break;
+        await must(addr(operator), "finalize_game_week", { game: g, week: String(w) });
       }
       await check(`finalize ${g}/${w}`);
     }
     for (let i = 0; i < 30 && !(await read("get_week", { week: String(w) })).week?.finalized; i++) await send(addr(operator), "finalize_week", { week: String(w) });
-    // claims
-    for (const p of players) {
-      for (const g of [2, 3, 13]) await send(p, "claim_game", { player: p, game: g, week: String(w) });
-      await send(p, "claim", { player: p, week: String(w) });
+    // claims: every reward a finalized week owes must be claimable, and claiming them all must empty the week
+    // (a ghost of what each pot owes: fix-check VN-6).
+    for (const g of [2, 3, 13]) {
+      const gw = (await read("get_game", { game: g, week: String(w) })).week ?? {};
+      if (!gw.finalized) continue;
+      let winners = 0;
+      for (const p of players) {
+        const e = (await read("get_game_player", { player: p, game: g, week: String(w) })).entry;
+        const place = Number(e?.prize_place ?? 0), pts = Number(e?.points ?? 0), cutoff = Number(gw.cutoff ?? 0);
+        const owed = place === 1 ? big(gw.prize_first) > 0n : place === 2 ? big(gw.prize_second) > 0n
+          : !gw.rolled_over && cutoff >= 1 && pts >= cutoff;
+        if (owed) {
+          winners++;
+          const res = await sim.sendAs([{ method: "claim_game", args: { player: p, game: g, week: String(w) } }], [p]);
+          if (!res.ok) {
+            const full = await read("get_game", { game: g, week: String(w) });
+            console.log("DUMPCLAIM", JSON.stringify({ gw: full.week, e, buckets: (full.buckets ?? []).map((b: any, i: number) => [i, b]).filter((x: any) => x[1].players) }));
+          }
+          assert.ok(res.ok, `seed ${seed}: claim_game ${p} game ${g} week ${w}: ${res.error}`);
+        }
+        else assert.ok(!(await send(p, "claim_game", { player: p, game: g, week: String(w) })), `seed ${seed}: game ${g} week ${w} paid ${p}, who wasn't owed`);
+      }
+      const after = (await read("get_game", { game: g, week: String(w) })).week ?? {};
+      const due = (after.rolled_over ? 0n : big(after.bucket)) + big(after.prize_first) * BigInt(Number(after.first_n ?? 0)) + big(after.prize_second) * BigInt(Number(after.second_n ?? 0));
+      const left = due - big(after.claimed);
+      if (!(left >= 0n && left <= BigInt(winners + 2))) {
+        const rows = [];
+        for (const p of players) rows.push((await read("get_game_player", { player: p, game: g, week: String(w) })));
+        const bk = ((await read("get_game", { game: g, week: String(w) })).buckets ?? []).map((b: any, i: number) => [i, b]).filter((x: any) => Object.keys(x[1]).length);
+        console.log("DUMP", JSON.stringify(bk));
+      }
+      assert.ok(left >= 0n && left <= BigInt(winners + 2), `seed ${seed}: game ${g} week ${w} left ${left} unpaid after every winner claimed`);
     }
+    for (const p of players) await send(p, "claim", { player: p, week: String(w) });
     await checkPots(w);
     await check(`claims ${w}`);
     // stop or restart game 13 now and then

@@ -7,7 +7,7 @@ mainnet also needs `CONFIRM_MAINNET=yes` in `.env`. Run everything in PowerShell
 |---|---|
 | Contract | `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr` (the game; it becomes the vault, same address) |
 | Live code | `c17066ae988d204fd43d43f662ad87fcdc38170419943c20b5164a5bd34dd784` (v5, uploaded 2026-10-28) |
-| **New code** | **set after the audits' fixes** (after the audit fixes: `5ff7366bbfa64ba2c0e3a41dfcb2d11cb0ab84246e3855ec46d6d4ccd1848010`, 85,215 bytes; final once the fix-check is clean). Emergency withdrawals-only build: `6eebf6777d49be38ee26f9bcd9d14f83d209a82071dcac2644f9f1c2d44f2957`, 83,789 bytes |
+| **New code** | **set after the audits' fixes** (after the fix-check fixes: `e7c2abbcc3b1feb1a076b8115ce1e4d5b785535b0da954e53005dc6f02ff4d01`, 86,070 bytes; final once the second fix-check is clean). Emergency withdrawals-only build: `7eda61eb51dabf5ae276e35c52fc7999d1c05a610e0f0b66637456ef8eb48f92`, 84,644 bytes (pinned in `game-data/deployment.json` as `safeWasmSha256`; the bot refuses any other) |
 | Timelock | 48 h after `schedule`, then 7 days to upload |
 | Upload paid by | the owner wallet: about **91 KOIN of Mana** (the tool checks it) |
 | Design | `docs/V6-PLAN.md`; owner explainer: the Docs page "KnodeGames Vault: how it works" |
@@ -89,6 +89,8 @@ npm run bot -- game-add 7 "Producer Race" --staked --free               then aga
 ```
 Staked games are added the same way when each one launches (for example `game-add 13 "Last Node Standing" --staked`).
 
+**Survivor's timing:** a game earns from the week after you apply it, and Survivor's seasons start at its first week. Its Season 1 starts Monday 16 Nov 2026 (vault week 4), so **apply game 3 between Mon 9 Nov and Sun 15 Nov (UTC)**, which means announcing it between Sat 7 Nov and Fri 13 Nov. If the vault isn't live by then, tell the Survivor chat: its first season then starts with the week after you apply it (`npm run bot -- games` shows its "from week").
+
 Each game's results source goes into `game-data/deployment.json` (its chat gives you the line), for example:
 ```json
 "vaultGames": { "2": { "name": "Who Signs Block X", "results": "games-data:blockx/vault" } }
@@ -124,9 +126,12 @@ Each game shows "from week N", the coming Monday.
 
 ## Emergency: the withdrawals-only build
 If something is wrong and everything must stop, upgrade to the withdrawals-only build. It keeps the same address and
-storage and only lets money out: every stake (`withdraw`, `withdraw_from`), prizes of finished weeks, the seed and
-your fee. Deposits, moves, answers, results, closes and finalizing are refused. New block rewards wait in the vault
-for the fixed build.
+storage and lets money out: every stake (`withdraw`, `withdraw_from`), prizes of finished weeks, the seed (only what
+isn't needed to cover players: the seed takes any shortfall first) and your fee. Deposits, moves, answers, new
+questions, closes and finalizing are refused. **Recording results stays open** (settling, resolving and correcting
+questions, posting, sealing, correcting and voiding other games' results), because their deadlines keep running: the
+hourly bot keeps doing its part, and you can still fix or void bad results. New block rewards wait in the vault for
+the fixed build.
 
 1. Build it and note its fingerprint (keep it with this runbook):
    ```
@@ -135,9 +140,10 @@ for the fixed build.
    It prints `sha256 …` for `game\build\safe\contract.wasm`, and rebuilds the normal build afterwards.
 2. Stop new money at once while the 48 hours run: `npm run bot -- pause on --send`, and `game-stop <id> --send` for any game that misbehaves. Keep the contract's own Mana for withdrawals: `npm run bot -- admin set_sponsor_limit max_sponsor_rc=0 min_sponsor_rc=0 --as owner --send` (the safe build never sponsors a call either).
 3. Announce it: `npm run bot -- upgrade schedule --safe`, then again with `--send`.
-4. 48 hours later: `npm run bot -- upgrade apply --safe`, then again with `--send`.
-5. Tell players on the site: withdraw any time; claims for **finalized** weeks work. Weeks that were closed but not yet finalized when the safe build went in wait for the normal build (their rewards stay owed; nothing is lost).
-6. Going back: fix the bug, build normally, and upgrade again the usual way (48 hours).
+4. Before applying, make sure the bot has settled the closed question weeks and posted and sealed every ended game week (its hourly run does this; `npm run bot -- status` shows what is open), and correct or void anything wrong.
+5. 48 hours later: `npm run bot -- upgrade apply --safe`, then again with `--send`.
+6. Tell players on the site: withdraw any time; claims for **finalized** weeks work. Weeks that are closed but not finalized wait for the normal build: their results are kept (they can still be recorded and corrected), and they finalize when it returns. A week whose results were not sealed by its deadline still rolls over, as it would in normal times.
+7. Going back: fix the bug, build normally, and upgrade again the usual way (48 hours).
 
 ## Mana (before announcing, on testnet)
 Measure what the heaviest calls cost with 13 games (audit V6-12): a close with 13 games, an answer that closes and

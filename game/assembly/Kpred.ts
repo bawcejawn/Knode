@@ -113,8 +113,10 @@ const MAX_NAME: i32 = 32;
 const MAX_SEASON_WEEKS: u32 = 4;               // a free prize can be paid once a season of up to 4 weeks (Survivor: 2)
 
 // ───────────── keys ─────────────
-// v6 (audit V6-2): the game's code from before the vault (mainnet v3 and v5). schedule_upgrade refuses them.
+// v6 (audit V6-2): the game's code from before the vault (mainnet's first deploy, v3 and v5). schedule_upgrade
+// refuses them.
 const PRE_VAULT_CODE: string[] = [
+  "ff4207b477b0bee2d2f545b3ddfeff9a8dd1cc6fb804852f12d8102ecef5697f",
   "917708a7c567d9642a7a2f121c34fbc70200909787208705fc3aa5a2b1e6433a",
   "c17066ae988d204fd43d43f662ad87fcdc38170419943c20b5164a5bd34dd784",
 ];
@@ -345,6 +347,15 @@ export class Kpred {
     t.acc_time = now;
   }
 
+  /** What the seed could take out now: holdings minus everything owed to others (fix-check VN-2), at least 0. */
+  seedFree(t: kpred.totals_object): u64 {
+    const holdings = u128.fromU64(Tokens.vhpBalance(this.contractId)) + u128.fromU64(Tokens.koinBalance(this.contractId));
+    const others = u128.fromU64(this.liabilities(t)) + u128.fromU64(t.rolled_over) - u128.fromU64(t.seed_vhp) - u128.fromU64(t.seed_koin);
+    if (holdings <= others) return 0;
+    const f = holdings - others;
+    return f.hi > 0 ? U64.MAX_VALUE : f.lo;
+  }
+
   /** Holdings must always cover everything owed. Checked after every reward/fee payout, so a bug can never pay out
    *  more than the pool has actually earned. (Principal returns — withdrawals, seed — are not blocked by it.) */
   assertSolvent(): void {
@@ -387,7 +398,10 @@ export class Kpred {
     return h > this.weeks.get(u64Key(t.weeks_finalized))!.settle_end;
   }
 
-  /** Refuses everything but getting money out when this is the withdrawals-only build (assembly/Mode.ts). */
+  /** Refuses new money, new play, closes and finalizing when this is the withdrawals-only build (assembly/Mode.ts).
+   *  Fix-check VN-1: what only records results (settle, resolving and correcting questions, posting, sealing,
+   *  correcting and voiding other games' results) stays open, because those actions have deadlines that keep running
+   *  while the safe build is in place: freezing them would change who gets paid. None of them moves a token. */
   live(): void {
     System.require(!safeMode(), "the vault is in withdrawals-only mode: you can withdraw your stake and claim finished weeks");
   }
@@ -715,7 +729,6 @@ export class Kpred {
   }
 
   settle(args: kpred.settle_arguments): kpred.settle_result {
-    this.live();
     const c = this.cfg();
     this.advance(c);
     const player = args.player!;
@@ -812,7 +825,8 @@ export class Kpred {
     const e = this.entries.get(key)!;
     const reward = e.eligible ? this.rewardOf(args.week, wk, e) : this.freePrizeOf(wk, e);
     // v6 (audit V6-1, defence in depth): a week never pays out more than its own pot.
-    System.require(wk.claimed + reward <= wk.pot, "accounting error: that week's pot is used up");
+    // (Fix-check VN-5: a rolled-over week still owes only its free prize; the rest left with the rollover.)
+    System.require(wk.claimed + reward <= (wk.rolled_over ? wk.pot_free : wk.pot), "accounting error: that week's pot is used up");
     e.claimed = true;
     e.reward = reward;
     this.entries.put(key, e);
@@ -1100,7 +1114,6 @@ export class Kpred {
   }
 
   resolve_question(args: kpred.resolve_question_arguments): kpred.resolve_question_result {
-    this.live();
     const c = this.cfg();
     System.requireAuthority(authority.authorization_type.contract_call, c.operator!);
     const key = u32Key(args.id);
@@ -1123,7 +1136,6 @@ export class Kpred {
   // ═══════════════════════ owner ═══════════════════════
 
   correct_question(args: kpred.correct_question_arguments): kpred.correct_question_result {
-    this.live();
     const c = this.cfg();
     System.require(this.isOwner(c), "owner only");
     const key = u32Key(args.id);
@@ -1395,8 +1407,13 @@ export class Kpred {
     System.require(this.now() >= s.eta, "the timelock has not passed yet");
     System.require(this.now() < s.eta + ANNOUNCEMENT_EXPIRY, "this request expired (it must be carried out within 7 days after its timelock): request it again");
     const t = this.totals.get()!;
-    const vhpAmt = s.vhp <= t.seed_vhp ? s.vhp : t.seed_vhp;
+    let vhpAmt = s.vhp <= t.seed_vhp ? s.vhp : t.seed_vhp;
     let koinAmt = s.koin <= t.seed_koin ? s.koin : t.seed_koin;
+    // v6 (fix-check VN-2): the seed takes the first loss. It can only take what is left after everything owed to
+    // players, unpaid rewards and fees; in a shortfall the rest of the seed stays to cover it. Solvent: no change.
+    const free = this.seedFree(t);
+    if (vhpAmt > free) vhpAmt = free;
+    if (koinAmt > free - vhpAmt) koinAmt = free - vhpAmt;
     const mana = Tokens.mana(this.contractId);
     if (koinAmt > mana) koinAmt = mana;                 // the rest can be executed again after Mana refills
     const koinBal = Tokens.koinBalance(this.contractId);
@@ -1874,11 +1891,11 @@ export class Kpred {
   }
 
   post_results(args: kpred.post_results_arguments): kpred.post_results_result {
-    this.live();
     const c = this.cfg();
     System.requireAuthority(authority.authorization_type.contract_call, c.operator!);
     const gw = this.postable(c, args.game, args.week);
-    System.require(this.otherGame(args.game).staked, "that game has no stake bucket");
+    // Fix-check VN-9: a week that closed with a bucket takes results even if the game has since dropped its stakes.
+    System.require(this.otherGame(args.game).staked || gw.bucket > 0, "that game has no stake bucket");
     System.require(args.rows.length > 0 && args.rows.length <= MAX_ROWS, "1 to 50 results per call");
     const min = this.minStakeFor(c, args.week);
     for (let i = 0; i < args.rows.length; i++) {
@@ -1896,7 +1913,6 @@ export class Kpred {
   }
 
   post_prize_winners(args: kpred.post_prize_winners_arguments): kpred.post_prize_winners_result {
-    this.live();
     const c = this.cfg();
     System.requireAuthority(authority.authorization_type.contract_call, c.operator!);
     const gw = this.postable(c, args.game, args.week);
@@ -1926,7 +1942,6 @@ export class Kpred {
   }
 
   seal_results(args: kpred.seal_results_arguments): kpred.seal_results_result {
-    this.live();
     const c = this.cfg();
     System.requireAuthority(authority.authorization_type.contract_call, c.operator!);
     const gw = this.postable(c, args.game, args.week);
@@ -1951,7 +1966,6 @@ export class Kpred {
   /** The owner may correct a game week's results until a day after the seal (or, unsealed, until the deadline).
    *  Every correction restarts the 12-hour wait before the week can be finalized, so it is visible first. */
   correct_result(args: kpred.correct_result_arguments): kpred.correct_result_result {
-    this.live();
     const c = this.cfg();
     System.require(this.isOwner(c), "owner only");
     const g = this.otherGame(args.game);
@@ -1967,7 +1981,7 @@ export class Kpred {
       if (e.prize_place == 1) gw.first_n -= 1; else gw.second_n -= 1;
       e.prize_place = 0;
     } else {
-      System.require(g.staked, "that game has no stake bucket");
+      System.require(g.staked || gw.bucket > 0, "that game has no stake bucket");
       System.require(args.points <= MAX_GAME_POINTS, "points must be 0 to 255");
       if (e.points > 0) this.removePoints(args.game, args.week, gw, e);
       if (args.points > 0) {
@@ -1983,7 +1997,6 @@ export class Kpred {
   }
 
   void_game_week(args: kpred.void_game_week_arguments): kpred.void_game_week_result {
-    this.live();
     const c = this.cfg();
     System.require(this.isOwner(c), "owner only");
     const g = this.otherGame(args.game);
@@ -2159,8 +2172,8 @@ export class Kpred {
     const reward = this.claimableG(args.game, args.week, gw, e);
     System.require(reward > 0, "nothing to claim that week");
     // Audit V6-1, defence in depth: a game week never pays out more than its bucket and prize.
-    // (A bucket that rolled over has left the week: only the prize can still be claimed.)
-    const cap = (gw.rolled_over ? 0 : gw.bucket) + gw.prize;
+    // (A bucket that rolled over has left the week; of the prize, only what finalizing gave out stays: fix-check VN-5.)
+    const cap = (gw.rolled_over ? 0 : gw.bucket) + gw.prize_first * <u64>gw.first_n + gw.prize_second * <u64>gw.second_n;
     System.require(gw.claimed + reward <= cap, "accounting error: that week's bucket is used up");
     e!.claimed = true;
     e!.reward = reward;
@@ -2243,6 +2256,10 @@ export class Kpred {
         System.require(this.totals.get()!.weeks_closed >= g!.last_week_plus_one,
           "the vault has not closed that game's last week yet: try again after the next close");
         g!.from_week = from;
+      } else {
+        // Fix-check VN-8: it keeps running, so its open weeks keep their season: the length can change only after a gap.
+        const was: u32 = g!.season_weeks > 1 ? g!.season_weeks : 1, now_: u32 = pr!.game!.season_weeks > 1 ? pr!.game!.season_weeks : 1;
+        System.require(was == now_, "a running game's season length changes only after a gap: stop it for a week first");
       }
     }
     g!.name = pr!.game!.name;

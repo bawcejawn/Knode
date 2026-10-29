@@ -55,6 +55,7 @@ function setup(): Kpred {
   MockVM.setHeadInfo(new chain.head_info(null, 0, 1));
   at(100);
   testSetInitV6Rule(1);
+  testSetSafeMode(false);
   const k = new Kpred();
   k.init(new kpred.init_arguments(OWNER, OPERATOR, SEED, GENESIS * MS, WEEK * MS, CLOSE * MS, SETTLE * MS, LOCK * MS, VHP, VHP));
   const all: Uint8Array[] = [A, B, C, D, E, F];
@@ -941,6 +942,7 @@ describe("v6 audit fixes", () => {
     as(OWNER);
     expect(() => { gK!.schedule_upgrade(new kpred.schedule_upgrade_arguments(hexBytes("c17066ae988d204fd43d43f662ad87fcdc38170419943c20b5164a5bd34dd784"))); }).toThrow();
     expect(() => { gK!.schedule_upgrade(new kpred.schedule_upgrade_arguments(hexBytes("917708a7c567d9642a7a2f121c34fbc70200909787208705fc3aa5a2b1e6433a"))); }).toThrow();
+    expect(() => { gK!.schedule_upgrade(new kpred.schedule_upgrade_arguments(hexBytes("ff4207b477b0bee2d2f545b3ddfeff9a8dd1cc6fb804852f12d8102ecef5697f"))); }).toThrow();
     const r = k.schedule_upgrade(new kpred.schedule_upgrade_arguments(hexBytes("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")));
     expect(r.eta > 0).toBe(true);
   });
@@ -1139,8 +1141,6 @@ describe("v6 withdrawals-only build (emergency)", () => {
     expect(() => { gK!.move_stake(new kpred.move_stake_arguments(gWho, gGame, 1, VHP)); }).toThrow();
     nobody();
     expect(() => { gK!.close_week(new kpred.close_week_arguments(gWeek)); }).toThrow();
-    as(OPERATOR);
-    expect(() => { gK!.post_results(new kpred.post_results_arguments(gGame, gWeek, [row(gWho, 3)])); }).toThrow();
     as(OWNER);
     expect(() => { gK!.propose_game(new kpred.propose_game_arguments(5, "New", true, false)); }).toThrow();
     // Out: B's finished prize, every stake, the seed, the fee.
@@ -1168,5 +1168,134 @@ describe("v6 withdrawals-only build (emergency)", () => {
     expect(t.seed_vhp).toBe(0);
     k.assertSolvent();
     testSetSafeMode(false);
+  });
+});
+
+// ───────────── fixes from the RepoLens fix-check of 2026-10-28 ─────────────
+
+describe("v6 fix-check fixes", () => {
+  it("VN-1/VN-11: safe mode refuses all 14 entry points that move the game on, keeps results open, and never advances", () => {
+    const k = setup();
+    gK = k;
+    playG2Week1(k);
+    depositQ(k, F, 7 * VHP);
+    closeWeek(k, 1);
+    testSetSafeMode(true);
+    at(weekEnd(1) + CLOSE + 5);
+    gWho = E; gGame = G2; gWeek = 1; gAmt = VHP;
+    as(E);
+    expect(() => { gK!.deposit_vhp(new kpred.deposit_vhp_arguments(gWho, gAmt)); }).toThrow();
+    expect(() => { gK!.deposit_koin(new kpred.deposit_koin_arguments(gWho, gAmt)); }).toThrow();
+    expect(() => { gK!.deposit_to(new kpred.deposit_to_arguments(gWho, gGame, gAmt, false)); }).toThrow();
+    gWho = A;
+    as(A);
+    expect(() => { gK!.move_stake(new kpred.move_stake_arguments(gWho, gGame, 1, gAmt)); }).toThrow();
+    expect(() => { gK!.answer(new kpred.answer_arguments(gWho, 1, 1)); }).toThrow();
+    nobody();
+    expect(() => { gK!.close_week(new kpred.close_week_arguments(2)); }).toThrow();
+    expect(() => { gK!.finalize_week(new kpred.finalize_week_arguments(1)); }).toThrow();
+    expect(() => { gK!.finalize_game_week(new kpred.finalize_game_week_arguments(gGame, gWeek)); }).toThrow();
+    as(OPERATOR);
+    expect(() => { gK!.post_question(new kpred.post_question_arguments(4, 0, 0, 0, new Uint8Array(32))); }).toThrow();
+    as(OWNER);
+    expect(() => { gK!.set_min_stake(new kpred.set_min_stake_arguments(gAmt)); }).toThrow();
+    expect(() => { gK!.propose_game(new kpred.propose_game_arguments(5, "New", true, false)); }).toThrow();
+    expect(() => { gK!.apply_game(new kpred.apply_game_arguments(5)); }).toThrow();
+    as(SEED);
+    expect(() => { gK!.seed_deposit_vhp(new kpred.seed_deposit_vhp_arguments(gAmt)); }).toThrow();
+    expect(() => { gK!.seed_deposit_koin(new kpred.seed_deposit_koin_arguments(gAmt)); }).toThrow();
+    // Recording results stays open: their deadlines keep running (VN-1).
+    postRows(k, G2, 1, [row(A, 4), row(B, 9)]);
+    as(OWNER);
+    k.correct_result(new kpred.correct_result_arguments(G2, 1, A, 12, false));
+    MockVM.commitTransaction();
+    seal(k, G2, 1);
+    expect(gweek(k, G2, 1).sealed).toBe(true);
+    // advance() is a no-op: week 2 is due to close, and compound (which advances in the normal build) doesn't close it.
+    at(weekEnd(2) + CLOSE + 5);
+    const closedBefore = k.totals.get()!.weeks_closed;
+    nobody();
+    k.compound(new kpred.compound_arguments());
+    MockVM.commitTransaction();
+    as(F);
+    k.withdraw(new kpred.withdraw_arguments(F, 7 * VHP));
+    MockVM.commitTransaction();
+    expect(k.totals.get()!.weeks_closed).toBe(closedBefore);
+    // Back to the normal build: the sealed week finalizes as posted, after the correction day.
+    testSetSafeMode(false);
+    nobody();
+    k.finalize_game_week(new kpred.finalize_game_week_arguments(G2, 1));
+    MockVM.commitTransaction();
+    expect(gweek(k, G2, 1).finalized).toBe(true);
+    expect(claimG(k, G2, 1, A)).toBe(gweek(k, G2, 1).bucket);
+    k.assertSolvent();
+  });
+
+  it("VN-2: in a shortfall the seed takes the first loss, and every player still gets out in full", () => {
+    const k = setup();
+    playG2Week1(k);                                // 36 VHP staked in game 2; 100 VHP of rewards arrive
+    depositQ(k, F, 20 * VHP);
+    seedIn(k, 50 * VHP);
+    closeWeek(k, 1);
+    as(SEED);
+    k.request_seed_withdrawal(new kpred.request_seed_withdrawal_arguments(50 * VHP, 0));
+    MockVM.commitTransaction();
+    // A bug leaves the vault 30 VHP short.
+    const t0 = k.totals.get()!;
+    const owed = k.liabilities(t0) + t0.rolled_over;
+    Tokens.testSet(VHP_TAG, CONTRACT, owed - 30 * VHP);
+    Tokens.testSet(KOIN_TAG, CONTRACT, 0);
+    at(weekEnd(1) + CLOSE + 1 + LOCK + 1);
+    as(SEED);
+    const before = vhpOf(SEED);
+    k.execute_seed_withdrawal(new kpred.execute_seed_withdrawal_arguments());
+    MockVM.commitTransaction();
+    expect(vhpOf(SEED) - before).toBe(20 * VHP); // 50 of seed, 30 of it covering the shortfall
+    as(A); k.withdraw_from(new kpred.withdraw_from_arguments(A, G2, 20 * VHP));
+    as(B); k.withdraw_from(new kpred.withdraw_from_arguments(B, G2, 10 * VHP));
+    as(C); k.withdraw_from(new kpred.withdraw_from_arguments(C, G2, 5 * VHP));
+    as(D); k.withdraw_from(new kpred.withdraw_from_arguments(D, G2, 1 * VHP));
+    as(F); k.withdraw(new kpred.withdraw_arguments(F, 20 * VHP));
+    MockVM.commitTransaction();
+    expect(k.totals.get()!.total_stake).toBe(0);
+  });
+
+  it("VN-8: a running game's season length can't change on a restart in its last week", () => {
+    const k = setup();
+    gK = k;
+    addGames(k);
+    at(weekEnd(1) + 100);
+    as(OWNER);
+    k.deactivate_game(new kpred.deactivate_game_arguments(G3));
+    k.propose_game(new kpred.propose_game_arguments(G3, "Block X", false, true, 2));
+    at(weekEnd(1) + 100 + LOCK + 1);
+    MockVM.commitTransaction();
+    as(OWNER);
+    gGame = G3;
+    expect(() => { gK!.apply_game(new kpred.apply_game_arguments(gGame)); }).toThrow();
+    k.propose_game(new kpred.propose_game_arguments(G3, "Block X", false, true, 1));
+    at(weekEnd(1) + 100 + 2 * LOCK + 2);
+    as(OWNER);
+    expect(k.apply_game(new kpred.apply_game_arguments(G3)).from_week).toBe(1);
+  });
+
+  it("VN-9: after everyone left and the game dropped its stakes, a week it earned still takes results", () => {
+    const k = setup();
+    playG2Week1(k);
+    closeWeek(k, 1);                               // week 1 closes with a bucket for game 2
+    expect(gweek(k, G2, 1).bucket > 0).toBe(true);
+    at(weekEnd(1) + CLOSE + 2);
+    as(A); k.withdraw_from(new kpred.withdraw_from_arguments(A, G2, 20 * VHP));
+    as(B); k.withdraw_from(new kpred.withdraw_from_arguments(B, G2, 10 * VHP));
+    as(C); k.withdraw_from(new kpred.withdraw_from_arguments(C, G2, 5 * VHP));
+    as(D); k.withdraw_from(new kpred.withdraw_from_arguments(D, G2, 1 * VHP));
+    as(OWNER);
+    k.deactivate_game(new kpred.deactivate_game_arguments(G2));
+    k.propose_game(new kpred.propose_game_arguments(G2, "Fantasy", false, true));
+    at(weekEnd(1) + CLOSE + 2 + LOCK + 1);
+    as(OWNER);
+    k.apply_game(new kpred.apply_game_arguments(G2));                  // same week: keeps running, without stakes
+    postRows(k, G2, 1, [row(A, 5), row(B, 2)]);                       // week 1 still takes its results
+    expect(gweek(k, G2, 1).eligible_players).toBe(2);
   });
 });

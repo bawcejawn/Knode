@@ -129,6 +129,7 @@ test("a prize winner who was staked in the game is reported, not posted; a missi
   await ok([["deposit_to", { from: addr(B), game: 3, amount: String(2n * VHP), koin: false }]], [B]);
   at(GENESIS + WEEK + 12 * HOUR + 1);
   await ok([["close_week", { week: "0" }]], []);
+  await sim.ledgerAdd(2, addr(contract), 100n * VHP);   // rewards, so week 1 funds its prize (a week with no prize takes no winners)
   at(GENESIS + 2 * WEEK + 12 * HOUR + 1);
   await ok([["close_week", { week: "1" }]], []);
   const results = { "mem:blockx/W1": { game: 3, week: 1, final: true, rows: [], first: [addr(B)], second: [] } };
@@ -175,4 +176,31 @@ test("checkResults refuses malformed files; seasonEnds follows the season", () =
   const g = { from_week: 4, season_weeks: 2 };
   assert.deepEqual([4, 5, 6, 7].map((w) => seasonEnds(g, w)), [false, true, false, true]);
   assert.equal(seasonEnds({ from_week: 4, season_weeks: 0 }, 4), true);
+});
+
+test("fix-check VN-3: a game restarted after a gap still gets its last earned week posted, sealed and finalized", { skip: !fs.existsSync(NEW) && `${NEW} missing: run npm run build:sim in game/` }, async () => {
+  const { sim, at, ok } = await world();
+  await ok([["propose_game", { game: 2, name: "Fantasy", staked: true, free_prize: false, season_weeks: 1 }]], [owner]);
+  at(T0 + 2 * DAY + HOUR);
+  await ok([["apply_game", { game: 2 }]], [owner]);
+  for (const [p, n] of [[B, 20n], [C, 5n]] as const) await ok([["deposit_to", { from: addr(p), game: 2, amount: String(n * VHP), koin: false }]], [p]);
+  at(GENESIS + WEEK + 12 * HOUR + 1);
+  await ok([["close_week", { week: "0" }]], []);
+  // Stopped in week 1 (it earns week 1), announced again; restarted in week 2, after week 1 closed: a gap (week 2).
+  await ok([["deactivate_game", { game: 2 }], ["propose_game", { game: 2, name: "Fantasy", staked: true, free_prize: false, season_weeks: 1 }]], [owner]);
+  await sim.ledgerAdd(2, addr(contract), 50n * VHP);
+  at(GENESIS + 2 * WEEK + 12 * HOUR + 1);
+  await ok([["close_week", { week: "1" }]], []);
+  await ok([["apply_game", { game: 2 }]], [owner]);
+  assert.equal(Number((await sim.read("get_game", { game: 2, week: "0" })).game.from_week), 3, "restarts from week 3");
+  assert.ok(BigInt((await sim.read("get_game", { game: 2, week: "1" })).week.bucket) > 0n, "week 1 earned a bucket");
+  const results = { "mem:fantasy/W1": { game: 2, week: 1, final: true, rows: [{ player: addr(B), points: 9 }, { player: addr(C), points: 4 }] } };
+  const sent: string[] = [];
+  await vaultResultsPass(vctx(sim, results), sendAs(sim, operator, sent));
+  assert.deepEqual(sent, ["Fantasy week 1: points for 2 player(s)", "Fantasy week 1: seal the results (the owner can correct them for 24 h)"]);
+  at(sim.time + 24 * HOUR + 1);
+  const fin: string[] = [];
+  await vaultFinalizePass(vctx(sim, results), sendAs(sim, operator, fin));
+  assert.deepEqual(fin, ["Fantasy week 1: finalize (find the winners)"]);
+  await ok([["claim_game", { player: addr(B), game: 2, week: "1" }]], [B]);
 });

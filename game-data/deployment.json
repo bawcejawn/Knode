@@ -43,6 +43,10 @@
     "guest": true
   },
   "vaultGames": {
+    "3": {
+      "name": "Survivor",
+      "results": "games-data:survivor/vault"
+    },
     "4": {
       "name": "Fantasy Producers",
       "results": "games-data:fantasy/vault"
@@ -59,5 +63,6 @@
       "name": "Last Node Standing",
       "results": "games-data:lastnode/vault"
     }
-  }
+  },
+  "safeWasmSha256": "7eda61eb51dabf5ae276e35c52fc7999d1c05a610e0f0b66637456ef8eb48f92"
 }

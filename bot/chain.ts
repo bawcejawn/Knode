@@ -149,6 +149,18 @@ export class SimChain implements Chain {
     this.K = require("@koinos/mock-vm/src/constants");
     this.koinos = require("@koinos/proto-js").koinos;
     this.vm = new MockVM(true);
+    // The mock VM's database orders keys with JavaScript's > and <, which compare Buffers as UTF-8 strings: every byte
+    // from 0x80 up decodes to the same replacement character, so keys that differ only there collide (found by the
+    // vault fuzz: score buckets 128-255 of a game week were one object). The chain orders keys bytewise; so does this.
+    this.vm.db.comparator = (a: Uint8Array, b: Uint8Array) => {
+      const n = Math.min(a.length, b.length);
+      for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+      return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
+    };
+    // Its transaction backup copies the map with the default (string) ordering too, so keep the same ordering there.
+    const db = this.vm.db, { SoMap } = require(require.resolve("somap", { paths: [require.resolve("@koinos/mock-vm")] }));
+    db.commitTransaction = () => { db.backupDb = new SoMap(db.db, db.comparator); };
+    db.initDb();
   }
 
   async init() {
@@ -245,7 +257,7 @@ export class SimChain implements Chain {
   async sendAs(calls: Call[], authorities: string[], record = true): Promise<Sent> {
     if (record) this.calls++;
     this.vm.db.commitTransaction();
-    const before = new (this.vm.db.db.constructor)(this.vm.db.db); // snapshot of the whole state for multi-op rollback
+    const before = new (this.vm.db.db.constructor)(this.vm.db.db, this.vm.db.comparator); // snapshot of the whole state for multi-op rollback (bytewise, as above)
     for (const c of calls) {
       if (c.contract && c.contract !== this.contractId) continue; // token approvals: the sim ledger needs none
       const r = await this.run(c.method, c.args, authorities);

@@ -190,7 +190,8 @@ export async function rehearseV6(snap: Snapshot, opts: { weeks?: number; reward?
     let heldGames = 0n;
     for (const g of (await read("list_games", {})).games ?? []) heldGames += big(g.prize_held);
     owedWeeks += heldGames;
-    check(big(t.pots_outstanding) >= owedWeeks, `${when}: unpaid rewards ${showKoin(t.pots_outstanding)} cover what every closed week still owes ${showKoin(owedWeeks)}`);
+    // Fix-check VN-12: on correct data the two are equal, so any drift shows.
+    check(big(t.pots_outstanding) === owedWeeks, `${when}: unpaid rewards ${showKoin(t.pots_outstanding)} equal what every closed week still owes ${showKoin(owedWeeks)}`);
     const rolled = ((await read("list_games", {})).games ?? []).reduce((n: bigint, g: any) => n + big(g.rolled), 0n);
     check(big(t.games_rolled) === rolled, `${when}: rolled-over buckets ${showKoin(t.games_rolled)} equal the games' own ${showKoin(rolled)}`);
   };

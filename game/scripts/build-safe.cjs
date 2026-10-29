@@ -23,8 +23,9 @@ try {
   hash = crypto.createHash("sha256").update(fs.readFileSync("build/safe/contract.wasm")).digest("hex");
 } finally {
   fs.writeFileSync(MODE, normal);
+  // Never leave the safe build where the normal one belongs, whatever failed above (fix-check VN-10): if the rebuild
+  // below fails too, there is no release build at all.
+  fs.rmSync("build/release/contract.wasm", { force: true });
 }
-// Never leave the safe build where the normal one belongs: if the rebuild below fails, there is no release build at all.
-fs.rmSync("build/release/contract.wasm", { force: true });
 build();
 console.log(`\nbuild/safe/contract.wasm: the withdrawals-only build\nsha256 ${hash}\n(build/release is the normal build again)`);

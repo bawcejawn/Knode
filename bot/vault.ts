@@ -83,6 +83,12 @@ export function seasonEnds(g: any, w: number): boolean {
 }
 
 /** Whether a game earns (has a week to report) for week w. */
+/** Whether a game has results for week w, as the contract decides (requireResults): it earns that week now, or the
+ *  vault closed that week with it earning (a game restarted after a gap keeps those weeks). */
+export function earnedWeek(g: any, w: number, gw: any): boolean {
+  return !!gw?.closed || gameEarns(g, w);
+}
+
 export function gameEarns(g: any, w: number): boolean {
   const last = num(g.last_week_plus_one);
   return num(g.from_week) <= w && (last === 0 || w + 1 <= last);
@@ -149,12 +155,14 @@ export async function vaultResultsPass(ctx: VaultCtx, send: Send, only?: { game:
     if (id === Q_GAME || (only && only.game !== id)) continue;
     const w = only ? only.week : k.week - 1;
     const name = g.name ?? `game ${id}`;
-    if (w < 0 || !gameEarns(g, w)) { if (only) throw new Error(`${name} has no results for week ${w}.`); continue; }
+    if (w < 0) { if (only) throw new Error(`${name} has no results for week ${w}.`); continue; }
+    const gw = (await ctx.chain.read("get_game", { game: id, week: String(w) })).week ?? {};
+    // Fix-check VN-3: the contract's rule. A game restarted after a gap keeps the weeks it earned (closed with it).
+    if (!earnedWeek(g, w, gw)) { if (only) throw new Error(`${name} has no results for week ${w}.`); continue; }
     const source = only?.source ?? cfg[String(id)]?.results;
     if (!source) { log(ctx, `  ${name}: no results source in deployment.json (vaultGames.${id}.results)`); continue; }
     if (k.time < k.weekEnd(w)) { if (only) throw new Error(`Week ${w} of ${name} is not over yet.`); continue; }
     const due = k.resultsDue(w);
-    const gw = (await ctx.chain.read("get_game", { game: id, week: String(w) })).week ?? {};
     if (gw.sealed || gw.finalized || gw.voided) { if (only) log(ctx, `  ${name} week ${w} is already ${gw.finalized ? "final" : gw.voided ? "voided" : "sealed"}.`); continue; }
     if (k.time >= due) { if (only) throw new Error(`Week ${w} of ${name} is past its results deadline (${utc(due)}).`); continue; }
     const r = read(source, w);
@@ -170,7 +178,7 @@ export async function vaultResultsPass(ctx: VaultCtx, send: Send, only?: { game:
     // Points for staked players: only rows the chain would take, and only once.
     const rows: Array<{ player: string; points: number }> = [];
     let skipped = 0;
-    if (g.staked) {
+    if (g.staked || big(gw.bucket) > 0n) {
       for (const x of r.rows ?? []) {
         const p = await ctx.chain.read("get_game_player", { player: x.player, game: id, week: String(w) });
         const posted = num(p.entry?.points);
@@ -183,7 +191,7 @@ export async function vaultResultsPass(ctx: VaultCtx, send: Send, only?: { game:
     } else if ((r.rows ?? []).length) log(ctx, `  ${name} has no stake bucket: its ${r.rows.length} row(s) of points are not sent`);
     // Prize winners, on the last week of the game's season only, each a free player there.
     const places: Array<{ place: number; players: string[] }> = [];
-    if (g.free_prize && seasonEnds(g, w)) {
+    if (g.free_prize && (gw.closed ? big(gw.prize) > 0n : seasonEnds(g, w))) {
       for (const [place, list] of [[1, r.first ?? []], [2, r.second ?? []]] as Array<[number, string[]]>) {
         const fresh: string[] = [];
         for (const a of list) {
@@ -225,8 +233,8 @@ export async function vaultFinalizePass(ctx: VaultCtx, send: Send) {
   for (const g of view.games) {
     const id = num(g.id);
     if (id === Q_GAME) continue;
-    for (let w = Math.max(num(g.from_week), k.weeksClosed - 6); w < k.weeksClosed; w++) {
-      if (!gameEarns(g, w)) continue;
+    // Every closed week of the game (a closed game week is one it earned, also before a restart: fix-check VN-3).
+    for (let w = Math.max(0, k.weeksClosed - 6); w < k.weeksClosed; w++) {
       for (let page = 0; page < 20; page++) {
         const gw = (await ctx.chain.read("get_game", { game: id, week: String(w) })).week ?? {};
         if (!gw.closed || gw.finalized) break;
@@ -262,9 +270,9 @@ export async function recentGameWeeks(chain: Chain, view: VaultView, weeksClosed
   for (const g of view.games) {
     const id = num(g.id);
     if (id === Q_GAME) continue;
-    for (let w = Math.max(num(g.from_week), weeksClosed - 3); w <= weeksClosed; w++) {
-      if (!gameEarns(g, w)) continue;
+    for (let w = Math.max(0, weeksClosed - 3); w <= weeksClosed; w++) {
       const gw = (await chain.read("get_game", { game: id, week: String(w) })).week ?? {};
+      if (!earnedWeek(g, w, gw)) continue;
       out.set(`${g.name ?? `game ${id}`}:${w}`, gw);
     }
   }
@@ -288,8 +296,8 @@ export async function vaultStatus(chain: Chain, print: (s: string) => void) {
     print(line);
     if (id === Q_GAME) continue;
     const w = k.weeksClosed - 1;
-    if (w >= 0 && gameEarns(g, w)) {
-      const gw = (await chain.read("get_game", { game: id, week: String(w) })).week ?? {};
+    const gw = w >= 0 ? (await chain.read("get_game", { game: id, week: String(w) })).week ?? {} : {};
+    if (w >= 0 && earnedWeek(g, w, gw)) {
       const st = gw.finalized ? (gw.rolled_over ? "rolled over" : `final: ${num(gw.winners)} winner(s), cutoff ${num(gw.cutoff)}, claimed ${showKoin(gw.claimed)}`)
         : gw.voided ? "voided" : gw.sealed ? `sealed ${utc(num(gw.seal_time))}` : `results due ${utc(k.resultsDue(w))}`;
       print(`      week ${w}: bucket ${showKoin(gw.bucket)}, prize ${showKoin(gw.prize)}; ${num(gw.eligible_players)} player(s) posted; ${st}`);
