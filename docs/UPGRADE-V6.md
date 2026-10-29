@@ -67,7 +67,7 @@ npm run bot -- admin cancel_upgrade --as owner --send
 ```
 
 ## 4. Put the v6 bot live
-Merge branch `vault-v6` into `main` on GitHub (pull request, then merge). The hourly bot then knows the vault: other games' results, finalizing, alerts and status. The v5 bot keeps working on v6 until then, so there is no rush within the day.
+Merge branch `vault-v6` into `main` on GitHub (pull request, then merge). **Do this the same day:** the Race recorder (and any other that reads the vault's ABI from `main`) refuses to write its results file until `game/abi/kpred.koilib.json` on `main` has the vault's methods, so a late merge would roll those weeks over. The hourly bot then knows the vault: other games' results, finalizing, alerts and status. The v5 bot keeps working on v6 until then, so there is no rush within the day.
 
 ## 5. Verify
 ```

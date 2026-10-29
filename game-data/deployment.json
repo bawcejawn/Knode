@@ -51,6 +51,10 @@
       "name": "Fantasy Producers",
       "results": "games-data:fantasy/vault"
     },
+    "7": {
+      "name": "Producer Race",
+      "results": "race-data:vault"
+    },
     "8": {
       "name": "Combo Card",
       "results": "games-data:combo/vault"
