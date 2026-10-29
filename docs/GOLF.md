@@ -64,7 +64,10 @@ the Race's real week; its first mainnet weeks are practice weeks with no prizes,
   least 1 VHP, read from the vault on two nodes) who scored on that game, and it needs 5 (owner, 2026-10-28).
   Players not staked in Block Golf still get a scorecard (Free play board) but never make up a field.
 - The question game hole keeps Block Golf's simple rule (owner, 2026-10-28).
-- Staked weeks need the vault (v6) live: until then the recorder can't read Block Golf stakes and holds the week.
+- Staked weeks need the vault (v6) live and merged: the recorder refuses to start if `GOLF_STAKED_FROM_WEEK` is set
+  before it can read Block Golf stakes. Order: vault v6 live → v6 merged → Block Golf registered (id 6) → set the variable.
+- A hole in a staked week becomes final only after the stakes are read once the week has ended; if they still can't be
+  read 66 hours after the week, the hole is skipped rather than scored on older reads.
 - The vault takes only scorecards with at least 1 point (a player who played a single hole has it dropped by the
   mulligan and scores 0).
 

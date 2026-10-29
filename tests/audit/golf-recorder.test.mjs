@@ -136,8 +136,8 @@ test("the question game: nodes that disagree on answers or on who is ranked, an 
   assert.match(holeOf(out, "questions").why, /don't agree/);
   assert.equal(readOut(out, "W003.json").final, false);
   const out1 = tmp("golf-");
-  await run(base({ now: END + 20 * H, out: out1, raceDir: raceDir(), gamesDir: FINAL_GAMES(),
-    rankedOf: async (node, who) => new Set(node === "check" ? who.slice(1) : who) }));
+  await run(base({ stakedFromWeek: null, now: END + 20 * H, out: out1, raceDir: raceDir(), gamesDir: FINAL_GAMES(),
+    rankedOf: async (node, who) => new Set(node === "check" ? who.slice(1) : who) }));   // ranked is read in practice weeks
   assert.match(holeOf(out1, "questions").why, /who is ranked/, "audit M1");
   const out2 = tmp("golf-");
   await run(base({ now: END + 20 * H, out: out2, raceDir: raceDir(), gamesDir: FINAL_GAMES(), questionsOf: async () => qWeek({ resolved: 29 }) }));
@@ -151,7 +151,7 @@ test("the question game: nodes that disagree on answers or on who is ranked, an 
 
 test("a ranked read that fails keeps the hole waiting instead of dropping players", async () => {
   const out = tmp("golf-");
-  const r = await run(base({ now: END + 20 * H, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), rankedOf: async () => { throw new Error("rpc"); } }));
+  const r = await run(base({ stakedFromWeek: null, now: END + 20 * H, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), rankedOf: async () => { throw new Error("rpc"); } }));
   assert.equal(holeOf(out, "questions").status, "live");
   assert.match(r.problems.join(" "), /rpc/);
 });
@@ -400,10 +400,41 @@ test("staked weeks: stakes that can't be read, or that the nodes disagree on, ke
   assert.match(r2.problems.join(" "), /don't agree on who is staked/);
 });
 
-test("the default stake reader refuses until the vault (v6) is live", async () => {
-  const out = tmp("golf-");
-  const o = base({ now: START + DAY, out, raceDir: raceDir(), gamesDir: gamesDir() });
+test("staked weeks refuse to start until the vault (v6) can be read (fix-check S2)", async () => {
+  const o = base({ now: START + DAY, out: tmp("golf-"), raceDir: raceDir(), gamesDir: gamesDir() });
   delete o.golfStakersOf;
-  const r = await run({ ...o, p: { call: async () => { throw new Error("no node in tests"); } }, check: null });
-  assert.match(r.problems.join(" "), /Block Golf stakes:/);
+  await assert.rejects(run(o), /vault \(v6\) isn't live/);
+  await run({ ...o, stakedFromWeek: null });   // practice weeks don't need it
+});
+
+test("staked weeks: a hole is final only with stakes read after the week ended (fix-check S1)", async () => {
+  const all = async (_n, who) => new Set(who.filter((a) => a !== FREE));
+  const five = async (_n, who) => new Set(who.filter((a) => P.slice(0, 5).includes(a)));
+  const prev = tmp("golf-");
+  await run(base({ now: END - H, out: prev, raceDir: raceDir(), gamesDir: gamesDir(), golfStakersOf: all }));
+  const out = tmp("golf-");
+  await run(base({ now: END + 13 * H, prev, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), golfStakersOf: async () => { throw new Error("rpc down"); } }));
+  assert.equal(holeOf(out, "race").status, "live", "no final hole on flags read during the week");
+  assert.match(holeOf(out, "race").why, /Block Golf stakes/);
+  const out2 = tmp("golf-");
+  await run(base({ now: END + 14 * H, prev: out, out: out2, raceDir: raceDir(), gamesDir: FINAL_GAMES(), golfStakersOf: five }));
+  assert.equal(readOut(out2, "W003.json").final, true);
+  assert.equal(holeOf(out2, "race").field, 5, "the stakes after the week ended");
+  // Stakes never readable: skipped at 66 h, not scored on old flags
+  let p = prev;
+  for (const h of [13, 61, 67]) {
+    const o2 = tmp("golf-");
+    await run(base({ now: END + h * H, prev: p, out: o2, raceDir: raceDir(), gamesDir: FINAL_GAMES(), golfStakersOf: async () => { throw new Error("rpc down"); } }));
+    p = o2;
+  }
+  const wf = readOut(p, "W003.json");
+  assert.equal(wf.final, true);
+  assert.ok(wf.holes.every((h) => h.status === "skipped"));
+  assert.match(wf.holes[0].why, /couldn't be read in time/);
+});
+
+test("staked weeks don't read the question game's ranked list (fix-check S3)", async () => {
+  const out = tmp("golf-");
+  await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), rankedOf: async () => { throw new Error("must not be read"); } }));
+  assert.equal(readOut(out, "W003.json").final, true);
 });

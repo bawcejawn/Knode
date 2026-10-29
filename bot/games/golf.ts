@@ -46,8 +46,8 @@ const DEADLINE_MS = 60 * HOUR;                // a hole not final 60 hours after
 const FORCE_MS = 66 * HOUR;                   // after this, a read problem no longer holds the week back (fix-check N1)
 const ONE_VHP = 100000000n;
 const MAX_ROWS = 100000;
-const MAX_PAGES = 2000;
-const GOLF_GAME_ID = 6;                       // Block Golf in the vault registry (game id registry, 2026-10-28)                       // question game: up to 100,000 players a week, else the read fails
+const MAX_PAGES = 2000;                       // question game: up to 100,000 players a week, else the read fails
+const GOLF_GAME_ID = 6;                       // Block Golf in the vault registry (game id registry, 2026-10-28)
 const isAddr = (a: unknown): a is string => typeof a === "string" && G.isAddr(a);
 
 export type Row = { a: string; score: number; scored: boolean; ranked: boolean };
@@ -214,13 +214,16 @@ export async function run(o: Opts) {
   const PREV = o.prev, OUT = o.out || "games-data/golf";
   const STAKED_FROM = Number.isInteger(o.stakedFromWeek) && (o.stakedFromWeek as number) >= 0 ? (o.stakedFromWeek as number) : null;
   const ruleOf = (w: number) => { const r = G.rule(w, STAKED_FROM); return { ...r, minField: o.minField ?? r.minField }; };
+  const weekPractice = (w: number) => { const j = readJson(PREV, wName(w)); return j && typeof j.practice === "boolean" ? j.practice : G.rule(w, STAKED_FROM).practice; };
   const ruleFixed = (practice: boolean) => { const r = G.rule(0, practice ? null : 0); return { ...r, minField: o.minField ?? r.minField }; };
   const sources = (o.sources ?? sourcesFromGames()).filter((s) => READERS[s.reader]);
   const KNODE = o.knodeGame === undefined ? MAINNET_KNODE_GAME || null : o.knodeGame;
   const VHP = o.vhpContract || MAINNET_VHP;
   const nowW = M.weekOf(now);
   const problems: string[] = [];
-  const troubled = new Set<number>();            // weeks with a read problem this run: never made final in this run
+  const troubled = new Set<number>();
+  // Staked weeks need the vault (v6) to read Block Golf stakes: refuse to start without it (fix-check S2).
+  if (STAKED_FROM !== null && !o.golfStakersOf && !(GAME_ABI().methods || {}).get_game_player) throw new Error("GOLF_STAKED_FROM_WEEK is set but the vault (v6) isn't live here (its ABI has no get_game_player): merge v6 first");            // weeks with a read problem this run: never made final in this run
 
   // 0. the last run's files: if any exist, its index must be readable (a broken read is never a fresh start)
   const prevIdx = readJson(PREV, "index.json");
@@ -249,7 +252,9 @@ export async function run(o: Opts) {
       if (JSON.stringify(a) !== JSON.stringify(b)) { r = { state: "live", rows: [], why: "the two nodes don't agree yet" }; troubled.add(w); }
       else {
         const who = a.rows.map((x) => x.a);
-        const ra = await rankedRead(o.p, who), rb = o.check ? await rankedRead(o.check, who) : ra;
+        // Staked weeks: the Block Golf stake decides who counts, so "ranked" isn't read (fix-check S3).
+        const needRanked = weekPractice(w);
+        const ra = needRanked ? await rankedRead(o.p, who) : new Set<string>(), rb = needRanked && o.check ? await rankedRead(o.check, who) : ra;
         if ([...ra].sort().join() !== [...rb].sort().join()) { r = { state: "live", rows: [], why: "the two nodes don't agree on who is ranked yet" }; troubled.add(w); }
         else {
           const final = now >= M.weekStart(w + 1) && a.closed && a.questions > 0 && a.resolved >= a.questions;
@@ -302,6 +307,7 @@ export async function run(o: Opts) {
     }
     // B. Staked weeks: a hole's field is the players staked in Block Golf that week (owner, 2026-10-28), read from the
     //    vault on two nodes. If it can't be read, the flags from the last run stand and the week waits.
+    let stakesFresh = R.practice;
     if (!R.practice) {
       const who = [...new Set(drafts.filter((d) => !d.keptFinal).flatMap((d) => d.rows.map((r) => r.a)))].sort();
       let stakers: Set<string> | null = null;
@@ -309,7 +315,7 @@ export async function run(o: Opts) {
         const read = o.golfStakersOf ?? ((n: any, list: string[], wk: number) => readGolfStakers(n, KNODE, list, wk));
         const sa = await read(o.p, who, w), sb = o.check ? await read(o.check, who, w) : sa;
         if ([...sa].sort().join() !== [...sb].sort().join()) { problems.push(`week ${w}: the two nodes don't agree on who is staked in Block Golf yet`); troubled.add(w); }
-        else stakers = sa;
+        else { stakers = sa; stakesFresh = now >= end; }
       } catch (e) { problems.push(`week ${w}: Block Golf stakes: ${(e as Error).message}`); troubled.add(w); }
       for (const d of drafts) {
         if (d.keptFinal) continue;
@@ -323,6 +329,12 @@ export async function run(o: Opts) {
     for (const d of drafts) {
       if (d.keptFinal) { holes.push(d.keptFinal); continue; }
       let { status, why } = d;
+      // Staked weeks: a hole is final only with the Block Golf stakes read after the week ended; stakes still
+      // unreadable 66 hours after it skip the hole rather than use flags read during the week (fix-check S1).
+      if (!stakesFresh && status !== "skipped") {
+        if (now >= end + FORCE_MS) { status = "skipped"; why = "the Block Golf stakes couldn't be read in time"; }
+        else if (status === "final") { status = "live"; why = "waiting to read the Block Golf stakes"; }
+      }
       const scored = status === "skipped" ? null : G.scoreHole(d.rows, R.minField, R.everyone);
       if (scored && scored.skipped && status === "final") { status = "skipped"; why = scored.why; }
       holes.push({
