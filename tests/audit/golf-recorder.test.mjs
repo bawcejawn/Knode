@@ -287,7 +287,7 @@ function checks() {
     return f;
   });
 }
-const copyDir = (from) => { const d = tmp("copy-"); for (const f of fs.readdirSync(from)) fs.copyFileSync(path.join(from, f), path.join(d, f)); return d; };
+const copyDir = (from) => { const d = tmp("copy-"); fs.cpSync(from, d, { recursive: true }); return d; };
 
 test("the publish job's shape check accepts the recorder's files and refuses tampered ones", async (t) => {
   try { execFileSync("python3", ["--version"]); } catch { t.skip("no python3 here"); return; }
@@ -437,4 +437,34 @@ test("staked weeks don't read the question game's ranked list (fix-check S3)", a
   const out = tmp("golf-");
   await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), rankedOf: async () => { throw new Error("must not be read"); } }));
   assert.equal(readOut(out, "W003.json").final, true);
+});
+
+test("the Vault's file: a final staked week gets vault/W<week>.json with the Block Golf stakers' points (hand-off 2026-10-28)", async (t) => {
+  const golfers = async (_n, who) => new Set(who.filter((a) => P.slice(0, 6).includes(a)));
+  const out = tmp("golf-");
+  await run(base({ now: END - H, out, raceDir: raceDir(), gamesDir: gamesDir(), golfStakersOf: golfers }));
+  assert.ok(!fs.existsSync(path.join(out, "vault")), "nothing before the week is final");
+  await run(base({ now: END + 13 * H, prev: out, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), golfStakersOf: golfers }));
+  const v = readOut(path.join(out, "vault"), "W3.json");
+  const wf = readOut(out, "W003.json");
+  assert.equal(v.game, 6); assert.equal(v.week, 3); assert.equal(v.final, true);
+  assert.deepEqual(v.first, []); assert.deepEqual(v.second, []);
+  const want = wf.cards.filter((c) => P.slice(0, 6).includes(c.a) && c.pts >= 1).map((c) => c.a).sort();
+  assert.deepEqual(v.rows.map((r) => r.player).sort(), want, "only Block Golf stakers with 1+ points");
+  for (const r of v.rows) assert.equal(r.points, wf.cards.find((c) => c.a === r.player).pts);
+  for (let i = 1; i < v.rows.length; i++) assert.ok(v.rows[i].points <= v.rows[i - 1].points);
+  // Practice weeks: no vault file
+  const out2 = tmp("golf-");
+  await run(base({ stakedFromWeek: null, now: END + 13 * H, out: out2, raceDir: raceDir(), gamesDir: FINAL_GAMES() }));
+  assert.equal(readOut(out2, "W003.json").final, true);
+  assert.ok(!fs.existsSync(path.join(out2, "vault")));
+  // The publish checks accept it, and refuse a changed vault file once sent
+  try { execFileSync("python3", ["--version"]); } catch { t.skip("no python3 here"); return; }
+  const [shape, history] = checks();
+  assert.match(execFileSync("python3", [shape, out], { encoding: "utf8" }), /golf files ok/);
+  const bad = copyDir(out); const bv = readOut(path.join(bad, "vault"), "W3.json"); bv.rows[0].points = 256; write(path.join(bad, "vault"), "W3.json", bv);
+  assert.throws(() => execFileSync("python3", [shape, bad], { stdio: "pipe" }), "points over 255");
+  const next = copyDir(out); const nv = readOut(path.join(next, "vault"), "W3.json"); nv.rows.pop(); write(path.join(next, "vault"), "W3.json", nv);
+  assert.throws(() => execFileSync("python3", [history, next, out], { stdio: "pipe" }), "a sent week can't change");
+  assert.match(execFileSync("python3", [history, copyDir(out), out], { encoding: "utf8" }), /golf history ok/);
 });

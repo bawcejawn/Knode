@@ -106,7 +106,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN/golf" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/golf" \) -o \( -type f ! -regex "$IN/golf/\(index\|board\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/golf" ! -path "$IN/golf/vault" \) -o \( -type f ! -regex "$IN/golf/\(index\|board\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/golf/vault/W[0-9]+\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           big=$(find "$IN" -type f -size +8192k -print)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 8 MB: $big"; exit 1; fi
@@ -135,7 +135,16 @@ jobs:
               keys = {"a", "place", "pts", "topar", "strokes", "holes", "lost", "ranked"}
               return all(type(x) is dict and set(x) == keys and isaddr(x["a"]) and type(x["ranked"]) is bool
                   and all(small(x[k]) for k in ("place", "pts", "topar", "strokes", "holes", "lost")) for x in v["rows"])
+          vd = os.path.join(d, "vault")
+          for f in (os.listdir(vd) if os.path.isdir(vd) else []):
+              j = json.load(open(os.path.join(vd, f), encoding="utf-8"))
+              assert set(j) == {"game", "week", "final", "rows", "first", "second"} and j["game"] == 6 and j["final"] is True and nat(j["week"]) and f == "W%d.json" % j["week"], "vault/" + f
+              assert type(j["rows"]) is list and len(j["rows"]) <= 100000 and all(type(r) is dict and set(r) == {"player", "points"} and isaddr(r["player"]) and type(r["points"]) is int and 1 <= r["points"] <= 255 for r in j["rows"]), "vault/" + f
+              assert len({r["player"] for r in j["rows"]}) == len(j["rows"]) and j["first"] == [] and j["second"] == [], "vault/" + f
+              w = os.path.join(d, "W%03d.json" % j["week"])
+              assert os.path.exists(w) and json.load(open(w, encoding="utf-8"))["final"] is True and json.load(open(w, encoding="utf-8"))["practice"] is False, "vault/" + f + ": its week must be final and staked"
           for f in os.listdir(d):
+              if f == "vault": continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "index.json":
                   assert set(j) == {"v", "updated", "weeks", "course", "stakedFromWeek"} and j["v"] == 1, f
@@ -165,10 +174,10 @@ jobs:
               parent=$(git rev-parse FETCH_HEAD)
               git read-tree FETCH_HEAD
             else git read-tree --empty; fi
-            for f in "$IN"/golf/*.json; do
+            for f in "$IN"/golf/*.json "$IN"/golf/vault/*.json; do
               [ -e "$f" ] || continue
               blob=$(git hash-object -w "$f")
-              git update-index --add --cacheinfo 100644 "$blob" "golf/$(basename "$f")"
+              git update-index --add --cacheinfo 100644 "$blob" "golf/${f#"$IN"/golf/}"
             done
             # What's already published can't be rewritten: a final week stays exactly as it is, the list of weeks only
             # grows, and a game's joining week never changes (audit L5).
@@ -176,6 +185,10 @@ jobs:
             if [ -n "$parent" ]; then
               for f in $(git ls-tree --name-only "$parent:golf" 2>/dev/null); do
                 if [[ "$f" =~ ^(index|W[0-9]{3})\.json$ ]]; then git show "$parent:golf/$f" > "$RUNNER_TEMP/old/$f"; fi
+              done
+              mkdir -p "$RUNNER_TEMP/old/vault"
+              for f in $(git ls-tree --name-only "$parent:golf/vault" 2>/dev/null); do
+                if [[ "$f" =~ ^W[0-9]+\.json$ ]]; then git show "$parent:golf/vault/$f" > "$RUNNER_TEMP/old/vault/$f"; fi
               done
             fi
             /usr/bin/python3 - "$IN/golf" "$RUNNER_TEMP/old" <<'PY'
@@ -187,6 +200,10 @@ jobs:
               assert set(oi["weeks"]) <= set(ni["weeks"]), "the list of weeks can only grow"
               assert all(ni["course"].get(k) == v for k, v in oi["course"].items()), "a game's joining week can't change"
               assert oi.get("stakedFromWeek") is None or ni["stakedFromWeek"] == oi["stakedFromWeek"], "the first staked week can't change once set"
+          ov = os.path.join(old, "vault")
+          for f in (os.listdir(ov) if os.path.isdir(ov) else []):
+              nf = os.path.join(new, "vault", f)
+              assert not os.path.exists(nf) or load(os.path.join(new, "vault"), f) == load(ov, f), "vault/" + f + ": a sent week can't change"
           for f in os.listdir(old):
               if f.startswith("W") and load(old, f).get("final") is True:
                   assert not os.path.exists(os.path.join(new, f)) or load(new, f) == load(old, f), f + ": a final week can't change"

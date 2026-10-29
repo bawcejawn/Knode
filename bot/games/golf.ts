@@ -24,7 +24,8 @@
  *     read problem no longer holds the week back, so the week's points reach the vault within its 3-day window.
  *     A final week is never recomputed. Whether a week is practice or staked is fixed when it is first recorded.
  *  5. Writes index.json, W<week>.json and board.json (Today and This week: this week so far; Last week; All time:
- *     final weeks only). The publish job checks their shape and pushes them to the data branch.
+ *     final weeks only), and for each final staked week the Vault's file vault/W<week>.json (game 6, the staked
+ *     players' points). The publish job checks their shape and pushes them to the data branch.
  * Safety: a previous run's files that exist but can't be read stop the run (never treated as a fresh start).
  *
  *   npm run golf     (RPC, RPC_CHECK, GOLF_PREV, GOLF_OUT, RACE_DATA, GAMES_DATA, GOLF_STAKED_FROM_WEEK)
@@ -208,6 +209,14 @@ async function readGolfStakers(node: any, vault: string | null, who: string[], w
   return out;
 }
 
+/** The Vault's results file for one final staked week. */
+export function vaultFile(wf: { week: number; cards: CardRec[] }) {
+  const rows = wf.cards.filter((c) => c.ranked && isAddr(c.a) && Number.isInteger(c.pts) && c.pts >= 1)
+    .map((c) => ({ player: c.a, points: Math.min(255, c.pts) }))
+    .sort((x, y) => y.points - x.points || (x.player < y.player ? -1 : 1));
+  return { game: GOLF_GAME_ID, week: wf.week, final: true, rows, first: [] as string[], second: [] as string[] };
+}
+
 // ── the run ──
 export async function run(o: Opts) {
   const now = o.now ?? Date.now();
@@ -366,6 +375,14 @@ export async function run(o: Opts) {
     if (!wf.holes.length && !known.has(w)) continue;
     known.add(w);
     fs.writeFileSync(path.join(OUT, wName(w)), JSON.stringify(wf) + "\n");
+  }
+  // The Vault's file for a final staked week (hand-off from the Vault v6 chat, 2026-10-28): every player staked in
+  // Block Golf that week with 1+ points, points 1–255 (7 × counted holes − strokes keeps the order and the ties).
+  // Block Golf is staked only, so it has no free-prize winners. Practice weeks have no vault file.
+  for (const [w, wf] of weeks) {
+    if (!wf.final || wf.practice || !wf.holes.length) continue;
+    fs.mkdirSync(path.join(OUT, "vault"), { recursive: true });
+    fs.writeFileSync(path.join(OUT, "vault", `W${w}.json`), JSON.stringify(vaultFile(wf)) + "\n");
   }
   const weekList = [...known].sort((a, b) => a - b);
   fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), weeks: weekList, course, stakedFromWeek: STAKED_FROM }) + "\n");
