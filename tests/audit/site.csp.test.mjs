@@ -95,7 +95,12 @@ test("(guard) every origin the pages fetch or load from is allowed (connect-src 
       const tn = json("testnet/blockx.json");
       if (!allows(conn, tn.rpc + "/")) missing.push(`${p}: connect-src lacks the testnet node ${tn.rpc}`);
       if (!allows(conn, tn.data + "blockx-2/board.json")) missing.push(`${p}: connect-src lacks the testnet data branch`);
-      for (const bad of ["https://api.koinos.io/", "https://koinos.armana.io/", "https://koinvault.app/api/dapp/status", "https://raw.githubusercontent.com/bawcejawn/Knode/games-data/x"])
+      // A testnet page that declares it READS mainnet blocks (Last Node Standing: the testnet has one producer, so its
+      // race is the real mainnet producers) may reach the mainnet read nodes, but loads no mainnet wallet code, and
+      // still never reaches KOIN Vault or the live games' data.
+      const readsMainnet = /<meta name="kg-reads" content="mainnet-blocks">/.test(html);
+      if (readsMainnet) for (const s of ["wallet.js", "guest.js", "header-wallet.js"]) if (html.includes(`<script src="${s}">`)) missing.push(`${p}: reads mainnet but loads the mainnet wallet ${s}`);
+      for (const bad of [...(readsMainnet ? [] : ["https://api.koinos.io/", "https://koinos.armana.io/"]), "https://koinvault.app/api/dapp/status", "https://raw.githubusercontent.com/bawcejawn/Knode/games-data/x"])
         if (allows(conn, bad)) missing.push(`${p}: the testnet page may reach ${bad}`);
       for (const m of html.matchAll(/<script\b[^>]*\bsrc="(https:[^"]+)"/g)) if (!allows(srcList(c, "script-src"), m[1])) missing.push(`${p}: script-src blocks ${m[1]}`);
       continue;

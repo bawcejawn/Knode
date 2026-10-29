@@ -1,7 +1,9 @@
-// Who Signs Block X on the Koinos TESTNET, on your own computer: serves the testnet page at
+// Who Signs Block X and Last Node Standing on the Koinos TESTNET, on your own computer: serves the testnet pages at
 //   http://127.0.0.1:8350/blockx-testnet.html
-// and (with --record) runs the Block X recorder for every testnet game every 5 minutes, so the page shows results
-// without GitHub. Nothing is pushed or published; mainnet is never touched.
+//   http://127.0.0.1:8350/lastnode-testnet.html
+// and (with --record) runs the recorders for every testnet game every 5 minutes, so the pages show results without
+// GitHub. Nothing is pushed or published; nothing is ever sent to mainnet (Last Node Standing READS mainnet blocks: the
+// testnet has one producer, so the race is the real mainnet producers while the picks are on the testnet).
 //
 //   npm run testnet-site              the page only
 //   npm run testnet-site -- --record  the page, and the recorder every 5 minutes (stop with Ctrl+C)
@@ -12,7 +14,9 @@
 // only to the page on this computer (Origin and Host must be this server; a custom header blocks other sites).
 //
 // Safety: it listens on 127.0.0.1 only (not your network), answers GET/HEAD (and that one POST), and serves only an allowlist:
-// the site's own page files at the repository root (html, js, css; media/ images), testnet/blockx.json, the Picks ABI (picks/abi/picks.koilib.json) and the recorder's testnet-data/blockx-<id>/*.json. Never .env.testnet, keys,
+// the site's own page files at the repository root (html, js, css; media/ images), testnet/blockx.json, testnet/lastnode.json,
+// the Picks ABI (picks/abi/picks.koilib.json) and the recorders' testnet-data/blockx-<id>/*.json and
+// testnet-data/lastnode-<id>/*.json. Never .env.testnet, keys,
 // or any other file of the project.
 import http from "node:http";
 import fs from "node:fs";
@@ -35,7 +39,8 @@ export function allowed(urlPath) {
   if (rel.split("/").some((s) => s === ".." || s.startsWith("."))) return null;
   // The site lives at the repository root (knodegames.com, 2026-10-28): only its page files there (no .json, .ts,
   // dotfiles or folders), media/ images, and the few data files below.
-  const ok = /^[A-Za-z0-9_-][A-Za-z0-9._-]*\.(html|js|css)$/.test(rel) || /^media\/[A-Za-z0-9_-][A-Za-z0-9._-]*\.(png|svg|ico)$/.test(rel) || rel === "manifest.webmanifest" || rel === "testnet/blockx.json" || rel === "picks/abi/picks.koilib.json" || /^testnet-data\/blockx-\d{1,3}\/(index|board|cards|W\d{3})\.json$/.test(rel);
+  const ok = /^[A-Za-z0-9_-][A-Za-z0-9._-]*\.(html|js|css)$/.test(rel) || /^media\/[A-Za-z0-9_-][A-Za-z0-9._-]*\.(png|svg|ico)$/.test(rel) || rel === "manifest.webmanifest" || rel === "testnet/blockx.json" || rel === "testnet/lastnode.json" || rel === "picks/abi/picks.koilib.json" || /^testnet-data\/blockx-\d{1,3}\/(index|board|cards|W\d{3})\.json$/.test(rel)
+    || /^testnet-data\/lastnode-\d{1,3}\/(index|board|D\d{4}-\d{2}-\d{2}(T\d{2})?)\.json$/.test(rel);
   if (!ok) return null;
   const abs = path.join(ROOT, rel);
   if (!abs.startsWith(ROOT + path.sep)) return null;
@@ -136,16 +141,23 @@ function start(port, tries = 20) {
   });
 }
 
+let recording = false;
 function recordAll() {
+  if (recording) { console.log("(the last recording run is still going; skipping this one)"); return; }
+  const ok = (id) => Number.isInteger(id) && id > 0 && id < 128;
   const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, "testnet/blockx.json"), "utf8"));
-  const ids = cfg.games.map((g) => g.id).filter((id) => Number.isInteger(id) && id > 0 && id < 128);
+  let ln = { games: [] };
+  try { ln = JSON.parse(fs.readFileSync(path.join(ROOT, "testnet/lastnode.json"), "utf8")); } catch { /* no Last Node Standing settings */ }
+  const jobs = [...cfg.games.map((g) => g.id).filter(ok).map((id) => ["bot/games/blockx.ts", id]),
+    ...(Array.isArray(ln.games) ? ln.games : []).map((g) => g.id).filter(ok).map((id) => ["bot/games/lastnode.ts", id])];
   const one = (i) => {
-    if (i >= ids.length) return;
+    if (i >= jobs.length) { recording = false; return; }
     // Node itself runs the recorder (no shell, so nothing is pieced together into a command line).
-    const c = spawn(process.execPath, ["--import", "tsx", "bot/games/blockx.ts", "--testnet", "--game", String(ids[i])], { cwd: ROOT, stdio: "inherit" });
+    const c = spawn(process.execPath, ["--import", "tsx", jobs[i][0], "--testnet", "--game", String(jobs[i][1])], { cwd: ROOT, stdio: "inherit" });
     c.on("exit", () => one(i + 1));
   };
-  console.log(`\n[${new Date().toISOString()}] recording games ${ids.join(", ")}`);
+  recording = true;
+  console.log(`\n[${new Date().toISOString()}] recording ${jobs.map(([f, id]) => `${f.includes("lastnode") ? "Last Node" : "Block X"} ${id}`).join(", ")}`);
   one(0);
 }
 
@@ -154,6 +166,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const port = s.address().port;
     console.log(`\nBlock X testnet page:  http://127.0.0.1:${port}/blockx-testnet.html#game-92   (fast game)`);
     console.log(`                       http://127.0.0.1:${port}/blockx-testnet.html#game-2    (real settings)`);
+    console.log(`Last Node Standing:    http://127.0.0.1:${port}/lastnode-testnet.html#game-93 (fast test: a cut every 20 minutes)`);
+    console.log(`                       http://127.0.0.1:${port}/lastnode-testnet.html#game-13 (real settings: daily 14:00 UTC)`);
     console.log("Leave this window open. Stop with Ctrl+C.");
     if (process.argv.includes("--record")) { recordAll(); setInterval(recordAll, 5 * 60000); }
     else console.log("Results: add --record to run the recorder every 5 minutes (or run: npm run blockx -- --testnet --game 92).");

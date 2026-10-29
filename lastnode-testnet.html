@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- TESTNET page. Picks go to the Koinos Foundation testnet (test KOIN only); the race is read from mainnet nodes and
+       the public race and block files (read only). It never loads the mainnet wallet scripts. 'unsafe-eval' is needed by
+       koilib; CDN scripts are pinned by their integrity hash. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://testnet.koinosfoundation.org https://koinos.armana.io https://api.koinos.io https://raw.githubusercontent.com/bawcejawn/Knode/blocks-data/ https://raw.githubusercontent.com/bawcejawn/Knode/race-data/ https://raw.githubusercontent.com/bawcejawn/Knode/testnet-data/; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="kg-network" content="testnet">
+  <meta name="kg-reads" content="mainnet-blocks">
+  <title>Last Node Standing · TESTNET · Knode Games</title>
+  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Archivo:wdth,wght@62..125,600;62..125,800;62..125,900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="board.css">
+  <link rel="stylesheet" href="lastnode.css">
+  <style>
+    .tn-band { background: #FF4D6D; color: #fff; padding: 9px 16px; font-weight: 700; text-align: center; font-size: 14px; }
+    body.ln-arena .tn-band a { color: #fff; text-decoration: underline; }
+    .tn-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 16px; max-width: 1040px; margin: 0 auto; }
+    .tn-top .brand-name { font-family: "Big Shoulders Display", system-ui, sans-serif; font-weight: 900; font-size: 24px; color: #F3EEFF; }
+    .tn-top a.brand { text-decoration: none; }
+    .tn-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+    .tn-tabs .btn { font: inherit; font-size: 14px; font-weight: 700; padding: 7px 14px; border-radius: 99px; text-decoration: none; background: #F3EEFF; color: #160F33; }
+    .tn-tabs .btn.ghost { background: transparent; color: #F3EEFF; box-shadow: inset 0 0 0 1px #3A2F6E; }
+    .tn-wallet { font: inherit; font-weight: 800; font-size: 15px; padding: 10px 18px; border-radius: 99px; border: 0; background: #FFC83D; color: #241800; cursor: pointer; }
+  </style>
+</head>
+<body class="ln-arena">
+  <div class="tn-band" role="note">TESTNET practice · test KOIN only. Nothing here is real money or counts on Knode Games. <a href="lastnode.html">The live game</a></div>
+  <header class="tn-top">
+    <a class="brand" href="./" aria-label="Knode Games home"><span class="brand-name">Knode Games</span></a>
+    <button class="tn-wallet" type="button" id="wallet-btn">Play free</button>
+  </header>
+
+  <main class="ln">
+    <div class="tn-tabs" id="game-tabs" hidden></div>
+    <p class="status" id="status" role="status">Reading the chain…</p>
+    <section class="ln-hero" id="event-box">
+      <h1>Last node <span>standing</span></h1>
+      <div class="ln-clock" id="ev-clockbox"><b id="ev-clock">–</b><span id="ev-clock-label"></span></div>
+      <p class="ln-event"><span class="ln-tag wait" id="ev-tag">–</span><b id="ev-title">–</b><span id="ev-sub"></span></p>
+    </section>
+
+    <section class="ln-arena-box" id="arena" aria-label="The race">
+      <div class="ln-arena-head"><b>The arena</b><span id="arena-sub">Each bar is a node's lead over the slowest one. At each cut, the slowest is knocked out.</span></div>
+      <div class="ln-track" id="track"></div>
+      <div class="ln-legend"><span><i style="background:var(--ln-storm)"></i>Out if the cut were now</span><span><i style="background:var(--ln-you)"></i>Your node</span></div>
+      <div class="ln-fallen" id="fallen"></div>
+    </section>
+
+    <div class="ln-grid2">
+      <section class="ln-panel" id="me-box">
+        <div class="ln-panel-head"><h2>Your run</h2><span class="note" id="me-who"></span></div>
+        <p class="note" id="picks-soon">Picks open once this game is registered on the testnet Picks contract. Until then, watch the race.</p>
+        <div class="ln-me" id="me"></div>
+      </section>
+      <section class="ln-panel" id="field-box">
+        <div class="ln-panel-head"><h2>Scouting report</h2></div>
+        <p class="note" id="field-sub"></p>
+        <table class="hist"><thead><tr><th>Node</th><th class="num hide-sm">Per hour</th><th class="num">Handicap</th><th>Last 24 h</th></tr></thead><tbody id="field-rows"></tbody></table>
+        <p class="note">"Last 24 h" is how many blocks a node actually signed compared with what its VHP says it should: 100% is on par. Nodes that miss blocks fall behind, and that's where the skill is. Big nodes are steady; small nodes are boom or bust.</p>
+      </section>
+    </div>
+
+    <section class="ln-panel" id="board-box" hidden style="margin-top:16px">
+      <h2>Leaderboard</h2>
+      <div id="ln-board"></div>
+      <p class="note">Points: 1 for each cut your node survives, plus 5 for riding the last node standing without jumping, or 3 after a jump. Ranked by points, then rides, then fewer jumps; players equal on all three share the place. On the testnet nothing is paid.</p>
+    </section>
+
+    <section class="ln-panel explain" id="how" style="margin-top:16px">
+      <h2>How it works</h2>
+      <p><b>Practice.</b> Your picks go to the Koinos <b>testnet</b> with free test KOIN. The race is the <b>real</b> mainnet producers, read live: the testnet has only one producer, so it can't hold a race. Nothing here is paid and nothing counts on Knode Games.</p>
+      <p><b>Two timings.</b> <b>Fast test</b>: a cut every 20 minutes, an event every 4 hours (00:00, 04:00, 08:00 … UTC); your pick locks 15 minutes before the start; after your node is cut you can jump until 5 minutes past that cut. <b>Real settings</b>: the live game's timing, daily at 14:00 UTC, a cut every hour; your pick locks at 13:10 UTC; jump until 10 minutes past the cut.</p>
+      <p><b>The field.</b> Producers expected to sign at least 20 blocks an hour, from a Producer Race card taken before picks open.</p>
+      <p><b>The handicap.</b> Big nodes sign more blocks, so smaller nodes move further per block. A small luck trim, set for each event, gives every node about the same chance to be last standing.</p>
+      <p><b>The cut.</b> At each cut, the node with the fewest steps since the start is knocked out. Ties go to fewer blocks, then less VHP.</p>
+      <p><b>Your run.</b> Drop in on one node. If it's knocked out, jump once to a node still standing, or set a backup in advance and it jumps for you. Lose a second node, or miss the jump, and your run ends (your points so far count).</p>
+      <p><b>Fair checks.</b> Results come from irreversible blocks that match on two independent Koinos nodes, and the page and the recorder run the same rules file.</p>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js" integrity="sha384-IAL9o3r4bQJvWhvszkorFINY2ct4LBA/LvyXE9NSOPCyYB25BsFV12JITA7Gxbk6" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js" integrity="sha384-WOeNFfSdOron0s4x9jdzLtA7Ic7RSqZCXZAaeQd6HRL6WezQp0KAtIF2XSa+11TL" crossorigin="anonymous"></script>
+  <script src="testnet-wallet.js"></script>
+  <script src="chain-blocks.js"></script>
+  <script src="race-math.js"></script>
+  <script src="lastnode-math.js"></script>
+  <script src="board.js"></script>
+  <script src="lastnode.js"></script>
+</body>
+</html>

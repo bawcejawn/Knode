@@ -10,6 +10,7 @@
  *   npm run picks -- status [--testnet]              the contract on chain: code, overrides, owner, games, announcements
  *   npm run picks -- upload [--testnet] [--send]     put the contract on the PICKS_WIF wallet, all three overrides ON
  *   npm run picks -- announce <id> [--testnet] [--send]   announce a game (owner's key); it can be applied after the wait
+ *                                                          (testnet: Block X 2 and 92, Last Node Standing 13 and 93)
  *   npm run picks -- apply <id> [--testnet] [--send]      put an announced game in force (any key; the tool uses OWNER_WIF)
  *   npm run picks -- pause <id> [--testnet] [--send]      switch a game off at once (owner's key)
  *   npm run picks -- lock-test <id> --testnet --send      send one pick per block across a target's lock, report each
@@ -32,7 +33,9 @@ import { showKoin, toSat } from "./chain.ts";
 import { contractMetadata } from "./chaincheck.ts";
 import { isMainnet, TESTNET } from "./bot.ts";
 await import("../blockx-math.js");
+await import("../lastnode-math.js");
 const X: any = (globalThis as any).KBlockX;
+const LN: any = (globalThis as any).KLastNode;
 
 const E = process.env;
 const log = (...a: any[]) => console.log(...a);
@@ -56,6 +59,8 @@ const MAINNET_WASM = "picks/build/release/contract.wasm";
 const TESTNET_WASM = "picks/build/testnet/contract.wasm", TESTNET_MANIFEST = "picks/build/testnet/manifest.json";
 const MAINNET_STATE = path.join("picks-data", "deployment.json");
 const TESTNET_CONFIG = path.join("testnet", "blockx.json");
+/** Last Node Standing's testnet games (time-locked, on the same testnet Picks contract). */
+const TESTNET_LASTNODE = path.join("testnet", "lastnode.json");
 /** Mainnet games this tool may register: Who Signs Block X, exactly as in claude/builds/03-block-x-plan.md. */
 const MAINNET_GAMES = [{ ...X.MAINNET_GAME, name: "Who Signs Block X" }];
 /** The picks per wallet per day and changes per pick the Picks contract allows at most. */
@@ -78,7 +83,9 @@ export function network(testnet = TESTNET): Net {
     if (!cfg || cfg.network !== "koinos-foundation-testnet") throw new Error(`${TESTNET_CONFIG} is missing or not a testnet config.`);
     if (cfg.chainId === MAINNET_CHAIN_ID) throw new Error(`${TESTNET_CONFIG} names the MAINNET chain id. Refusing.`);
     const owner = readJson(TESTNET_MANIFEST)?.owner ?? (E.OWNER_WIF ? Signer.fromWif(E.OWNER_WIF).getAddress() : "");
-    return { testnet: true, rpc: [E.TESTNET_RPC || cfg.rpc], chainId: cfg.chainId ?? null, owner, picks: isAddr(cfg.picks) ? cfg.picks : null, games: cfg.games, cfg };
+    const ln = readJson(TESTNET_LASTNODE);
+    const lnGames = ln && ln.network === "koinos-foundation-testnet" && Array.isArray(ln.games) ? ln.games.filter((g: any) => g && Number.isInteger(g.cut)) : [];
+    return { testnet: true, rpc: [E.TESTNET_RPC || cfg.rpc], chainId: cfg.chainId ?? null, owner, picks: isAddr(cfg.picks) ? cfg.picks : null, games: [...cfg.games, ...lnGames], cfg };
   }
   const st = readJson(MAINNET_STATE);
   // Audit BX-47: one primary node only (koilib would quietly fall back to the second, which is the check node).
@@ -159,7 +166,10 @@ async function status() {
   if (cfg.upgrade_eta && cfg.upgrade_eta !== "0") log(`  Upgrade        announced: ${cfg.upgrade_hash}, from ${new Date(Number(cfg.upgrade_eta)).toISOString()}`);
   const games = (await read(p, net.picks, "list_games")).games ?? [];
   log(`  Games          ${games.length ? "" : "none yet (npm run picks -- announce 2)"}`);
-  for (const g of games) log(`    ${g.id} ${g.name}: ${g.enabled ? "ON" : "off"}, every ${g.round_size} blocks, locks ${g.lead} before, opens ${g.ahead} ahead, ${g.max_picks_per_day} picks a day, ${g.max_changes} changes`);
+  const mins = (ms: any) => `${Math.round(Number(ms) / 60000)} min`;
+  for (const g of games) log(Number(g.lock_mode) === 2
+    ? `    ${g.id} ${g.name}: ${g.enabled ? "ON" : "off"}, a round every ${mins(g.round_size)} (target +${mins(g.round_offset)}), locks ${mins(g.lead)} before, opens ${mins(g.ahead)} ahead, ${g.max_picks_per_day} picks a day, ${g.max_changes} changes`
+    : `    ${g.id} ${g.name}: ${g.enabled ? "ON" : "off"}, every ${g.round_size} blocks, locks ${g.lead} before, opens ${g.ahead} ahead, ${g.max_picks_per_day} picks a day, ${g.max_changes} changes`);
   const pend = (await read(p, net.picks, "list_pending", { limit: 50 })).pending ?? [];
   for (const x of pend) log(`  Announced      game ${x.game?.id} (${x.game?.name}): can be applied from ${new Date(Number(x.eta)).toISOString()}${Date.now() >= Number(x.eta) ? " — ready now: npm run picks -- apply " + x.game?.id : ""}`);
   log(`  Mana           contract wallet ${showKoin(await p.getAccountRc(net.picks))}`);
@@ -262,6 +272,15 @@ async function findVhp(p: Provider): Promise<string | null> {
 // ═══════════════════════════════ games ═══════════════════════════════
 /** The game_config the contract takes for a Block X game (one producer, locked by block height). Exported for the tests. */
 export function buildGameConfig(g: any, enabled = true) {
+  if (Number.isInteger(g.cut)) {
+    // A Last Node Standing game: one producer per round, locked by TIME (ms). Its rules check the contract's limits.
+    const T = LN.forGame(g);
+    if (typeof g.name !== "string" || !g.name || Buffer.byteLength(g.name) > 40) throw new Error("A game needs a name of 1 to 40 bytes.");
+    if (!(g.picksPerDay >= 1 && g.picksPerDay <= MAX_PICKS_PER_DAY)) throw new Error("Picks per day must be 1 to 50.");
+    if (!(g.maxChanges >= 0 && g.maxChanges <= MAX_CHANGES)) throw new Error("Changes must be 0 to 50.");
+    return { id: g.id, name: g.name, kind: 1, list_size: 1, number_min: "0", number_max: "0", lock_mode: 2, round_size: String(T.CUT), round_offset: String(T.OFFSET),
+      lead: String(T.LEAD), ahead: String(T.AHEAD), max_picks_per_day: g.picksPerDay, max_changes: g.maxChanges, enabled };
+  }
   X.forGame(g);   // the contract's own limits for a height game (lead ≥ 100, ahead > lead, ...)
   if (typeof g.name !== "string" || !g.name || Buffer.byteLength(g.name) > 40) throw new Error("A game needs a name of 1 to 40 bytes.");
   if (!(g.id >= 1 && g.id < 128)) throw new Error("Game ids are 1 to 127.");
@@ -348,7 +367,11 @@ async function announce(id: number, send: boolean) {
   const s = ownerKey(net, p);
   const wait = net.testnet ? (readJson(TESTNET_MANIFEST)?.timelockMs ?? 600000) / 60000 + " minutes" : "48 hours";
   log(`Announce game ${id} "${g.name}" on ${net.testnet ? "the testnet" : "MAINNET"} (owner ${s.getAddress()}):`);
-  log(`  one producer per target; a target every ${g.round} blocks; locks ${g.lead} blocks before; opens ${g.ahead} ahead (${X.forGame(g).openRounds(g.ahead * 10).length} targets open at a time)`);
+  if (Number.isInteger(g.cut)) {
+    const T = LN.forGame(g), m = (ms: number) => `${ms / 60000} min`;
+    log(`  Last Node Standing (time lock): a cut every ${m(T.CUT)}, an event every ${m(T.PERIOD)}; each round locks ${m(T.JUMP_WINDOW)} after its cut`);
+    log(`  (round_size ${T.CUT}, round_offset ${T.OFFSET}, lead ${T.LEAD}, ahead ${T.AHEAD}). The start pick locks ${m(T.CUT - T.JUMP_WINDOW)} before an event starts.`);
+  } else log(`  one producer per target; a target every ${g.round} blocks; locks ${g.lead} blocks before; opens ${g.ahead} ahead (${X.forGame(g).openRounds(g.ahead * 10).length} targets open at a time)`);
   log(`  ${g.picksPerDay} picks a day per wallet, ${g.maxChanges} changes per pick. It can be applied ${wait} after it is announced (anyone may apply it).`);
   if (!send) { log("\nDry run only. Nothing was sent. Add --send to send it."); return; }
   const r = await sendCall(net, p, chainId, s, "announce_game", { game: cfg });
@@ -418,6 +441,7 @@ async function lockTest(id: number, send: boolean) {
   const { p, chainId } = await connect(net);
   const g = (await read(p, net.picks, "get_game", { game: id })).game;
   if (!g || !g.enabled) throw new Error(`Game ${id} isn't in force yet (announce, wait, apply).`);
+  if (Number(g.lock_mode) !== 1) throw new Error(`lock-test is for the block-height games (2, 92); game ${id} locks by time.`);
   const G = X.forGame({ id, round: Number(g.round_size), offset: Number(g.round_offset), lead: Number(g.lead), ahead: Number(g.ahead), picksPerDay: g.max_picks_per_day, maxChanges: g.max_changes });
   if (G.MAX_CHANGES < 5) throw new Error("lock-test needs a game that allows at least 5 changes.");
   const player = signerOf("PLAYER_WIF", p), me = player.getAddress();
@@ -472,6 +496,7 @@ async function manaTest(id: number, send: boolean) {
   const { p, chainId } = await connect(net);
   const g = (await read(p, net.picks, "get_game", { game: id })).game;
   if (!g || !g.enabled) throw new Error(`Game ${id} isn't in force yet.`);
+  if (Number(g.lock_mode) !== 1) throw new Error(`mana-test is for the block-height games (2, 92); game ${id} locks by time.`);
   const G = X.forGame({ id, round: Number(g.round_size), offset: Number(g.round_offset), lead: Number(g.lead), ahead: Number(g.ahead), picksPerDay: g.max_picks_per_day, maxChanges: g.max_changes });
   const player = signerOf("PLAYER_WIF", p), me = player.getAddress();
   const rounds = G.offerRounds(Number(((await p.getHeadInfo()) as any).head_topology.height), 60);

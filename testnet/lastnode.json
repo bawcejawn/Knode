@@ -1,0 +1,42 @@
+{
+  "v": 1,
+  "network": "koinos-foundation-testnet",
+  "note": "Last Node Standing on the Koinos TESTNET (Koinos Foundation testnet). Picks go to the testnet Picks contract named in testnet/blockx.json (the same contract as Who Signs Block X), with test KOIN only. The race itself is run on the real MAINNET producers, read only: the testnet has a single block producer, so it can not hold a race. Nothing here sends anything to mainnet.",
+  "rpc": "https://testnet.koinosfoundation.org",
+  "chainId": "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==",
+  "koin": "1FaSvLjQJsCJKq5ybmGsMMQs8RQYyVv8ju",
+  "picksFrom": "testnet/blockx.json",
+  "mainnet": {
+    "rpc": "https://koinos.armana.io",
+    "check": "https://api.koinosblocks.com",
+    "raceData": "https://raw.githubusercontent.com/bawcejawn/Knode/race-data/"
+  },
+  "data": "https://raw.githubusercontent.com/bawcejawn/Knode/testnet-data/",
+  "faucet": "https://t.me/KoinosTestnetFaucetBot",
+  "games": [
+    {
+      "id": 93,
+      "name": "Last Node Standing fast test",
+      "cut": 1200000,
+      "offset": 600000,
+      "lead": 300000,
+      "ahead": 14400000,
+      "period": 14400000,
+      "phase": 0,
+      "picksPerDay": 50,
+      "maxChanges": 5
+    },
+    {
+      "id": 13,
+      "name": "Last Node Standing",
+      "cut": 3600000,
+      "offset": 900000,
+      "lead": 300000,
+      "ahead": 86400000,
+      "period": 86400000,
+      "phase": 50400000,
+      "picksPerDay": 30,
+      "maxChanges": 5
+    }
+  ]
+}

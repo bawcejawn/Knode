@@ -146,3 +146,19 @@ test("audit BX-47: the check node must be a different node from the primary", as
   assert.match(src, /is the same node as RPC: the check needs a second, independent node/);
   assert.match(src, /rpc: \[E\.RPC \|\| MAINNET_RPCS\[0\]\]/, "one primary node (no quiet fallback to the check node)");
 });
+
+test("Last Node Standing games register as time-locked games with exactly the rules' settings", async () => {
+  await import("../../lastnode-math.js");
+  const LN: any = (globalThis as any).KLastNode;
+  const real = buildGameConfig({ ...LN.MAINNET_GAME });
+  assert.equal(real.lock_mode, 2); assert.equal(real.kind, 1); assert.equal(real.list_size, 1);
+  assert.equal(real.round_size, String(LN.PICKS_GAME.round_size)); assert.equal(real.round_offset, String(LN.PICKS_GAME.round_offset));
+  assert.equal(real.lead, String(LN.PICKS_GAME.lead)); assert.equal(real.ahead, String(LN.PICKS_GAME.ahead));
+  assert.equal(real.max_picks_per_day, 30); assert.equal(real.max_changes, 5);
+  const fast = buildGameConfig({ ...LN.FAST_GAME });
+  assert.equal(fast.id, 93); assert.equal(fast.round_size, "1200000"); assert.equal(fast.round_offset, "600000"); assert.equal(fast.lead, "300000"); assert.equal(fast.ahead, "14400000");
+  assert.throws(() => buildGameConfig({ ...LN.FAST_GAME, lead: 60000 }), /5 minutes/);
+  // The testnet game list holds both Block X games and both Last Node Standing games.
+  const ids = network(true).games.map((g: any) => g.id).sort((a: number, b: number) => a - b);
+  assert.deepEqual(ids, [2, 13, 92, 93]);
+});

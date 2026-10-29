@@ -16,6 +16,8 @@
     { "id": "fantasy", "name": "Fantasy Producers", "kinds": ["staked"], "status": "soon", "href": "",
       "line": "Draft 5 producers under a salary cap, with a captain who scores double." },
     { "id": "golf", "name": "Block Golf", "kinds": ["staked"], "status": "soon", "href": "",
-      "line": "Nine holes a day: guess how many blocks until a producer signs its next one." }
+      "line": "Nine holes a day: guess how many blocks until a producer signs its next one." },
+    { "id": "lastnode", "name": "Last Node Standing", "kinds": ["staked"], "status": "soon", "href": "",
+      "line": "Pick a node. Every hour the slowest is knocked out; jump once if yours goes. Ride the last node standing." }
   ]
 }
