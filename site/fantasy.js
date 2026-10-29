@@ -293,7 +293,19 @@
   // ── the league ──
   let leagueWeek = "now";
   function renderLeague() {
-    const b = files.board, part = b ? (leagueWeek === "now" ? b.week : b.lastWeek) : null, who = me();
+    const who = me();
+    $("league-col4").textContent = leagueWeek === "all" ? "Weeks" : "Vault";
+    if (leagueWeek === "all") {
+      const rows = files.board && Array.isArray(files.board.allTime) ? files.board.allTime : [];
+      $("fx-league").tBodies[0].replaceChildren(...rows.slice(0, 50).map((r) => el("tr", { class: r.a === who ? "me" : null, title: `Best week ${fmt(r.best, 0)}` },
+        el("td", { class: "num", text: String(r.place) }), el("td", {}, el("span", { class: "fx-name" }, dot(r.a), el("span", { text: nameOf(r.a) }))),
+        el("td", { class: "num", text: fmt(r.points, 0) }), el("td", { class: "num hide-sm", text: String(r.weeks) }))));
+      const mine = who ? rows.find((x) => x.a === who) : null;
+      $("league-sub").textContent = "All finished weeks";
+      $("league-note").textContent = !rows.length ? "The all-time table starts with the first finished week." : `Total points over every finished week.${mine ? ` You: #${mine.place}, ${mine.weeks} week${mine.weeks > 1 ? "s" : ""}, best ${fmt(mine.best, 0)}.` : ""}`;
+      return;
+    }
+    const b = files.board, part = b ? (leagueWeek === "now" ? b.week : b.lastWeek) : null;
     const wf = part ? files.weeks.get(part.week) : null, vault = new Map(((wf && wf.players) || []).map((x) => [x.a, x.vault]));
     const rows = part && Array.isArray(part.rows) ? part.rows : [];
     $("fx-league").tBodies[0].replaceChildren(...rows.slice(0, 50).map((r) => el("tr", { class: r.a === who ? "me" : null },
@@ -316,7 +328,7 @@
         el("div", { class: "side" }, el("span", { text: "You" }), el("b", { text: fmt(a ? a.points : 0, 0) })),
         el("span", { class: "mid", text: "vs" }),
         el("div", { class: "side r" }, el("span", { text: nameOf(mine.rivalNow) }), el("b", { text: fmt(z ? z.points : 0, 0) }))),
-        el("p", { class: "note", text: "This week's challenge. It counts if you both have a team all 7 days." }));
+        el("p", { class: "note", text: "This week's challenge. It counts if you both hold a Knode Games stake and have a team all 7 days." }));
     } else match.replaceChildren(el("p", { class: "note", text: `No rival this week.` }));
     const against = wf && Array.isArray(wf.rivals) ? wf.rivals.filter((x) => x[1] === who).map((x) => x[0]) : [];
     if (who && against.length) match.append(el("p", { class: "note", text: `Challenged by ${against.length}: ${against.slice(0, 6).map(nameOf).join(", ")}${against.length > 6 ? "…" : ""}` }));
@@ -410,7 +422,7 @@
       await W.send(`Weekly Rival: challenge ${nameOf(target)}`, [operation]);
       const ok = await confirmPick(G.rival, F.rivalRound(rw), [target]);
       $("fx-rival-addr").value = "";
-      pop(ok ? "ok" : "info", ok ? "Challenge sent" : "Sent, not seen yet", [ok ? `${nameOf(target)} is your rival for week ${rw + 1}. It counts if you both have a team all 7 days.` : "It usually shows within a minute."], [okBtn()]);
+      pop(ok ? "ok" : "info", ok ? "Challenge sent" : "Sent, not seen yet", [ok ? `${nameOf(target)} is your rival for week ${rw + 1}. It counts if you both hold a Knode Games stake and have a team all 7 days.` : "It usually shows within a minute."], [okBtn()]);
     } catch (e) { const w = why(e); pop(/Cancelled/.test(w) ? "info" : "bad", /Cancelled/.test(w) ? "Cancelled" : "Challenge not sent", [w], [okBtn("OK")]); }
     finally { sending = false; await refreshMine(); }
   }

@@ -352,7 +352,8 @@ export async function record() {
   fs.mkdirSync(DATA(), { recursive: true });
   const saved = console.log; console.log = () => {};
   try {
-    return await run({ p: mp, check: mcheck, picksP: tp, picksCheck: null, prev: DATA(), out: DATA(), raceData: RACE(), math: F, games: c.games, picksContract: c.picks?.contract ?? null });
+    // rivalStaked null: on the practice testnet every test player's rival matches count (test wallets hold no stake).
+    return await run({ p: mp, check: mcheck, picksP: tp, picksCheck: null, prev: DATA(), out: DATA(), raceData: RACE(), math: F, games: c.games, picksContract: c.picks?.contract ?? null, rivalStaked: null });
   } finally { console.log = saved; }
 }
 
@@ -569,7 +570,7 @@ export async function startSite(opts: { port?: number } = {}) {
         json(res, 200, { token }); return;
       }
       if (/^\/testnet\/(test-wallet\.js|testnet\.css)$/.test(u)) { sendFile(res, path.join(ROOT, "tools", "fantasy-testnet", path.basename(u))); return; }
-      const m = /^\/testnet-data\/fantasy\/(index|days|board|rivals|W\d{3})\.json$/.exec(u);
+      const m = /^\/testnet-data\/fantasy\/(index|days|board|rivals|alltime|W\d{3})\.json$/.exec(u);
       if (m) { sendFile(res, path.join(DATA(), `${m[1]}.json`)); return; }
       if (u === "/picks/abi/picks.koilib.json") { sendFile(res, path.join(ROOT, "picks", "abi", "picks.koilib.json")); return; }
       // The site's own scripts, styles and images only; the only page here is the TESTNET one.

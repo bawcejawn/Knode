@@ -139,7 +139,9 @@ top right). You can switch to any robot to see its side, for example to check a 
    what your change is before you save. A second change is refused on the page.
 5. At the start of each new test week you may pick a whole new team. New prices come out 30 minutes before.
 6. **Weekly Rival:** choose a player and press **Challenge**. It counts for the next test week, if you both have a team
-   all 7 test days.
+   all 7 test days. (In the live game both players must also hold a Knode Games stake; the test wallets hold none, so
+   in practice every test player counts.)
+7. **All time:** the league's "All time" tab adds up every finished test week.
 
 ### What to try (tick them off)
 - [ ] Save a first team, then change the captain the next test day.
@@ -149,6 +151,7 @@ top right). You can switch to any robot to see its side, for example to check a 
 - [ ] Challenge p3, then see the match under Weekly Rival the next test week.
 - [ ] Switch to p5 in the red bar: see that p5 challenged you.
 - [ ] At a week's end, check the league goes "final" 30 minutes later, with Vault points (255 for the best week).
+- [ ] After two finished test weeks, open the league's "All time" tab.
 - [ ] Let a week roll over without saving: your team carries on if it fits the new prices. If it doesn't, the page
       says "Last week's team doesn't fit this week's prices".
 - [ ] Run `npm run fantasy-test -- status` and send Claude the output, with anything that looked odd.

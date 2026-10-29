@@ -55,7 +55,7 @@ jobs:
               if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:blockx/$f" > "$RUNNER_TEMP/prev/blockx/$f"; fi
             done
             for f in $(git ls-tree --name-only FETCH_HEAD:fantasy 2>/dev/null); do
-              if [[ "$f" =~ ^(index|board|days|rivals|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:fantasy/$f" > "$RUNNER_TEMP/prev/fantasy/$f"; fi
+              if [[ "$f" =~ ^(index|board|days|rivals|alltime|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:fantasy/$f" > "$RUNNER_TEMP/prev/fantasy/$f"; fi
             done
           else echo "No games-data branch yet."; fi
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
@@ -109,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/fantasy" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/fantasy/\(index\|board\|days\|rivals\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/fantasy" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/fantasy/\(index\|board\|days\|rivals\|alltime\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           big=$(find "$IN" -type f ! -path "$IN/fantasy/*" -size +2048k -print; find "$IN/fantasy" -type f -size +8192k -print 2>/dev/null || true)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
@@ -160,7 +160,7 @@ jobs:
           if [ "$prc" -eq 0 ]; then
             git init -q "$RUNNER_TEMP/pgit" && git -C "$RUNNER_TEMP/pgit" fetch -q --depth 1 "$remote" games-data
             for f in $(git -C "$RUNNER_TEMP/pgit" ls-tree --name-only FETCH_HEAD:fantasy 2>/dev/null); do
-              if [[ "$f" =~ ^(index|rivals|W[0-9]{3})\.json$ ]]; then git -C "$RUNNER_TEMP/pgit" show "FETCH_HEAD:fantasy/$f" > "$RUNNER_TEMP/parent/fantasy/$f"; fi
+              if [[ "$f" =~ ^(index|rivals|alltime|W[0-9]{3})\.json$ ]]; then git -C "$RUNNER_TEMP/pgit" show "FETCH_HEAD:fantasy/$f" > "$RUNNER_TEMP/parent/fantasy/$f"; fi
             done
           fi
           if [ -d "$IN/fantasy" ]; then /usr/bin/python3 - "$IN/fantasy" "$RUNNER_TEMP/parent/fantasy" <<'PY'
@@ -187,8 +187,12 @@ jobs:
               elif f == "rivals.json":
                   assert set(j) == {"v", "weeks", "records"} and all(nat(w) for w in j["weeks"]), f
                   assert all(A(a) and set(r) == {"made", "received"} and all(type(r[k]) is list and len(r[k]) == 3 and all(nat(n) for n in r[k]) for k in r) for a, r in j["records"].items()), f
+              elif f == "alltime.json":
+                  assert set(j) == {"v", "weeks", "players"} and all(nat(w) for w in j["weeks"]), f
+                  assert all(A(a) and set(x) == {"points", "weeks", "best"} and num(x["points"]) and x["points"] >= 0 and nat(x["weeks"]) and num(x["best"]) for a, x in j["players"].items()), f
               elif f == "board.json":
-                  assert set(j) == {"v", "updated", "week", "lastWeek", "rivals", "mostChallenged"}, f
+                  assert set(j) == {"v", "updated", "week", "lastWeek", "rivals", "mostChallenged", "allTime"}, f
+                  assert type(j["allTime"]) is list and len(j["allTime"]) <= 500 and all(A(r["a"]) and num(r["points"]) and nat(r["weeks"]) and num(r["best"]) and nat(r["place"]) for r in j["allTime"]), f
                   for k in ("week", "lastWeek"):
                       b = j[k]
                       assert b is None or (nat(b["week"]) and type(b["final"]) is bool and all(A(r["a"]) and num(r["points"]) and nat(r["place"]) and type(r["full"]) is bool for r in b["rows"])), f
@@ -220,6 +224,11 @@ jobs:
                   for a, r in o["records"].items():
                       n = j["records"].get(a)
                       assert n is not None and all(n[k][i] >= r[k][i] for k in ("made", "received") for i in range(3)), f + ": a rival record can't go down"
+              elif f == "alltime.json":
+                  assert set(o["weeks"]) <= set(j["weeks"]), f + ": counted weeks can't go missing"
+                  for a, x in o["players"].items():
+                      n = j["players"].get(a)
+                      assert n is not None and n["points"] >= x["points"] and n["weeks"] >= x["weeks"] and n["best"] >= x["best"], f + ": an all-time total can't go down"
               elif f == "index.json":
                   assert set(o["weeks"]) <= set(j["weeks"]), f + ": weeks can't go missing"
           print("fantasy files ok")

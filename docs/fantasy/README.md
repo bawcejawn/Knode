@@ -16,9 +16,13 @@ Plan and owner decisions: `claude/builds/05-fantasy-plan.md` in the KnodeGames p
 - **Vault points:** 255 for the best week, one less per lower distinct score, ties kept, at least 1, ranked among the
   week's Fantasy stakers only (`stakedOf`, once the vault is live; until then `index.json` says `vaultBasis: "all"`).
   The vault uses only their order.
-- **Weekly Rival:** challenge one player for the next week. A match counts only if both had a team all 7 days. The record
-  keeps challenges made and received apart. No prize money.
-- **Knode's own nodes** are in the pool like any producer, and marked on the page.
+- **Weekly Rival:** challenge one player for the next week. A match counts only if both had a team all 7 days and both
+  hold a Knode Games stake (owner, 2026-10-28; read on both nodes when the week is finished; the practice kit counts
+  every test player). The record keeps challenges made and received apart. No prize money.
+- **All time** (owner, 2026-10-28): each final week adds every player's points to `alltime.json` (total, weeks played,
+  best week); the page's league has an "All time" tab. No prize.
+- **Knode's own nodes** are in the pool like any producer, marked on the page, and run the same way whatever the game
+  (Terms, section 3). Knode Games can't control how others stake or unstake on any node (also in Terms).
 
 ## The parts
 | File | What |
@@ -48,7 +52,7 @@ node --import tsx tools/fantasy-testnet/rehearse.mjs        # about 5 minutes: 2
   retried for 8 weeks.
 - A day is final only when every hour with blocks has a race card.
 - The workflow stops rather than record from empty files if the games-data branch can't be read, and the publish job
-  refuses to change a published price list, a final week, counted rival weeks or a rival record.
+  refuses to change a published price list, a final week, counted rival weeks, a rival record or an all-time total.
 - Final days must be checked on two nodes. Final weeks keep teams as positions on the price list (small files);
   Fantasy files may be up to 8 MB, and a Fantasy failure never blocks Block X's publishing.
 

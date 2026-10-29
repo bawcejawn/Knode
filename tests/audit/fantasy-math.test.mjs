@@ -282,3 +282,20 @@ test("audit FX-4: teams pack to positions on the price list and back", () => {
   assert.equal(F.unpackTeam(sheet, [0, 1, 99, 2, 3]), null, "a position not on the list is no team");
   assert.equal(F.packTeam(sheet, null), null);
 });
+
+test("owner 2026-10-28: rival matches count only when both players hold a Knode Games stake", () => {
+  const players = { [A]: { points: 10, full: true }, [B]: { points: 8, full: true }, [C]: { points: 5, full: true } };
+  const ch = [[A, B], [C, A]];
+  assert.equal(F.matches(ch, players).length, 2, "not checked: both count");
+  assert.deepEqual(F.matches(ch, players, new Set([A, B])).map((m) => m.b), [B], "C holds no stake: its challenge doesn't count");
+  assert.equal(F.matches(ch, players, new Set()).length, 0);
+});
+
+test("owner 2026-10-28: the all-time table adds each final week once per call; most points first", () => {
+  let t = F.addAllTime({}, [{ a: A, points: 100 }, { a: B, points: 300 }, { a: C, points: 0 }]);
+  t = F.addAllTime(t, [{ a: A, points: 250.5 }, { a: B, points: 40 }]);
+  assert.deepEqual(t[A], { points: 350.5, weeks: 2, best: 250.5 });
+  assert.deepEqual(t[B], { points: 340, weeks: 2, best: 300 });
+  assert.equal(t[C], undefined, "a week with 0 points isn't a week played");
+  assert.deepEqual(F.allTimeRows(t).map((r) => [r.a, r.place]), [[A, 1], [B, 2]]);
+});

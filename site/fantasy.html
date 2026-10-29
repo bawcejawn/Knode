@@ -120,8 +120,9 @@
         <div class="fx-filter" role="group" aria-label="Which week">
           <button type="button" data-week="now" aria-pressed="true">This week</button>
           <button type="button" data-week="last" aria-pressed="false">Last week</button>
+          <button type="button" data-week="all" aria-pressed="false">All time</button>
         </div>
-        <table class="fx-t" id="fx-league"><thead><tr><th class="num">#</th><th>Player</th><th class="num">Points</th><th class="num hide-sm">Vault</th></tr></thead><tbody></tbody></table>
+        <table class="fx-t" id="fx-league"><thead><tr><th class="num">#</th><th>Player</th><th class="num">Points</th><th class="num hide-sm" id="league-col4">Vault</th></tr></thead><tbody></tbody></table>
         <p class="note" id="league-note"></p>
       </section>
 
@@ -155,7 +156,8 @@
         <p><b>Prices.</b> The price list comes out <span data-fx="sheet">Sunday 12:00 UTC</span> for the next week. A producer's price follows its form over the 7 <span data-fx="day">days</span> before: 20 for the middle of the pool, up to 40 for the most reliable, down to 8 for the least. Its fingerprint (sha256) is published with it, so nobody can change it later.</p>
         <p><b>Locks.</b> The Picks contract refuses a team 5 minutes before its <span data-fx="day">day</span> starts, so nobody can pick knowing the blocks.</p>
         <p><b>Prizes.</b> Fantasy is a staked game: the Fantasy share of the Knode Games vault's weekly reward goes to the top 30% of Fantasy stakers with at least 1 point. A week is final <span data-fx="half">12 hours</span> after it ends.</p>
-        <p><b>Weekly Rival.</b> Challenge one player for the coming week. Whoever scores more that week wins. Your record counts the challenges you made and those you received. A match counts only if both of you had a team on all 7 <span data-fx="day">days</span>, so nobody piles up wins against empty wallets.</p>
+        <p><b>Weekly Rival.</b> Challenge one player for the coming week. Whoever scores more that week wins. Your record counts the challenges you made and those you received. A match counts only if both of you hold a Knode Games stake and had a team on all 7 <span data-fx="day">days</span>, so nobody piles up wins against throwaway wallets.</p>
+        <p><b>All time.</b> Every finished week adds your points to the all-time table: total, weeks played and best week. Bragging rights only; prizes are weekly.</p>
         <p><b>Fair checks.</b> Days are scored from irreversible blocks that match on two independent nodes. The page and the recorder run the same scoring file (fantasy-math.js).</p>
       </div>
     </details>

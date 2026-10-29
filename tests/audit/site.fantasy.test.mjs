@@ -46,3 +46,12 @@ test("page: says what players need to know", () => {
     assert.ok(html.includes(w), `How it works mentions "${w}"`);
   assert.match(css, /prefers-reduced-motion/);
 });
+
+test("owner 2026-10-28: All time tab; rivals need a stake; Terms say Knode's nodes run the same and others can't be controlled", () => {
+  assert.match(html, /data-week="all"[^>]*>All time</);
+  assert.match(html, /hold a Knode Games stake/);
+  const terms = read("site/terms.html");
+  assert.match(terms, /never changes how its own nodes produce, or their VHP, because of Fantasy/);
+  assert.match(terms, /can't control what other producers or stakers do/);
+  assert.match(terms, /rival match counts only when both players hold a Knode Games stake/);
+});

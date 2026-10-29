@@ -71,7 +71,25 @@ export type Opts = {
   /** The wallets with a Fantasy stake in the vault that week. Vault points are ranked among them only (audit FX-3).
    *  Until the vault is live the recorder ranks everyone and says so (index.json vaultBasis "all"). */
   stakedOf?: (who: string[], week: number) => Promise<Set<string>>;
+  /** Who holds a Knode Games stake now (rival matches count only between two of them: owner, 2026-10-28). Read on the
+   *  scoring chain's node(s). Default on mainnet: the Knode game's get_player (stake, pending, or a stake in another
+   *  game). null: everyone counts (the testnet practice kit, whose test wallets hold no stake). */
+  rivalStaked?: ((who: string[], node: any) => Promise<Set<string>>) | null;
 };
+const GAME_ABI = () => JSON.parse(fs.readFileSync(new URL("../../game/abi/kpred.koilib.json", import.meta.url), "utf8"));
+const KNODE_GAME = (() => { try { return JSON.parse(fs.readFileSync(new URL("../../game-data/deployment.json", import.meta.url), "utf8")).contract as string; } catch { return ""; } })();
+/** Wallets with a Knode Games stake (active, pending, or in another game with vault v6). */
+export async function readStaked(node: any, who: string[], game = KNODE_GAME): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!game || !isAddr(game)) throw new Error("no Knode game contract in game-data/deployment.json");
+  const c = new Contract({ id: game, abi: GAME_ABI(), provider: node });
+  for (const a of who) {
+    const r: any = await withRetry(`Knode stake of ${a}`, () => (c.functions as any).get_player({ player: a, week: "0" }));
+    const p = r?.result?.player ?? {};
+    if (BigInt(p.stake || "0") + BigInt(p.pending || "0") + BigInt(p.stake_other || "0") > 0n) out.add(a);
+  }
+  return out;
+}
 const WEEKS_BACK = 8;                       // an unfinished week is still finished up to 8 weeks later (audit FX-6)
 
 function readJson(dir: string, name: string): any {
@@ -231,6 +249,10 @@ export async function run(o: Opts) {
   let records = rivalsPrev?.records && typeof rivalsPrev.records === "object" && !Array.isArray(rivalsPrev.records) ? rivalsPrev.records : {};
   const counted = new Set<number>(Array.isArray(rivalsPrev?.weeks) ? rivalsPrev.weeks.filter((w: any) => Number.isInteger(w)) : []);
   const correction = F.DAY_MS / 2;                         // real clock: Monday 12:00 UTC
+  const allPrev = readJson(prev, "alltime.json");
+  let allTime = allPrev?.players && typeof allPrev.players === "object" && !Array.isArray(allPrev.players) ? allPrev.players : {};
+  const allCounted = new Set<number>(Array.isArray(allPrev?.weeks) ? allPrev.weeks.filter((w: any) => Number.isInteger(w)) : []);
+  const stakedRead = o.rivalStaked === undefined ? (who: string[], node: any) => readStaked(node, who) : o.rivalStaked;
   for (const w of [...weeks.keys()].sort((x, y) => x - y)) {
     const wf = weeks.get(w)!;
     if (wf.final || !wf.sheet || now < wf.start) continue;
@@ -253,11 +275,21 @@ export async function run(o: Opts) {
     const allFinal = recs.every((d: any) => d.final);
     // Final only with every day's blocks AND every day's picks read (audit FX-1), the rivals read, the stakes known.
     const allPicks = !picksRead || F.weekDays(w).every((d: number) => Array.isArray(wf.picks[d]));
-    if (allFinal && allPicks && now >= wf.end + correction && (wf.rivals || !picksRead) && (!o.stakedOf || staked)) {
+    // Rival matches count only between two staked wallets, read on both nodes when the week is finished.
+    let rivalOk: Set<string> | null = null, rivalReady = true;
+    const inRivals = [...new Set((wf.rivals || []).flat())];
+    if (allFinal && allPicks && now >= wf.end + correction && stakedRead && inRivals.length) {
+      try {
+        rivalOk = await stakedRead(inRivals, p);
+        if (check) { const other = await stakedRead(inRivals, check); if (other.size !== rivalOk.size || [...rivalOk].some((a) => !other.has(a))) { rivalReady = false; problems.push(`week ${w}: the two nodes disagree about who is staked; not final this run`); } }
+      } catch (e) { rivalReady = false; problems.push(`week ${w}: stakes for the rival matches: ${(e as Error).message}`); }
+    }
+    if (allFinal && allPicks && rivalReady && now >= wf.end + correction && (wf.rivals || !picksRead) && (!o.stakedOf || staked)) {
       wf.final = true;
       wf.picks = {};                                       // in the players' days now; the file stays small
       const pts = Object.fromEntries(wf.players.map((x) => [x.a, { points: x.points, full: x.full }]));
-      wf.matches = F.matches(wf.rivals || [], pts);
+      wf.matches = F.matches(wf.rivals || [], pts, stakedRead ? rivalOk || new Set() : null);
+      if (!allCounted.has(w)) { allTime = F.addAllTime(allTime, wf.players); allCounted.add(w); }
       if (!counted.has(w)) { records = F.addRecords(records, wf.matches); counted.add(w); }
       console.log(`week ${w}: final, ${wf.players.length} players, ${wf.matches.length} rival matches`);
     }
@@ -274,13 +306,15 @@ export async function run(o: Opts) {
   }
   fs.writeFileSync(path.join(out, "days.json"), JSON.stringify({ v: 1, days: dayList, live }) + "\n");
   fs.writeFileSync(path.join(out, "rivals.json"), JSON.stringify({ v: 1, weeks: [...counted].sort((x, y) => x - y), records }) + "\n");
+  fs.writeFileSync(path.join(out, "alltime.json"), JSON.stringify({ v: 1, weeks: [...allCounted].sort((x, y) => x - y), players: allTime }) + "\n");
   const boardOf = (w: number) => { const wf = weeks.get(w); return wf ? { week: w, final: wf.final, rows: wf.players.map((x) => ({ a: x.a, points: x.points, place: x.place, full: x.full })) } : null; };
   const rivalRows = Object.entries(records).map(([a, x]: [string, any]) => ({ a, ...F.recordLine(x), made: x.made, received: x.received }))
     .filter((r) => isAddr(r.a) && r.n >= 4).sort((x, y) => y.pct - x.pct || y.n - x.n || (x.a < y.a ? -1 : 1));
   const cur = weeks.get(wNow), challenged = new Map<string, number>();
   for (const [, b] of cur?.rivals || []) challenged.set(b, (challenged.get(b) || 0) + 1);
   const most = [...challenged].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1)).slice(0, 5).map(([a, n]) => ({ a, n }));
-  fs.writeFileSync(path.join(out, "board.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), week: boardOf(wNow), lastWeek: boardOf(wNow - 1), rivals: rivalRows, mostChallenged: most }) + "\n");
+  fs.writeFileSync(path.join(out, "board.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), week: boardOf(wNow), lastWeek: boardOf(wNow - 1), rivals: rivalRows, mostChallenged: most,
+    allTime: F.allTimeRows(allTime).slice(0, 500).map((x: any) => ({ a: x.a, points: x.points, weeks: x.weeks, best: x.best, place: x.place })) }) + "\n");
   fs.writeFileSync(path.join(out, "index.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), weeks: [...known].sort((x, y) => x - y),
     contract: contract || null, games: G, clock: { day: F.DAY_MS, genesis: F.clock.genesis, sheetBefore: F.clock.sheetBefore }, vaultBasis: o.stakedOf ? "staked" : "all" }) + "\n");
   for (const pr of problems) console.log(`::warning::${pr.replace(/[\r\n]+/g, " ").replace(/::/g, ": ")}`);

@@ -52,13 +52,14 @@ const raceData = (() => {
   }
   return d;
 })();
-let picks = { team: {}, rival: {} };                // team: { [dayNo]: [[player, list, at]] }, rival: { [week]: [...] }
+let picks = { team: {}, rival: {} };
+const unstaked = new Set();                         // wallets without a Knode stake (their rival matches don't count)                // team: { [dayNo]: [[player, list, at]] }, rival: { [week]: [...] }
 const picksOf = async (_n, game, round) => (game === 4 ? picks.team[round] || [] : game === 5 ? picks.rival[round] || [] : []);
 async function hourly(at, prev, opts = {}) {
   const out = tmp();
   const log = console.log; console.log = () => {};
   let r;
-  try { r = await run({ p: node(at), check: opts.check === null ? null : node(at, opts.check || {}), prev, out, raceData, picksContract: "1PicksPicksPicksPicksPicksPicks11", picksOf }); } finally { console.log = log; }
+  try { r = await run({ p: node(at), check: opts.check === null ? null : node(at, opts.check || {}), prev, out, raceData, picksContract: "1PicksPicksPicksPicksPicksPicks11", picksOf, rivalStaked: async (who) => new Set(who.filter((a) => !unstaked.has(a))) }); } finally { console.log = log; }
   return { out, problems: r.problems };
 }
 const read = (dir, f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
@@ -141,12 +142,16 @@ test("a week: teams scored day by day, final after the 12 h window, rivals count
   assert.equal(w.players[0].a, pa);
   // Rivals: pa↔pb mutual = 1 match; pc and pd had no full week, so their challenges don't count.
   assert.deepEqual(w.matches, [{ a: pa, b: pb, mutual: true, result: "a" }]);
+  const at = read(fin.out, "alltime.json");
+  assert.ok(at.weeks.includes(2) && at.players[pa].weeks >= 1 && at.players[pa].best === row(pa).points, "week 2 is in the all-time table");
+  assert.equal(read(fin.out, "board.json").allTime[0].a, Object.entries(at.players).sort((x, y) => y[1].points - x[1].points)[0][0]);
   const rv = read(fin.out, "rivals.json");
   assert.ok(rv.weeks.includes(2), "week 2 counted (week 1, the current week at the first run, had a late sheet and no players)");
   assert.deepEqual(rv.records[pa], { made: [1, 0, 0], received: [0, 0, 0] });
   assert.deepEqual(rv.records[pb], { made: [0, 1, 0], received: [0, 0, 0] });
   const again = await hourly(U("2026-11-09T13:30Z"), fin.out);
   assert.deepEqual(read(again.out, "rivals.json").records, rv.records, "a final week is counted once");
+  assert.deepEqual(read(again.out, "alltime.json"), at, "and added to the all-time table once");
   assert.deepEqual(read(again.out, "W002.json"), w, "a final week never changes");
 });
 
@@ -159,7 +164,7 @@ test("audit FX-1: a week is never final while a day's picks are unread; then it 
   const broken = picksOf;
   let fail = days[3];
   const flaky = async (n, game, round) => { if (game === 4 && round === fail) throw new Error("node hiccup"); return broken(n, game, round); };
-  const run1 = async (at, prev) => { const out = tmp(); const log = console.log; console.log = () => {}; let r; try { r = await run({ p: node(at), check: node(at), prev, out, raceData, picksContract: "1PicksPicksPicksPicksPicksPicks11", picksOf: flaky }); } finally { console.log = log; } return { out, r }; };
+  const run1 = async (at, prev) => { const out = tmp(); const log = console.log; console.log = () => {}; let r; try { r = await run({ p: node(at), check: node(at), prev, out, raceData, picksContract: "1PicksPicksPicksPicksPicksPicks11", picksOf: flaky, rivalStaked: async (who) => new Set(who) }); } finally { console.log = log; } return { out, r }; };
   let cur = s.out;
   for (const at of ["2026-11-04T12:30Z", "2026-11-09T12:30Z", "2026-11-10T12:30Z"]) cur = (await run1(U(at), cur)).out;
   const w = read(cur, "W002.json");

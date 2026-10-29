@@ -25,7 +25,9 @@
  *   and the top-30% headcount; docs/V6-PLAN.md on branch vault-v6), so the best week gets 255, the next distinct
  *   score 254, and so on, keeping every tie; players below the 255th distinct score all get 1. Only scores above 0.
  * - Weekly Rival: a player may challenge one other player for the week. The match counts only when both had a team on
- *   all 7 days. More week points wins; equal is a draw. Two players who challenge each other play one match.
+ *   all 7 days and both hold a Knode Games stake (owner, 2026-10-28: throwaway wallets can't farm records).
+ * - All time: each final week adds every player's points to an all-time table (total, weeks played, best week).
+ *   Bragging rights only; prizes stay weekly. More week points wins; equal is a draw. Two players who challenge each other play one match.
  *   A record keeps challenges made and challenges received apart. Rivals carry no prize money.
  *
  * THE CLOCK. KFantasyMath runs on the real clock (days of 24 hours, weeks from the Knode game's Monday). The testnet
@@ -233,15 +235,18 @@
     }
 
     // ── Weekly Rival ──
-    /** The week's matches. challenges: [[challenger, target]]; players: { [address]: { points, full } }.
-     *  A challenge counts if both are different, both had a team all 7 days. Mutual challenges are one match.
+    /** The week's matches. challenges: [[challenger, target]]; players: { [address]: { points, full } }; staked: the
+     *  wallets holding a Knode Games stake (null = not checked: everyone counts, used only for tests and practice).
+     *  A challenge counts if both are different, both had a team all 7 days and both are staked. Mutual challenges
+     *  are one match.
      *  Returns [{ a, b, mutual, result }] with result "a" | "b" | "draw" (a = the challenger). */
-    function matches(challenges, players) {
+    function matches(challenges, players, staked = null) {
       const seen = new Map(), out = [];
       for (const [a, b] of challenges || []) {
         if (!isAddr(a) || !isAddr(b) || a === b) continue;
         const pa = players[a], pb = players[b];
         if (!pa?.full || !pb?.full) continue;
+        if (staked && !(staked.has(a) && staked.has(b))) continue;
         const key = a < b ? `${a}|${b}` : `${b}|${a}`;
         if (seen.has(key)) { seen.get(key).mutual = true; continue; }
         const m = { a, b, mutual: false, result: pa.points > pb.points ? "a" : pb.points > pa.points ? "b" : "draw" };
@@ -261,6 +266,18 @@
       }
       return r;
     }
+    /** Add a final week's players to the all-time table { [address]: { points, weeks, best } }. Returns a new table. */
+    function addAllTime(table, rows) {
+      const t = JSON.parse(JSON.stringify(table || {}));
+      for (const r of rows) {
+        if (!isAddr(r.a) || !(r.points > 0)) continue;
+        const x = (t[r.a] = t[r.a] || { points: 0, weeks: 0, best: 0 });
+        x.points = round(x.points + r.points, 2); x.weeks += 1; x.best = Math.max(x.best, r.points);
+      }
+      return t;
+    }
+    /** The all-time table as ranked rows: most points first; equal points share a place. */
+    const allTimeRows = (table) => rank(Object.entries(table || {}).map(([a, x]) => ({ a, points: x.points, weeks: x.weeks, best: x.best })));
     /** One record's combined line and win share (draws count half). */
     function recordLine(x) {
       const w = x.made[0] + x.received[0], l = x.made[1] + x.received[1], d = x.made[2] + x.received[2], n = w + l + d;
@@ -273,7 +290,7 @@
       dayNo, dayStart, weekOf, weekStart, weekDays, sheetTime, formDays, rivalRound, weekOfRivalRound, lockOfDay, lockOfWeek, games,
       cardAt, sharesOf, dayIndex, spanIndex, priceOf, medianOf, makeSheet, sheetText,
       checkTeam, changes, teamsForWeek, dayScore, scoreWeek, vaultPoints, packTeam, unpackTeam, rank,
-      matches, addRecords, recordLine,
+      matches, addRecords, recordLine, addAllTime, allTimeRows,
     };
   }
 
