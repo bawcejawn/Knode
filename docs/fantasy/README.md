@@ -46,6 +46,18 @@ node --import tsx --test tests/audit/fantasy-recorder.test.mjs tests/audit/fanta
 node --import tsx tools/fantasy-testnet/rehearse.mjs        # about 5 minutes: 2.5 test weeks end to end, offline
 ```
 
+## Results into the vault (claude/handoff-vault-results.md)
+- Source for `game-data/deployment.json` → `vaultGames`: **`games-data:fantasy`** (vault game 4).
+- For each final week the recorder writes `fantasy/vault/W<week>.json`: `{ "game": 4, "week", "final": true, "rows":
+  [{ "player", "points" }], "first": [], "second": [] }`. Fantasy is a staked game, so no free-prize winners.
+- `rows`: the players with at least 1 VHP staked in Fantasy that week (`get_game_player` week_stake, or the stake frozen
+  at the week's start) and at least 1 point, as 255 for the best week and one less per lower score (ties kept).
+  Stakes are read on both nodes and must agree.
+- Written only once the vault is live (the game ABI has `get_game_player`); until then `index.json` says
+  `vaultBasis: "all"` and there is no vault file. A week is normally final 12 hours after it ends (vault deadline 3
+  days; ALERT at 2). The publish job refuses to change a vault file once published.
+- Weekly Rival with the vault live: a match counts only when both players are staked in Fantasy that week.
+
 ## Safety rails (audit 2026-10-28, FX-1 to FX-10)
 - A week is final only when all 7 days' blocks (two nodes) and all 7 days' picks are read, the rivals are read, and
   12 hours have passed. A week still not final 2 days after it ends raises an `ALERT` warning (the vault deadline is 3 days); unfinished weeks are
@@ -60,6 +72,6 @@ node --import tsx tools/fantasy-testnet/rehearse.mjs        # about 5 minutes: 2
 1. Independent audit and fix-check of this branch.
 2. Register Picks games 4 and 5 on mainnet (48 h wait), with the settings `KFantasyMath.games()` prints.
 3. Merge; set `FANTASY_ENABLED=true`; first price list the Sunday before the launch Monday.
-4. Vault v6: register Fantasy as a staked game; give the recorder `stakedOf` (the vault's frozen Fantasy stakes) so
-   vault points rank stakers only; the operator posts each final week's vault points.
+4. Vault v6: register Fantasy as staked game 4; add `games-data:fantasy` to `vaultGames`. Once the v6 ABI is in
+   `game/abi`, the recorder reads Fantasy stakes and writes the vault files by itself; the vault bot posts them.
 5. Add the page to the menus, `tools/site-seo.mjs` and the sitemap; remove the noindex.

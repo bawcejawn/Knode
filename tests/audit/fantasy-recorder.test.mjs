@@ -9,7 +9,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 
 const APP = process.env.APP || ".";
-const { run } = await import(path.resolve(APP, "bot/games/fantasy.ts"));
+const { run, vaultFile } = await import(path.resolve(APP, "bot/games/fantasy.ts"));
 const M = globalThis.KRaceMath, F = globalThis.KFantasyMath;
 const U = (s) => Date.parse(s);
 
@@ -174,6 +174,42 @@ test("audit FX-1: a week is never final while a day's picks are unread; then it 
   fail = -1;
   const ok = await run1(U("2026-11-11T14:30Z"), last.out);
   assert.equal(read(ok.out, "W002.json").final, true, "final once every day's picks are read");
+});
+
+test("vault hand-off: one file per final week, rows for Fantasy stakers only, ranked 1..255 keeping ties", async () => {
+  const s0 = await hourly(U("2026-11-01T12:30Z"), "");
+  const sheet = read(s0.out, "W002.json").sheet, days = F.weekDays(2), [pa, pb, pc, pd] = PLAYERS;
+  const cheap = [...sheet.pool].sort((x, y) => x.price - y.price).slice(0, 5).map((x) => x.a);
+  const other = [cheap[1], cheap[0], ...cheap.slice(2)];
+  picks = { team: { [days[0]]: [[pa, cheap, 1], [pb, cheap, 1], [pc, other, 1], [pd, cheap, 1]] }, rival: { [F.rivalRound(2)]: [[pa, [pc], 1], [pc, [pb], 1], [pb, [pa], 1]] } };
+  const stakers = new Set([pa, pb, pc]);                                     // pd plays without a Fantasy stake
+  const go = async (at, prev, stakedOf) => { const out = tmp(); const log = console.log; console.log = () => {}; try { await run({ p: node(at), check: node(at), prev, out, raceData, picksContract: "1PicksPicksPicksPicksPicksPicks11", picksOf, stakedOf }); } finally { console.log = log; } return out; };
+  let cur = await go(U("2026-11-04T12:30Z"), s0.out, async (who) => new Set(who.filter((a) => stakers.has(a))));
+  assert.equal(fs.existsSync(path.join(cur, "vault", "W2.json")), false, "no vault file before the week is final");
+  cur = await go(U("2026-11-09T12:30Z"), cur, async (who) => new Set(who.filter((a) => stakers.has(a))));
+  const v = JSON.parse(fs.readFileSync(path.join(cur, "vault", "W2.json"), "utf8"));
+  assert.equal(v.game, 4); assert.equal(v.week, 2); assert.equal(v.final, true);
+  assert.deepEqual(v.first, []); assert.deepEqual(v.second, []);
+  assert.ok(!v.rows.some((r) => r.player === pd), "a player with no Fantasy stake isn't in the rows");
+  const w = read(cur, "W002.json");
+  assert.equal(w.players.find((x) => x.a === pd).vault, 0);
+  const pts = Object.fromEntries(w.players.map((x) => [x.a, x.points]));
+  assert.equal(v.rows[0].points, 255);
+  for (const r of v.rows) for (const q of v.rows) assert.equal(Math.sign(r.points - q.points), Math.sign(pts[r.player] - pts[q.player]), "order and ties kept");
+  assert.equal(pts[pa], pts[pb]); assert.equal(v.rows.find((r) => r.player === pa).points, v.rows.find((r) => r.player === pb).points, "a tie stays a tie");
+  // Rivals: pa↔pc and pc↔pb count (all staked, full weeks); pb→pa too.
+  assert.ok(w.matches.every((m) => stakers.has(m.a) && stakers.has(m.b)));
+  assert.equal(read(cur, "index.json").vaultBasis, "staked");
+  const again = await go(U("2026-11-09T13:30Z"), cur, async (who) => new Set(who.filter((a) => stakers.has(a))));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(again, "vault", "W2.json"), "utf8")), v, "the same file every run");
+  const none = await go(U("2026-11-09T12:30Z"), cur, null);
+  assert.equal(fs.existsSync(path.join(none, "vault")), false, "without the vault's stakes, no vault file");
+});
+
+test("vault file: staked game shape; zero points and bad rows left out; best first", () => {
+  const [a, b, c, d] = PLAYERS;
+  const f = vaultFile(57, [{ a, vault: 254 }, { a: b, vault: 255 }, { a: c, vault: 0 }, { a: d, vault: 254 }, { a: "bad", vault: 3 }]);
+  assert.deepEqual(f, { game: 4, week: 57, final: true, rows: [{ player: b, points: 255 }, { player: a, points: 254 }, { player: d, points: 254 }].sort((x, y) => y.points - x.points || (x.player < y.player ? -1 : 1)), first: [], second: [] });
 });
 
 test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

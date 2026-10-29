@@ -109,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/fantasy" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/fantasy/\(index\|board\|days\|rivals\|alltime\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/fantasy" ! -path "$IN/fantasy/vault" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/fantasy/\(index\|board\|days\|rivals\|alltime\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/fantasy/vault/W[0-9]+\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           big=$(find "$IN" -type f ! -path "$IN/fantasy/*" -size +2048k -print; find "$IN/fantasy" -type f -size +8192k -print 2>/dev/null || true)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
@@ -159,6 +159,10 @@ jobs:
           if [ "$prc" -ne 0 ] && [ "$prc" -ne 2 ]; then echo "::error::Couldn't read the published games-data (git exit $prc)."; exit 1; fi
           if [ "$prc" -eq 0 ]; then
             git init -q "$RUNNER_TEMP/pgit" && git -C "$RUNNER_TEMP/pgit" fetch -q --depth 1 "$remote" games-data
+            mkdir -p "$RUNNER_TEMP/parent/fantasy/vault"
+            for f in $(git -C "$RUNNER_TEMP/pgit" ls-tree --name-only FETCH_HEAD:fantasy/vault 2>/dev/null); do
+              if [[ "$f" =~ ^W[0-9]+\.json$ ]]; then git -C "$RUNNER_TEMP/pgit" show "FETCH_HEAD:fantasy/vault/$f" > "$RUNNER_TEMP/parent/fantasy/vault/$f"; fi
+            done
             for f in $(git -C "$RUNNER_TEMP/pgit" ls-tree --name-only FETCH_HEAD:fantasy 2>/dev/null); do
               if [[ "$f" =~ ^(index|rivals|alltime|W[0-9]{3})\.json$ ]]; then git -C "$RUNNER_TEMP/pgit" show "FETCH_HEAD:fantasy/$f" > "$RUNNER_TEMP/parent/fantasy/$f"; fi
             done
@@ -174,7 +178,19 @@ jobs:
               return type(p) is dict and len(p) <= 500 and all(A(a) and type(v) is list and len(v) == 3 and nat(v[0]) and num(v[1]) and (v[2] is None or num(v[2])) for a, v in p.items())
           def day_ok(x, final):
               return type(x) is dict and set(x) <= {"day", "final", "checked", "heights", "blocks", "producers", "upTo"} and nat(x["day"]) and x["final"] is final and ix_ok(x["producers"]) and nat(x["blocks"])
+          # The vault's files (claude/handoff-vault-results.md): game 4, staked rows only, final, never changed once published.
+          vd = os.path.join(d, "vault")
+          for f in (os.listdir(vd) if os.path.isdir(vd) else []):
+              j = json.load(open(os.path.join(vd, f), encoding="utf-8"))
+              m = re.fullmatch(r"W(\d+)\.json", f)
+              assert m and set(j) == {"game", "week", "final", "rows", "first", "second"} and j["game"] == 4 and j["week"] == int(m.group(1)) and j["final"] is True, "vault/" + f
+              assert j["first"] == [] and j["second"] == [] and type(j["rows"]) is list and len(j["rows"]) <= 100000, "vault/" + f
+              assert all(type(r) is dict and set(r) == {"player", "points"} and A(r["player"]) and type(r["points"]) is int and 1 <= r["points"] <= 255 for r in j["rows"]), "vault/" + f
+              assert len({r["player"] for r in j["rows"]}) == len(j["rows"]), "vault/" + f + ": a player twice"
+              po = os.path.join(parent, "vault", f)
+              if os.path.exists(po): assert j == json.load(open(po, encoding="utf-8")), "vault/" + f + ": a published vault file can't change"
           for f in os.listdir(d):
+              if f == "vault": continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               assert type(j) is dict and j.get("v") == 1, f
               if f == "index.json":
@@ -214,6 +230,7 @@ jobs:
           # Compare with what is already published.
           old = lambda f: json.load(open(os.path.join(parent, f), encoding="utf-8")) if os.path.exists(os.path.join(parent, f)) else None
           for f in os.listdir(d):
+              if f == "vault": continue
               j, o = json.load(open(os.path.join(d, f), encoding="utf-8")), old(f)
               if o is None: continue
               if f.startswith("W"):
@@ -246,6 +263,13 @@ jobs:
               blob=$(git hash-object -w "$f")
               git update-index --add --cacheinfo 100644 "$blob" "$g/$(basename "$f")"
             done
+            if [ -d "$IN/$g/vault" ]; then
+              for f in "$IN"/$g/vault/*.json; do
+                [ -e "$f" ] || continue
+                blob=$(git hash-object -w "$f")
+                git update-index --add --cacheinfo 100644 "$blob" "$g/vault/$(basename "$f")"
+              done
+            fi
           done
           tree=$(git write-tree)
           if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi
