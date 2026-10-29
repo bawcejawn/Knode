@@ -35,7 +35,7 @@ function signerFn(field, offline = new Set(), offFrom = 0) {
 // block burns 4 VHP of its signer's, and moves [{ h, a, d (VHP) }] add or take VHP in block h.
 const BURN = 4e8, START = (r) => r.vhp * 1000 * 1e8;
 let TOP = H0;                                   // the fake head (set by headAt)
-function nodeOf(signer, tamper = null, { moves = [], forkAt = null } = {}) {
+function nodeOf(signer, tamper = null, { moves = [], forkAt = null, effOff = 0 } = {}) {
   const start = new Map(signer.field.map((r) => [r.a, START(r)]));
   const signed = new Map(); let upTo = H0 - 1;   // blocks signed by each producer from H0 (cached)
   const count = (a, top) => { for (let h = upTo + 1; h <= top; h++) { const s = signer(h); signed.set(s, (signed.get(s) || [])); signed.get(s).push(h); } upTo = Math.max(upTo, top); const l = signed.get(a) || []; let lo = 0, hi = l.length; while (lo < hi) { const m = (lo + hi) >> 1; if (l[m] <= top) lo = m + 1; else hi = m; } return lo; };
@@ -60,7 +60,9 @@ function nodeOf(signer, tamper = null, { moves = [], forkAt = null } = {}) {
       },
       async balance(a) {
         const v = (start.get(a) || 0) - BURN * count(a, TOP) + moves.filter((m) => m.a === a && m.h <= TOP).reduce((t, m) => t + m.d * 1e8, 0);
-        return { v, h: TOP, id: "id" + TOP };
+        // the contract's effective balance for the next block: minus what arrived in the last 19 blocks
+        const eff = Math.max(0, v - moves.filter((m) => m.a === a && m.d > 0 && m.h > TOP - 19 && m.h <= TOP).reduce((t, m) => t + m.d * 1e8, 0)) + effOff;
+        return { v, eff, h: TOP, id: "id" + TOP };
       },
     };
   };
@@ -114,7 +116,7 @@ test("seeding: exact VHP averaged over the day before Saturday 12:00, on two nod
 
 test("seeding: waits while the nodes disagree and turns void after 24 hours; under 8 is no bracket; 13 has byes; 40 is a 32-bracket", async () => {
   const field = fieldOf(17), dir = tmp();
-  const skew = (name) => { const n = nodeOf(signerFn(field))(name); return name === "check" ? { ...n, balance: async (a) => { const b = await n.balance(a); return { ...b, v: b.v + 1e8 }; } } : n; };
+  const skew = (name) => { const n = nodeOf(signerFn(field))(name); return name === "check" ? { ...n, balance: async (a) => { const b = await n.balance(a); return { ...b, v: b.v + 1e8, eff: b.eff + 1e8 }; } } : n; };
   const o = { picksContract: "1P", nodeOf: skew, picksOf: picksOf([]) };
   const r1 = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + H), ...o }));
   assert.ok(r1.problems.some((p) => p.includes("disagree about the seeding")));
@@ -169,7 +171,8 @@ test("a whole week: hours irreversible only, results equal the shared math on th
   assert.deepEqual(last.problems, []);
   let wf = readW(dir);
   assert.ok(wf.days[0].every(Boolean)); assert.equal(wf.days[1].filter(Boolean).length, 10); assert.ok(wf.days[2].every((x) => x === null));
-  assert.ok(wf.days[0].every((x) => x.checked === 2 && x.q > 0 && Object.keys(x.vmax).length === 16));
+  assert.ok(wf.days[0].every((x) => x.checked === 2 && x.q > 0 && Object.keys(x.cr).length === 16 && Object.keys(x.w).length === 16));
+  assert.ok(wf.days[0].every((x) => JSON.stringify(x.w) === JSON.stringify(wf.days[0][0].w)), "one baseline per seed for the whole day");
   assert.equal(B.indexFromHours(wf.days[0]).get(field[0].a).blocks, 0, "seed 1 signed nothing");
   assert.ok(B.indexFromHours(wf.days[0]).get(field[0].a).expected > 100, "…but was expected to, by its VHP");
   assert.equal(wf.results.rounds.length, 1); assert.deepEqual(wf.results.rounds[0], truth.rounds[0]);
@@ -213,14 +216,14 @@ test("hours: the two nodes must agree; a fork while reading is caught; VHP moved
   // a fork between the hour and the head while reading (the block a balance was read at changed): nothing recorded
   const r2 = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.roundDay(W, 0) + 8 * H), ...o, nodeOf: nodeOf(signer, null, { moves, forkAt: { node: "main", h: hAt(B.roundDay(W, 0) + 8 * H) + 1 } }) }));
   assert.ok(r2.problems.some((p) => p.includes("fork")), JSON.stringify(r2.problems));
-  // agreeing nodes: recorded (at most 6 hours a run); parking VHP for 10 minutes doesn't lower the mover's day VHP
+  // agreeing nodes: recorded (at most 6 hours a run); parking VHP for 10 minutes doesn't lower the mover's baseline
   const r3 = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.roundDay(W, 0) + 8 * H), ...o }));
   assert.equal(readW(dir).days[0].filter(Boolean).length, 6, "6 hours a run (audit A-2) " + JSON.stringify(r3.problems));
   await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.roundDay(W, 0) + 8 * H), ...o }));
   const wf = readW(dir);
   assert.equal(wf.days[0].filter(Boolean).length, 8, "00:00–07:59 are irreversible by 08:00");
-  const v4 = wf.days[0][4].vmax[mover], v5 = wf.days[0][5].vmax[mover];
-  assert.ok(Math.abs(v5 / v4 - 1) < 0.001, `hour 5's most VHP ${v5} is still the full amount (hour 4: ${v4})`);
+  assert.equal(wf.days[0][5].w[mover], wf.days[0][0].w[mover], "the baseline is the day's start, whatever happens later");
+  assert.ok(wf.days[0][6].w[mover] === wf.days[0][0].w[mover], "…also in the next run's hours (taken from hour 0)");
   assert.ok(Math.abs(wf.days[0][5].q / wf.days[0][4].q - 1) < 0.05, "q is about the same every hour");
 });
 
@@ -341,4 +344,12 @@ test("R-4: the two nodes must agree about the Picks game", async () => {
   const dir = await lockedWeek(base);
   const r = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.lockTime(W) + 60000), ...base, gameOf: async (n) => (n === "check" ? { ...good, enabled: false } : good) }));
   assert.equal(readW(dir).picks, null); assert.ok(r.problems.some((p) => p.includes("disagree about the Picks game")));
+});
+
+test("the rebuilt effective VHP must equal the VHP contract's own effective balance at the read block", async () => {
+  const field = fieldOf(17), dir = tmp();
+  const o = { picksContract: "1P", nodeOf: nodeOf(signerFn(field), null, { effOff: 1 }), picksOf: picksOf([]) };
+  const r = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + H), ...o }));
+  assert.ok(r.problems.some((p) => p.includes("doesn't match the contract's effective balance")), JSON.stringify(r.problems));
+  assert.ok(!fs.existsSync(path.join(dir, "W003.json")) || !readW(dir).seeding, "not seeded on a mismatch");
 });

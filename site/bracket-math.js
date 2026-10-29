@@ -9,17 +9,15 @@
  * - Size from the field: 32 or more → a 32-producer bracket (5 rounds, Monday–Friday); 16–31 → the top 16 (4 rounds,
  *   Monday–Thursday); 12–15 → 16 slots with byes for the top seeds; 8–11 → an 8-producer bracket (3 rounds,
  *   Monday–Wednesday); under 8 → no bracket that week.
- * - Round r is played on the week's UTC day r (0 = Monday). A matchup is won by the higher day index:
- *     index = blocks signed that day ÷ blocks expected that day,
- *     expected = the producer's day VHP × Σ over every block of the day of 1 ÷ (the VHP of every active producer),
- *     day VHP = the most VHP it held just before any block of that UTC day,
- *   all exact, from the chain's own VHP events (owner decision 2026-10-28, option A). "Active" = signed at least one of
- *   the 7,200 blocks (about 6 hours) before. Koinos picks each block's signer in proportion to VHP, so a producer that
- *   holds its VHP all day and signs its share scores about 1 whatever its size (the plain handicap, c = 0).
- *   The Σ part is the same for every producer, so a matchup comes down to blocks signed per day VHP. Moving VHP away
- *   for part of the day only lowers a producer's real chances (its day VHP stays the most it held), and VHP added
- *   mid-day counts for the whole day: neither can help (bracket audit A-1). Every block burns about 4 VHP of its
- *   signer's (the block reward is paid in KOIN); that is about the same share of VHP for every producer, so it evens out.
+ * - Round r is played on the week's UTC day r (0 = Monday). VHP follows the KnodeGames VHP standard
+ *   (site/vhp-standard.js, owner decision 2026-10-28): exact effective VHP rebuilt from the chain's own VHP events.
+ *   A matchup is won by the higher day index:
+ *     index = credited blocks ÷ expected blocks,
+ *     baseline = the producer's effective VHP just before the day's first block,
+ *     expected = baseline × Σ over the day's blocks of 1 ÷ (effective VHP of every active producer),
+ *     credited = Σ over the blocks it signed of min(1, baseline ÷ its effective VHP at that block).
+ *   The Σ is the same for both producers, so a matchup comes down to credited blocks per baseline. Moving VHP away
+ *   during the day only lowers its real chances; VHP added during the day (its own or sent by anyone) is neutral.
  *   An exact tie goes to the lower seed (the underdog).
  *
  * THE PICK: one number for the whole bracket (one Picks game, kind NUMBER).
@@ -39,10 +37,9 @@
   const MIN_FIELD = 8;
   const MAX_SIZE = 32, NUMBER_MAX = 2 ** (MAX_SIZE - 1) - 1;   // the Picks game's number range: 0 … 2,147,483,647
   const CHAMPION_BONUS = 2;
-  const ACTIVE_BLOCKS = 7200;                   // a producer is active if it signed one of the 7,200 blocks before
-  const SEED_BLOCKS = 28800;                    // seeding: VHP averaged over the 28,800 blocks before Saturday 12:00
-  const Q_SCALE = 1e15;                         // hour records keep Σ 1 / active VHP (satoshi) × 1e15
-  const VHP_CONTRACT = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq";   // mainnet VHP (the race recorder reads the same)
+  const V = root.KVhp;                          // the KnodeGames VHP standard (site/vhp-standard.js, loaded first)
+  if (!V) throw new Error("bracket-math.js needs vhp-standard.js loaded first");
+  const { ACTIVE_BLOCKS, SEED_BLOCKS, Q_SCALE, VHP_CONTRACT, vhpDeltas, vhpBook, averageCard } = V;
   const GAME_ID = 9;                           // the Bracket's game id in the Picks contract (Block X is 2)
   const MAX_CHANGES = 20, PICKS_PER_DAY = 20;  // the Picks game's limits
   const ROUND_NAMES = { 32: ["Round of 32", "Round of 16", "Quarterfinals", "Semifinals", "Final"],
@@ -137,90 +134,42 @@
     return number;
   }
 
-  // ── exact VHP, block by block ──
-  /** VHP changes from decoded token events of the VHP contract: [{ h (height of the block holding the event), a,
-   *  d (satoshi, + in / − out) }]. events: [{ h, src, name, from, to, value }]; others are ignored. */
-  function vhpDeltas(events, contract = VHP_CONTRACT) {
-    const out = [];
-    for (const e of Array.isArray(events) ? events : []) {
-      if (!e || e.src !== contract || !Number.isInteger(e.h)) continue;
-      const v = Number(e.value); if (!Number.isFinite(v) || v < 0) continue;
-      const n = String(e.name || "");
-      if (/transfer_event$/.test(n)) { if (typeof e.from === "string") out.push({ h: e.h, a: e.from, d: -v }); if (typeof e.to === "string") out.push({ h: e.h, a: e.to, d: v }); }
-      else if (/mint_event$/.test(n)) { if (typeof e.to === "string") out.push({ h: e.h, a: e.to, d: v }); }
-      else if (/burn_event$/.test(n)) { if (typeof e.from === "string") out.push({ h: e.h, a: e.from, d: -v }); }
-    }
-    return out;
-  }
-  /** A VHP book: anchors { address: { h, v } } (v = satoshi balance AFTER block h, read on the chain) and the deltas of
-   *  every block between the anchor and any height asked about. book.before(a, h) = satoshi balance just before block
-   *  h (after block h − 1), or null for an address without an anchor. */
-  function vhpBook(anchors, deltas) {
-    const per = new Map();
-    for (const x of deltas) { if (!anchors[x.a]) continue; let l = per.get(x.a); if (!l) per.set(x.a, (l = [])); l.push(x); }
-    const idx = new Map();
-    for (const [a, l] of per) {
-      l.sort((p, q) => p.h - q.h);
-      const hs = l.map((x) => x.h), cum = new Float64Array(l.length + 1);
-      for (let i = 0; i < l.length; i++) cum[i + 1] = cum[i] + l[i].d;
-      idx.set(a, { hs, cum });
-    }
-    const upTo = (a, x) => { const t = idx.get(a); if (!t) return 0; let lo = 0, hi = t.hs.length; while (lo < hi) { const m = (lo + hi) >> 1; if (t.hs[m] <= x) lo = m + 1; else hi = m; } return t.cum[lo]; };
-    return {
-      before(a, h) {
-        const an = anchors[a]; if (!an) return null;
-        return an.v + upTo(a, h - 1) - upTo(a, an.h);   // after block h − 1 = anchor ± the blocks in between
-      },
-    };
-  }
-  /** Hour records from blocks. B: { hs: [heights], ts: [ms], sig: [index], signers: [address] }, contiguous and starting
-   *  at least ACTIVE_BLOCKS before the first hour (fewer: the active set is what is there). starts: hour starts (ms).
-   *  Returns one { from, to, n, by: { seed: blocks }, vmax: { seed: most satoshi VHP just before any block of the hour },
-   *  q: Σ over the hour's blocks of Q_SCALE ÷ active VHP } per start (to < from when the hour had no block), or throws
-   *  if a needed balance is missing. */
-  function exactHours(B, starts, seeds, book) {
-    const out = [], keep = new Set(seeds);
-    const lb = (t) => lowerBound(B.ts, t);
-    const need = (a, h) => { const v = book.before(a, h); if (v === null) throw new Error(`no VHP balance for ${a} at block ${h}`); return v; };
+  // ── the day index (VHP from the standard) ──
+  /** Hour records from blocks. B: { hs, ts, sig, signers }, contiguous, starting at least ACTIVE_BLOCKS before the first
+   *  hour. starts: hour starts (ms), in order. base: { dayStart ms: { seed: baseline } } for days whose first hour is
+   *  not in `starts` (taken from the recorded hour 0); a day whose first hour is in `starts` gets its baselines there.
+   *  Returns one { from, to, n, by, cr, w, q } per start (see vhp-standard windowStats), or throws if a balance is
+   *  missing or a baseline unknown. */
+  function exactHours(B, starts, seeds, book, base = {}) {
+    const out = [], days = new Map(Object.entries(base || {}).map(([d, w]) => [Number(d), w]));
     for (const start of starts) {
-      const i0 = lb(start), i1 = lb(start + HOUR);
-      const by = {}, vmax = {};
-      for (const a of seeds) { by[a] = 0; vmax[a] = 0; }
-      let q = 0;
-      const last = new Map();
-      for (let i = Math.max(0, i0 - ACTIVE_BLOCKS); i < i0; i++) last.set(B.signers[B.sig[i]], i);
-      for (let i = i0; i < i1; i++) {
-        let tot = 0;
-        for (const [a, j] of last) {
-          if (j < i - ACTIVE_BLOCKS) { last.delete(a); continue; }
-          const v = need(a, B.hs[i]);
-          if (v > 0) tot += v;
-        }
-        if (tot > 0) q += Q_SCALE / tot;
-        for (const a of seeds) { const v = need(a, B.hs[i]); if (v > vmax[a]) vmax[a] = v; }
-        const s = B.signers[B.sig[i]];
-        if (keep.has(s)) by[s]++;
-        last.set(s, i);
-      }
+      const i0 = lowerBound(B.ts, start), i1 = lowerBound(B.ts, start + HOUR), day = Math.floor(start / DAY) * DAY;
+      if (start === day && !days.has(day)) { const w = {}; for (const a of seeds) { const v = book.effective(a, B.hs[i0]); if (v === null) throw new Error(`no VHP balance for ${a}`); w[a] = v; } days.set(day, w); }
+      const w = days.get(day);
+      if (!w) throw new Error(`no baseline for the day of ${new Date(start).toISOString()}`);
+      const st = V.windowStats(B, i0, i1, seeds, book, w);
+      for (const a of seeds) st.cr[a] = Math.round(st.cr[a] * 1e9) / 1e9;
       out.push({ from: i1 > i0 ? B.hs[i0] : (i0 < B.hs.length ? B.hs[i0] : B.hs[B.hs.length - 1] + 1), to: i1 > i0 ? B.hs[i1 - 1] : (i0 < B.hs.length ? B.hs[i0] - 1 : B.hs[B.hs.length - 1]),
-        n: i1 - i0, by, vmax, q: Math.round(q * 1e9) / 1e9 });
+        n: i1 - i0, by: st.by, cr: st.cr, w: st.w, q: Math.round(st.q * 1e9) / 1e9 });
     }
     return out;
   }
-  const hourOk = (h) => !!(h && h.by && typeof h.by === "object" && h.vmax && typeof h.vmax === "object" && Number.isFinite(h.q) && h.q >= 0);
+  const hourOk = (h) => !!(h && h.by && typeof h.by === "object" && h.cr && typeof h.cr === "object" && h.w && typeof h.w === "object" && Number.isFinite(h.q) && h.q >= 0);
   function sumHours(hours) {
-    const out = new Map(), get = (a) => { let r = out.get(a); if (!r) out.set(a, (r = { blocks: 0, vmax: 0, expected: 0, index: 0 })); return r; };
+    const out = new Map(), get = (a) => { let r = out.get(a); if (!r) out.set(a, (r = { blocks: 0, credited: 0, baseline: 0, expected: 0, index: 0 })); return r; };
     const ok = (x) => Number.isFinite(x) && x >= 0;
     let q = 0;
     for (const hr of hours) {
       q += hr.q;
-      for (const [a, v] of Object.entries(hr.vmax)) if (ok(v)) { const r = get(a); if (v > r.vmax) r.vmax = v; }
       for (const [a, b] of Object.entries(hr.by || {})) if (ok(b)) get(a).blocks += b;
+      for (const [a, c] of Object.entries(hr.cr || {})) if (ok(c)) get(a).credited += c;
     }
-    for (const r of out.values()) { r.expected = r.vmax * q / Q_SCALE; r.index = r.expected > 0 ? r.blocks / r.expected : 0; }
+    for (const [a, v] of Object.entries(hours[0].w || {})) if (ok(v)) get(a).baseline = v;   // one baseline a day
+    for (const r of out.values()) { r.expected = V.expectedBlocks(r.baseline, q); r.index = r.expected > 0 ? r.credited / r.expected : 0; }
     return out;
   }
-  /** Day index from the 24 recorded hours: Map address → { blocks, vmax, expected, index }; null unless every hour is in. */
+  /** Day index from the 24 recorded hours: Map address → { blocks, credited, baseline, expected, index }; null unless
+   *  every hour is in. */
   function indexFromHours(hours) {
     if (!Array.isArray(hours) || hours.length !== 24 || !hours.every(hourOk)) return null;
     return sumHours(hours);
@@ -230,22 +179,6 @@
     const got = (Array.isArray(hours) ? hours : []).filter(hourOk);
     return got.length ? sumHours(got) : null;
   }
-  /** Seeding rows from exact VHP: each producer that signed one of the blocks in [i0, i1) of B, with its VHP averaged
-   *  over those blocks (in VHP, 2 decimals), as a race card's field and paddock (field: at least 10 expected blocks in
-   *  a 6-hour race, the race recorder's rule). */
-  function averageCard(B, i0, i1, book) {
-    const who = new Set(); for (let i = i0; i < i1; i++) who.add(B.signers[B.sig[i]]);
-    const rows = [];
-    for (const a of who) {
-      let s = 0;
-      for (let i = i0; i < i1; i++) { const v = book.before(a, B.hs[i]); if (v === null) throw new Error(`no VHP balance for ${a} at block ${B.hs[i]}`); s += v; }
-      const vhp = Math.round(s / (i1 - i0) / 1e6) / 100;
-      if (vhp > 0) rows.push({ a, vhp });
-    }
-    const tot = rows.reduce((t, r) => t + r.vhp, 0), field = [], paddock = [];
-    for (const r of rows.sort((x, y) => y.vhp - x.vhp || (x.a < y.a ? -1 : 1))) (7200 * r.vhp / tot >= 10 ? field : paddock).push(r);
-    return { field, paddock };
-  }
   /** Day index straight from blocks and a book (tests and the replay): the 24 hours from dayStart. */
   function dayIndex(B, dayStart, seeds, book) {   // (unchanged)
     return indexFromHours(exactHours(B, Array.from({ length: 24 }, (_, h) => dayStart + h * HOUR), seeds, book));
@@ -253,8 +186,9 @@
   /** Does `other` beat `better` on a day? Higher index wins; an exact tie (compared without division) goes to `other`,
    *  the lower seed. A producer missing from the day's index counts as 0 blocks. */
   function otherWins(idx, better, other) {
-    const A = idx.get(better) || { blocks: 0, expected: 0 }, B = idx.get(other) || { blocks: 0, expected: 0 };
-    const sa = A.blocks * B.expected, sb = B.blocks * A.expected;   // index A vs index B, cross-multiplied
+    const A = idx.get(better) || { credited: 0, expected: 0 }, B = idx.get(other) || { credited: 0, expected: 0 };
+    const ca = A.credited ?? A.blocks ?? 0, cb = B.credited ?? B.blocks ?? 0;
+    const sa = ca * B.expected, sb = cb * A.expected;   // index A vs index B, cross-multiplied
     if (A.expected <= 0 && B.expected <= 0) return true;
     if (B.expected <= 0) return false;   // the underdog was on no card all day: it can't win
     if (A.expected <= 0) return true;

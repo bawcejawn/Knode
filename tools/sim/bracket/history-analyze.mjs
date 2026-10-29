@@ -7,7 +7,7 @@
 // the brackets' points.
 import fs from "node:fs"; import path from "node:path"; import zlib from "node:zlib";
 const REPO = new URL("../../..", import.meta.url).pathname.replace(/\/$/, "");
-await import(REPO + "/site/race-math.js"); await import(REPO + "/site/bracket-math.js");
+await import(REPO + "/site/race-math.js"); await import(REPO + "/site/vhp-standard.js"); await import(REPO + "/site/bracket-math.js");
 const M = globalThis.KRaceMath, B = globalThis.KBracketMath;
 const DIR = process.argv[2];
 const H = 3600000, DAY = 24 * H;
@@ -43,7 +43,7 @@ const book = B.vhpBook(anchors, deltas);
 const neg = Object.keys(anchors).filter((a) => (book.before(a, from) ?? 0) < -1);
 console.log(`Rebuilt balances below zero at the start (missed events): ${neg.length}`);
 // a book that never answers null: signers without a reading count as 0 VHP
-const safe = { before: (a, h) => book.before(a, h) ?? 0 };
+const safe = { before: (a, h) => book.before(a, h) ?? 0, effective: (a, h) => book.effective(a, h) ?? 0, maxEffective: (a, x, y) => book.maxEffective(a, x, y) ?? 0, avgEffective: (a, x, y) => book.avgEffective(a, x, y) ?? 0 };
 const chain = { hs, ts, sig, signers: names };
 const lb = (t) => { let lo = 0, hi = n; while (lo < hi) { const m = (lo + hi) >> 1; if (ts[m] < t) lo = m + 1; else hi = m; } return lo; };
 
@@ -84,7 +84,7 @@ for (let w = -40; w < 400; w++) {
     margins.push(Math.abs(ia - ib));
     return won;
   });
-  const form = indexOver(seedT - 7 * DAY, seedT, sd.seeds);
+  const dayS = Math.floor(seedT / DAY) * DAY, form = indexOver(dayS - 7 * DAY, dayS, sd.seeds);   // the 7 whole UTC days before
   const fi = (s) => { const f = form.get(sd.seeds[s - 1]); return f.expected > 0 ? f.blocks / f.expected : 0; };
   const nS = sd.seeds.length, sc = (fn) => B.score({ rounds: B.play(sd.size, nS, fn).rounds }, res, sd.size, nS).points;
   PTS.chalk.push(sc(() => false)); PTS.underdog.push(sc(() => true)); PTS.random.push(sc(() => rnd() < 0.5));

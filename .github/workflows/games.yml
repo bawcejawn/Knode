@@ -166,13 +166,14 @@ jobs:
           isa = lambda x: type(x) is str and addr.fullmatch(x) is not None
           def hour_ok(h):
               if h is None: return True
-              if type(h) is not dict or set(h) != {"from", "to", "n", "by", "vmax", "q", "checked"}: return False
+              if type(h) is not dict or set(h) != {"from", "to", "n", "by", "cr", "w", "q", "checked"}: return False
               if not (nat(h["from"]) and nat(h["to"]) and nat(h["n"]) and h["n"] <= 100000 and h["checked"] == 2 and num(h["q"]) and h["q"] >= 0): return False
               if type(h["by"]) is not dict or len(h["by"]) > 32 or not all(isa(a) and nat(v) and v <= h["n"] for a, v in h["by"].items()): return False
-              return type(h["vmax"]) is dict and len(h["vmax"]) <= 32 and all(isa(a) and num(v) and 0 <= v < 1e16 for a, v in h["vmax"].items())
+              if type(h["cr"]) is not dict or len(h["cr"]) > 32 or not all(isa(a) and num(v) and 0 <= v <= h["n"] for a, v in h["cr"].items()): return False
+              return type(h["w"]) is dict and len(h["w"]) <= 32 and all(isa(a) and num(v) and 0 <= v < 1e16 for a, v in h["w"].items())
           def week_ok(j):
               if not set(j) <= {"v", "week", "start", "end", "status", "seeding", "picks", "days", "results", "points", "void"}: return False
-              if j.get("v") != 3 or not nat(j.get("week")) or not nat(j.get("start")) or not nat(j.get("end")): return False
+              if j.get("v") != 4 or not nat(j.get("week")) or not nat(j.get("start")) or not nat(j.get("end")): return False
               if j.get("status") not in ("waiting", "none", "void", "open", "locked", "final"): return False
               if "void" in j and (type(j["void"]) is not str or len(j["void"]) > 200): return False
               s = j.get("seeding")

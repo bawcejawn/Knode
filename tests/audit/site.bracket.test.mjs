@@ -11,6 +11,7 @@ const APP = process.env.APP || ".";
 const read = (f) => fs.readFileSync(`${APP}/site/${f}`, "utf8");
 const box = { window: {} };
 vm.runInNewContext(read("race-math.js"), box);
+vm.runInNewContext(read("vhp-standard.js"), box);
 vm.runInNewContext(read("bracket-math.js"), box);
 const R = box.window.KRaceMath, M = box.window.KBracketMath;
 const plain = (x) => JSON.parse(JSON.stringify(x));
@@ -134,11 +135,12 @@ test("invalid numbers score nothing: too big for the bracket, bits on a bye, not
 
 // ── the day index: exact VHP, block by block (option A, owner decision 2026-10-28) ──
 const DAY0 = U("2026-11-02T00:00:00Z"), E8 = 1e8;
-/** A made-up chain. vhp: { address: VHP }, each block's signer drawn by VHP (seeded), every block burns 4 VHP of its
- *  signer's; moves: [{ at: block index, a, d (VHP) }] applied in that block; offline(a, i) → true to skip a producer.
+/** A made-up chain. vhp: { address: VHP }, each block's signer drawn by VHP (seeded), every block burns VHP of its
+ *  signer's at mainnet's rate (4 VHP a block on ~12 million VHP, scaled to this network); moves: [{ at: block index, a, d (VHP) }] applied in that block; offline(a, i) → true to skip a producer.
  *  Starts ACTIVE_BLOCKS blocks before DAY0 + startHour, 3 s a block. Returns { B, deltas, anchors (after the last block) }. */
 function fakeChain(vhp, { hours = 24, seed = 7, moves = [], offline = () => false, h0 = 50_000_000, startHour = 0, luck = null } = {}) {
   const rnd = R.rng(seed), names = Object.keys(vhp), bal = new Map(names.map((a) => [a, vhp[a] * E8]));
+  const burn = Math.round(4 * E8 * Object.values(vhp).reduce((t, v) => t + v, 0) / 12e6);
   const pre = M.ACTIVE_BLOCKS, n = pre + hours * 1200, t0 = DAY0 + startHour * H - pre * 3000;
   const hs = [], ts = [], sig = [], deltas = [];
   for (let i = 0; i < n; i++) {
@@ -148,7 +150,7 @@ function fakeChain(vhp, { hours = 24, seed = 7, moves = [], offline = () => fals
     let x = (luck ? luck(i) : rnd.next()) * tot, s = live[live.length - 1];
     for (const a of live) { x -= bal.get(a); if (x < 0) { s = a; break; } }
     hs.push(h); ts.push(t0 + i * 3000); sig.push(names.indexOf(s));
-    bal.set(s, bal.get(s) - 4 * E8); deltas.push({ h, a: s, d: -4 * E8 });
+    bal.set(s, bal.get(s) - burn); deltas.push({ h, a: s, d: -burn });
   }
   const anchors = Object.fromEntries(names.map((a) => [a, { h: h0 + n - 1, v: bal.get(a) }]));
   return { B: { hs, ts, sig, signers: names }, deltas, anchors, n, h0 };
@@ -179,8 +181,8 @@ test("expected blocks follow exact VHP: a producer signing its share scores ≈1
   const book = M.vhpBook(anchors, deltas);
   const idx = M.dayIndex(B, DAY0, Object.keys(vhp), book);
   const totalExp = [...idx.values()].reduce((t, r) => t + r.expected, 0);
-  // the day VHP is the most held, before the day's burns: ~4 VHP a block is ~2.3% of this small network a day (~0.9% on mainnet), the same share for all
-  assert.ok(totalExp / (24 * 1200) - 1 > 0 && totalExp / (24 * 1200) - 1 < 0.025, `expected adds up to the blocks of the day plus the day's burns (${totalExp})`);
+  // baselines are taken at the day's start, before the day's burns (~1% of all VHP a day, the same share for everyone)
+  assert.ok(totalExp / (24 * 1200) - 1 > 0 && totalExp / (24 * 1200) - 1 < 0.012, `expected adds up to the blocks of the day plus half a day's burns (${totalExp})`);
   for (const a of ["1Big", "1Mid"]) assert.ok(Math.abs(idx.get(a).index - 1) < 0.05, `${a} ${idx.get(a).index}`);
   assert.ok(Math.abs(idx.get("1Sml").index - 1) < 0.25, `small ${idx.get("1Sml").index}`);
   // hour records are contiguous and count every block once
@@ -201,10 +203,16 @@ test("moving VHP away and back (or adding it) gains nothing: expected follows th
   // its expected blocks are within 0.1% of never having moved anything (2 blocks of 1,200 an hour)
   const still = fakeChain(vhp, { seed: 3 }), idx2 = M.dayIndex(still.B, DAY0, ["1Dog"], M.vhpBook(still.anchors, still.deltas));
   assert.ok(Math.abs(idx.get("1Dog").expected / idx2.get("1Dog").expected - 1) < 0.002);
-  // VHP added mid-day (burning KOIN) counts for the whole day: it can't help that day (about 0.77 here)
-  const up = fakeChain(vhp, { seed: 5, moves: [{ at: M.ACTIVE_BLOCKS + 6 * 1200, a: "1Dog", d: 200_000 }] });
-  const iu = M.dayIndex(up.B, DAY0, ["1Fav", "1Dog"], M.vhpBook(up.anchors, up.deltas));
-  assert.ok(iu.get("1Dog").index < 0.85 && iu.get("1Dog").index > 0.7, `after adding VHP ${iu.get("1Dog").index}`);
+  // VHP added mid-day (burning KOIN, or sent by anyone) is neutral: blocks signed above the baseline count baseline ÷ VHP
+  let sumUp = 0, sumSame = 0;
+  for (let d = 0; d < 12; d++) {
+    const up = fakeChain(vhp, { seed: 50 + d, moves: [{ at: M.ACTIVE_BLOCKS + 6 * 1200, a: "1Dog", d: 200_000 }] });
+    sumUp += M.dayIndex(up.B, DAY0, ["1Dog"], M.vhpBook(up.anchors, up.deltas)).get("1Dog").index;
+    const same = fakeChain(vhp, { seed: 50 + d });
+    sumSame += M.dayIndex(same.B, DAY0, ["1Dog"], M.vhpBook(same.anchors, same.deltas)).get("1Dog").index;
+  }
+  assert.ok(Math.abs(sumUp / 12 - 1) < 0.06, `after adding VHP: mean index ${(sumUp / 12).toFixed(3)} (neutral)`);
+  assert.ok(Math.abs(sumSame / 12 - 1) < 0.06, `unchanged: mean index ${(sumSame / 12).toFixed(3)}`);
 });
 test("audit A-1: holding VHP only while a stopped producer still counts as active doesn't pay (it did before)", () => {
   // a 20% producer stops at 06:00 and still counts as active for the next 7,200 blocks; the seed holds its VHP in its
@@ -212,14 +220,29 @@ test("audit A-1: holding VHP only while a stopped producer still counts as activ
   const vhp = { "1Seed": 50_000, "1Opp": 50_000, "1Dead": 250_000, "1Rest": 900_000 };
   const s0 = M.ACTIVE_BLOCKS + 6 * 1200, s1 = s0 + M.ACTIVE_BLOCKS;
   const moves = [{ at: 0, a: "1Seed", d: -49_000 }, { at: s0, a: "1Seed", d: 49_000 }, { at: s1, a: "1Seed", d: -49_000 }];
-  let ahead = 0, sum = 0; const N = 30;
+  let ahead = 0, sum = 0, sumOpp = 0; const N = 40;
   for (let d = 0; d < N; d++) {
     const c = fakeChain(vhp, { seed: 500 + d, moves, offline: (a, i) => a === "1Dead" && i >= s0 });
     const idx = M.dayIndex(c.B, DAY0, ["1Seed", "1Opp"], M.vhpBook(c.anchors, c.deltas));
-    sum += idx.get("1Seed").index; if (idx.get("1Seed").index > idx.get("1Opp").index) ahead++;
+    sum += idx.get("1Seed").index; sumOpp += idx.get("1Opp").index; if (idx.get("1Seed").index > idx.get("1Opp").index) ahead++;
   }
-  assert.ok(sum / N < 0.5, `the timing seed's mean index ${(sum / N).toFixed(3)}: its day VHP is the most it held`);
-  assert.ok(ahead <= 2, `ahead of an honest opponent on ${ahead} of ${N} days`);
+  // its baseline is the 1,000 VHP it held at 00:00: the blocks it signs with 50,000 count 1/50 each, so the 6 hours of
+  // "cheap" blocks earn it exactly what an honest producer earns (before the fix it was ahead on 40 of 40 days)
+  assert.ok(Math.abs(sum / N - sumOpp / N) < 0.15, `timing seed ${(sum / N).toFixed(3)} vs honest ${(sumOpp / N).toFixed(3)}`);
+  assert.ok(ahead < N * 0.75, `ahead of an honest opponent on ${ahead} of ${N} days`);
+});
+test("audit G-1: VHP sent to a seed late in its day (a gift) neither lowers nor raises its index", () => {
+  const vhp = { "1Target": 50_000, "1Opp": 50_000, "1Rest": 900_000 };
+  const late = M.ACTIVE_BLOCKS + 23 * 1200;   // 23:00
+  let withGift = 0, without = 0; const N = 30;
+  for (let d = 0; d < N; d++) {
+    const g = fakeChain(vhp, { seed: 900 + d, moves: [{ at: late, a: "1Target", d: 5_000 }] });
+    const p = fakeChain(vhp, { seed: 900 + d });
+    withGift += M.dayIndex(g.B, DAY0, ["1Target"], M.vhpBook(g.anchors, g.deltas)).get("1Target").index;
+    without += M.dayIndex(p.B, DAY0, ["1Target"], M.vhpBook(p.anchors, p.deltas)).get("1Target").index;
+  }
+  // the same random days: the gift only changes the last hour, and blocks signed above the baseline count baseline ÷ VHP
+  assert.ok(Math.abs(withGift / N - without / N) < 0.01, `with a 10% gift at 23:00 ${(withGift / N).toFixed(4)}, without ${(without / N).toFixed(4)}`);
 });
 test("a seed that goes offline is still expected to sign by its VHP, and loses", () => {
   const vhp = { "1Fav": 100_000, "1Dog": 20_000, "1Rest": 880_000 };
@@ -327,7 +350,7 @@ test("the shared math is read only and has no betting words", () => {
 // ── the page (site/bracket.html, bracket.js) ──
 const page = read("bracket.html"), js = read("bracket.js");
 test("the page: scripts in order, the shared board, reads only the bracket files, the block snapshot and the site", () => {
-  assert.match(page, /<script src="bracket-math\.js"><\/script>\s*<script src="board\.js"><\/script>\s*<script src="bracket\.js"><\/script>/);
+  assert.match(page, /<script src="vhp-standard\.js"><\/script>\s*<script src="bracket-math\.js"><\/script>\s*<script src="board\.js"><\/script>\s*<script src="bracket\.js"><\/script>/);
   assert.match(page, /<link rel="stylesheet" href="board\.css">/);
   const csp = page.match(/Content-Security-Policy" content="([^"]+)"/)[1];
   assert.match(csp, /connect-src [^;]*https:\/\/raw\.githubusercontent\.com\/bawcejawn\/Knode\/games-data\//);
