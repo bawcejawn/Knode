@@ -47,6 +47,10 @@
       "name": "Fantasy Producers",
       "results": "games-data:fantasy/vault"
     },
+    "8": {
+      "name": "Combo Card",
+      "results": "games-data:combo/vault"
+    },
     "13": {
       "name": "Last Node Standing",
       "results": "games-data:lastnode/vault"
