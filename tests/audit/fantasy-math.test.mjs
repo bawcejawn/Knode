@@ -256,3 +256,29 @@ test("clock: refuses a clock the contract or the rules can't run", () => {
   assert.throws(() => F.withClock({ day: R.HOUR, genesis: 0, sheetBefore: 2 * R.HOUR }), /sheet/);
   assert.ok(F.withClock({ day: 20 * 60000, genesis: 0, sheetBefore: 10 * 60000 }));
 });
+
+test("audit FX-3: vault points ranked among the staked players only, when known", () => {
+  const rows = [{ a: A, points: 900 }, { a: B, points: 800 }, { a: C, points: 700 }, { a: D, points: 600 }];
+  const all = F.vaultPoints(rows), staked = F.vaultPoints(rows, new Set([B, D]));
+  assert.equal(all.get(D), 252);
+  assert.deepEqual([...staked.entries()], [[B, 255], [D, 254]], "free players don't push stakers down");
+});
+
+test("audit FX-5: a day with blocks in an hour no card covers is marked uncovered", () => {
+  const t0 = F.dayStart(DAYS[0]);
+  const ts = [t0 + 1000, t0 + 20 * R.HOUR], sig = [0, 1];
+  const full = F.dayIndex({ ts, sig, signers: [A, B] }, races, DAYS[0]);
+  assert.equal(full.uncovered, 0);
+  const part = {}; for (const [id, c] of Object.entries(races)) if (Date.parse(id.replace(/T(\d\d)$/, "T$1:00:00Z")) < t0 + 12 * R.HOUR) part[id] = c;
+  const half = F.dayIndex({ ts, sig, signers: [A, B] }, part, DAYS[0]);
+  assert.ok(half.uncovered === 0 || half.uncovered === 1, "cards carry up to 24 h, so only a gap past that counts");
+  const none = F.dayIndex({ ts, sig, signers: [A, B] }, {}, DAYS[0]);
+  assert.equal(none.uncovered, 2, "both hours with blocks lack a card");
+});
+
+test("audit FX-4: teams pack to positions on the price list and back", () => {
+  const t = [C, A, E, B, D];
+  assert.deepEqual(F.unpackTeam(sheet, F.packTeam(sheet, t)), t);
+  assert.equal(F.unpackTeam(sheet, [0, 1, 99, 2, 3]), null, "a position not on the list is no team");
+  assert.equal(F.packTeam(sheet, null), null);
+});

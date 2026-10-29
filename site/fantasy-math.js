@@ -115,10 +115,11 @@
     /** For one day: blocks B = { ts: [...ascending], sig: [index], signers: [address] } covering at least the day.
      *  Expected comes from each hour's blocks (or each part of a shorter test day) and the card in force at its start.
      *  Returns { [address]: [signed, expected (2 decimals), index (2 decimals) or null] } for every producer on a card
-     *  that day or that signed a block, and the day's block count. */
+     *  that day or that signed a block, the day's block count, and `uncovered`: how many hours (steps) had blocks but no
+     *  card (such a day must not be final: its blocks would count as signed without being expected; audit FX-5). */
     function dayIndex(B, racesById, d) {
       const t0 = dayStart(d), out = new Map();
-      let i = R.lowerBound(B.ts, t0), blocks = 0;
+      let i = R.lowerBound(B.ts, t0), blocks = 0, uncovered = 0;
       const get = (a) => { let x = out.get(a); if (!x) { x = { got: 0, exp: 0 }; out.set(a, x); } return x; };
       const step = Math.min(HOUR, C.day);
       for (let hs = t0; hs < t0 + C.day; hs += step) {
@@ -126,12 +127,13 @@
         let n = 0;
         for (; i < B.ts.length && B.ts[i] < he; i++) { if (B.ts[i] < hs) continue; n++; const a = B.signers[B.sig[i]]; if (isAddr(a)) get(a).got++; }
         blocks += n;
-        const card = cardAt(racesById, hs);
-        if (card) for (const [a, s] of sharesOf(card)) get(a).exp += n * s;
+        const card = cardAt(racesById, hs), sh = card ? sharesOf(card) : null;
+        if (sh && sh.size) for (const [a, s] of sh) get(a).exp += n * s;
+        else if (n > 0) uncovered++;
       }
       const res = {};
       for (const [a, x] of [...out].sort((u, v) => (u[0] < v[0] ? -1 : 1))) res[a] = [x.got, round(x.exp, 2), x.exp > 0 ? round(100 * x.got / x.exp, 2) : null];
-      return { blocks, producers: res };
+      return { blocks, producers: res, uncovered };
     }
     /** A producer's index over several days (the sums of signed and expected), or null if it was never expected. */
     function spanIndex(days, a) {
@@ -211,12 +213,18 @@
       return { days: rows, points: round(rows.reduce((s, r) => s + r.score, 0), 2), full: rows.every((r) => r.team) };
     }
     /** The vault's whole points for a week's players: 255 for the best score, one less for each lower distinct score
-     *  (ties keep the same points), never below 1; a score of 0 gets nothing. Returns a Map address → points. */
-    function vaultPoints(rows) {
-      const scores = [...new Set(rows.filter((r) => r.points > 0).map((r) => r.points))].sort((x, y) => y - x);
+     *  (ties keep the same points), never below 1; a score of 0 gets nothing. Ranked among `eligible` only (the wallets
+     *  with a Fantasy stake that week) when given: free players must not push stakers down (audit FX-3).
+     *  Returns a Map address → points. */
+    function vaultPoints(rows, eligible = null) {
+      const ok = rows.filter((r) => r.points > 0 && (!eligible || eligible.has(r.a)));
+      const scores = [...new Set(ok.map((r) => r.points))].sort((x, y) => y - x);
       const at = new Map(scores.map((p, i) => [p, Math.max(1, VAULT_MAX - i)]));
-      return new Map(rows.filter((r) => r.points > 0).map((r) => [r.a, at.get(r.points)]));
+      return new Map(ok.map((r) => [r.a, at.get(r.points)]));
     }
+    /** A team as positions on the week's price list (the W files keep teams this small; audit FX-4), and back. */
+    const packTeam = (sheet, team) => (team ? team.map((a) => sheet.pool.findIndex((p) => p.a === a)) : null);
+    const unpackTeam = (sheet, t) => (Array.isArray(t) && t.every((i) => Number.isInteger(i) && sheet && sheet.pool[i]) ? t.map((i) => sheet.pool[i].a) : null);
     /** Rank players by week points (more first); equal points share a place. Returns rows with place. */
     function rank(rows) {
       const s = [...rows].sort((x, y) => y.points - x.points || (x.a < y.a ? -1 : 1));
@@ -264,7 +272,7 @@
       clock: Object.freeze({ ...C, week: WEEK }), DAY_MS: C.day, WEEK_MS: WEEK,
       dayNo, dayStart, weekOf, weekStart, weekDays, sheetTime, formDays, rivalRound, weekOfRivalRound, lockOfDay, lockOfWeek, games,
       cardAt, sharesOf, dayIndex, spanIndex, priceOf, medianOf, makeSheet, sheetText,
-      checkTeam, changes, teamsForWeek, dayScore, scoreWeek, vaultPoints, rank,
+      checkTeam, changes, teamsForWeek, dayScore, scoreWeek, vaultPoints, packTeam, unpackTeam, rank,
       matches, addRecords, recordLine,
     };
   }

@@ -129,17 +129,18 @@ for (const w of [w0, w1]) {
 }
 const row = (w, who) => w.players.find((x) => x.a === A(who));
 for (const who of ["p1", "p2", "p3", "p4", "p5"]) assert.ok(row(w0, who) && row(w0, who).full, `${who} played all of week 1`);
-assert.ok(row(w0, "p6") && !row(w0, "p6").full && row(w0, "p6").days[0].team === null, "p6 joined late in week 1");
+assert.ok(row(w0, "p6") && !row(w0, "p6").full && row(w0, "p6").days[0][0] === null, "p6 joined late in week 1");
 assert.ok(row(w1, "p6") && row(w1, "p6").full, "p6 played all of week 2 (late only in its first week)");
 // Your refused team: the day shows the note, and yesterday's team played.
 const mine0 = row(w0, "p1");
-assert.ok(mine0.days.some((d) => /more than one change/.test(d.note || "")), "the 2-change team was ignored");
+assert.ok(mine0.days.some((d) => /more than one change/.test(d[2] || "")), "the 2-change team was ignored");
 // Every score is the shared math on the recorded days.
 for (const w of [w0, w1]) {
   const recs = F.weekDays(w.week).map((d) => days.days.find((x) => x.day === d));
   assert.ok(recs.every((r) => r && r.final && r.checked === 2), `week ${w.week + 1}: every day final on 2 nodes`);
   for (const x of w.players) {
-    const total = x.days.reduce((s, d) => s + F.dayScore(d.team, recs[x.days.indexOf(d)]), 0);
+    const total = x.days.reduce((s, d, i) => s + F.dayScore(F.unpackTeam(w.sheet, d[0]), recs[i]), 0);
+    assert.ok(x.days.every((d, i) => Math.abs(d[1] - F.dayScore(F.unpackTeam(w.sheet, d[0]), recs[i])) < 0.005), "each day's score");
     assert.ok(Math.abs(total - x.points) < 0.05, `week ${w.week + 1} ${x.a}: ${total} vs ${x.points}`);
     assert.equal(x.vault, F.vaultPoints(w.players).get(x.a) || 0);
   }
@@ -182,4 +183,4 @@ if (process.env.KEEP) {
   console.log(`Leaving it running: ${origin}/site/fantasy-testnet.html  (clock +${Math.round(clock.offset / 60000)} min; Ctrl+C to stop)`);
   setInterval(() => kit.tick(true), 60000);
 }
-else { server.close(); await Promise.all([mainA.close(), mainB.close(), test.close()]); fs.rmSync(dir, { recursive: true, force: true }); process.exit(0); }
+else { server.close(); await Promise.all([mainA.close(), mainB.close(), test.close()]); if (!process.env.KEEP_DATA) fs.rmSync(dir, { recursive: true, force: true }); process.exit(0); }

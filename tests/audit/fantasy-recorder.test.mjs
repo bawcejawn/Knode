@@ -18,7 +18,7 @@ const P = "ABCDEFGHJKM".split("").map((c) => "1" + c.repeat(33));
 const VHP = [300, 250, 200, 150, 120, 100, 90, 80, 70, 9, 1];   // the last two are in the paddock at 720 blocks a race
 const REL = [1.05, 1.0, 0.75, 1.05, 0.8, 1.02, 0.9, 1.0, 0.78, 1, 1];
 const PLAYERS = ["1Pa1111111111111111111111111111111", "1Pb2222222222222222222222222222222", "1Pc3333333333333333333333333333333", "1Pd4444444444444444444444444444444"];
-const STEP = 30000, T0 = U("2026-10-24T00:00:00Z"), N = Math.floor((U("2026-11-10T00:00:00Z") - T0) / STEP);
+const STEP = 30000, T0 = U("2026-10-24T00:00:00Z"), N = Math.floor((U("2026-11-12T00:00:00Z") - T0) / STEP);
 const chain = (() => {
   const R = M.rng(11), w = VHP.map((v, i) => v * REL[i]), tot = w.reduce((a, b) => a + b), ts = [], who = [];
   for (let i = 0; i < N; i++) { ts.push(T0 + i * STEP); let x = R.next() * tot, j = 0; while (x >= w[j]) { x -= w[j]; j++; } who.push(P[j]); }
@@ -116,8 +116,8 @@ test("a week: teams scored day by day, final after the 12 h window, rivals count
   const mid = await hourly(U("2026-11-04T12:30Z"), s.out);
   const wm = read(mid.out, "W002.json");
   assert.equal(wm.final, false);
-  assert.equal(wm.players.find((x) => x.a === pd).days[0].team, null, "an invalid pick (same producer twice) doesn't start a team");
-  assert.match(wm.players.find((x) => x.a === pd).days[0].note, /twice/);
+  assert.equal(wm.players.find((x) => x.a === pd).days[0][0], null, "an invalid pick (same producer twice) doesn't start a team");
+  assert.match(wm.players.find((x) => x.a === pd).days[0][2], /twice/);
   assert.equal(wm.players.find((x) => x.a === pc), undefined, "Thursday's joiner has no row yet on Wednesday");
   // After Monday 9 Nov 00:00 but before 12:00: still checking.
   const late = await hourly(U("2026-11-09T06:30Z"), mid.out);
@@ -128,7 +128,9 @@ test("a week: teams scored day by day, final after the 12 h window, rivals count
   const row = (a) => w.players.find((x) => x.a === a);
   assert.equal(row(pa).full, true); assert.equal(row(pb).full, true);
   assert.equal(row(pc).full, false); assert.equal(row(pd).full, false);
-  for (const d of row(pc).days.slice(0, 3)) assert.equal(d.score, 0, "days before joining score 0");
+  for (const d of row(pc).days.slice(0, 3)) assert.equal(d[1], 0, "days before joining score 0");
+  assert.deepEqual(w.picks, {}, "a final week keeps teams in the players' days only");
+  assert.deepEqual(F.unpackTeam(w.sheet, row(pa).days[6][0]), best, "teams are stored as positions on the price list");
   // The scores are exactly the shared math on the recorded days.
   const dayRecs = read(fin.out, "days.json").days;
   const recs = days.map((d) => dayRecs.find((x) => x.day === d));
@@ -146,6 +148,27 @@ test("a week: teams scored day by day, final after the 12 h window, rivals count
   const again = await hourly(U("2026-11-09T13:30Z"), fin.out);
   assert.deepEqual(read(again.out, "rivals.json").records, rv.records, "a final week is counted once");
   assert.deepEqual(read(again.out, "W002.json"), w, "a final week never changes");
+});
+
+test("audit FX-1: a week is never final while a day's picks are unread; then it alerts, and finishes once read", async () => {
+  const s = await hourly(U("2026-11-01T12:30Z"), "");
+  const days = F.weekDays(2), pa = PLAYERS[0];
+  const sheet = read(s.out, "W002.json").sheet;
+  const cheap = [...sheet.pool].sort((x, y) => x.price - y.price).slice(0, 5).map((x) => x.a);
+  picks = { team: { [days[0]]: [[pa, cheap, 1]] }, rival: { [F.rivalRound(2)]: [] } };
+  const broken = picksOf;
+  let fail = days[3];
+  const flaky = async (n, game, round) => { if (game === 4 && round === fail) throw new Error("node hiccup"); return broken(n, game, round); };
+  const run1 = async (at, prev) => { const out = tmp(); const log = console.log; console.log = () => {}; let r; try { r = await run({ p: node(at), check: node(at), prev, out, raceData, picksContract: "1PicksPicksPicksPicksPicksPicks11", picksOf: flaky }); } finally { console.log = log; } return { out, r }; };
+  let cur = s.out;
+  for (const at of ["2026-11-04T12:30Z", "2026-11-09T12:30Z", "2026-11-10T12:30Z"]) cur = (await run1(U(at), cur)).out;
+  const w = read(cur, "W002.json");
+  assert.equal(w.final, false, "not final with day 4's picks unread");
+  const last = await run1(U("2026-11-11T13:30Z"), cur);
+  assert.ok(last.r.problems.some((p) => /ALERT week 2 is still not final/.test(p)), "and it says so");
+  fail = -1;
+  const ok = await run1(U("2026-11-11T14:30Z"), last.out);
+  assert.equal(read(ok.out, "W002.json").final, true, "final once every day's picks are read");
 });
 
 test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

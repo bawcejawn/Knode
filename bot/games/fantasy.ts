@@ -38,7 +38,7 @@ const M: any = (globalThis as any).KRaceMath;
 const FREAL: any = (globalThis as any).KFantasyMath;
 
 const E = process.env;
-const KEEP_DAYS = 21;                       // days kept in days.json (a sheet's form needs 7; last week and this one 14)
+const KEEP_DAYS = 21;                       // days kept in days.json at least (a sheet's form needs 7; last week and this one 14)
 const BLOCK_BUDGET = 120000;                // blocks read for whole days per run (a long outage catches up over runs)
 const isAddr = (a: unknown): a is string => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
 const pad = (w: number) => String(w).padStart(3, "0");
@@ -48,11 +48,13 @@ export type DayRec = { day: number; final: boolean; checked: number; heights: [n
 type Sheet = { week: number; at: number; budget: number; median: number | null; pool: { a: string; form: number | null; price: number }[]; late?: boolean };
 /** A pick as the Picks contract holds it: [player, addresses (team: captain first; rival: the rival), time (ms)]. */
 export type RawPick = [string, string[], number];
-type PlayerRow = { a: string; points: number; vault: number; full: boolean; place: number; days: { day: number; team: string[] | null; score: number; note?: string }[] };
+/** A player's week. days: one entry per day [team as positions on the week's price list, or null; score; note?]
+ *  (F.unpackTeam turns the positions back into addresses; small files: audit FX-4). */
+type PlayerRow = { a: string; points: number; vault: number; full: boolean; place: number; days: [number[] | null, number, string?][] };
 type WeekFile = {
   v: 1; week: number; start: number; end: number; final: boolean;
   sheet: Sheet | null; sha256: string | null;
-  picks: Record<string, RawPick[]>;                   // team picks by day number
+  picks: Record<string, RawPick[]>;                   // team picks by day number (emptied once the week is final)
   rivals: [string, string][] | null;                  // [challenger, target], read when the week started
   players: PlayerRow[];
   matches: { a: string; b: string; mutual: boolean; result: string }[];
@@ -66,7 +68,11 @@ export type Opts = {
   picksContract?: string | null;                                     // default: picks-data/deployment.json
   picksOf?: (node: any, game: number, round: number) => Promise<RawPick[]>;   // for the tests
   live?: boolean;                                                    // publish today so far (default true)
+  /** The wallets with a Fantasy stake in the vault that week. Vault points are ranked among them only (audit FX-3).
+   *  Until the vault is live the recorder ranks everyone and says so (index.json vaultBasis "all"). */
+  stakedOf?: (who: string[], week: number) => Promise<Set<string>>;
 };
+const WEEKS_BACK = 8;                       // an unfinished week is still finished up to 8 weeks later (audit FX-6)
 
 function readJson(dir: string, name: string): any {
   if (!dir) return null;
@@ -139,9 +145,20 @@ export async function run(o: Opts) {
   const prevDays: DayRec[] = (readJson(prev, "days.json")?.days || []).filter((d: any) => d && Number.isInteger(d.day) && d.final === true && d.producers && typeof d.producers === "object");
   const days = new Map<number, DayRec>(prevDays.map((d) => [d.day, d]));
   const today = F.dayNo(now);
+  // The weeks this run works on: last week, this one, the next, and any earlier week (up to 8 back) not final yet.
+  const wNow = F.weekOf(now), weeks = new Map<number, WeekFile>();
+  const load = (w: number): WeekFile => {
+    const x = readJson(prev, `W${pad(w)}.json`);
+    if (x && x.v === 1 && x.week === w && x.start === F.weekStart(w)) return x;
+    return { v: 1, week: w, start: F.weekStart(w), end: F.weekStart(w + 1), final: false, sheet: null, sha256: null, picks: {}, rivals: null, players: [], matches: [] };
+  };
+  const idx = readJson(prev, "index.json"), known = new Set<number>(Array.isArray(idx?.weeks) ? idx.weeks.filter((w: any) => Number.isInteger(w) && w >= 0 && w < 100000) : []);
+  for (const w of [...known].filter((w) => w >= wNow - WEEKS_BACK && w < wNow - 1)) { const x = load(w); if (!x.final && x.sheet) weeks.set(w, x); }
+  for (const w of [wNow - 1, wNow, wNow + 1]) if (w >= 0) weeks.set(w, load(w));
+  const firstDay = Math.min(today - KEEP_DAYS, ...[...weeks.values()].filter((x) => !x.final && x.sheet).map((x) => F.weekDays(x.week)[0]));
   let budget = BLOCK_BUDGET;
   // Newest first, so a long backlog never holds up the days a sheet or this week needs most.
-  for (let d = today - 1; d >= today - KEEP_DAYS && budget > 0; d--) {
+  for (let d = today - 1; d >= firstDay && budget > 0; d--) {
     if (days.get(d)?.final || F.dayStart(d + 1) > libT) continue;
     try {
       const t0 = F.dayStart(d), t1 = F.dayStart(d + 1);
@@ -157,7 +174,7 @@ export async function run(o: Opts) {
         checked = 2;
       }
       const ix = F.dayIndex(B, cards, d);
-      if (Object.values(ix.producers).every((x: any) => x[1] === 0)) { problems.push(`day ${new Date(t0).toISOString()}: no race card covers it yet; not final this run`); continue; }
+      if (ix.uncovered > 0) { problems.push(`day ${new Date(t0).toISOString()}: ${ix.uncovered} hour(s) have no race card yet; not final this run`); continue; }
       days.set(d, { day: d, final: true, checked, heights: [a, b], blocks: ix.blocks, producers: ix.producers });
       console.log(`day ${new Date(t0).toISOString()}: ${ix.blocks} blocks ${a}-${b}, checked on ${checked} node(s)`);
     } catch (e) { problems.push(`day ${d}: ${(e as Error).message} (tried again next run)`); }
@@ -172,16 +189,9 @@ export async function run(o: Opts) {
       if (b >= a) { const B = await readBlocks(p, headId, a, b); const ix = F.dayIndex(B, cards, today); live = { day: today, final: false, upTo: libT, heights: [a, b], blocks: ix.blocks, producers: ix.producers }; }
     } catch (e) { problems.push(`today so far: ${(e as Error).message}`); }
   }
-  const dayList = [...days.values()].filter((d) => d.day >= today - KEEP_DAYS).sort((x, y) => x.day - y.day);
+  const dayList = [...days.values()].filter((d) => d.day >= firstDay).sort((x, y) => x.day - y.day);
 
-  // ── 2. weeks and sheets ──
-  const wNow = F.weekOf(now), weeks = new Map<number, WeekFile>();
-  const load = (w: number): WeekFile => {
-    const x = readJson(prev, `W${pad(w)}.json`);
-    if (x && x.v === 1 && x.week === w && x.start === F.weekStart(w)) return x;
-    return { v: 1, week: w, start: F.weekStart(w), end: F.weekStart(w + 1), final: false, sheet: null, sha256: null, picks: {}, rivals: null, players: [], matches: [] };
-  };
-  for (const w of [wNow - 1, wNow, wNow + 1]) if (w >= 0) weeks.set(w, load(w));
+  // ── 2. sheets ──
   for (const [w, wf] of weeks) {
     if (wf.sheet || now < F.sheetTime(w) || w < wNow) continue;   // never a sheet for a week already over
     const formWin = F.formDays(w).map((d: number) => days.get(d));
@@ -230,25 +240,33 @@ export async function run(o: Opts) {
     const byPlayer = new Map<string, Record<number, string[]>>();
     for (const [d, rows] of Object.entries(wf.picks)) for (const [who, list] of rows) { const m = byPlayer.get(who) || {}; m[Number(d)] = list; byPlayer.set(who, m); }
     const last = weeks.get(w - 1) || (w > 0 ? load(w - 1) : null);
-    const carried = new Map<string, string[]>((last?.players || []).filter((x) => x.days?.[6]?.team).map((x) => [x.a, x.days[6].team as string[]]));
+    const carried = new Map<string, string[]>();
+    for (const x of last?.players || []) { const t = Array.isArray(x.days?.[6]) ? F.unpackTeam(last!.sheet, x.days[6][0]) : null; if (t) carried.set(x.a, t); }
     for (const a of carried.keys()) if (!byPlayer.has(a)) byPlayer.set(a, {});
-    const rows = [...byPlayer].map(([a, picks]) => { const s = F.scoreWeek(wf.sheet, recs, picks, carried.get(a) || null); return { a, points: s.points, vault: 0, full: s.full, days: s.days }; });
-    const vp = F.vaultPoints(rows);
-    for (const r of rows) r.vault = vp.get(r.a) || 0;
-    wf.players = F.rank(rows.filter((r) => r.days.some((d: any) => d.team)));
+    const rows = [...byPlayer].map(([a, picks]) => { const s = F.scoreWeek(wf.sheet, recs, picks, carried.get(a) || null); return { a, points: s.points, vault: 0, full: s.full, days: s.days }; })
+      .filter((r) => r.days.some((d: any) => d.team));
+    let staked: Set<string> | null = null;
+    if (o.stakedOf) { try { staked = await o.stakedOf(rows.map((r) => r.a), w); } catch (e) { problems.push(`week ${w}: stakes: ${(e as Error).message}`); } }
+    const vp = F.vaultPoints(rows, staked);
+    wf.players = F.rank(rows.map((r) => ({ ...r, vault: vp.get(r.a) || 0 }))).map((r: any) => ({ a: r.a, points: r.points, vault: r.vault, full: r.full, place: r.place,
+      days: r.days.map((d: any) => (d.note ? [F.packTeam(wf.sheet, d.team), d.score, d.note] : [F.packTeam(wf.sheet, d.team), d.score])) }));
     const allFinal = recs.every((d: any) => d.final);
-    if (allFinal && now >= wf.end + correction && (wf.rivals || !picksRead)) {
+    // Final only with every day's blocks AND every day's picks read (audit FX-1), the rivals read, the stakes known.
+    const allPicks = !picksRead || F.weekDays(w).every((d: number) => Array.isArray(wf.picks[d]));
+    if (allFinal && allPicks && now >= wf.end + correction && (wf.rivals || !picksRead) && (!o.stakedOf || staked)) {
       wf.final = true;
+      wf.picks = {};                                       // in the players' days now; the file stays small
       const pts = Object.fromEntries(wf.players.map((x) => [x.a, { points: x.points, full: x.full }]));
       wf.matches = F.matches(wf.rivals || [], pts);
       if (!counted.has(w)) { records = F.addRecords(records, wf.matches); counted.add(w); }
       console.log(`week ${w}: final, ${wf.players.length} players, ${wf.matches.length} rival matches`);
     }
+    if (!wf.final && now >= wf.end + 2 * F.DAY_MS)
+      problems.push(`ALERT week ${w} is still not final ${Math.floor((now - wf.end) / F.DAY_MS)} days after it ended (days final: ${recs.filter((d: any) => d.final).length}/7, picks read: ${F.weekDays(w).filter((d: number) => Array.isArray(wf.picks[d])).length}/7, rivals ${wf.rivals ? "read" : "not read"}). The vault needs results within 3 days.`);
   }
 
   // ── 5. write ──
   fs.mkdirSync(out, { recursive: true });
-  const idx = readJson(prev, "index.json"), known = new Set<number>(Array.isArray(idx?.weeks) ? idx.weeks.filter((w: any) => Number.isInteger(w) && w >= 0 && w < 100000) : []);
   for (const [w, wf] of weeks) {
     if (!wf.sheet && !wf.players.length) continue;
     known.add(w);
@@ -264,7 +282,7 @@ export async function run(o: Opts) {
   const most = [...challenged].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1)).slice(0, 5).map(([a, n]) => ({ a, n }));
   fs.writeFileSync(path.join(out, "board.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), week: boardOf(wNow), lastWeek: boardOf(wNow - 1), rivals: rivalRows, mostChallenged: most }) + "\n");
   fs.writeFileSync(path.join(out, "index.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), weeks: [...known].sort((x, y) => x - y),
-    contract: contract || null, games: G, clock: { day: F.DAY_MS, genesis: F.clock.genesis, sheetBefore: F.clock.sheetBefore } }) + "\n");
+    contract: contract || null, games: G, clock: { day: F.DAY_MS, genesis: F.clock.genesis, sheetBefore: F.clock.sheetBefore }, vaultBasis: o.stakedOf ? "staked" : "all" }) + "\n");
   for (const pr of problems) console.log(`::warning::${pr.replace(/[\r\n]+/g, " ").replace(/::/g, ": ")}`);
   return { problems, weeks, days: dayList, live };
 }

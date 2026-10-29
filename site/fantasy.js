@@ -115,7 +115,7 @@
     const wf = files.weeks.get(week), who = me();
     if (!wf || !wf.sheet || !who) return null;
     const row = (wf.players || []).find((x) => x.a === who);
-    if (wf.final) return row && row.days && row.days[6] ? row.days[6].team : null;
+    if (wf.final) return row && Array.isArray(row.days) && Array.isArray(row.days[6]) ? F.unpackTeam(wf.sheet, row.days[6][0]) : null;
     const days = F.weekDays(week), pk = await picksFor(week, days[6]);
     const carried = depth < 1 ? await lastTeamOf(week - 1, depth + 1) : null;
     return F.teamsForWeek(wf.sheet, days, pk, carried)[6].team;
@@ -262,18 +262,18 @@
   function renderWeek() {
     const now = Date.now(), wNow = F.weekOf(now), days = F.weekDays(wNow), today = F.dayNo(now), who = me();
     const wf = files.weeks.get(wNow), row = who && wf ? (wf.players || []).find((x) => x.a === who) : null;
-    $("week-sub").textContent = `Week ${wNow + 1}${TESTNET ? " (test)" : ""} · ${when(F.weekStart(wNow))} to ${when(F.weekStart(wNow + 1))}`;
+    $("week-sub").textContent = `Week ${wNow + 1}${TESTNET ? " (test)" : " · days are UTC days"} · ${when(F.weekStart(wNow))} to ${when(F.weekStart(wNow + 1))} your time`;
     const lv = liveRec();
     let total = 0;
     $("fx-days").replaceChildren(...days.map((d, i) => {
       const t = mine.weekTeams[i] || null, team = t ? t.team : null;
-      const rec = dayRec(d), recRow = row && row.days ? row.days.find((x) => x.day === d) : null;
+      const rec = dayRec(d), recRow = row && Array.isArray(row.days) && Array.isArray(row.days[i]) ? row.days[i] : null;
       let score = null, live = false;
-      if (recRow && rec && rec.final) score = recRow.score;
+      if (recRow && rec && rec.final) score = recRow[1];
       else if (team && rec && rec.final) score = F.dayScore(team, rec);
       else if (team && d === today && lv && lv.day === d) { score = F.dayScore(team, lv); live = true; }
       if (score != null && !live) total += score;          // today so far is shown on its own, not in the week's points
-      const label = new Date(F.dayStart(d)).toLocaleString(undefined, TESTNET ? { hour: "numeric", minute: "2-digit" } : { weekday: "short" });
+      const label = new Date(F.dayStart(d)).toLocaleString(undefined, TESTNET ? { hour: "numeric", minute: "2-digit" } : { weekday: "short", timeZone: "UTC" });   // game days are UTC days
       return el("div", { class: "fx-day" + (d === today ? " now" : "") + (live ? " live" : ""), title: team ? team.map(nameOf).join(", ") : "" },
         el("span", { text: label }), el("b", { text: score == null ? (d > today ? "·" : "–") : fmt(score, 0) }),
         el("span", { class: "cap", text: team ? `C ${nameOf(team[0])}` : d > today ? "to come" : "no team" }),

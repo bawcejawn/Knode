@@ -45,7 +45,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/prev/blockx" "$RUNNER_TEMP/prev/fantasy" "$RUNNER_TEMP/race"
-          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" games-data 2>/dev/null; then
+          # A games-data branch that exists but can't be fetched stops the run: recording from empty files would remake
+          # a published price list and drop the rival records (audit FX-2). Exit code 2 = the branch doesn't exist yet.
+          set +e; git ls-remote --exit-code --heads "https://github.com/${GITHUB_REPOSITORY}.git" games-data > /dev/null 2>&1; rc=$?; set -e
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then echo "::error::Couldn't reach the games-data branch (git exit $rc). Not recording from empty files."; exit 1; fi
+          if [ "$rc" -eq 0 ]; then
+            git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" games-data
             for f in $(git ls-tree --name-only FETCH_HEAD:blockx 2>/dev/null); do
               if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:blockx/$f" > "$RUNNER_TEMP/prev/blockx/$f"; fi
             done
@@ -68,6 +73,8 @@ jobs:
           RACE_DATA: ${{ runner.temp }}/race
       - name: Record Fantasy Producers
         if: ${{ vars.FANTASY_ENABLED == 'true' }}
+        # A Fantasy problem must not stop Block X's results from publishing (audit FX-4).
+        continue-on-error: true
         run: npm run fantasy
         env:
           RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
@@ -104,7 +111,7 @@ jobs:
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
           bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/fantasy" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/fantasy/\(index\|board\|days\|rivals\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
-          big=$(find "$IN" -type f -size +2048k -print)
+          big=$(find "$IN" -type f ! -path "$IN/fantasy/*" -size +2048k -print; find "$IN/fantasy" -type f -size +8192k -print 2>/dev/null || true)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
           # The content must be the recorder's own shape, not only parse as JSON.
           /usr/bin/python3 - "$IN/blockx" <<'PY'
@@ -144,9 +151,21 @@ jobs:
               assert type(j["targets"]) is list and len(j["targets"]) <= 100 and all(target_ok(t) for t in j["targets"]), f
           print("games files ok")
           PY
-          if [ -d "$IN/fantasy" ]; then /usr/bin/python3 - "$IN/fantasy" <<'PY'
+          # Fantasy: what was published before must not change behind the players' backs (audit FX-2): a price list once
+          # published, a final week, the counted rival weeks and records.
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          mkdir -p "$RUNNER_TEMP/parent/fantasy"
+          set +e; git ls-remote --exit-code --heads "$remote" games-data > /dev/null 2>&1; prc=$?; set -e
+          if [ "$prc" -ne 0 ] && [ "$prc" -ne 2 ]; then echo "::error::Couldn't read the published games-data (git exit $prc)."; exit 1; fi
+          if [ "$prc" -eq 0 ]; then
+            git init -q "$RUNNER_TEMP/pgit" && git -C "$RUNNER_TEMP/pgit" fetch -q --depth 1 "$remote" games-data
+            for f in $(git -C "$RUNNER_TEMP/pgit" ls-tree --name-only FETCH_HEAD:fantasy 2>/dev/null); do
+              if [[ "$f" =~ ^(index|rivals|W[0-9]{3})\.json$ ]]; then git -C "$RUNNER_TEMP/pgit" show "FETCH_HEAD:fantasy/$f" > "$RUNNER_TEMP/parent/fantasy/$f"; fi
+            done
+          fi
+          if [ -d "$IN/fantasy" ]; then /usr/bin/python3 - "$IN/fantasy" "$RUNNER_TEMP/parent/fantasy" <<'PY'
           import json, os, re, sys
-          d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          d, parent = sys.argv[1], sys.argv[2]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
           num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
           nat = lambda x: type(x) is int and 0 <= x < 10**16
           A = lambda x: type(x) is str and addr.fullmatch(x) is not None
@@ -159,11 +178,11 @@ jobs:
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               assert type(j) is dict and j.get("v") == 1, f
               if f == "index.json":
-                  assert set(j) == {"v", "updated", "weeks", "contract", "games", "clock"} and all(nat(w) for w in j["weeks"]), f
+                  assert set(j) == {"v", "updated", "weeks", "contract", "games", "clock", "vaultBasis"} and j["vaultBasis"] in ("all", "staked") and all(nat(w) for w in j["weeks"]), f
                   assert j["contract"] is None or A(j["contract"]), f
                   assert j["games"] == {"team": 4, "rival": 5} and j["clock"]["day"] == 86400000, f
               elif f == "days.json":
-                  assert set(j) == {"v", "days", "live"} and type(j["days"]) is list and len(j["days"]) <= 30 and all(day_ok(x, True) and x["checked"] in (1, 2) for x in j["days"]), f
+                  assert set(j) == {"v", "days", "live"} and type(j["days"]) is list and len(j["days"]) <= 80 and all(day_ok(x, True) and x["checked"] == 2 for x in j["days"]), f
                   assert j["live"] is None or day_ok(j["live"], False), f
               elif f == "rivals.json":
                   assert set(j) == {"v", "weeks", "records"} and all(nat(w) for w in j["weeks"]), f
@@ -184,12 +203,28 @@ jobs:
                   assert j["rivals"] is None or all(A(a) and A(b) for a, b in j["rivals"]), f
                   for r in j["players"]:
                       assert A(r["a"]) and num(r["points"]) and nat(r["vault"]) and r["vault"] <= 255 and type(r["full"]) is bool and nat(r["place"]), f
-                      assert len(r["days"]) == 7 and all(team(x["team"]) and num(x["score"]) for x in r["days"]), f
+                      pos = lambda t: t is None or (type(t) is list and len(t) == 5 and len(set(t)) == 5 and all(type(i) is int and 0 <= i < len(s["pool"]) for i in t))
+                      assert s is not None and len(r["days"]) == 7 and all(type(x) is list and len(x) in (2, 3) and pos(x[0]) and num(x[1]) and (len(x) == 2 or (type(x[2]) is str and len(x[2]) <= 120)) for x in r["days"]), f
+                  assert not j["final"] or j["picks"] == {}, f
                   assert all(A(m["a"]) and A(m["b"]) and m["result"] in ("a", "b", "draw") for m in j["matches"]), f
+          # Compare with what is already published.
+          old = lambda f: json.load(open(os.path.join(parent, f), encoding="utf-8")) if os.path.exists(os.path.join(parent, f)) else None
+          for f in os.listdir(d):
+              j, o = json.load(open(os.path.join(d, f), encoding="utf-8")), old(f)
+              if o is None: continue
+              if f.startswith("W"):
+                  if o.get("final"): assert j == o, f + ": a final week can't change"
+                  if o.get("sheet") is not None: assert j["sheet"] == o["sheet"] and j["sha256"] == o["sha256"], f + ": a published price list can't change"
+              elif f == "rivals.json":
+                  assert set(o["weeks"]) <= set(j["weeks"]), f + ": counted weeks can't go missing"
+                  for a, r in o["records"].items():
+                      n = j["records"].get(a)
+                      assert n is not None and all(n[k][i] >= r[k][i] for k in ("made", "received") for i in range(3)), f + ": a rival record can't go down"
+              elif f == "index.json":
+                  assert set(o["weeks"]) <= set(j["weeks"]), f + ": weeks can't go missing"
           print("fantasy files ok")
           PY
           fi
-          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git init -q work && cd work
           parent=""
           if git fetch -q --depth 1 "$remote" games-data 2>/dev/null; then

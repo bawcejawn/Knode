@@ -494,6 +494,7 @@ export function testPage(html: string): string {
   swap('<script src="guest.js"></script>', "");
   swap('<script src="wallet.js"></script>', '<script src="/testnet/fantasy-net.js"></script>\n  <script src="/testnet/test-wallet.js"></script>');
   swap('<script src="header-wallet.js"></script>', "");
+  html = html.replace(/\s*<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/kondor-js[^"]*"[^>]*><\/script>/, "");   // not used on the practice page
   return html;
 }
 const RPC_METHODS = new Set(["chain.get_head_info", "chain.get_chain_id", "chain.read_contract", "block_store.get_blocks_by_height", "chain.get_account_rc",

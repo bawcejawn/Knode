@@ -25,7 +25,7 @@ test("practice page: the TESTNET bar, the test settings and test wallet instead 
   assert.match(p, /<title>TESTNET · /);
   assert.match(p, /class="tn-bar"/);
   assert.match(p, /\/testnet\/fantasy-net\.js[\s\S]*\/testnet\/test-wallet\.js[\s\S]*race-math\.js[\s\S]*fantasy-math\.js[\s\S]*fantasy\.js/);
-  for (const real of ['src="guest.js"', 'src="wallet.js"', 'src="header-wallet.js"']) assert.ok(!p.includes(real), `no ${real}`);
+  for (const real of ['src="guest.js"', 'src="wallet.js"', 'src="header-wallet.js"', '<script src="https://cdn.jsdelivr.net/npm/kondor-js']) assert.ok(!p.includes(real), `no ${real}`);
 });
 
 test("game settings: the contract's rules, the same shape whenever the test week starts", () => {
