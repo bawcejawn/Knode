@@ -181,6 +181,7 @@
       $("ev-sub").textContent = df && df.void ? `No race this time: ${df.void}.` : "The field is set from a Producer Race card and each node's form, a few minutes after picks open.";
       track.replaceChildren(el("p", { class: "note", style: "margin:6px 2px", text: `No race in the arena right now. The next one starts at ${clock(nx.start)}: pick your node below.` }));
       $("fallen").replaceChildren();
+      legendYou(ev, null);
       renderField(null); renderMe(ev, null, null); return;
     }
     const { hours, partial } = liveHours(df, now);
@@ -198,6 +199,7 @@
       : now < ev.start ? `${n} nodes. Picks close at ${clock(cutoff(ev.round))}, first cut at ${clock(ev.start + H)}.`
       : `${res.standing.length} of ${n} still standing${recorded < res.cuts.length ? " · latest cut not final yet" : ""}`;
     const mine = myState(ev, df, res);
+    legendYou(ev, mine);
     const tot = new Map(live.totals.map((t) => [t.a, t]));
     // The node that would go if the cut were now: the live cut beyond the recorded ones (none before the start).
     const wouldGo = partial && live.cuts.length > res.cuts.length ? live.cuts[res.cuts.length].a : null;
@@ -249,6 +251,17 @@
   function jumpOpen(df, res, ev, now = nowT()) {
     const at = L.canJump(df.field, res, picksFor(ev)), r = at ? L.roundForJump(df.start, at) : null;
     return r != null && now < cutoff(r) ? r : null;
+  }
+  /** The legend's "Your node": shown when you're in the race on screen. With a pick only for a later event, it says
+   *  which one, so a missing highlight isn't a surprise. */
+  function legendYou(ev, mine) {
+    const box = $("legend-you"), txt = $("legend-you-text");
+    if (!box || !txt) return;
+    if (mine && mine.entered) { box.hidden = false; txt.textContent = "Your node"; return; }
+    let later = null;
+    for (let e = L.nextEvent(ev), k = 0; k < 3 && !later; k++, e = L.nextEvent(e)) if (myPicks.has(e.round)) later = e;
+    box.hidden = !later;
+    if (later) txt.textContent = `Your pick, ${nameOf(myPicks.get(later.round))}, races in the ${dayTime(later.start)} event, not this one`;
   }
   function flash(big, small, kind) {
     const box = $("arena");
