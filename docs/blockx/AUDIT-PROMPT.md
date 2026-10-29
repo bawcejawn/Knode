@@ -1,13 +1,16 @@
-# Audit prompt: Who Signs Block X (after testnet testing; for Repo Lens or any auditor)
+# Audit prompt: Who Signs Block X + Mana sponsor v3 (for Repo Lens or any auditor)
 
 Copy everything below the line into the auditor. Give it the repository `bawcejawn/Knode` at branch `picks`, or the
 audit package `blockx-audit-package.zip` (the same files, with this prompt as `00-AUDIT-PROMPT.md`).
 
 ---
 
-You are an independent smart-contract and web security auditor. Audit **Who Signs Block X**, a free prediction game
-on Koinos, in the repository `bawcejawn/Knode`, branch `picks`. Do not trust the comments or the docs: check the
+You are an independent smart-contract and web security auditor. Audit two things that go live together on Koinos
+mainnet, in the repository `bawcejawn/Knode`, branch `picks`: **Part A, Who Signs Block X** (a free prediction game
+and its Picks contract) and **Part B, the Mana sponsor v3** (the contract that pays players' Mana). Do not trust the comments or the docs: check the
 code. Do not send any transaction to mainnet.
+
+## Part A: Who Signs Block X and the Picks contract
 
 **What it is.** A Koinos contract, `picks/assembly/Picks.ts` (AssemblyScript, @koinos/sdk-as 1.5.1), stores one pick
 per wallet per round of each game. The chain enforces each game's lock, opening window, choice and caps. It must hold
@@ -61,10 +64,39 @@ with no problems. Check these conclusions against the code; P-5 asked for exactl
    uploads only the audited build on mainnet; the upload is signed by the new Picks wallet and paid by a second
    wallet (`PAYER_WIF`, else `OPERATOR_WIF`), so the Picks wallet never holds KOIN it could not move out again.
 
-**Out of scope.** The Mana sponsor contract (`sponsor/`, its v3 is audited separately) and the game vault. Do
-note anything in Block X that relies on the sponsor (what a sponsored pick must look like, the spam budget).
+## Part B: Mana sponsor v3 (`sponsor/`)
 
-**Report.** A table of findings: ID (BX-1, BX-2, …), severity (Critical/High/Medium/Low/Info), file:line, a concrete
-attack or failure scenario, and a fix. Then a verdict: "ready for mainnet", "fix first" or "not ready", and the
-findings that must be fixed before mainnet. Where you can, add a failing test (as-pect for the contract, node:test
+**What it is.** A contract uploaded onto the sponsor wallet `1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8` with only the
+transaction-application override on. When a transaction names it as payer, its `authorize` decides whether to pay:
+only listed player actions, signed by the player (payee) alone, within per-transaction, per-player daily/weekly,
+everyone-daily and free-player-daily caps. Live on mainnet: v2 `fa4659e6…`. Candidate: v3 sha256
+`21bec82583e1a7decbb2c70376f4b08e026f617c32bca268ab700f50e9aef2df` (rebuild: `cd sponsor; npm ci; npm test;
+npm run check`). Read `sponsor/README.md` and `sponsor/assembly/proto/sponsor.proto`.
+
+**Earlier audits.** `docs/history/AUDIT-2026-10-27-sponsor-v3.md` (S3-1…S3-8) and the v1/v2 audits it cites. Check
+the fixes are still in place.
+
+**New since that audit (look hardest here).**
+1. `CAP_LIMIT` 5,000 Mana a day (was 1,000); weekly per-player ceiling 7 × that. Any u64 or ordering issue?
+2. `config.mana_caps` (up to 16 rows {contract, entry point, max Mana}): a transaction's `rc_limit` must be at most
+   the sum of its operations' rows (no row: `max_mana_per_tx`), and at most `max_mana_per_tx`. The caps count
+   `rc_limit` (authorize runs before execution) while the chain charges the payer only what is used. Can the budget
+   check be bypassed, overflow, or make the sponsor pay for anything it shouldn't? Can a too-low row make players'
+   transactions fail, and what is lost then?
+3. The Mana adjuster (`bot/mana-limits.ts`, `bot/sponsor.ts` mana-report / mana-limit / config): limits from
+   measured `rc_used` (1.5 ×, floor 0.02, never below 1.25 × the most used, never lowered below an older maximum).
+   Is the math right (bigint rounding, batches split per operation)? Can the website's copy of the limits
+   (`sponsor.rcLimits` in game-data/desk-data deployment.json, used by `site/wallet.js` `rcFor`) disagree with the
+   chain in a way that hurts players (guests have no Mana to fall back on)?
+4. The allowlist row for the Picks `pick` (built by `bot/sponsor.ts`): the sponsor and the Picks contract must read
+   the same player from the same bytes (`argsPlayer`, `PICKS_ARG_TYPES`).
+5. Spam: with free play paid for any wallet (2,000 Mana a day shared by wallets with no VHP and no stake; 50 per
+   wallet per day), what can one attacker cost the sponsor per day, and can they lock out real players? Use the
+   measured 0.048 Mana per pick.
+
+**Out of scope.** The game vault and the daily-questions game contract (audited separately).
+
+**Report.** A table of findings: ID (BX-1, BX-2, … for Part A; SP-1, SP-2, … for Part B), severity (Critical/High/Medium/Low/Info), file:line, a concrete
+attack or failure scenario, and a fix. Then a verdict for each part: "ready for mainnet", "fix first" or "not
+ready", and the findings that must be fixed before mainnet. Where you can, add a failing test (as-pect for the contract, node:test
 for the rest) that shows each High or Medium finding.
