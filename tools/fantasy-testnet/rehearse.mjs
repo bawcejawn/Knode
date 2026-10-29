@@ -120,6 +120,7 @@ step(`${ticks} recorder runs over ${((clock.now() - g) / H).toFixed(1)} test hou
 
 // 6. checks.
 const data = (n) => JSON.parse(fs.readFileSync(path.join(dir, "data", n), "utf8"));
+if (!fs.existsSync(path.join(dir, "data", "W001.json"))) console.log("Recorder notes (last 20):\n" + notes.slice(-20).join("\n"));
 const w0 = data("W000.json"), w1 = data("W001.json"), days = data("days.json"), rv = data("rivals.json"), board = data("board.json");
 const crypto = await import("node:crypto");
 for (const w of [w0, w1]) {

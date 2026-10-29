@@ -35,6 +35,7 @@ Plan and owner decisions: `claude/builds/05-fantasy-plan.md` in the KnodeGames p
 | `fantasy-math.js` | the rules and scoring; the page and the recorder both run it |
 | `bot/games/fantasy.ts` | the recorder: read only, two nodes must agree, publishes `games-data/fantasy/` |
 | `fantasy.html`, `fantasy.js`, `fantasy.css` | the game page (noindex, not in the menus until launch) |
+| `stake-panel.js` (shared, the site's) | Stake / Withdraw / Move / Claim for game 4 on the live page; hidden until Vault v6 is live |
 | `.github/workflows/games.yml` | runs the recorder hourly once `FANTASY_ENABLED` is `true`; checks the files' shape |
 | `bot/fantasy-test.ts`, `tools/fantasy-testnet/` | the testnet practice kit (`docs/fantasy/TESTNET.md`) and its offline rehearsal |
 
@@ -74,7 +75,7 @@ node --import tsx tools/fantasy-testnet/rehearse.mjs        # about 5 minutes: 2
   Fantasy files may be up to 8 MB, and a Fantasy failure never blocks Block X's publishing.
 
 ## Before launch (needs the vault and the Picks contract live)
-1. Independent audit and fix-check of this branch.
+1. Repo Lens fix-check of this branch (`docs/fantasy/FIXCHECK-PROMPT.md`) and its fixes; re-run the simulation on a full week of real data.
 2. Register Picks games 4 and 5 on mainnet (48 h wait), with the settings `KFantasyMath.games()` prints.
 3. Merge; set `FANTASY_ENABLED=true`; first price list the Saturday (00:00 UTC) before the launch Monday.
 4. Vault v6: register Fantasy as staked game 4; add `games-data:fantasy` to `vaultGames`. Once the v6 ABI is in

@@ -68,7 +68,9 @@ export async function startFakeChain({ name, clock, chainId, producers, blockMs 
   }
   function call(contract, fn, args, payer, t, h) {
     if (contract === koin || contract === vhp) {
-      if (fn === "balance_of") return { value: String(getBal(contract, args.owner)) };
+      // effective_balance_of: the VHP block production uses (the race cards read it since audit BX-3 b). The fake chain
+      // has no 20-block delay, so it is the balance.
+      if (fn === "balance_of" || fn === "effective_balance_of") return { value: String(getBal(contract, args.owner)) };
       if (fn === "total_supply") return { value: String([...bal.entries()].filter(([k]) => k.startsWith(contract + "|")).reduce((s, [, v]) => s + v, 0n)) };
       if (fn === "transfer") {
         if (args.from !== payer) fail("from is not the signer");
