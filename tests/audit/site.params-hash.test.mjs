@@ -7,7 +7,7 @@ import vm from "node:vm";
 import { webcrypto } from "node:crypto";
 import { paramsHashOf } from "../../resolver.ts";
 
-const app = fs.readFileSync("site/app.js", "utf8");
+const app = fs.readFileSync("app.js", "utf8");
 const a = app.indexOf("// params-hash:start"), b = app.indexOf("// params-hash:end");
 assert.ok(a > 0 && b > a, "params-hash markers in site/app.js");
 const ctx = vm.createContext({ crypto: webcrypto, TextEncoder, Uint8Array });

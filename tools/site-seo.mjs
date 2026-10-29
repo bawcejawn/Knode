@@ -1,11 +1,11 @@
 // Writes each page's search and share tags (title, description, canonical link, Open Graph, Twitter, and JSON-LD on the
 // game page), plus robots.txt and sitemap.xml at the site root. Run after changing SITE (for example when the custom
 // domain is live) or a page's text:   node tools/site-seo.mjs
-// SITE is the address of the site/ folder. With a custom domain whose root serves this repository, it becomes
-// "https://your-domain/site/"; robots.txt and sitemap.xml are written to the repository root, which is the domain root.
+// SITE is the site's address. The pages sit at the repository root, which GitHub Pages serves as the domain root, so
+// robots.txt and sitemap.xml are written there too.
 import fs from "node:fs";
 
-export const SITE = "https://knodegames.com/site/";
+export const SITE = "https://knodegames.com/";
 const ROOT = new URL("../", import.meta.url).pathname;
 
 export const PAGES = [
@@ -83,11 +83,11 @@ export function apply(html, p) {
 
 if (process.argv[1] && process.argv[1].endsWith("site-seo.mjs")) {
   for (const p of PAGES) {
-    const f = ROOT + "site/" + p.file;
+    const f = ROOT + p.file;
     fs.writeFileSync(f, apply(fs.readFileSync(f, "utf8"), p));
   }
   const today = new Date().toISOString().slice(0, 10);
   fs.writeFileSync(ROOT + "sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${PAGES.map((p) => `  <url><loc>${SITE + p.path}</loc><lastmod>${today}</lastmod><priority>${p.priority}</priority></url>`).join("\n")}\n</urlset>\n`);
-  fs.writeFileSync(ROOT + "robots.txt", `# Knode Games, https://knodegames.com\nUser-agent: *\nAllow: /\nDisallow: /site/producer.html\nSitemap: ${SITE.replace(/site\/$/, "")}sitemap.xml\n`);
+  fs.writeFileSync(ROOT + "robots.txt", `# Knode Games, https://knodegames.com\nUser-agent: *\nAllow: /\nDisallow: /producer.html\nSitemap: ${SITE}sitemap.xml\n`);
   console.log(`Wrote tags for ${PAGES.length} pages, sitemap.xml and robots.txt (site: ${SITE}).`);
 }

@@ -8,8 +8,8 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const KOIN = 100_000_000n;
-const app = fs.readFileSync("site/app.js", "utf8");
-const wallet = fs.readFileSync("site/wallet.js", "utf8");
+const app = fs.readFileSync("app.js", "utf8");
+const wallet = fs.readFileSync("wallet.js", "utf8");
 
 const a = app.indexOf("// claim-mana:start"), b = app.indexOf("// claim-mana:end");
 assert.ok(a > 0 && b > a, "claim-mana markers in site/app.js");

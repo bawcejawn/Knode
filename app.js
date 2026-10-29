@@ -11,7 +11,7 @@
   // Block explorer links (change here if the explorer's address format differs).
   const EXPLORER_ADDRESS = "https://koinosscan.com/address/";
   const EXPLORER_PRODUCERS = "https://koinosscan.com/producers";
-  const BASE = location.pathname.includes("/site/") ? "../" : "./";
+  const BASE = "./";
   const DATA = BASE + "game-data/";
   const ABI_URL = BASE + "game/abi/kpred.koilib.json";
   const lib = window.koilib || window.koinos || window; // koilib's browser build exposes Contract, Provider, ...

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const APP = process.env.APP || ".";
-const dir = `${APP}/site`;
+const dir = `${APP}`;
 const pages = fs.readdirSync(dir).filter((f) => f.endsWith(".html"));
 const scripts = fs.readdirSync(dir).filter((f) => f.endsWith(".js"));
 const read = (f) => fs.readFileSync(`${dir}/${f}`, "utf8");

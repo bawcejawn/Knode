@@ -105,7 +105,7 @@
   W.init({ provider: lib && lib.Provider ? new lib.Provider(["https://koinos.armana.io"]) : null, toast });
   // Guest play is offered on every page: read the owner's switch (game-data/deployment.json, this site's own file).
   if (W.setGuestConfig && window.KGuest) {
-    const base = location.pathname.includes("/site/") ? "../" : "./";
+    const base = "./";
     fetch(base + "game-data/deployment.json", { cache: "no-cache" }).then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (d && d.sponsor) W.setGuestConfig({ payer: d.payer, sponsor: d.sponsor }); }).catch(() => { /* no guest option then */ });
   }
