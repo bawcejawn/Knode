@@ -197,6 +197,30 @@ test("leaderboard: best 10 cards, ties by hits then the earlier last hit", () =>
   assert.equal(b[3].player, "D"); assert.equal(b[3].pts, 0);
 });
 
+test("vault file: staked players with points, mapped onto 1..255 keeping order and ties; no free prizes", () => {
+  const W = C.vaultWeek(Date.parse("2026-11-03T10:00:00Z"));
+  assert.equal(W, 2); assert.equal(C.vaultWeek(Date.parse("2026-10-19T00:00:00Z")), 0); assert.equal(C.vaultWeek(Date.parse("2026-10-25T23:59:59Z")), 0);
+  const P = (i) => "1" + String(i).padStart(33, "A").replace(/0/g, "B");
+  const rows = [
+    { player: P(1), pts: 4374000, staked: true }, { player: P(2), pts: 2700, staked: true }, { player: P(3), pts: 2700, staked: true },
+    { player: P(4), pts: 1, staked: true }, { player: P(5), pts: 9999999, staked: false }, { player: P(6), pts: 0, staked: true },
+    { player: "not an address", pts: 500, staked: true },
+  ];
+  const f = plain(C.vaultFile(W, true, rows));
+  assert.deepEqual(f, { game: 8, week: 2, final: true, first: [], second: [],
+    rows: [{ player: P(1), points: 255 }, { player: P(2), points: 254 }, { player: P(3), points: 254 }, { player: P(4), points: 253 }] });
+  // nobody qualifies: an empty file is still written for the week
+  assert.deepEqual(plain(C.vaultFile(W, true, [{ player: P(1), pts: 0, staked: true }])).rows, []);
+  assert.equal(C.vaultFile(W, "yes", []).final, false, "final only when exactly true");
+  // more than 255 distinct scores: the top 254 keep their order, the rest share 1
+  const many = Array.from({ length: 300 }, (_, i) => 1000 + i);
+  const m = C.toVaultPoints(many);
+  assert.equal(m[299], 255); assert.equal(m[298], 254); assert.equal(m[299 - 253], 2);
+  for (let i = 0; i <= 299 - 254; i++) assert.equal(m[i], 1);
+  for (let i = 1; i < 300; i++) assert.ok(m[i] >= m[i - 1], "order kept");
+  assert.ok(m.every((v) => Number.isInteger(v) && v >= 1 && v <= 255));
+});
+
 test("share text", () => {
   assert.equal(C.shareText([1, 2, 3, 4], ["hit", "hit", "pending", "miss"], 0), "KnodeGames Combo · 4 legs · ✅✅⏳❌ · 0 pts");
   assert.equal(C.shareText([1, 2], ["hit", "hit"], 2735), "KnodeGames Combo · 2 legs · ✅✅ · 27.35 pts");

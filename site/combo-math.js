@@ -246,6 +246,26 @@
     return ranked.map((r, i) => { const p = ranked[i - 1]; if (!p || p.pts !== r.pts || p.hits !== r.hits || p.lastHit !== r.lastHit) place = i + 1; return { ...r, place }; });
   }
 
+  // ── the Vault's weekly file (hand-off from the Vault v6 chat, 2026-10-28) ──
+  /** The Vault week of a time: week 0 began Monday 19 Oct 2026 00:00 UTC (the same week as KRaceMath.weekOf). */
+  const vaultWeek = (t) => M.weekOf(t);
+  /** Scores onto 1..255 for the Vault, which only uses their order: distinct scores, highest first, get 255, 254, ...;
+   *  equal scores stay equal. If there are more than 255 distinct scores, the lowest ones share 1 (the top 254 keep
+   *  their exact order). scores: numbers above 0. Returns the mapped values in the same order. */
+  function toVaultPoints(scores) {
+    const distinct = [...new Set(scores)].sort((a, b) => b - a);
+    const rank = new Map(distinct.map((v, i) => [v, Math.max(1, 255 - i)]));
+    return scores.map((v) => rank.get(v));
+  }
+  /** Combo Card's file for the Vault: staked game, so rows only (no free prizes). boardRows: C.board() rows for the
+   *  week, each with { player, pts (hundredths), staked (bool) }. Only staked players with points above 0 are listed
+   *  (owner's player rule: at least 1 VHP staked in the Combo Card at the week's start). */
+  function vaultFile(week, final, boardRows) {
+    const ok = (boardRows || []).filter((r) => r && r.staked === true && r.pts > 0 && isAddr(r.player));
+    const pts = toVaultPoints(ok.map((r) => r.pts));
+    return { game: GAME_ID, week, final: final === true, rows: ok.map((r, i) => ({ player: r.player, points: pts[i] })), first: [], second: [] };
+  }
+
   // ── share ──
   /** A short text for sharing a card: "KnodeGames Combo · 4 legs · ✅✅⏳❌ · 0 pts". */
   function shareText(legs, results, pts) {
@@ -258,5 +278,6 @@
     CARDS_PER_DAY, MAX_CHANGES, BEST, RACE_LEAD_MS, RACE_AHEAD_MS, BLOCK_LEAD, BLOCK_AHEAD,
     isWindow, slotKey, slotRound, dayOfRound, utcDay, lockOf, legOpen, cardLockTime, cardProblem,
     priceCard, raceChances, factorOf, priceLeg, pointsFor, potential, legResult, scoreCard, board, places, shareText,
+    vaultWeek, toVaultPoints, vaultFile,
   };
 })(typeof window !== "undefined" ? window : globalThis);
