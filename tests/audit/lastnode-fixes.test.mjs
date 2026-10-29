@@ -160,3 +160,13 @@ test("fix-check: the two mainnet nodes are compared however they are spelled", a
   assert.notEqual(nodeKey("https://koinos.armana.io"), nodeKey("https://api.koinosblocks.com"));
 });
 void os;
+
+test("owner 2026-10-29: a backup for the first cut can be set before the start, on the round the rules read for it", () => {
+  assert.match(page, /const b1 = L\.roundForJump\(nx\.start, 1\), backup = myPicks\.get\(b1\);/);
+  assert.match(page, /sendPick\(b1, a, "your backup for the first cut"\)/);
+  assert.match(page, /new Set\(\[nx\.round, ev\.round, L\.roundForJump\(nx\.start, 1\)\]\)/, "and it is read back");
+  // The rules count a pick for that round as the jump at the first cut.
+  const ev = L.eventOf(Date.UTC(2026, 10, 3, 12));
+  assert.equal(L.roundForJump(ev.start, 1), ev.round + 2);
+  assert.ok(L.pickable(L.roundForJump(ev.start, 1), ev.lock - 30 * MIN, {}, MARGIN), "open while the start pick is");
+});

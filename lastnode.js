@@ -383,6 +383,14 @@
       el("p", { class: "ln-cta", text: startMine ? `You drop in on ${nameOf(startMine)} at ${clock(nx.start)}` : `Pick your node for the ${clock(nx.start)} drop` }),
       el("p", { class: "note", style: "margin:0", text: `Picks close in ${dur(cutoff(nx.round) - now)}, at ${clock(cutoff(nx.round))}${startMine ? "; you can switch until then" : ""}. Tip: a node that signs every block it should is hard to knock out.` }),
       picker(startMine ? "Switch to" : "Drop in", nf.field.nodes.map((x) => x.a), startMine, (a) => sendPick(nx.round, a, `your node for the ${clock(nx.start)} event`), "", nx.round, nf)));
+    // A backup for the first cut, set ahead of the start (owner, 2026-10-29): if your node goes at the first cut, you
+    // jump to it automatically. Later backups are set from "Your run" once the race is on.
+    if (nf && nf.field && nx.open && startMine) {
+      const b1 = L.roundForJump(nx.start, 1), backup = myPicks.get(b1);
+      if (pickable(b1)) parts.push(el("div", { class: "ln-act" },
+        el("p", { class: "note", style: "margin:0 0 10px", text: (backup ? `Backup set: if ${nameOf(startMine)} goes at the first cut (${clock(nx.start + H)}), you jump to ${nameOf(backup)}.` : `Optional backup: if ${nameOf(startMine)} goes at the first cut (${clock(nx.start + H)}), you jump to it automatically.`) + " It covers that cut only; one jump per event." }),
+        picker(backup ? "Change backup" : "Set backup", nf.field.nodes.map((x) => x.a).filter((a) => a !== startMine), backup, (a) => sendPick(b1, a, "your backup for the first cut"), "ghost", b1, nf)));
+    }
     else parts.push(el("p", { class: "note", style: "margin:0", text: `The field for the ${dayTime(nx.start)} event appears when picks open, at ${clock(nx.opens)}.` }));
     box.replaceChildren(...parts);
   }
@@ -487,7 +495,7 @@
     if (who !== mineWho) { drafts.clear(); myPicks.clear(); mineWho = who; mineOk = false; mineErr = false; }
     if (!picksContract || !who) { mineOk = true; return; }
     const { ev, df } = shownEvent(), nx = nextEntry();
-    const rounds = new Set([nx.round, ev.round]);
+    const rounds = new Set([nx.round, ev.round, L.roundForJump(nx.start, 1)]);
     const n = df && df.field ? df.field.nodes.length : 0;
     for (let o = 2; o <= n; o++) rounds.add(ev.round + o);
     try {
