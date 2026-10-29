@@ -44,6 +44,11 @@ jobs:
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-samples 2>/dev/null; then
             if git cat-file -e "FETCH_HEAD:vhp-samples.json" 2>/dev/null; then git show "FETCH_HEAD:vhp-samples.json" > "$RUNNER_TEMP/prev/vhp-samples.json"; fi
           else echo "No race-samples branch yet."; fi
+          # Audit BX-53: the newest published race week files, so every producer on the latest card is sampled too
+          # (read only; nothing from race-data is published by this job).
+          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
+            for f in $(git ls-tree --name-only FETCH_HEAD | grep -E '^W[0-9]{3}\.json$' | sort | tail -n 2); do git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; done
+          fi
       - name: Take a sample (at a random moment in the next 4 minutes)
         run: npm run race -- --sample
         env:

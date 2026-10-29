@@ -287,7 +287,7 @@ test("workflow: the recorder holds no secret and no write token; only the publis
 
 test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 
-test("audit BX-4 / BX-37: VHP is combined producer by producer: one that differs counts at the higher read, never above the top both agree on; the card is still made", async () => {
+test("audit BX-4 / BX-37 / BX-55 (round 3): VHP is combined producer by producer: one that differs counts at the LOWER read and is flagged on the card; the card is still made", async () => {
   const at = U("2026-11-02T05:37Z"), log = console.log;
   const off = (f, who = P[1]) => async (w) => Object.fromEntries(w.map((a) => [a, String(Math.round((VHP[P.indexOf(a)] || 0) * 1e8 * (a === who ? f : 1)))]));
   const go = async (f, who) => {
@@ -298,11 +298,15 @@ test("audit BX-4 / BX-37: VHP is combined producer by producer: one that differs
   const one = await go(1.5);
   const card = race(one.out, "2026-11-02T06").cards[0], all = [...card.field, ...card.paddock];
   assert.ok(card, "one producer's disagreement no longer holds the card for everyone");
-  assert.equal(all.find((x) => x.a === P[1]).vhp, 375, "P[1] counts at the higher read (250 x 1.5)");
+  assert.ok(all.find((x) => x.a === P[1]).vhp < 375, "P[1] is not lifted to the other node's higher read");
+  assert.deepEqual(card.flagged, [P[1]], "and it is flagged on the card");
   assert.ok(one.r.problems.some((x) => /disagree on .*VHP/.test(x)));
-  const top = await go(10, P[0]);                         // one node says the top producer has 10x: capped
-  const all2 = [...race(top.out, "2026-11-02T06").cards[0].field, ...race(top.out, "2026-11-02T06").cards[0].paddock];
-  assert.ok(all2.find((x) => x.a === P[0]).vhp <= 400, "never above the largest VHP both nodes agree on");
+  const top = await go(10, P[0]);                         // one node says the top producer has 10x: the lower read counts
+  const c2 = race(top.out, "2026-11-02T06").cards[0], all2 = [...c2.field, ...c2.paddock];
+  assert.ok(all2.find((x) => x.a === P[0]).vhp <= 400, "never the inflated read");
+  assert.deepEqual(c2.flagged, [P[0]]);
+  const same = await go(1);
+  assert.equal(race(same.out, "2026-11-02T06").cards[0].flagged, undefined, "no flag when the nodes agree");
 });
 
 test("audit BX-36: the 6 hours of blocks behind the card must match on both nodes; a node that drops a signer gets no card made", async () => {

@@ -29,7 +29,7 @@
  *   npm run blockx                          mainnet (RPC, RPC_CHECK, BLOCKX_PREV, BLOCKX_OUT, RACE_DATA)
  *   npm run blockx -- --testnet --game 2    one game of testnet/blockx.json (TESTNET_RPC overrides its rpc)
  */
-import { Provider, Contract } from "koilib";
+import { Provider, Contract, utils as kutils } from "koilib";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -53,7 +53,7 @@ type Pick = [string, string, number, number, number];
 type Target = {
   round: number; height: number; final: true; checked: number;
   signer: string | null; time: number; lockTime: number;
-  card: { at: number; top: number; signerVhp: number | null } | null;
+  card: { at: number; top: number; signerVhp: number | null; afterAt?: number } | null;   // afterAt: the first card after X (BX-35)
   void?: string; picks: Pick[];
 };
 type WeekFile = { v: 1; week: number; start: number; end: number; game?: number; targets: Target[] };
@@ -76,6 +76,8 @@ export type Opts = {
   stakeOf?: (who: string[], node: any, week: number) => Promise<{ min: bigint; week: Map<string, bigint> } | null>;
   signersOf?: (node: any, from: number, to: number) => Promise<{ signers: string[]; first: number; last: number; n: number }>;
   vhpOf?: (who: string[]) => Promise<Record<string, string>>;
+  /** Tests: VHP moved into `who` in blocks from..to (audit BX-53). */
+  vhpMovesOf?: (node: any, who: string, from: number, to: number) => Promise<bigint>;
   head?: { height: number; time: number; lib: number };
 };
 
@@ -153,27 +155,85 @@ const GAME_ABI = () => JSON.parse(fs.readFileSync(new URL("../../game/abi/kpred.
  *  stake the vault counts (the lowest that week; 0 if all was withdrawn), and the entry's `peak_stake` (else the
  *  active stake) is the most it had (a free player never reached the minimum). Before v6 is live
  *  (get_state → config.v6_rule_week_plus_one = 0) nobody is staked. Audit BX-15: a failed read is an error. */
-export const VAULT_ABI = () => JSON.parse(fs.readFileSync(new URL("../../game/abi/kpred-v6.koilib.json", import.meta.url), "utf8"));
+// Audit BX-61: game/abi/kpred-v6.koilib.json is the vault v6 ABI, copied from the vault repo (branch vault-v6-next,
+// f1ecf59, game/abi/kpred.koilib.json, made there by game/scripts/make-abi.cjs from game/assembly/proto/kpred.proto).
+export const VAULT_ABI_FILE = new URL("../../game/abi/kpred-v6.koilib.json", import.meta.url);
+export const VAULT_ABI = () => JSON.parse(fs.readFileSync(VAULT_ABI_FILE, "utf8"));
+/** Audit BX-61: just enough of the vault's get_state (the same entry point in v5 and v6) to see whether v6 is live and
+ *  what the minimum stake is. Fields the vault has but this doesn't name are skipped by the decoder. So the "is v6
+ *  live?" check never needs the v6 ABI file: before v6, nothing else is read and nobody is staked. */
+const U64 = (id: number) => ({ type: "uint64", id, options: { jstype: "JS_STRING" } });
+export const STATE_ABI = {
+  methods: { get_state: { entry_point: 1023583049, argument: "kpred.get_state_arguments", return: "kpred.get_state_result", read_only: true } },
+  koilib_types: { nested: { kpred: { nested: {
+    get_state_arguments: { fields: {} },
+    get_state_result: { fields: { config: { type: "config_object", id: 1 } } },
+    config_object: { fields: { min_stake: U64(9), min_stake_next: U64(13), min_stake_next_week: U64(14), v6_rule_week_plus_one: U64(21) } },
+  } } } },
+};
 export type VaultView = { live: boolean; min: bigint; players: Map<string, { week: bigint; peak: bigint }> };
 export function minStakeFor(cfg: any, week: number): bigint {
   const next = BigInt(cfg?.min_stake_next || "0"), from = Number(cfg?.min_stake_next_week || 0);
   return next > 0n && week >= from ? next : BigInt(cfg?.min_stake || "0");
 }
-async function readVault(node: any, vault: string | null, game: number, who: string[], week: number): Promise<VaultView> {
-  const out: VaultView = { live: false, min: 0n, players: new Map() };
-  if (!vault) return out;
-  const c = new Contract({ id: vault, abi: VAULT_ABI(), provider: node });
-  const st: any = await withRetry("vault state", () => (c.functions as any).get_state({}));
-  if (!st || !("result" in st)) throw new Error("no answer reading the vault's state");
-  const cfg = st.result?.config ?? {};
-  if (!(Number(cfg.v6_rule_week_plus_one || 0) > 0)) return out;
-  const results = new Map<string, any>();
-  for (const a of who) {
-    const r: any = await withRetry(`vault: ${a} in game ${game}`, () => (c.functions as any).get_game_player({ player: a, game, week: String(week) }));
-    if (!r || !("result" in r)) throw new Error(`no answer reading ${a}'s stake in game ${game}`);
-    results.set(a, r.result ?? {});
-  }
-  return vaultView(cfg, results, week);
+/** Runs fn over items, at most `limit` at a time (audit BX-63). */
+export async function pool<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i]); } };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return out;
+}
+export const VAULT_READS_AT_ONCE = 8;
+/** The vault as Block X sees it, read once per run (audit BX-63): the state once per node, and each wallet's
+ *  get_game_player once per node and week (cached for the run; up to 8 reads at a time). Audit BX-61: the v6 check
+ *  comes first, with STATE_ABI; the v6 ABI file is loaded only once v6 is live. `abi` is for the tests. */
+export function vaultReader(vault: string | null, game: number, abi: () => any = VAULT_ABI) {
+  const state = new Map<any, Promise<any>>();
+  const stakeCache = new Map<any, Map<string, Promise<any>>>();   // node → "week|wallet" → its get_game_player answer
+  const cfgOf = (node: any) => {
+    let s = state.get(node);
+    if (!s) {
+      s = (async () => {
+        const c = new Contract({ id: vault!, abi: STATE_ABI as any, provider: node });
+        const st: any = await withRetry("vault state", () => (c.functions as any).get_state({}));
+        if (!st || !("result" in st)) throw new Error("no answer reading the vault's state");
+        return st.result?.config ?? {};
+      })();
+      s.catch(() => state.delete(node));
+      state.set(node, s);
+    }
+    return s;
+  };
+  return async (node: any, who: string[], week: number): Promise<VaultView> => {
+    if (!vault) return { live: false, min: 0n, players: new Map() };
+    const cfg = await cfgOf(node);
+    if (!(Number(cfg.v6_rule_week_plus_one || 0) > 0)) return { live: false, min: 0n, players: new Map() };
+    const c = new Contract({ id: vault, abi: abi(), provider: node });
+    let mine = stakeCache.get(node);
+    if (!mine) { mine = new Map(); stakeCache.set(node, mine); }
+    const results = new Map<string, any>();
+    const got = await pool([...new Set(who)], VAULT_READS_AT_ONCE, async (a) => {
+      const k = `${week}|${a}`;
+      let p = mine!.get(k);
+      if (!p) {
+        p = (async () => {
+          const r: any = await withRetry(`vault: ${a} in game ${game}`, () => (c.functions as any).get_game_player({ player: a, game, week: String(week) }));
+          if (!r || !("result" in r)) throw new Error(`no answer reading ${a}'s stake in game ${game}`);
+          return r.result ?? {};
+        })();
+        p.catch(() => mine!.delete(k));     // a failed read is tried again (never cached as "not staked")
+        mine!.set(k, p);
+      }
+      return [a, await p] as [string, any];
+    });
+    for (const [a, r] of got) results.set(a, r);
+    return vaultView(cfg, results, week);
+  };
+}
+/** One read of the vault (no cache between calls). Exported for the tests. */
+export function readVault(node: any, vault: string | null, game: number, who: string[], week: number, abi: () => any = VAULT_ABI): Promise<VaultView> {
+  return vaultReader(vault, game, abi)(node, who, week);
 }
 /** From the vault's answers (get_state's config, and get_game_player for THIS game per player): the minimum for the
  *  week, each player's counted stake (`week_stake`, the lowest that week) and the most it had. Exported for the tests. */
@@ -189,7 +249,6 @@ export function vaultView(cfg: any, results: Map<string, any>, week: number): Va
   return out;
 }
 export { stakedSet };
-function stakedSetOf(v: VaultView) { return new Set([...v.players.entries()].filter(([, x]) => v.live && x.peak >= v.min).map(([a]) => a)); }
 const stakedSet = (v: VaultView) => new Set([...v.players.entries()].filter(([, x]) => v.live && x.peak >= v.min).map(([a]) => a));
 
 /** The Vault's points for staked players (1-255, keeping the board's order and ties; only order matters to the
@@ -198,6 +257,57 @@ export function vaultPoints(ranked: { player: string; place: number }[]): { play
   const places = [...new Set(ranked.map((x) => x.place))].sort((a, b) => a - b);
   const pts = new Map(places.map((pl, i) => [pl, Math.max(1, 255 - i)]));
   return ranked.map((x) => ({ player: x.player, points: pts.get(x.place)! }));
+}
+
+// ── VHP moved in around block X (audit BX-53) ──
+/** Blocks before the lock card that still count: added VHP counts for production 20 blocks after it arrives. */
+export const MOVE_MARGIN = 25;
+/** A card with `vhp` (1e-8 units) added to `who` (field or paddock); the same card when nothing moved. */
+export function withMoved(card: Card | null, who: string, vhp: bigint): Card | null {
+  if (!card || vhp <= 0n) return card;
+  const add = Number(vhp) / 1e8;
+  const bump = (rows: any[]) => (rows || []).map((r: any) => (r && r.a === who ? { ...r, vhp: r.vhp + add } : r));
+  return { ...card, field: bump(card.field), paddock: bump(card.paddock) };
+}
+/** VHP moved INTO `who` by the VHP contract in blocks from..to: the sum of its transfer and mint events naming `who` as
+ *  the receiver (events are read from the block receipts, 200 blocks per call). Moves out are ignored: the card already
+ *  counts the highest VHP. Exported for the tests. */
+export async function scoringVhpMoves(node: any, headId: string, vhp: string, who: string, from: number, to: number): Promise<bigint> {
+  let moved = 0n;
+  for (let s = Math.max(1, from); s <= to; s += 200) {
+    const res: any = await withRetry(`receipts at ${s}`, () => node.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(s), num_blocks: Math.min(200, to - s + 1), return_block: false, return_receipt: true }));
+    for (const it of res?.block_items ?? []) moved += vhpInflows(it?.receipt, vhp, who);
+  }
+  return moved;
+}
+/** From one block receipt: VHP received by `who` (transfer: to = field 2, value = 3; mint: to = 1, value = 2). */
+export function vhpInflows(receipt: any, vhp: string, who: string): bigint {
+  const events = [...(receipt?.events ?? []), ...((receipt?.transaction_receipts ?? []) as any[]).flatMap((t) => t?.events ?? [])];
+  let sum = 0n;
+  for (const e of events) {
+    if (!e || e.source !== vhp || typeof e.name !== "string") continue;
+    const mint = /mint/i.test(e.name), transfer = /transfer/i.test(e.name);
+    if (!mint && !transfer) continue;
+    const f = pbFields(e.data);
+    const to = f.get(mint ? 1 : 2), value = f.get(mint ? 2 : 3);
+    if (to instanceof Uint8Array && typeof value === "bigint" && kutils.encodeBase58(to) === who) sum += value;
+  }
+  return sum;
+}
+function pbFields(data: unknown): Map<number, Uint8Array | bigint> {
+  const out = new Map<number, Uint8Array | bigint>();
+  let b: Uint8Array;
+  try { b = typeof data === "string" ? new Uint8Array(Buffer.from(data, "base64")) : new Uint8Array(0); } catch { return out; }
+  let i = 0;
+  const vint = (): bigint | null => { let r = 0n, sh = 0n; for (let k = 0; k < 10; k++) { if (i >= b.length) return null; const x = b[i++]; r |= BigInt(x & 0x7f) << sh; if (!(x & 0x80)) return r; sh += 7n; } return null; };
+  while (i < b.length) {
+    const tag = vint(); if (tag === null) break;
+    const f = Number(tag >> 3n), w = Number(tag & 7n);
+    if (w === 0) { const v = vint(); if (v === null) break; if (!out.has(f)) out.set(f, v); }
+    else if (w === 2) { const n = vint(); if (n === null || i + Number(n) > b.length) break; if (!out.has(f)) out.set(f, b.slice(i, i + Number(n))); i += Number(n); }
+    else break;
+  }
+  return out;
 }
 
 // ── cards ──
@@ -219,10 +329,12 @@ function latestCardAt(cards: (Card | null | undefined)[], t: number, race = fals
 }
 /** Audit BX-35: the first card taken AFTER block X (within 3 hours). A target is scored with the lower multiplier
  *  of this card and the lock's card, so VHP moved in right after the lock card doesn't pay. */
-function firstCardAfter(cards: (Card | null | undefined)[], t: number, race = false): Card | null {
+function firstCardAfter(cards: (Card | null | undefined)[], t: number, race = false, signer = ""): Card | null {
   let best: Card | null = null;
   for (const c of cards) {
     if (!usable(c, race)) continue;
+    if (signer && flags(c, signer)) continue;   // audit BX-55: a card on which the nodes disagreed about the signer waits for the next
+
     if (c.at > t && c.at - t <= CARD_MAX_AGE_MS && (!best || c.at < best.at)) best = c;
   }
   return best;
@@ -240,9 +352,11 @@ function raceCards(raceDir: string | undefined, times: number[]): (Card | null)[
   }
   return all;
 }
-function raceCardAfter(raceDir: string | undefined, t: number): Card | null {
-  return firstCardAfter(raceCards(raceDir, [t, t + M.RACE]), t, true);
+function raceCardAfter(raceDir: string | undefined, t: number, signer = ""): Card | null {
+  return firstCardAfter(raceCards(raceDir, [t, t + M.RACE]), t, true, signer);
 }
+/** Audit BX-55: the race recorder lists on a card the producers whose VHP the two nodes read differently. */
+export const flags = (c: Card | null | undefined, who: string) => !!c && Array.isArray(c.flagged) && c.flagged.includes(who);
 function raceCardAt(raceDir: string | undefined, t: number): Card | null {
   const all: (Card | null)[] = [];
   for (const at of [t, t - M.RACE]) {
@@ -254,7 +368,7 @@ function raceCardAt(raceDir: string | undefined, t: number): Card | null {
   return latestCardAt(all, t, true);
 }
 const selfCardAt = (cards: Card[], t: number): Card | null => latestCardAt(cards, t);
-const selfCardAfter = (cards: Card[], t: number): Card | null => firstCardAfter(cards, t);
+const selfCardAfter = (cards: Card[], t: number, signer = ""): Card | null => firstCardAfter(cards, t, false, signer);
 
 /** One run for one game. Exported for the tests, which pass fake nodes. */
 export async function run(o: Opts) {
@@ -274,10 +388,11 @@ export async function run(o: Opts) {
   const headId = live ? live.id : "";
   const blockP = o.blockOf ? (h: number) => o.blockOf!(o.p, h) : blockReader(o.p, headId);
   let blockC: ((h: number) => Promise<{ signer: string; time: number }>) | null = null;
+  let checkHeadId = "";
   if (o.check) {
     if (o.blockOf) blockC = (h: number) => o.blockOf!(o.check, h);
     else {
-      const ch = await headOf(o.check); blockC = blockReader(o.check, ch.id);
+      const ch = await headOf(o.check); blockC = blockReader(o.check, ch.id); checkHeadId = ch.id;
       // Audit BX-17: a block is irreversible only when both nodes say so.
       if (ch.lib < head.lib) head.lib = ch.lib;
     }
@@ -295,7 +410,9 @@ export async function run(o: Opts) {
     }
   }
   const picksRead = o.picksOf ?? (contract ? (node: any, r: number) => readPicks(node, contract, G.GAME_ID, r) : null);
-  const vaultRead = o.stakeOf ? null : (who: string[], node: any, week: number) => readVault(node, KNODE, G.GAME_ID, who, week);
+  // Audit BX-63: one vault reader for the whole run (each wallet read once per node and week, in parallel).
+  const vaultOnce = vaultReader(KNODE, G.GAME_ID);
+  const vaultRead = o.stakeOf ? null : (who: string[], node: any, week: number) => vaultOnce(node, who, week);
   const rankedRead = o.rankedOf ?? (async (who: string[], node: any, week = 0) => stakedSet(await vaultRead!(who, node, week)));
   const weekStakes = async (who: string[], node: any, week: number): Promise<{ min: bigint; week: Map<string, bigint> } | null> => {
     if (o.stakeOf) return o.stakeOf(who, node, week);
@@ -326,7 +443,7 @@ export async function run(o: Opts) {
     cards.sort((a, b) => a.at - b.at);
   }
   const cardAt = (t: number) => (CARDS === "self" ? selfCardAt(cards, t) : raceCardAt(RACE, t));
-  const cardAfter = (t: number) => (CARDS === "self" ? selfCardAfter(cards, t) : raceCardAfter(RACE, t));
+  const cardAfter = (t: number, signer = "") => (CARDS === "self" ? selfCardAfter(cards, t, signer) : raceCardAfter(RACE, t, signer));
 
   // The weeks touched: the last 3 days and now.
   const weeks = new Map<number, WeekFile>();
@@ -384,7 +501,7 @@ export async function run(o: Opts) {
       const never = (CARDS === "self" && cards.length > 0 && lock.time < cards[0].at) || head.time > lock.time + CARD_MAX_AGE_MS;
       if (!card && !old && !never) { problems.push(`block ${h}: no handicap card yet for ${new Date(lock.time).toISOString()}; tried again next run`); continue; }
       // Audit BX-35: and the first card after block X; until it exists the target waits (3 hours at most).
-      const after = card ? cardAfter(b.time) : null;
+      const after = card ? cardAfter(b.time, b.signer) : null;
       const afterNever = head.time > b.time + CARD_MAX_AGE_MS;
       if (card && !after && !old && !afterNever) { problems.push(`block ${h}: waiting for the first handicap card after the block (scored with the lower of the two); tried again next run`); continue; }
       // Audit BX-4: Staked or Free play is read on both nodes too; a disagreement holds the target like a block's.
@@ -395,15 +512,32 @@ export async function run(o: Opts) {
         const other = await rankedRead(players, o.check, wk);
         if (ranked.size !== other.size || [...ranked].some((a) => !other.has(a))) { problems.push(`block ${h}: the two nodes disagree about which players are Staked; not recorded this run`); if (old) voidAt(r, h, b.time, lock.time, "the two nodes disagreed about Staked status until it left the 3-day window"); continue; }
       }
-      const { m, top } = card ? X.vhpOf(card) : { m: new Map(), top: 0 };
-      const scoring = card && after ? card : null;
-      const pointsOf = (producer: string) => (scoring ? Math.min(X.pointsOf(card, producer, b.signer), X.pointsOf(after, producer, b.signer)) : 0);
+      // Audit BX-55: a lock card on which the two nodes disagreed about the signer's VHP is never scored: the target
+      // waits (the lock card can't change, so it is voided at the usual 3-hour limit).
+      const lockFlagged = !!card && flags(card, b.signer);
+      if (lockFlagged && !old && !afterNever) { problems.push(`block ${h}: the two nodes disagreed about ${b.signer}'s VHP on its lock card; held (voided after 3 hours)`); continue; }
+      // Audit BX-53: VHP moved INTO the signer between its lock card and block X (a "flash" stake that neither card
+      // sees) counts for the signer on both cards, read on both nodes (the higher of the two), so it can't look small.
+      let moved = 0n;
+      // (Tests that serve fake blocks with blockOf and no vhpMovesOf have no receipts to read: nothing moved.)
+      if (card && after && !lockFlagged && isAddr(b.signer) && (o.vhpMovesOf || !o.blockOf)) {
+        const from = Math.max(1, h - Math.ceil(Math.max(0, b.time - Number(card.at)) / 3000) - MOVE_MARGIN), to = h;
+        const read = o.vhpMovesOf ?? ((node: any, who: string, f: number, t: number) => scoringVhpMoves(node, node === o.p ? headId : checkHeadId, VHP, who, f, t));
+        const mp = await read(o.p, b.signer, from, to), mc = o.check ? await read(o.check, b.signer, from, to) : mp;
+        moved = mp > mc ? mp : mc;
+        if (moved > 0n) console.log(`block ${h}: ${Number(moved) / 1e8} VHP moved into ${b.signer} between its card and the block; counted on both cards`);
+      }
+      const lockC = withMoved(card, b.signer, moved), afterC = withMoved(after, b.signer, moved);
+      const { m, top } = lockC ? X.vhpOf(lockC) : { m: new Map(), top: 0 };
+      const scoring = card && after && !lockFlagged ? lockC : null;
+      const pointsOf = (producer: string) => (scoring ? Math.min(X.pointsOf(lockC, producer, b.signer), X.pointsOf(afterC, producer, b.signer)) : 0);
       const picks: Pick[] = raw.map((x) => [x.player, x.producer, x.time, pointsOf(x.producer), ranked.has(x.player) ? 1 : 0]);
       const t: Target = {
         round: r, height: h, final: true, checked, signer: isAddr(b.signer) ? b.signer : null, time: b.time, lockTime: lock.time,
         card: scoring ? { at: Number(card.at) || 0, top, signerVhp: m.get(b.signer) ?? null, afterAt: Number(after!.at) || 0 } : null, picks,
       };
       if (!card) t.void = "no handicap card was recorded for this target's lock; no points";
+      else if (lockFlagged) t.void = "the two nodes disagreed about the signer's VHP on the lock's handicap card; no points";
       else if (!after) t.void = "no handicap card was taken within 3 hours after the block; no points";
       const wf = weekFor(M.weekOf(b.time));
       wf.targets = wf.targets.filter((x) => x.round !== r).concat([t]).sort((x, y) => x.round - y.round);
@@ -566,8 +700,11 @@ export function readNetConfig(file: URL | string = new URL("../../testnet/blockx
 async function main() {
   const argv = process.argv.slice(2);
   if (!argv.includes("--testnet")) {
-    const RPC = E.RPC || "https://api.koinos.io";
+    const RPC = E.RPC || "https://koinos.armana.io";   // audit BX-60: the same default node as the race recorder
     const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
+    // Audit BX-59: never quietly down to one node on mainnet; ALLOW_ONE_NODE=yes says so out loud.
+    if (!RPC_CHECK && E.ALLOW_ONE_NODE !== "yes") throw new Error("no second node (RPC_CHECK is off, missing or the same as RPC): Block X needs two on mainnet. Set RPC_CHECK, or ALLOW_ONE_NODE=yes to run on one node.");
+    if (!RPC_CHECK) console.log("::warning::running on ONE node (ALLOW_ONE_NODE=yes): blocks, picks and stakes are not cross-checked");
     const r = await run({ p: new Provider([RPC]), check: RPC_CHECK ? new Provider([RPC_CHECK]) : null, prizesFromWeek: E.PRIZES_FROM_WEEK ? Number(E.PRIZES_FROM_WEEK) : null });
     return r;
   }

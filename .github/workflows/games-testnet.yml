@@ -132,9 +132,32 @@ jobs:
               if w is None or len(j["first"]) > 10 or len(j["second"]) > 10 or not all(type(a) is str and addr.fullmatch(a) for a in w): return False
               allw = w + [x["player"] for x in rows]
               return len(set(allw)) == len(allw)
+          # Audit BX-62 / BX-65: a vault file only for the week that just ended, while it is fresh, and only as that week's final
+          # board says: rows = the Staked board's players in board order (points never rising), first/second = that week's
+          # prize winners (never a staked row). Anything else fails the run; a planted file for another week can't be kept.
           if os.path.isdir(os.path.join(d, "vault")):
-              for f in os.listdir(os.path.join(d, "vault")):
-                  assert vault_ok(json.load(open(os.path.join(d, "vault", f), encoding="utf-8")), f), "vault/" + f
+              vfiles = os.listdir(os.path.join(d, "vault"))
+              bpath = os.path.join(d, "board.json")
+              assert not vfiles or os.path.isfile(bpath), "vault: no board.json to check it against"
+              lw = json.load(open(bpath, encoding="utf-8")).get("lastWeek") if vfiles else None
+              for f in vfiles:
+                  j = json.load(open(os.path.join(d, "vault", f), encoding="utf-8"))
+                  assert vault_ok(j, f), "vault/" + f
+                  assert type(lw) is dict and lw.get("final") is True and j["week"] == lw.get("week"), "vault/" + f + ": not the week that just ended (board lastWeek)"
+                  bj = json.load(open(bpath, encoding="utf-8"))
+                  upd = __import__("datetime").datetime.strptime(str(bj["updated"])[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=__import__("datetime").timezone.utc).timestamp() * 1000
+                  end = lw["start"] + WEEK
+                  assert end <= upd <= end + 7 * 86400000, "vault/" + f + ": outside the 7 days after its week ended"
+                  order = [r["a"] for r in lw["rows"] if r["ranked"]]
+                  pos = [order.index(x["player"]) if x["player"] in order else -1 for x in j["rows"]]
+                  assert all(p >= 0 for p in pos) and pos == sorted(pos), "vault/" + f + ": rows are not the Staked board's players in board order"
+                  pts = [x["points"] for x in j["rows"]]
+                  assert all(pts[k] >= pts[k + 1] for k in range(len(pts) - 1)), "vault/" + f + ": points rise down the board"
+                  won1 = {x["player"] for x in lw["prizes"] if x["place"] == 1}
+                  won = {x["player"] for x in lw["prizes"]}
+                  assert set(j["first"]) <= won1 and set(j["second"]) <= won and not (set(j["first"]) & set(j["second"])), "vault/" + f + ": first/second are not that week's prize winners"
+                  assert not (set(j["first"] + j["second"]) & set(order)), "vault/" + f + ": a staked player is in first/second"
+
           for f in os.listdir(d):
               if f == "vault": continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
@@ -185,7 +208,11 @@ jobs:
           shopt -s nullglob
           for f in "$IN"/blockx-*/*.json "$IN"/blockx-*/vault/*.json; do
             rel="${f#"$IN"/}"
-            if [[ "$rel" =~ (/P[0-9]{3}|/vault/W[0-9]+)\.json$ ]] && git cat-file -e ":$rel" 2>/dev/null; then echo "Keeping the published $rel as it is."; continue; fi
+            if [[ "$rel" =~ (/P[0-9]{3}|/vault/W[0-9]+)\.json$ ]] && git cat-file -e ":$rel" 2>/dev/null; then
+              # Audit BX-62: a vault file that differs from the one already published fails the run (identical is fine).
+              if [[ "$rel" =~ /vault/W[0-9]+\.json$ ]] && [ "$(git hash-object "$f")" != "$(git rev-parse ":$rel")" ]; then echo "::error::$rel differs from the published file: not replaced."; exit 1; fi
+              echo "Keeping the published $rel as it is."; continue
+            fi
             blob=$(git hash-object -w "$f")
             git update-index --add --cacheinfo 100644 "$blob" "$rel"
           done

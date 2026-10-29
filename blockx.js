@@ -474,7 +474,24 @@
   // ── your stake in Block X (the Knode Games vault, v6; owner 2026-10-28: every game takes stakes) ──
   // Read-only here. The Stake / Withdraw / Move buttons are the site's shared stake panel (window.KStake, from the hub),
   // mounted below the boards for game 2 once the vault is live; nothing here signs a stake.
-  let vault = null;
+  let vault = null, vaultCfg = null;
+  // Audit BX-61: just enough of the vault's get_state (same entry point in v5 and v6) to see whether v6 is live and its
+  // minimum stake, so the v6 ABI file is only fetched once v6 is live (the recorder does the same).
+  const U64 = (id) => ({ type: "uint64", id, options: { jstype: "JS_STRING" } });
+  const STATE_ABI = {
+    methods: { get_state: { entry_point: 1023583049, argument: "kpred.get_state_arguments", return: "kpred.get_state_result", read_only: true } },
+    koilib_types: { nested: { kpred: { nested: {
+      get_state_arguments: { fields: {} },
+      get_state_result: { fields: { config: { type: "config_object", id: 1 } } },
+      config_object: { fields: { min_stake: U64(9), min_stake_next: U64(13), min_stake_next_week: U64(14), v6_rule_week_plus_one: U64(21) } },
+    } } } },
+  };
+  /** The vault's minimum stake for a week (bot/games/blockx.ts minStakeFor; 1 VHP when unset). */
+  function minStakeFor(cfg, week) {
+    const next = BigInt((cfg && cfg.min_stake_next) || "0"), from = Number((cfg && cfg.min_stake_next_week) || 0);
+    const m = next > 0n && week >= from ? next : BigInt((cfg && cfg.min_stake) || "0");
+    return m > 0n ? m : 100000000n;
+  }
   async function setupStake() {
     if (TESTNET) return;
     // The site's shared stake panel (stake-panel.js, Hub chat): Stake / Withdraw / Move / Claim for game 2. It stays
@@ -483,11 +500,11 @@
     try {
       const dep = await fetchJson(new URL("game-data/deployment.json", ROOT));
       if (!dep || !isAddr(dep.contract)) return;
-      const abi = await fetchJson(new URL("game/abi/kpred-v6.koilib.json", ROOT));
-      const c = new lib.Contract({ id: dep.contract, abi, provider });
-      const st = await c.functions.get_state({});
+      const st = await new lib.Contract({ id: dep.contract, abi: STATE_ABI, provider }).functions.get_state({});
       if (!(Number(st?.result?.config?.v6_rule_week_plus_one || 0) > 0)) return;   // the vault isn't live yet
-      vault = c;
+      const abi = await fetchJson(new URL("game/abi/kpred-v6.koilib.json", ROOT));
+      vault = new lib.Contract({ id: dep.contract, abi, provider });
+      vaultCfg = st.result.config;
       readStake();
     } catch { /* no vault: the boards still work */ }
   }
@@ -497,9 +514,15 @@
     const who = me();
     if (!vault || !who) { box.hidden = true; return; }
     try {
-      const r = (await vault.functions.get_game_player({ player: who, game: G.GAME_ID, week: String(M.weekOf(Date.now())) })).result || {};
+      const week = M.weekOf(Date.now());
+      const r = (await vault.functions.get_game_player({ player: who, game: G.GAME_ID, week: String(week) })).result || {};
       const now = Number(r.week_stake || 0) / 1e8, pend = Number(r.player?.pending || 0) / 1e8;
-      box.textContent = `Your stake in Block X: ${fmt(now, 2)} VHP this week${pend ? `, plus ${fmt(pend, 2)} VHP from next week` : ""}. ${now >= 1 ? "You're on the Staked board." : "You play on the Free play board."}`;
+      // Audit BX-64: the recorder's rule (bot/games/blockx.ts vaultView/stakedSet): the most staked here this week (the
+      // entry's peak_stake, else the active stake) at least the vault's minimum for the week.
+      const e = r.entry, big = (x) => BigInt(x || "0");
+      const peak = e ? [big(e.peak_stake), big(e.stake)].reduce((x, y) => (y > x ? y : x)) : big(r.active_stake);
+      const staked = peak >= minStakeFor(vaultCfg, week);
+      box.textContent = `Your stake in Block X: ${fmt(now, 2)} VHP this week${pend ? `, plus ${fmt(pend, 2)} VHP from next week` : ""}. ${staked ? "You're on the Staked board." : "You play on the Free play board."}`;
       box.hidden = false;
     } catch { box.hidden = true; }
   }
