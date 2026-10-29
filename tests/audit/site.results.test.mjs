@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const APP = process.env.APP || ".";
-const read = (p) => fs.readFileSync(`${APP}/site/${p}`, "utf8");
+const read = (p) => fs.readFileSync(`${APP}/${p}`, "utf8");
 
 test("results.js only reads and draws: no sending, storage, eval or HTML from data", () => {
   const js = read("results.js");

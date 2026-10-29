@@ -31,7 +31,7 @@ import { Signer, Provider, Contract, Transaction, utils } from "koilib";
 import { showKoin, toSat } from "./chain.ts";
 import { contractMetadata } from "./chaincheck.ts";
 import { isMainnet, TESTNET } from "./bot.ts";
-await import("../site/blockx-math.js");
+await import("../blockx-math.js");
 const X: any = (globalThis as any).KBlockX;
 
 const E = process.env;

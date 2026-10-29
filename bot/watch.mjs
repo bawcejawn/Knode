@@ -15,7 +15,7 @@
  */
 import fs from "node:fs";
 
-const RPC = process.env.RPC || "https://api.koinos.io";
+const RPC = process.env.RPC || "https://koinos.armana.io";
 const ADDR = (process.env.WATCH_PRODUCER || "").trim();
 const LABEL = process.env.WATCH_LABEL || "personal node";
 const MINUTES = Number(process.env.WATCH_MINUTES || 30);

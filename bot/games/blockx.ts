@@ -18,8 +18,8 @@
  *  3. The picks: every pick for the round from the Picks contract, on both nodes; they must agree. The chain locked them
  *     `lead` blocks before the target. Each pick is stored with its time, points and whether the wallet is Staked
  *     (holds 1 VHP or has a Knode stake when the target is recorded) or Free play (everyone else).
- *  4. Leaderboards (board.json): Today, This week, Last week and All time, by site/blockx-math.js, the same file the
- *     page runs, for the two boards of site/board.js (Staked / Free play). A week is final 12 hours after it ends (the
+ *  4. Leaderboards (board.json): Today, This week, Last week and All time, by blockx-math.js, the same file the
+ *     page runs, for the two boards of board.js (Staked / Free play). A week is final 12 hours after it ends (the
  *     correction window) when every target in it is recorded. Prizes (2 / 1 VHP to the week's top 2: every Block X player is a free player,
  *     picks on 3+ days, ≥ 1 point) are listed only for weeks from PRIZES_FROM_WEEK: none until the Knode Games vault is
  *     live (owner, 2026-10-28). The vault pays them; this file only records.
@@ -34,8 +34,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { readVhp, MAINNET_VHP, withRetry } from "../../common.ts";
-await import("../../site/race-math.js");
-await import("../../site/blockx-math.js");
+await import("../../race-math.js");
+await import("../../blockx-math.js");
 const M: any = (globalThis as any).KRaceMath;
 const X: any = (globalThis as any).KBlockX;
 

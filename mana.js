@@ -40,7 +40,7 @@
   if (typeof document === "undefined" || !document.getElementById("addr")) return;   // loaded by a test
 
   const lib = window.koilib || window.koinos || window;
-  const RPC = "https://api.koinos.io";
+  const RPC = "https://koinos.armana.io";
   const KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK";
   const SPONSOR = "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8";
   const EXPLORER = "https://koinosscan.com/address/";

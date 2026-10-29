@@ -79,7 +79,7 @@ const loadAbi = () => {
 function knode() {
   const game = readJson(GAME_DEP), desk = readJson(DESK_DEP), race = readJson(RACE_DEP);
   if (!game?.contract || !desk?.contract) throw new Error(`${GAME_DEP} and ${DESK_DEP} are needed.`);
-  const rpc = E.RPC ?? game.rpc ?? "https://api.koinos.io";
+  const rpc = E.RPC ?? game.rpc ?? "https://koinos.armana.io";
   pinDeployment("game", game, rpc, GAME_DEP);
   pinDeployment("desk", desk, rpc, DESK_DEP);
   const picks = readJson(PICKS_DEP);

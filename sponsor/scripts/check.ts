@@ -21,11 +21,11 @@ ok(fs.existsSync(ABI), `${ABI} exists`);
 const abi = fs.existsSync(ABI) ? JSON.parse(fs.readFileSync(ABI, "utf8")) : { methods: {} };
 for (const m of ["authorize", "get_config", "get_usage", "get_total_usage", "would_pay", "set_config"]) ok(!!abi.methods[m], `ABI has ${m}`);
 for (const m of ["get_config", "get_usage", "get_total_usage", "would_pay"]) ok(abi.methods[m]?.read_only === true, `${m} is read-only`);
-// The website (site/wallet.js) and the tools (bot/sponsor.ts) carry these entry points: they must match the built contract.
+// The website (wallet.js) and the tools (bot/sponsor.ts) carry these entry points: they must match the built contract.
 const SITE: Record<string, number> = { would_pay: 0xda1fd8f5, get_config: 0xbc4fcdd4 };
 for (const [m, ep] of Object.entries(SITE)) ok(abi.methods[m]?.entry_point === ep, `website entry point for ${m} matches`);
-const site = fs.existsSync("../site/wallet.js") ? fs.readFileSync("../site/wallet.js", "utf8") : "";
-ok(/0xda1fd8f5/.test(site), "site/wallet.js asks would_pay at 0xda1fd8f5");
+const site = fs.existsSync("../wallet.js") ? fs.readFileSync("../wallet.js", "utf8") : "";
+ok(/0xda1fd8f5/.test(site), "wallet.js asks would_pay at 0xda1fd8f5");
 
 // The player actions the contract pays for are the game's and the Desk's entry points by name.
 const game = JSON.parse(fs.readFileSync("../game/abi/kpred.koilib.json", "utf8"));

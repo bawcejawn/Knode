@@ -7,7 +7,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const src = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
+const src = fs.readFileSync(`${APP}/wallet.js`, "utf8");
 const SECRET = "S3CR3T-vault-session-secret-0123456789abcdef";
 const VAULT = "https://koinvault.app";
 const OP = [{ call_contract: { contract_id: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", entry_point: 0x12345678, args: "CgA=" } }];
@@ -201,8 +201,8 @@ test("KOIN Vault, remembered: the same account approved again → the action goe
 // Menus (owner, 2026-10-28): Games ▾ · Leaderboards · Results · Tools ▾ · Rules · New to Koinos? · Info ▾ at the top; the
 // footer keeps only Trust · Terms & risks · Install app · Source code.
 test("every page with a header loads the shared wallet button after wallet.js, and has the same top menu and footer", () => {
-  for (const p of fs.readdirSync(`${APP}/site`).filter((f) => f.endsWith(".html"))) {
-    const h = fs.readFileSync(`${APP}/site/${p}`, "utf8");
+  for (const p of fs.readdirSync(`${APP}`).filter((f) => f.endsWith(".html"))) {
+    const h = fs.readFileSync(`${APP}/${p}`, "utf8");
     if (!/top-row/.test(h)) continue;
     assert.match(h, /<script src="wallet\.js"><\/script>\s*<script src="header-wallet\.js"><\/script>/, `${p}: header wallet`);
     const nav = h.match(/<nav class="tabs"[\s\S]*?<\/nav>/)[0];

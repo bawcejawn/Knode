@@ -46,7 +46,7 @@ const loadAbi = () => {
 function game() {
   const g = readJson(GAME_DEP);
   if (!g?.contract || !g?.owner) throw new Error(`${GAME_DEP} is needed.`);
-  const rpc = E.RPC ?? g.rpc ?? "https://api.koinos.io";
+  const rpc = E.RPC ?? g.rpc ?? "https://koinos.armana.io";
   pinDeployment("game", g, rpc, GAME_DEP);
   return { g, rpc };
 }

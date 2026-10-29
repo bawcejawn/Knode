@@ -1,5 +1,5 @@
 # Who Signs Block X on the Koinos TESTNET (Koinos Foundation testnet): records every game in testnet/blockx.json every
-# 20 minutes and publishes to the testnet-data branch, for site/blockx-testnet.html. Mainnet is never touched: it reads
+# 20 minutes and publishes to the testnet-data branch, for blockx-testnet.html. Mainnet is never touched: it reads
 # only the testnet node in testnet/blockx.json (and checks its chain id is not mainnet's), and writes only testnet-data.
 #
 # Two jobs, like the mainnet recorders, so repository code never runs next to a write token:

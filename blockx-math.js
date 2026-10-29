@@ -12,7 +12,7 @@
  *
  * SCORING
  *   a correct pick scores min(3, top producer's VHP ÷ picked producer's VHP), to 2 decimals; a wrong pick scores 0.
- * - The VHP comes from the Producer Race card in force at the lock block's time (site/race-math.js: the hourly card of
+ * - The VHP comes from the Producer Race card in force at the lock block's time (race-math.js: the hourly card of
  *   that race leg), field and paddock together, so every producer that can sign counts. On a network with no Producer
  *   Race (the testnet), the recorder takes the same hourly card itself (bot/games/blockx.ts, CARDS=self).
  * - Koinos picks signers in proportion to VHP, so a pick's expected score is min(3 × its share, the top's share): every
@@ -25,7 +25,7 @@
  *
  * LEADERBOARD: Today (the target block's UTC day), This week (the Knode game week of the target block) and All time.
  *   Ranked by points; ties: more correct picks, then the earlier last correct pick (lower height), then address.
- *   Two boards, as in every Knode Games game (site/board.js): Staked (wallets holding 1 VHP or with a Knode stake) and
+ *   Two boards, as in every Knode Games game (board.js): Staked (wallets holding 1 VHP or with a Knode stake) and
  *   Free play (everyone else, guests included).
  * PRIZES (weekly 2 VHP / 1 VHP, owner's decisions 2026-10-27/28): the top 2 of the Free play board, each with at least
  *   one point and picks on at least 3 different UTC days that week (so a wallet can't win from one visit). Ties share.
@@ -39,7 +39,7 @@
   const CAP = 3, OPEN = 12, MIN_PRIZE_DAYS = 3;
   const BLOCK_MS = 3000;            // ~3 s a block (an estimate for showing times as "about")
   const DAY = 86400000, WEEK = 7 * DAY;
-  const GENESIS = 1792368000000;    // the Knode game's week 0: Monday 2026-10-19 00:00 UTC (as site/race-math.js)
+  const GENESIS = 1792368000000;    // the Knode game's week 0: Monday 2026-10-19 00:00 UTC (as race-math.js)
   const round2 = (x) => Math.round(x * 100) / 100;
 
   // ── targets (per game) ──

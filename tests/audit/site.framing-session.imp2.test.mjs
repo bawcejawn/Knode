@@ -10,7 +10,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const src = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
+const src = fs.readFileSync(`${APP}/wallet.js`, "utf8");
 const SECRET = "S3CR3T-vault-session-secret-0123456789abcdef";
 const PAGE = "https://knode.example/index.html?x=1";
 
@@ -160,22 +160,22 @@ test("IMP2-SESSION-2 closing the KOIN Vault dialog during a status check must le
 // script, and no page reaches a wallet (KWallet / window.kondor) without loading wallet.js (so the frame-buster covers
 // every page that can sign).
 test("IMP2-FRAME-4 (holds) every signing page is behind the frame-buster", () => {
-  const pages = fs.readdirSync(`${APP}/site`).filter((f) => f.endsWith(".html"));
+  const pages = fs.readdirSync(`${APP}`).filter((f) => f.endsWith(".html"));
   for (const p of pages) {
-    const html = fs.readFileSync(`${APP}/site/${p}`, "utf8");
+    const html = fs.readFileSync(`${APP}/${p}`, "utf8");
     const csp = (html.match(/http-equiv="Content-Security-Policy" content="([^"]*)"/) || [])[1] || "";
     assert.match(csp, /frame-src 'none'/, `IMP2-FRAME-4: ${p} allows frames`);
     const own = [...html.matchAll(/<script src="([^"/:]+\.js)"/g)].map((m) => m[1]);
-    const usesWallet = own.some((f) => f !== "wallet.js" && /KWallet|window\.kondor/.test(fs.readFileSync(`${APP}/site/${f}`, "utf8")));
+    const usesWallet = own.some((f) => f !== "wallet.js" && /KWallet|window\.kondor/.test(fs.readFileSync(`${APP}/${f}`, "utf8")));
     if (usesWallet) {
       // The one exception: the testnet page signs with testnet-wallet.js, which has its own frame-buster and never loads
       // the mainnet wallet (site.blockx.test.mjs checks that page's isolation).
       const testnetPage = /<meta name="kg-network" content="testnet">/.test(html);
       const buster = testnetPage ? "testnet-wallet.js" : "wallet.js";
       assert.ok(own.includes(buster), `IMP2-FRAME-4: ${p} signs without loading ${buster} (no frame-buster)`);
-      if (testnetPage) assert.match(fs.readFileSync(`${APP}/site/testnet-wallet.js`, "utf8"), /if \(window\.top !== window\.self\)/, "testnet-wallet.js has the frame-buster");
+      if (testnetPage) assert.match(fs.readFileSync(`${APP}/testnet-wallet.js`, "utf8"), /if \(window\.top !== window\.self\)/, "testnet-wallet.js has the frame-buster");
       const wi = own.indexOf(buster);
-      for (const f of own.slice(0, wi)) assert.ok(!/KWallet|window\.kondor/.test(fs.readFileSync(`${APP}/site/${f}`, "utf8")), `IMP2-FRAME-4: ${p} runs ${f} before the frame-buster`);
+      for (const f of own.slice(0, wi)) assert.ok(!/KWallet|window\.kondor/.test(fs.readFileSync(`${APP}/${f}`, "utf8")), `IMP2-FRAME-4: ${p} runs ${f} before the frame-buster`);
     }
   }
 });

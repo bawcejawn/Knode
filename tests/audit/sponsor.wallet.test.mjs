@@ -7,7 +7,7 @@ import vm from "node:vm";
 import { utils } from "koilib";
 
 const APP = process.env.APP || ".";
-const wallet = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
+const wallet = fs.readFileSync(`${APP}/wallet.js`, "utf8");
 const PLAYER = "1JEG83vHFKLwt3dnDqjuX9s5Zc56U4bQet", GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", DESK = "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR";
 const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK", POB = "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv";
 const SPONSOR = "1AZsVFFrvKFhhxLq2jKHUUesdm2zbCcbXW";

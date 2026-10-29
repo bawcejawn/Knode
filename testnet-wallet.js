@@ -1,4 +1,4 @@
-/* Knode Games TESTNET wallet: only for site/blockx-testnet.html (the Koinos Foundation testnet). Never loaded by a
+/* Knode Games TESTNET wallet: only for blockx-testnet.html (the Koinos Foundation testnet). Never loaded by a
  * mainnet page, and it never touches the mainnet wallet (wallet.js, guest.js, header-wallet.js):
  *   - its own storage name ("kg-testnet-wallet-v1"), so it can't read, replace or delete a mainnet guest key;
  *   - it refuses to work when the node or the page's settings name the Koinos MAINNET chain;

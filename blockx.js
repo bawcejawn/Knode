@@ -14,7 +14,7 @@
   const MAINNET_CHAIN_ID = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";
   const meta = document.querySelector('meta[name="kg-network"]');
   const TESTNET = !!(meta && meta.getAttribute("content") === "testnet");
-  const ROOT = new URL("../", location.href);
+  const ROOT = new URL("./", location.href);
   const NAMES = { "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "Knode pool", "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR": "Knode Swap" };
 
   const $ = (id) => document.getElementById(id);

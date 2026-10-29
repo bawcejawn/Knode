@@ -9,9 +9,9 @@ import { webcrypto } from "node:crypto";
 import * as koilib from "koilib";
 
 const APP = process.env.APP || ".";
-const guestSrc = fs.readFileSync(`${APP}/site/guest.js`, "utf8");
-const walletSrc = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
-const indexHtml = fs.readFileSync(`${APP}/site/index.html`, "utf8");
+const guestSrc = fs.readFileSync(`${APP}/guest.js`, "utf8");
+const walletSrc = fs.readFileSync(`${APP}/wallet.js`, "utf8");
+const indexHtml = fs.readFileSync(`${APP}/index.html`, "utf8");
 const MAINNET = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";
 const GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", DESK = "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR";
 const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK";
@@ -223,14 +223,14 @@ test("guests pick only on the pinned Knode race contract (mainnet)", () => {
 });
 
 test("race.html offers guest play too: it loads guest.js before wallet.js, from this site only", () => {
-  const h = fs.readFileSync(`${APP}/site/race.html`, "utf8");
+  const h = fs.readFileSync(`${APP}/race.html`, "utf8");
   const g = h.indexOf('<script src="guest.js"></script>'), wlt = h.indexOf('<script src="wallet.js"></script>');
   assert.ok(g > 0 && wlt > g);
 });
 
 test("every page with the wallet button offers guest play: guest.js before wallet.js, koilib allowed and loaded", () => {
-  for (const p of fs.readdirSync(`${APP}/site`).filter((f) => f.endsWith(".html"))) {
-    const h = fs.readFileSync(`${APP}/site/${p}`, "utf8");
+  for (const p of fs.readdirSync(`${APP}`).filter((f) => f.endsWith(".html"))) {
+    const h = fs.readFileSync(`${APP}/${p}`, "utf8");
     if (!/<script src="header-wallet\.js"><\/script>/.test(h)) continue;
     const g = h.indexOf('<script src="guest.js"></script>'), wlt = h.indexOf('<script src="wallet.js"></script>');
     assert.ok(g > 0 && g < wlt, `${p}: guest.js before wallet.js`);

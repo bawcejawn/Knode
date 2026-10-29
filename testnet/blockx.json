@@ -1,7 +1,7 @@
 {
   "v": 1,
   "network": "koinos-foundation-testnet",
-  "note": "Koinos TESTNET (Koinos Foundation testnet, the one SwarmTales uses) settings for Who Signs Block X. Test KOIN only; nothing here touches mainnet. Written by npm run picks -- <command> --testnet; read by the testnet page (site/blockx-testnet.html) and the testnet recorder.",
+  "note": "Koinos TESTNET (Koinos Foundation testnet, the one SwarmTales uses) settings for Who Signs Block X. Test KOIN only; nothing here touches mainnet. Written by npm run picks -- <command> --testnet; read by the testnet page (blockx-testnet.html) and the testnet recorder.",
   "rpc": "https://testnet.koinosfoundation.org",
   "chainId": "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==",
   "koin": "1FaSvLjQJsCJKq5ybmGsMMQs8RQYyVv8ju",

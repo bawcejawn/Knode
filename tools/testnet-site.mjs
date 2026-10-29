@@ -1,5 +1,5 @@
 // Who Signs Block X on the Koinos TESTNET, on your own computer: serves the testnet page at
-//   http://127.0.0.1:8350/site/blockx-testnet.html
+//   http://127.0.0.1:8350/blockx-testnet.html
 // and (with --record) runs the Block X recorder for every testnet game every 5 minutes, so the page shows results
 // without GitHub. Nothing is pushed or published; mainnet is never touched.
 //
@@ -12,7 +12,7 @@
 // only to the page on this computer (Origin and Host must be this server; a custom header blocks other sites).
 //
 // Safety: it listens on 127.0.0.1 only (not your network), answers GET/HEAD (and that one POST), and serves only an allowlist:
-// site/ files, testnet/blockx.json, the Picks ABI (picks/abi/picks.koilib.json) and the recorder's testnet-data/blockx-<id>/*.json. Never .env.testnet, keys,
+// the site's own page files at the repository root (html, js, css; media/ images), testnet/blockx.json, the Picks ABI (picks/abi/picks.koilib.json) and the recorder's testnet-data/blockx-<id>/*.json. Never .env.testnet, keys,
 // or any other file of the project.
 import http from "node:http";
 import fs from "node:fs";
@@ -33,7 +33,9 @@ export function allowed(urlPath) {
   if (p.includes("\0") || p.includes("\\")) return null;
   const rel = path.posix.normalize(p).replace(/^\/+/, "");
   if (rel.split("/").some((s) => s === ".." || s.startsWith("."))) return null;
-  const ok = (/^site\/[A-Za-z0-9._\/-]+$/.test(rel) && TYPES[path.extname(rel)]) || rel === "testnet/blockx.json" || rel === "picks/abi/picks.koilib.json" || /^testnet-data\/blockx-\d{1,3}\/(index|board|cards|W\d{3})\.json$/.test(rel);
+  // The site lives at the repository root (knodegames.com, 2026-10-28): only its page files there (no .json, .ts,
+  // dotfiles or folders), media/ images, and the few data files below.
+  const ok = /^[A-Za-z0-9_-][A-Za-z0-9._-]*\.(html|js|css)$/.test(rel) || /^media\/[A-Za-z0-9_-][A-Za-z0-9._-]*\.(png|svg|ico)$/.test(rel) || rel === "manifest.webmanifest" || rel === "testnet/blockx.json" || rel === "picks/abi/picks.koilib.json" || /^testnet-data\/blockx-\d{1,3}\/(index|board|cards|W\d{3})\.json$/.test(rel);
   if (!ok) return null;
   const abs = path.join(ROOT, rel);
   if (!abs.startsWith(ROOT + path.sep)) return null;
@@ -109,7 +111,7 @@ export function serve(port = PORT) {
       return;
     }
     if (req.method !== "GET" && req.method !== "HEAD") { res.writeHead(405).end(); return; }
-    if ((req.url || "/") === "/") { res.writeHead(302, { Location: "/site/blockx-testnet.html" }).end(); return; }
+    if ((req.url || "/") === "/") { res.writeHead(302, { Location: "/blockx-testnet.html" }).end(); return; }
     const f = allowed(req.url || "/");
     let st = null;
     try { st = f && fs.lstatSync(f); } catch { /* missing */ }
@@ -150,8 +152,8 @@ function recordAll() {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   start(PORT).then((s) => {
     const port = s.address().port;
-    console.log(`\nBlock X testnet page:  http://127.0.0.1:${port}/site/blockx-testnet.html#game-92   (fast game)`);
-    console.log(`                       http://127.0.0.1:${port}/site/blockx-testnet.html#game-2    (real settings)`);
+    console.log(`\nBlock X testnet page:  http://127.0.0.1:${port}/blockx-testnet.html#game-92   (fast game)`);
+    console.log(`                       http://127.0.0.1:${port}/blockx-testnet.html#game-2    (real settings)`);
     console.log("Leave this window open. Stop with Ctrl+C.");
     if (process.argv.includes("--record")) { recordAll(); setInterval(recordAll, 5 * 60000); }
     else console.log("Results: add --record to run the recorder every 5 minutes (or run: npm run blockx -- --testnet --game 92).");
