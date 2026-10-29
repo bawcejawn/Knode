@@ -16,6 +16,8 @@
  *     more picks placed, then more Knode questions answered, then a higher Knode score.
  *  4. Writes race-data/index.json, race-data/W<week>.json and race-data/board.json, which the publish job puts on the
  *     race-data branch for the website.
+ *  5. The KnodeGames Vault's results file for last week, race-data/vault/W<week>.json (see vaultResults below): the
+ *     free prize's 1st and 2nd places, final once every race of the week is final. A final file is never rewritten.
  * The scoring is race-math.js, the same file the website runs.
  *
  *   RPC, RPC_CHECK ("off" to skip the second node), RACE_PREV (the race-data files from the last run), RACE_OUT.
@@ -255,7 +257,7 @@ export async function run({ p, check, prev, out, vhpOf, raceContract, picksOf, p
   }
 
   // ── 3. leaderboards ──
-  const board = await leaderboards(weeks, now, (who, week) => playerRead(p, who, week), problems);
+  const { board, vault } = await leaderboards(weeks, now, (who, week) => playerRead(p, who, week), problems);
 
   // ── 4. write ──
   fs.mkdirSync(OUT, { recursive: true });
@@ -267,6 +269,10 @@ export async function run({ p, check, prev, out, vhpOf, raceContract, picksOf, p
   }
   fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), weeks: [...known].sort((x, y) => x - y) }) + "\n");
   if (board) fs.writeFileSync(path.join(OUT, "board.json"), JSON.stringify(board) + "\n");
+  if (vault) {
+    fs.mkdirSync(path.join(OUT, "vault"), { recursive: true });
+    fs.writeFileSync(path.join(OUT, "vault", `W${vault.week}.json`), JSON.stringify(vault) + "\n");
+  }
   for (const pr of problems) console.log(`::warning::${pr}`);
   return { problems };
 }
@@ -296,16 +302,17 @@ async function leaderboards(weeks: Map<number, WeekFile>, now: number, player: (
   const all = new Map(weeks);
   const idx = readPrev("index.json");
   for (const w of Array.isArray(idx?.weeks) ? idx.weeks : []) if (Number.isInteger(w) && !all.has(w)) all.set(w, loadWeek(w));
-  const anyPicks = [...all.values()].some((wf) => wf.races.some((r) => Array.isArray(r.result?.picks)));
-  if (!anyPicks) return null;
   const wNow = M.weekOf(now), day0 = Math.floor(now / M.DAY) * M.DAY;
   // Knode answers and points: this week's for Today and This week; summed over the weeks with picks for All time.
   const knode = new Map<string, PlayerInfo>();   // key: who|week
+  const failed = new Set<string>();              // who|week reads that failed (counted as 0 on the boards)
   const info = async (who: string, week: number) => {
     const k = `${who}|${week}`;
-    if (!knode.has(k)) { try { knode.set(k, await player(who, week)); } catch (e) { problems.push(`Knode record of ${who}: ${(e as Error).message}`); knode.set(k, { stake: 0n, answers: 0, points: 0 }); } }
+    if (!knode.has(k)) { try { knode.set(k, await player(who, week)); } catch (e) { problems.push(`Knode record of ${who}: ${(e as Error).message}`); failed.add(k); knode.set(k, { stake: 0n, answers: 0, points: 0 }); } }
     return knode.get(k)!;
   };
+  const anyPicks = [...all.values()].some((wf) => wf.races.some((r) => Array.isArray(r.result?.picks)));
+  if (!anyPicks) return { board: null, vault: await vaultResults(all, wNow - 1, [], failed, problems) };
   const build = async (from: number, to: number, weeksFor: (who: string) => number[]) => {
     const rows: Row[] = [];
     for (const [a, x] of tally(all, from, to)) {
@@ -316,13 +323,69 @@ async function leaderboards(weeks: Map<number, WeekFile>, now: number, player: (
     return rank(rows);
   };
   const weeksOf = (who: string) => [...all.values()].filter((wf) => wf.races.some((r) => Array.isArray(r.result?.picks) && r.result.picks.some((p: any) => p[0] === who))).map((wf) => wf.week);
-  return {
+  const lastRows = wNow > 0 ? await build(M.weekStart(wNow - 1), M.weekStart(wNow), () => [wNow - 1]) : [];
+  const board = {
     v: 1, updated: new Date(now).toISOString(),
     today: { day: M.dayOf(now), rows: await build(day0, day0 + M.DAY, () => [wNow]) },
     week: { week: wNow, start: M.weekStart(wNow), rows: await build(M.weekStart(wNow), M.weekStart(wNow + 1), () => [wNow]) },
-    lastWeek: wNow > 0 ? { week: wNow - 1, start: M.weekStart(wNow - 1), rows: await build(M.weekStart(wNow - 1), M.weekStart(wNow), () => [wNow - 1]) } : null,
+    lastWeek: wNow > 0 ? { week: wNow - 1, start: M.weekStart(wNow - 1), rows: lastRows } : null,
     allTime: { rows: await build(0, Infinity, weeksOf) },
   };
+  return { board, vault: await vaultResults(all, wNow - 1, lastRows, failed, problems) };
+}
+
+// ── the KnodeGames Vault's results file (Vault v6 hand-off, 2026-10-28) ──
+/** The Producer Race's game number in the KnodeGames Vault, and the vault's limit of wallets per prize place. */
+export const VAULT_GAME = 7;
+export const MAX_PRIZE_WINNERS = 10;
+type VaultFile = { game: number; week: number; final: boolean; rows: never[]; first: string[]; second: string[] };
+
+/** The free prize's places from a week's ranked rows (rank() order). Only wallets that may be ranked and scored at least
+ *  1 point qualify. Wallets tied on every measure (points, wins, picks, question answers, question score) share a place
+ *  (owner, 2026-10-27): a tie for 1st takes both prizes, so 2nd stays empty. The vault takes at most 10 wallets per
+ *  place; a place tied more widely than that is left empty (its prize returns to the pool) and reported. Exported. */
+export function prizePlaces(rows: Row[]): { first: string[]; second: string[]; notes: string[] } {
+  const same = (x: Row, y: Row) => x.pts === y.pts && x.correct === y.correct && x.picks === y.picks && x.answers === y.answers && x.points === y.points;
+  const groups: Row[][] = [];
+  for (const r of rows) {
+    if (!r.ranked || r.pts < 1) continue;
+    const g = groups[groups.length - 1];
+    if (g && same(g[0], r)) g.push(r); else groups.push([r]);
+  }
+  const [g1, g2] = groups, notes: string[] = [];
+  const wallets = (g: Row[]) => g.map((r) => r.a);
+  if (!g1) return { first: [], second: [], notes };
+  if (g1.length > MAX_PRIZE_WINNERS) {
+    notes.push(`${g1.length} wallets are tied for 1st, more than the vault's ${MAX_PRIZE_WINNERS} per place: no prize places are posted`);
+    return { first: [], second: [], notes };
+  }
+  if (g1.length > 1 || !g2) return { first: wallets(g1), second: [], notes };
+  if (g2.length > MAX_PRIZE_WINNERS) {
+    notes.push(`${g2.length} wallets are tied for 2nd, more than the vault's ${MAX_PRIZE_WINNERS} per place: 2nd is left empty`);
+    return { first: wallets(g1), second: [], notes };
+  }
+  return { first: wallets(g1), second: wallets(g2), notes };
+}
+
+/** The vault's file for week w: not final until every race of the week is final (or was never run because the
+ *  recorder hadn't started) and every question-game record used for the tie-breaks was read. A file already published
+ *  as final is kept exactly as it is, so the vault never sees its results change. */
+async function vaultResults(all: Map<number, WeekFile>, w: number, rows: Row[], failed: Set<string>, problems: string[]): Promise<VaultFile | null> {
+  if (w < 0) return null;
+  const old = readPrev(`vault/W${w}.json`);
+  if (old && old.final === true && old.game === VAULT_GAME && old.week === w) return old;
+  const wf = all.get(w);
+  if (!wf) return null;                                  // the recorder never ran that week
+  let firstCard = Infinity;
+  for (const x of all.values()) for (const r of x.races) if (r.cards.some(Boolean)) firstCard = Math.min(firstCard, r.start);
+  const open = wf.races.filter((r) => !r.result?.final && !(r.start < firstCard && !r.cards.some(Boolean)));
+  const unread = rows.filter((r) => failed.has(`${r.a}|${w}`));
+  const file: VaultFile = { game: VAULT_GAME, week: w, final: false, rows: [], first: [], second: [] };
+  if (open.length) { problems.push(`vault week ${w}: not final yet, ${open.length} race(s) still being checked (${open.map((r) => r.id).join(", ")})`); return file; }
+  if (unread.length) { problems.push(`vault week ${w}: not final yet, ${unread.length} question-game record(s) could not be read (tried again next run)`); return file; }
+  const places = prizePlaces(rows);
+  for (const n of places.notes) problems.push(`vault week ${w}: ${n}`);
+  return { ...file, final: true, first: places.first, second: places.second };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

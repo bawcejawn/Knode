@@ -53,3 +53,21 @@ To pause picks: `npm run racepicks -- disable --send` (owner's key, `OWNER_WIF`)
 
 Release build sha256 (audited 2026-10-27, docs/history/AUDIT-2026-10-27-race-picks.md): `61e8f21230e8b4bdb165bacfe7281517a5adf78f6c6b1b8a0d84ce41537afac5` (17,066 bytes).
 Tests: 22 contract tests (`npm test`, in the Koinos mock VM), including the auditor's attack tests (`Race.audit.spec.ts`).
+
+## Weekly results for the KnodeGames Vault (game 7)
+
+The race recorder (`bot/race.ts`) writes `vault/W<week>.json` on the `race-data` branch for the week that just ended.
+Its source for the vault is `race-data:vault` (in `game-data/deployment.json` → `vaultGames."7".results`).
+
+```json
+{ "game": 7, "week": 2, "final": true, "rows": [], "first": ["1Abc…"], "second": ["1Def…"] }
+```
+
+- **Final** once every race of the week is final (or was never run) and every question-game record used for the
+  tie-breaks was read. Until then the file says `"final": false` with no winners.
+- **Places** come from that week's leaderboard. Only wallets that may be ranked (1 VHP, or a question-game stake) and
+  scored at least 1 point qualify. Wallets tied on every measure share a place: a tie for 1st takes both prizes and
+  leaves 2nd empty. The vault takes at most 10 wallets a place; a place tied more widely is left empty (its prize goes
+  back to the pool) and the run warns about it.
+- `rows` is always empty: the Race is a free game, so nobody is staked in it.
+- A file published as final never changes. The recorder keeps it as it is, and the publish job refuses any change.

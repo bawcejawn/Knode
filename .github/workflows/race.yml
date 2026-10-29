@@ -4,6 +4,8 @@
 # Two jobs, like the main bot, so repository code never runs next to a write token:
 #   record   runs bot/race.ts with a read-only token and no secrets (it only reads the chain), and hands the files on.
 #   publish  runs no repository code: it checks the files' shape and pushes them to the race-data branch.
+#            That includes vault/W<week>.json, the KnodeGames Vault's weekly results (game 7); once one is published
+#            as final, publish refuses to change it.
 # It never touches main, holds no key, and does not run on pull requests.
 #
 # Turn it on: Settings → Secrets and variables → Actions → Variables: RACE_ENABLED = true
@@ -43,8 +45,9 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/prev"
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
-            for f in $(git ls-tree --name-only FETCH_HEAD); do
+            for f in $(git ls-tree -r --name-only FETCH_HEAD); do
               if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; fi
+              if [[ "$f" =~ ^vault/W[0-9]{1,4}\.json$ ]]; then mkdir -p "$RUNNER_TEMP/prev/vault"; git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; fi
             done
           else echo "No race-data branch yet."; fi
       - name: Record the race
@@ -81,7 +84,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o -type d -o \( -type f ! -regex "$IN/\(index\|board\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/vault" \) -o \( -type f ! -regex "$IN/\(index\|board\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/vault/W[0-9][0-9]?[0-9]?[0-9]?\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           big=$(find "$IN" -type f -size +2048k -print)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
@@ -121,7 +124,22 @@ jobs:
               return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "pts", "correct", "shows", "picks", "answers", "points", "ranked"}
                   and isaddr(x["a"]) and all(type(x[k]) is int and 0 <= x[k] < 10**9 for k in ("pts", "correct", "shows", "picks", "answers", "points"))
                   and x["correct"] + x["shows"] <= x["picks"] and x["pts"] == 3 * x["correct"] + x["shows"] and type(x["ranked"]) is bool for x in rows)
+          def vault_ok(f, j):
+              # The KnodeGames Vault's results (game 7, the Producer Race): free-prize places only, at most 10 wallets
+              # each, no wallet twice; nothing before the week is final; a tie for 1st leaves 2nd empty.
+              m = re.fullmatch(r"W(\d{1,4})\.json", f)
+              if not m or type(j) is not dict or set(j) != {"game", "week", "final", "rows", "first", "second"}: return False
+              if j["game"] != 7 or type(j["game"]) is not int or type(j["week"]) is not int or f != "W%d.json" % j["week"] or type(j["final"]) is not bool: return False
+              a, b = j["first"], j["second"]
+              if j["rows"] != [] or type(a) is not list or type(b) is not list or len(a) > 10 or len(b) > 10: return False
+              if not all(isaddr(x) for x in a + b) or len(set(a + b)) != len(a + b): return False
+              if not j["final"] and (a or b): return False
+              return not (b and len(a) != 1)
           for f in os.listdir(d):
+              if f == "vault":
+                  for g in os.listdir(os.path.join(d, f)):
+                      assert vault_ok(g, json.load(open(os.path.join(d, f, g), encoding="utf-8"))), "vault/" + g
+                  continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "board.json":
                   assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1, f
@@ -144,9 +162,14 @@ jobs:
             parent=$(git rev-parse FETCH_HEAD)
             git read-tree FETCH_HEAD
           else git read-tree --empty; fi
-          for f in "$IN"/*.json; do
+          for f in "$IN"/*.json "$IN"/vault/*.json; do
+            [ -e "$f" ] || continue
+            rel="${f#"$IN"/}"
+            # A vault results file already published as final never changes: the vault may have posted it.
+            if [[ "$rel" == vault/* ]] && [ -n "$parent" ] && old=$(git show "$parent:$rel" 2>/dev/null) && [[ "$old" == *'"final":true'* ]] \
+              && [ "$old" != "$(cat "$f")" ]; then echo "::error::Refusing to change $rel: it was already published as final."; exit 1; fi
             blob=$(git hash-object -w "$f")
-            git update-index --add --cacheinfo 100644 "$blob" "$(basename "$f")"
+            git update-index --add --cacheinfo 100644 "$blob" "$rel"
           done
           tree=$(git write-tree)
           if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi
