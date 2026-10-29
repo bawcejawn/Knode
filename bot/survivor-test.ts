@@ -17,7 +17,7 @@
  *
  * Everything it makes stays in testnet-data/survivor/ (git-ignored): keys.env (the throwaway TEST keys; never use them
  * on mainnet), config.json, data/ (the recorder's files) and picks-src/ (the testnet build).
- * The test page: http://127.0.0.1:8090 while `run` is going. It is served only to this PC.
+ * The test page: http://127.0.0.1:8370 (or the next free port; it prints the address) while `run` is going. It is served only to this PC.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -46,7 +46,22 @@ export const PLAYERS = ["p1", "p2", "p3", "p4", "p5", "p6"];
 export const PICK_ENTRY = 0x8ce33c6c;
 export const TEST_DAY_MS = 3_600_000;              // one test "day" (round) = 1 hour (owner, 2026-10-28)
 export const TEST_TIMELOCK_MS = 10 * 60_000;       // the testnet Picks build waits 10 minutes, not 48 hours
-const SITE_PORT = Number(process.env.SURVIVOR_TEST_PORT || 8090);
+// The test page's port: 8370, or the next free one (8090 is the owner's own Koinos node, 8350 the Block X test page).
+// Choose another with --port 8400 or SURVIVOR_TEST_PORT.
+const portArg = process.argv.indexOf("--port");
+const SITE_PORT = Number((portArg > 0 && process.argv[portArg + 1]) || process.env.SURVIVOR_TEST_PORT || 8370);
+/** A pick asks for at most this much Mana: ~0.05 is used (Block X testnet, 28 Oct). A big limit is held aside until the
+ *  pick settles, so a second quick pick would fail with "insufficient pending account resources". */
+const PICK_RC_KOIN = 0.3;
+/** The first port from `start` that this PC isn't using (tries 20). Exported for the tests. */
+export async function freePort(start: number): Promise<number> {
+  const net = await import("node:net");
+  for (let p = start; p < start + 20; p++) {
+    const ok = await new Promise<boolean>((done) => { const t = net.createServer(); t.once("error", () => done(false)); t.listen(p, "127.0.0.1", () => t.close(() => done(true))); });
+    if (ok) return p;
+  }
+  throw new Error(`Ports ${start}–${start + 19} are all in use. Choose another: --port 9100`);
+}
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 export const DIR = process.env.SURVIVOR_TEST_DIR || path.join(ROOT, "testnet-data", "survivor");
@@ -366,7 +381,7 @@ async function pick(who: string, producer: string, roundArg: string | undefined,
   const s = signerOf(keys, who, p);
   log(`${who} (${s.getAddress()}) picks ${a} for round ${r} (${S.dayLabel(r)} UTC)`);
   if (!sendIt) { log("Dry run. Add --send."); return; }
-  const id = await send(picksContract(c, p), "pick", { player: s.getAddress(), game: 3, round: String(r), producers: [a], number: "0" }, s, 1);
+  const id = await send(picksContract(c, p), "pick", { player: s.getAddress(), game: 3, round: String(r), producers: [a], number: "0" }, s, PICK_RC_KOIN);
   log(`✔ picked (${id.slice(0, 18)}…)`);
 }
 function readFields(): Map<number, { a: string; k: number; h: number }[]> {
@@ -385,8 +400,9 @@ async function record() {
 
 /** Robot players p2…p6, so a season has company: each picks for the next open round if it hasn't yet.
  *  p2 picks the biggest unused producer, p3 the second biggest, p4 a random one, p5 the smallest, and p6 skips
- *  every third round (to test missed picks). p1 is left for you. Exported for the tests. */
-export function botChoice(who: string, field: { a: string; k: number }[], used: Set<string>, round: number, rand = Math.random): string | null {
+ *  every third day of the season (days 3, 6, 9 …: to test missed picks; it always joins on day 1). p1 is left for you.
+ *  n is the season day of the round being picked. Exported for the tests. */
+export function botChoice(who: string, field: { a: string; k: number }[], used: Set<string>, n: number, rand = Math.random): string | null {
   const ok = field.filter((f) => !used.has(f.a));
   if (!ok.length) return null;
   switch (who) {
@@ -394,7 +410,7 @@ export function botChoice(who: string, field: { a: string; k: number }[], used: 
     case "p3": return (ok[1] ?? ok[0]).a;
     case "p4": return ok[Math.floor(rand() * ok.length)].a;
     case "p5": return ok[ok.length - 1].a;
-    case "p6": return round % 3 === 0 ? null : ok[Math.floor(ok.length / 2)].a;
+    case "p6": return n % 3 === 0 ? null : ok[Math.floor(ok.length / 2)].a;
     default: return null;
   }
 }
@@ -421,9 +437,9 @@ async function bots() {
       const x: any = (await (pc.functions as any).get_pick({ game: 3, round: String(d), player: a }).catch(() => ({}))).result?.pick;
       if (x?.producers?.[0]) used.add(x.producers[0]);
     }
-    const choice = botChoice(who, field, used, r);
+    const choice = botChoice(who, field, used, se.n);
     if (!choice) { log(`  bot ${who}: skips round ${r}`); continue; }
-    try { await send(pc, "pick", { player: a, game: 3, round: String(r), producers: [choice], number: "0" }, signerOf(keys, who, p), 1); log(`  bot ${who}: picked ${choice.slice(0, 8)}… for round ${r}`); }
+    try { await send(pc, "pick", { player: a, game: 3, round: String(r), producers: [choice], number: "0" }, signerOf(keys, who, p), PICK_RC_KOIN); log(`  bot ${who}: picked ${choice.slice(0, 8)}… for round ${r}`); }
     catch (e) { log(`  bot ${who}: ${(e as Error).message}`); }
   }
 }
@@ -454,9 +470,10 @@ export function testPage(html: string): string {
 const RPC_METHODS = new Set(["chain.get_head_info", "chain.get_chain_id", "chain.read_contract", "block_store.get_blocks_by_height", "chain.get_account_rc",
   "chain.get_account_nonce", "chain.get_resource_limits", "contract_meta_store.get_contract_meta"]);
 export async function startSite(opts: { port?: number } = {}) {
-  const c = readConfig(), keys = readKeys(), port = opts.port ?? SITE_PORT;
+  const c = readConfig(), keys = readKeys();
   // The same check as every other command, before anything can be signed (review TN-1): testnet only, same chain id.
   await testnetProvider(c);
+  const port = opts.port ?? (await freePort(SITE_PORT));
   const token = crypto.randomBytes(24).toString("hex");
   const origin = `http://127.0.0.1:${port}`;
   const p = new Provider([c.rpc]);
@@ -509,7 +526,7 @@ export async function startSite(opts: { port?: number } = {}) {
           if (dec?.name !== "pick" || a.player !== s.getAddress() || Number(a.game) !== 3 || !Array.isArray(a.producers) || a.producers.length !== 1 || !isAddr(a.producers[0])) {
             json(res, 400, { error: "that isn't a Survivor pick for this test player" }); return;
           }
-          try { const id = await send(pc, "pick", { player: a.player, game: 3, round: String(a.round), producers: a.producers, number: "0" }, s, 1); json(res, 200, { id }); }
+          try { const id = await send(pc, "pick", { player: a.player, game: 3, round: String(a.round), producers: a.producers, number: "0" }, s, PICK_RC_KOIN); json(res, 200, { id }); }
           catch (e) { json(res, 400, { error: String((e as Error).message).slice(0, 300) }); }
           return;
         }

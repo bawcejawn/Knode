@@ -78,7 +78,8 @@ test("robot players and the first round a season can start on", () => {
   assert.equal(T.botChoice("p2", f, new Set(), 10), f[0].a);
   assert.equal(T.botChoice("p2", f, new Set([f[0].a]), 10), f[1].a, "never a used producer");
   assert.equal(T.botChoice("p5", f, new Set(), 10), f[3].a);
-  assert.equal(T.botChoice("p6", f, new Set(), 9), null, "p6 skips every third round");
+  assert.equal(T.botChoice("p6", f, new Set(), 9), null, "p6 skips every third day of the season");
+  assert.notEqual(T.botChoice("p6", f, new Set(), 1), null, "p6 always joins on day 1");
   assert.equal(T.botChoice("p1", f, new Set(), 10), null, "p1 is yours");
   assert.equal(T.botChoice("p2", f, new Set(f.map((x) => x.a)), 10), null);
   const Q = S.withConfig({ day: 3600000 });
@@ -189,4 +190,14 @@ test("review TN-1: the test server won't start against a node that reports the m
     clock: { day: 3600000, firstDay: null, outFloor: 1 }, picks: null, game: null }));
   await assert.rejects(T.startSite({ port: 19950 }), /MAINNET/);
   srv.close();
+});
+
+test("the test page takes the next free port when its port is busy (8090 is the owner's Koinos node)", async () => {
+  const net = await import("node:net");
+  const busy = net.createServer();
+  const port = await new Promise((ok) => busy.listen(0, "127.0.0.1", () => ok(busy.address().port)));
+  const got = await T.freePort(port);
+  assert.ok(got > port && got < port + 20, `${got}`);
+  busy.close();
+  assert.equal(fs.readFileSync(path.join(APP, "bot/survivor-test.ts"), "utf8").match(/process\.env\.SURVIVOR_TEST_PORT \|\| (\d+)\)/)[1], "8370");
 });

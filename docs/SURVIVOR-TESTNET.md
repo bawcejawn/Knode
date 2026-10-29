@@ -138,7 +138,10 @@ Press **Ctrl+C** to stop it. Running it again carries on where it left off.
 
 **p1 is yours.** Open the test page in your browser:
 
-> http://127.0.0.1:8090
+> http://127.0.0.1:8370
+
+(`run` prints the exact address. If port 8370 is busy it uses the next free one, 8371 and up. To choose one yourself
+add `--port 9100`. It never uses 8090, your Koinos node, or 8350, the Block X test page, unless you ask.)
 
 Choose **p1** in the red bar ("Play as"), then pick a producer for the first round and press **Pick**. There is no
 wallet pop-up: the test server signs for p1 with its test key.

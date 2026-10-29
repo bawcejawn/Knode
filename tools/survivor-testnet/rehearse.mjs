@@ -121,7 +121,10 @@ async function browser() {
     await pg.waitForTimeout(5000);
     expect(await pg.isVisible(".tn-bar"), "test page shows the TESTNET bar");
     const today = await pg.innerText("#today-sub");
-    expect(/blocks so far/.test(today), `live standings: ${today.slice(0, 90)}`);
+    // The fake chain's clock runs a few minutes ahead of this browser's; when that crosses an hour, the page is still
+    // in the hour before and waits for its handicaps. Both are right.
+    const sameHour = Math.floor(fake.now() / 3600000) === Math.floor(Date.now() / 3600000);
+    expect(/blocks so far/.test(today) || (!sameHour && /Waiting for the recorder/.test(today)), `live standings: ${today.slice(0, 90)}`);
     await pg.selectOption("#tn-player", "p1");
     await pg.waitForTimeout(3000);
     // The first row you can pick in (an hour before Season 1 shows as a practice row without a Pick button).
