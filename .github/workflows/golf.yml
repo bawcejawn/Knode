@@ -123,7 +123,7 @@ jobs:
           def hole_ok(h):
               if type(h) is not dict or set(h) != {"id", "name", "status", "why", "field", "rows"}: return False
               if not (isid(h["id"]) and type(h["name"]) is str and len(h["name"]) <= 40 and h["status"] in ("final", "live", "skipped") and type(h["why"]) is str and len(h["why"]) <= 200 and nat(h["field"])): return False
-              return type(h["rows"]) is list and len(h["rows"]) <= 100000 and all(type(r) is list and len(r) == 4 and isaddr(r[0]) and num(r[1]) and r[2] in (0, 1) and r[3] in (0, 1) for r in h["rows"])
+              return type(h["rows"]) is list and len(h["rows"]) <= 100000 and all(type(r) is list and len(r) == 4 and isaddr(r[0]) and num(r[1]) and r[2] in (0, 1) and type(r[3]) is int and 0 <= r[3] <= 10**9 for r in h["rows"])
           def card_ok(c, ids):
               keys = {"a", "ranked", "place", "pts", "strokes", "par", "toPar", "lost", "under", "best", "mulligan", "holes"}
               if type(c) is not dict or set(c) != keys or not isaddr(c["a"]) or type(c["ranked"]) is not bool: return False

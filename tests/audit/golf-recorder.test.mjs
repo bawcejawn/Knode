@@ -49,7 +49,9 @@ const ranked = async (_node, who) => new Set(who.filter((a) => a !== FREE));
 /** A previous run's index, so the course already holds the three games from week W (as after a first run in W). */
 function seeded() { const d = tmp("golf-prev-"); write(d, "index.json", { v: 1, updated: "", weeks: [], course: { questions: W, race: W, blockx: W }, stakedFromWeek: 0 }); return d; }
 // Staked rules (ranked field, 5 per hole) unless a test says otherwise; practice weeks have their own test.
-const stakers = async (_node, who) => new Set(who.filter((a) => a !== FREE));   // everyone but FREE staked in Block Golf
+/** Block Golf stakes for the tests: a Map of whole VHP (1 each unless given). */
+const vhp = (list, each = 1) => new Map(list.map((a) => [a, typeof each === "function" ? each(a) : each]));
+const stakers = async (_node, who) => vhp(who.filter((a) => a !== FREE));   // everyone but FREE: 1 VHP in Block Golf
 const base = (o) => ({ sources: SOURCES, questionsOf: async () => qWeek(), rankedOf: ranked, golfStakersOf: stakers, p: "main", check: "check", stakedFromWeek: 0, ...(o.prev === undefined && !o.fresh ? { prev: seeded() } : {}), ...o });
 const readOut = (dir, name) => JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"));
 const holeOf = (dir, id, w = 3) => readOut(dir, `W00${w}.json`).holes.find((h) => h.id === id);
@@ -201,7 +203,7 @@ test("a hole needs 5 ranked players who scored; a player who scored nothing gets
   await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true, rows: [...four, ...zeros] }) }));
   const bx = holeOf(out, "blockx");
   assert.equal(bx.status, "skipped", "8 idle wallets don't make up the field (audit H5)");
-  assert.match(bx.why, /fewer than 5 ranked players scored/);
+  assert.match(bx.why, /less than 5 VHP of Block Golf stake/);
   const out2 = tmp("golf-");
   const five = P.slice(0, 5).map((a, i) => ({ a, place: i + 1, pts: 10 - i, correct: 1, picks: 1, days: 1, lastCorrect: 0, ranked: true }));
   await run(base({ now: END + 13 * H, out: out2, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true, rows: [...five, ...zeros.slice(1)] }) }));
@@ -368,7 +370,7 @@ test("the publish job's history check: the first staked week can't change once s
 test("staked weeks: a hole's field is the players staked in Block Golf who scored (owner, 2026-10-28)", async () => {
   // Only P0–P4 are staked in Block Golf; everyone on the race board is ranked there, but that no longer matters
   const golfers = new Set(P.slice(0, 5));
-  const only = async (_n, who) => new Set(who.filter((a) => golfers.has(a)));
+  const only = async (_n, who) => vhp(who.filter((a) => golfers.has(a)));
   const out = tmp("golf-");
   await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), golfStakersOf: only }));
   const wf = readOut(out, "W003.json");
@@ -395,7 +397,7 @@ test("staked weeks: stakes that can't be read, or that the nodes disagree on, ke
   assert.match(r.problems.join(" "), /Block Golf stakes: rpc down/);
   assert.equal(holeOf(out, "race").field, 10, "last run's flags stand");
   const out2 = tmp("golf-");
-  const r2 = await run(base({ now: END + 13 * H, prev, out: out2, raceDir: raceDir(), gamesDir: FINAL_GAMES(), golfStakersOf: async (n, who) => new Set(n === "check" ? who.slice(1) : who) }));
+  const r2 = await run(base({ now: END + 13 * H, prev, out: out2, raceDir: raceDir(), gamesDir: FINAL_GAMES(), golfStakersOf: async (n, who) => vhp(n === "check" ? who.slice(1) : who) }));
   assert.equal(readOut(out2, "W003.json").final, false);
   assert.match(r2.problems.join(" "), /don't agree on who is staked/);
 });
@@ -408,8 +410,8 @@ test("staked weeks refuse to start until the vault (v6) can be read (fix-check S
 });
 
 test("staked weeks: a hole is final only with stakes read after the week ended (fix-check S1)", async () => {
-  const all = async (_n, who) => new Set(who.filter((a) => a !== FREE));
-  const five = async (_n, who) => new Set(who.filter((a) => P.slice(0, 5).includes(a)));
+  const all = async (_n, who) => vhp(who.filter((a) => a !== FREE));
+  const five = async (_n, who) => vhp(who.filter((a) => P.slice(0, 5).includes(a)));
   const prev = tmp("golf-");
   await run(base({ now: END - H, out: prev, raceDir: raceDir(), gamesDir: gamesDir(), golfStakersOf: all }));
   const out = tmp("golf-");
@@ -440,7 +442,7 @@ test("staked weeks don't read the question game's ranked list (fix-check S3)", a
 });
 
 test("the Vault's file: a final staked week gets vault/W<week>.json with the Block Golf stakers' points (hand-off 2026-10-28)", async (t) => {
-  const golfers = async (_n, who) => new Set(who.filter((a) => P.slice(0, 6).includes(a)));
+  const golfers = async (_n, who) => vhp(who.filter((a) => P.slice(0, 6).includes(a)));
   const out = tmp("golf-");
   await run(base({ now: END - H, out, raceDir: raceDir(), gamesDir: gamesDir(), golfStakersOf: golfers }));
   assert.ok(!fs.existsSync(path.join(out, "vault")), "nothing before the week is final");
@@ -467,4 +469,17 @@ test("the Vault's file: a final staked week gets vault/W<week>.json with the Blo
   const next = copyDir(out); const nv = readOut(path.join(next, "vault"), "W3.json"); nv.rows.pop(); write(path.join(next, "vault"), "W3.json", nv);
   assert.throws(() => execFileSync("python3", [history, next, out], { stdio: "pipe" }), "a sent week can't change");
   assert.match(execFileSync("python3", [history, copyDir(out), out], { encoding: "utf8" }), /golf history ok/);
+});
+
+test("staked weeks count VHP: a hole needs 10% of the week's Block Golf stake among its scorers (owner, 2026-10-28)", async () => {
+  // P0 has 90 VHP in Block Golf and plays only the race; the 7 Block X scorers hold 1 VHP each = 7 < 10% of ~99
+  const big = async (_n, who) => vhp(who.filter((a) => a !== FREE), (a) => (a === P[0] ? 90 : 1));
+  const bxRows = P.slice(1, 8).map((a, i) => ({ a, place: i + 1, pts: 70 - 10 * i, correct: 1, picks: 1, days: 1, lastCorrect: 0, ranked: true }));
+  const out = tmp("golf-");
+  await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true, rows: bxRows }), golfStakersOf: big }));
+  const bx = holeOf(out, "blockx");
+  assert.equal(bx.status, "skipped");
+  assert.match(bx.why, /less than 10 VHP/);
+  assert.equal(holeOf(out, "race").status, "final");
+  assert.equal(holeOf(out, "race").rows.find((r) => r[0] === P[0])[3], 90, "the weight stored is the whole VHP staked");
 });
