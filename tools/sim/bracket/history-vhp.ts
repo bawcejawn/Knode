@@ -99,7 +99,11 @@ async function main() {
     const top = Number(E.TOP);
     // every address that signed in the last 3 days, read pinned to a block, on each node
     const recent = await blocks(p, top - 3 * 28800 + 1, top);
-    const who = [...new Set(recent.signer)];
+    // …plus every signer in the repo's packed history (Jun–Oct) and any ADDRS given, so older producers are anchored too
+    let packed: string[] = [];
+    try { packed = zlib.gunzipSync(fs.readFileSync("data/blocks-compact.csv.gz")).toString().split("\n", 1)[0].split(",").slice(1); } catch { /* none */ }
+    const extra = String(E.ADDRS || "").split(/[\s,]+/).filter((a) => /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a));
+    const who = [...new Set([...recent.signer, ...packed, ...extra])];
     const read = async (node: Provider) => {
       const vhp = new Contract({ id: VHP, abi: tokenAbi as any, provider: node });
       const out: Record<string, { v: string; h: number }> = {};
