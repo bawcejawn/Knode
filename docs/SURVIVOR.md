@@ -66,8 +66,16 @@ score at the out-zone line. A tie at the line is safe.
 
 At 0 lives you are out of the season.
 
-**The safety net.** If everyone still in lands in the out-zone on the same day, nobody loses a life for it. That
-producer still counts as used. A missing pick always costs a life, even on such a day.
+**The safety net.** If nobody still in has a safe pick on a day (each player's pick landed in the out-zone, or they
+made no valid pick), nobody loses a life for the out-zone that day. That producer still counts as used. A missing pick,
+a producer not in the field and a producer used before always cost a life, even on such a day.
+
+**Picking ahead.** You can pick up to 7 days ahead, but a day's field (who has enough recent blocks) is set the day
+before. If your producer isn't in that day's field, the pick costs a life, and the safety net doesn't cover it. The page
+reminds you to check early picks once the field is out.
+
+**Who counts.** Wallets that missed the 1-VHP check still play: they count as "still in" for the safety net and for the
+end of the season, but can't win a prize. (Owner's decision pending; see the Repo Lense audit, SV-A10.)
 
 **The end.** The season ends after the day on which 2 or fewer players are left (if more than 2 started), or after
 day 14. Results are final 12 hours later.
@@ -83,7 +91,9 @@ Equal on all three: the same place.
 if all of these hold:
 - you held at least 1 VHP (or a Knode Games stake) at every daily check while you were in the season;
 - you weren't knocked out by a missed pick;
-- the season had at least 3 players who each made at least 2 picks.
+- the season had at least 3 players who could win (the two rules above) and who each made at least 2 valid picks.
+
+A stake counts only from 1 VHP, the same as a wallet balance.
 
 These rules stop people from farming the prize with empty or idle wallets. Prizes are paid by the vault once it is
 live; until then the page says so.
@@ -193,4 +203,6 @@ The recorder refuses to record a season if game 3's settings on the chain differ
   200 players about 4 are left on day 14 and the ranking decides.
 - **Audits.** An independent audit found 1 High, 4 Medium, 4 Low and 3 Info issues, all fixed or accepted. The worst:
   idle wallets could farm the prize through the safety net. A fix-check and a re-check followed; the re-check's verdict
-  was "ready".
+  was "ready". Then the owner's Repo Lense audit (28 October 2026) found 1 Critical (testnet kit only), 2 High and 5
+  Medium issues among 26; all were fixed except the owner's open decisions (SV-A2's residual, SV-A10, SV-A19). See
+  `claude/builds/04-survivor-plan.md` in the project.

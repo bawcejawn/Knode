@@ -250,15 +250,23 @@ async function fund(sendIt: boolean) {
   log("Done. Next: npm run survivor-test -- picks-build");
 }
 
+/** sha256 of picks/assembly/Picks.ts as audited (LF line endings). The testnet build starts only from this exact source
+ *  (audit SV-A22): if the contract changes, this tool must be re-checked and the hash updated with it. */
+export const PICKS_SOURCE_SHA256 = "444209c16b2ad517e335ead1f5eef740e63761bc1d26b8115b56461ea1e583d6";
 /** Build the testnet Picks contract: the audited source with two constants changed (the test owner, a 10-minute admin
- *  wait). Exported for the tests. Returns the patched source. */
-export function patchPicksSource(src: string, owner: string): string {
+ *  wait). Each change must match exactly once (audit SV-A22). Exported for the tests (which pass pinned = null to test
+ *  the exactly-once rule on an edited source). Returns the patched source. */
+export function patchPicksSource(src: string, owner: string, pinned: string | null = PICKS_SOURCE_SHA256): string {
   if (!isAddr(owner)) throw new Error("bad test owner address");
+  src = src.replace(/\r\n/g, "\n");
+  if (pinned !== null && crypto.createHash("sha256").update(src, "utf8").digest("hex") !== pinned)
+    throw new Error("picks/assembly/Picks.ts changed since the audit (its sha256 isn't the pinned one): the testnet patch needs re-checking before it builds anything");
   const a = 'export const INITIAL_OWNER: Uint8Array = Base58.decode("1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717");';
-  const b = "export const TIMELOCK_MS: u64 = 2 * DAY_MS;";
-  if (!src.includes(a) || !src.includes(b)) throw new Error("picks/assembly/Picks.ts changed: the testnet patch needs updating");
+  const b = /^export const TIMELOCK_MS: u64 = 2 \* DAY_MS;.*$/gm;
+  const nA = src.split(a).length - 1, nB = (src.match(b) ?? []).length;
+  if (nA !== 1 || nB !== 1) throw new Error(`picks/assembly/Picks.ts changed: the testnet patch must change each line exactly once (owner line found ${nA}×, admin-wait line ${nB}×)`);
   return src.replace(a, `export const INITIAL_OWNER: Uint8Array = Base58.decode("${owner}");   // TESTNET BUILD: the test owner`)
-    .replace(/export const TIMELOCK_MS: u64 = 2 \* DAY_MS;.*$/m, `export const TIMELOCK_MS: u64 = ${TEST_TIMELOCK_MS};   // TESTNET BUILD: 10 minutes, not 48 hours`);
+    .replace(b, `export const TIMELOCK_MS: u64 = ${TEST_TIMELOCK_MS};   // TESTNET BUILD: 10 minutes, not 48 hours`);
 }
 async function picksBuild() {
   const c = readConfig(), keys = readKeys();
@@ -292,7 +300,8 @@ async function picksBuild() {
   void c;
 }
 
-async function picksUpload(sendIt: boolean) {
+/** Exported for the tests (audit SV-A1). */
+export async function picksUpload(sendIt: boolean) {
   const c = readConfig(), keys = readKeys();
   const p = await testnetProvider(c);
   const wasmFile = path.join(PICKS_SRC(), "build", "release", "contract.wasm");
@@ -308,9 +317,12 @@ async function picksUpload(sendIt: boolean) {
   log(`Mana needed: about ${koin(needRc)}`);
   if (rc < needRc) throw new Error(`The Picks wallet needs about ${koin(needRc)} test KOIN of Mana: npm run survivor-test -- fund --send`);
   if (!sendIt) { log("\nDry run. Add --send to upload."); return; }
+  // Signed for the chain id checked above, like every other send (audit SV-A1): without chainId, koilib asks the node
+  // again while it builds the transaction, and a node that changed its answer would get a signature for another chain.
+  if (!CHECKED_CHAIN || CHECKED_CHAIN === MAINNET_CHAIN_ID) throw new Error("Not uploading: the network wasn't checked (or is mainnet).");
   const k = new Contract({ id: A, abi, provider: p, signer: s, bytecode: new Uint8Array(wasm) });
   const { transaction, receipt } = await k.deploy({ abi: JSON.stringify(abi), authorizesCallContract: true, authorizesTransactionApplication: true, authorizesUploadContract: true,
-    payer: A, rcLimit: ((rc * 95n) / 100n).toString() } as any);
+    payer: A, rcLimit: ((rc * 95n) / 100n).toString(), chainId: CHECKED_CHAIN } as any);
   if (receipt?.reverted) throw new Error(`upload reverted: ${JSON.stringify(receipt.logs)}`);
   await transaction.wait("byBlock", 180_000);
   c.picks = { contract: A, sha256: sha256hex(wasm), uploadTx: transaction.id, uploadedAt: new Date().toISOString() };
@@ -473,9 +485,9 @@ export async function startSite(opts: { port?: number } = {}) {
   const c = readConfig(), keys = readKeys();
   // The same check as every other command, before anything can be signed (review TN-1): testnet only, same chain id.
   await testnetProvider(c);
-  const port = opts.port ?? (await freePort(SITE_PORT));
+  let port = opts.port ?? (await freePort(SITE_PORT));
   const token = crypto.randomBytes(24).toString("hex");
-  const origin = `http://127.0.0.1:${port}`;
+  let origin = `http://127.0.0.1:${port}`;
   const p = new Provider([c.rpc]);
   const abi = PICKS_ABI();
   const types: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
@@ -491,7 +503,7 @@ export async function startSite(opts: { port?: number } = {}) {
     req.on("data", (d: Buffer) => { n += d.length; if (n > max) { bad(new Error("too big")); req.destroy(); } else parts.push(d); });
     req.on("end", () => ok(Buffer.concat(parts).toString("utf8"))); req.on("error", bad);
   });
-  const json = (res: http.ServerResponse, code: number, v: any) => { res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify(v)); };
+  const json = (res: http.ServerResponse, code: number, v: any) => { res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" }); res.end(JSON.stringify(v)); };
   const server = http.createServer(async (req, res) => {
     // No other site may frame the test page (review TN-3).
     res.setHeader("x-frame-options", "DENY");
@@ -506,7 +518,7 @@ export async function startSite(opts: { port?: number } = {}) {
           const b = JSON.parse(await body(req));
           if (!b || typeof b.method !== "string" || !RPC_METHODS.has(b.method)) { json(res, 403, { error: `method not allowed: ${b?.method}` }); return; }
           const r = await fetch(c.rpc, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: b.id ?? 1, method: b.method, params: b.params ?? {} }) });
-          res.writeHead(r.status, { "content-type": "application/json", "cache-control": "no-store" }); res.end(await r.text()); return;
+          res.writeHead(r.status, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" }); res.end(await r.text()); return;
         }
         if (u === "/test/send") {
           const b = JSON.parse(await body(req));
@@ -526,6 +538,9 @@ export async function startSite(opts: { port?: number } = {}) {
           if (dec?.name !== "pick" || a.player !== s.getAddress() || Number(a.game) !== 3 || !Array.isArray(a.producers) || a.producers.length !== 1 || !isAddr(a.producers[0])) {
             json(res, 400, { error: "that isn't a Survivor pick for this test player" }); return;
           }
+          // Only a round that is open now, on the test clock (audit SV-A24). The contract checks this too.
+          const round = Number(a.round);
+          if (!Number.isSafeInteger(round) || !mathOf(cur).isOpen(round, Date.now())) { json(res, 400, { error: "that round isn't open for picks now (it is locked, or not open yet)" }); return; }
           try { const id = await send(pc, "pick", { player: a.player, game: 3, round: String(a.round), producers: a.producers, number: "0" }, s, PICK_RC_KOIN); json(res, 200, { id }); }
           catch (e) { json(res, 400, { error: String((e as Error).message).slice(0, 300) }); }
           return;
@@ -535,7 +550,11 @@ export async function startSite(opts: { port?: number } = {}) {
       if (req.method !== "GET") { res.writeHead(405); res.end(); return; }
       if (u === "/" || u === "/site/" || u === "/site/survivor.html") { res.writeHead(302, { location: "/site/survivor-testnet.html" }); res.end(); return; }
       if (u === "/site/survivor-testnet.html") { res.writeHead(200, { "content-type": types[".html"], "cache-control": "no-store" }); res.end(testPage(fs.readFileSync(path.join(ROOT, "site", "survivor.html"), "utf8"))); return; }
-      if (u === "/testnet/survivor-net.js") { res.writeHead(200, { "content-type": types[".js"], "cache-control": "no-store" }); res.end(netScript(readConfig(), keys)); return; }
+      if (u === "/testnet/survivor-net.js") {
+        // Loaded by the test page only (audit SV-A23): not as a script on another site. It holds no keys either way.
+        const sfs = req.headers["sec-fetch-site"];
+        if (sfs && sfs !== "same-origin" && sfs !== "none") { res.writeHead(403); res.end(); return; }
+        res.writeHead(200, { "content-type": types[".js"], "cache-control": "no-store" }); res.end(netScript(readConfig(), keys)); return; }
       if (u === "/testnet/session") {
         // Read with fetch from the page only: the browser won't let another site read this answer (no CORS header).
         if (req.headers["sec-fetch-site"] && req.headers["sec-fetch-site"] !== "same-origin") { json(res, 403, {}); return; }
@@ -552,7 +571,18 @@ export async function startSite(opts: { port?: number } = {}) {
       res.writeHead(404); res.end("not found");
     } catch (e) { json(res, 500, { error: String((e as Error).message).slice(0, 200) }); }
   });
-  server.listen(port, "127.0.0.1", () => log(`Test page: ${origin}/site/survivor-testnet.html  (only this PC can open it)`));
+  // Another program can take the port between freePort's check and here (audit SV-A26): then try the next free one.
+  for (let i = 0; ; i++) {
+    const err = await new Promise<NodeJS.ErrnoException | null>((ok) => {
+      const onErr = (e: NodeJS.ErrnoException) => ok(e);
+      server.once("error", onErr);
+      server.listen(port, "127.0.0.1", () => { server.off("error", onErr); ok(null); });
+    });
+    if (!err) break;
+    if (err.code !== "EADDRINUSE" || opts.port !== undefined || i >= 4) throw err;
+    port = await freePort(port + 1); origin = `http://127.0.0.1:${port}`;
+  }
+  log(`Test page: ${origin}/site/survivor-testnet.html  (only this PC can open it)`);
   return server;
 }
 

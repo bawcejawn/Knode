@@ -10,7 +10,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 const APP = process.env.APP || ".";
-const { run } = await import(path.resolve(APP, "bot/games/survivor.ts"));
+const { run, encodeSeason, readRanked } = await import(path.resolve(APP, "bot/games/survivor.ts"));
 const S = globalThis.KSurvivor;
 const A = (c) => "1" + c.repeat(33);
 const PRODS = ["A", "B", "C", "D", "E"].map(A);
@@ -104,14 +104,17 @@ test("a season: day-1 pickers only, late picks ignored, lives, the end with 2 le
   const sf = r.read("S001.json");
   assert.equal(sf.startDay, FIRST);
   assert.deepEqual(sf.days.map((x) => x.n), [1, 2, 3]);
-  assert.ok(!sf.days[0].picks.some((p) => p[0] === DAVE), "a pick at the lock time doesn't count");
+  assert.equal(sf.v, 2, "Repo Lense SV-A5: wallets and producers written once, the days refer to them by position");
+  const W = (i) => sf.who[i];
+  assert.ok(!sf.days[0].picks.some((p) => W(p[0]) === DAVE), "a pick at the lock time doesn't count");
   const by = Object.fromEntries(sf.result.players.map((x) => [x.a, x]));
   assert.deepEqual(Object.keys(by).sort(), [ALICE, BOB, CAROL, EVE].sort());
   assert.equal(by[BOB].outN, 2); assert.equal(by[CAROL].outN, 3);
   assert.equal(by[ALICE].outN, null); assert.equal(by[ALICE].lives, 2); assert.equal(by[EVE].lives, 2);
   assert.equal(by[EVE].eligible, false, "held no VHP at the checks");
   assert.ok(sf.days.slice(1).every((x) => x.picks.every((p) => p.length === 2)), "picks are [player, producer]");
-  assert.ok(!sf.days[2].picks.some((p) => p[0] === BOB), "audit SV-2: a player who is out keeps no picks in the file");
+  assert.ok(!sf.days[2].picks.some((p) => W(p[0]) === BOB), "audit SV-2: a player who is out keeps no picks in the file");
+  assert.deepEqual(sf.days.map((x) => x.noVhp.map(W)), [[EVE], [], []], "Repo Lense SV-A5: a missed check is listed once");
   assert.equal(sf.result.over, true); assert.equal(sf.result.endN, 3);
   assert.equal(sf.result.final, false, "inside the 12-hour correction window");
   assert.deepEqual(sf.result.prizes, []);
@@ -146,7 +149,7 @@ test("no season before the Picks contract is live or FIRST_DAY is set; FIRST_DAY
 
 test("the files pass the publish job's shape check", async (t) => {
   const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
-  const m = /if \[ -d "\$IN\/survivor" \] && ! \/usr\/bin\/python3 - "\$IN\/survivor" <<'PY'\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const m = /if \[ -d "\$IN\/survivor" \] && ! \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY'\n([\s\S]*?)\n\s*PY\n/.exec(yml);
   assert.ok(m, "the survivor check is in the workflow");
   const indent = /^(\s*)/.exec(m[1])[1].length;
   const py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
@@ -230,7 +233,7 @@ test("fix-check FC-2: a season that can't progress never stops new days and hand
 
 test("audit SV-2 and SV-3: a 1,000-player season fits under 2 MB, and a 1,000-way tie for the prize passes the check (never over 6 VHP)", async (t) => {
   const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
-  const m = /if \[ -d "\$IN\/survivor" \] && ! \/usr\/bin\/python3 - "\$IN\/survivor" <<'PY'\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const m = /if \[ -d "\$IN\/survivor" \] && ! \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY'\n([\s\S]*?)\n\s*PY\n/.exec(yml);
   const indent = /^(\s*)/.exec(m[1])[1].length;
   const py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
   try { execFileSync("python3", ["--version"]); } catch { t.skip("python3 not installed"); return; }
@@ -246,8 +249,143 @@ test("audit SV-2 and SV-3: a 1,000-player season fits under 2 MB, and a 1,000-wa
   assert.equal(sf.result.prizes.length, 1000, "a 1,000-way tie for 1st");
   assert.ok(sf.result.prizes.reduce((s, p) => s + Math.round(p.vhp * 1e8), 0) <= 6e8, "at most 6 VHP, counted in 1e-8 units");
   const dir = tmp();
-  fs.writeFileSync(path.join(dir, "S001.json"), JSON.stringify(sf) + "\n");
+  fs.writeFileSync(path.join(dir, "S001.json"), JSON.stringify(encodeSeason(sf)) + "\n");
   const size = fs.statSync(path.join(dir, "S001.json")).size;
   assert.ok(size < 2 * 1024 * 1024, `S001.json is ${(size / 1048576).toFixed(2)} MB`);
   assert.match(execFileSync("python3", ["-", dir], { input: py }).toString(), /survivor files ok/);
+});
+
+// ── Repo Lense fixes ──
+const seasonTimes = () => {
+  const start = S.dayStart(FIRST - 1) + 3600000;
+  const t = [start, start + 60000, start + 120000, start + 180000];
+  for (let n = 1; n <= 3; n++) t.push(S.dayStart(FIRST + n) + 3600000);
+  t.push(S.dayStart(FIRST + 3) + 12 * 3600000 + 60000);
+  return t;
+};
+function publishCheck() {
+  const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
+  const m = /if \[ -d "\$IN\/survivor" \] && ! \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY'\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const indent = /^(\s*)/.exec(m[1])[1].length;
+  const py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
+  return (dir) => { try { execFileSync("python3", ["-I", "-", dir], { input: py, stdio: "pipe" }); return true; } catch { return false; } };
+}
+function copyOut(from, edit) {
+  const dir = tmp();
+  for (const f of fs.readdirSync(from)) fs.copyFileSync(path.join(from, f), path.join(dir, f));
+  const j = JSON.parse(fs.readFileSync(path.join(dir, "S001.json"), "utf8"));
+  edit(j);
+  fs.writeFileSync(path.join(dir, "S001.json"), JSON.stringify(j));
+  return dir;
+}
+
+test("Repo Lense SV-A4 / SV-A13: the publish check tests meaning, not only shape", async (t) => {
+  try { execFileSync("python3", ["--version"]); } catch { t.skip("python3 not installed"); return; }
+  const ok = publishCheck();
+  const r = await runs(seasonTimes());
+  assert.equal(ok(r.out), true, "the recorder's own files pass");
+  const OUTSIDER = A("Z");
+  const bad = {
+    "prize to a wallet not in the season": (j) => { j.result.prizes[0].player = OUTSIDER; },
+    "prize to an ineligible player": (j) => { j.result.prizes[0].player = EVE; },
+    "both prizes to one wallet": (j) => { j.result.prizes[1].player = j.result.prizes[0].player; },
+    "prizes before the season is final": (j) => { j.result.final = false; },
+    "place 3": (j) => { j.result.prizes[1].place = 3; },
+    "a player not on day 1": (j) => { j.result.players[0].a = OUTSIDER; },
+    "lives that don't match the log": (j) => { j.result.players.find((p) => p.outN !== null).lives = 2; },
+    "out with lives left": (j) => { const p = j.result.players.find((x) => x.outN === null); p.outN = 1; },
+    "places out of order": (j) => { j.result.players.reverse(); },
+    "a negative score": (j) => { j.result.players[0].total = -1; },
+    "true where a number is meant": (j) => { j.result.players[0].place = true; },
+    "1.0 where an integer is meant": (j) => { j.days[0].n = 1.5; },
+    "an integer above 2^53": (j) => { j.days[0].counts[0][1] = 2 ** 60; },
+    "a pick index out of range": (j) => { j.days[0].picks[0][0] = j.who.length; },
+    "the same wallet twice in who": (j) => { j.who.push(j.who[0]); },
+    "a forged v1 file": (j) => { j.v = 1; },
+  };
+  for (const [why, edit] of Object.entries(bad)) assert.equal(ok(copyOut(r.out, edit)), false, why);
+  // A bad `updated`, and NaN, are refused too.
+  const d2 = tmp();
+  for (const f of fs.readdirSync(r.out)) fs.copyFileSync(path.join(r.out, f), path.join(d2, f));
+  fs.writeFileSync(path.join(d2, "days.json"), fs.readFileSync(path.join(r.out, "days.json"), "utf8").replace(/"updated":"[^"]*"/, `"updated":"${"x".repeat(1000)}"`));
+  assert.equal(ok(d2), false, "updated must be an ISO time");
+  const d3 = tmp();
+  for (const f of fs.readdirSync(r.out)) fs.copyFileSync(path.join(r.out, f), path.join(d3, f));
+  fs.writeFileSync(path.join(d3, "fields.json"), fs.readFileSync(path.join(r.out, "fields.json"), "utf8").replace(/"h":[0-9.]+/, `"h":NaN`));
+  assert.equal(ok(d3), false, "NaN is refused");
+});
+
+test("Repo Lense SV-A4: a forged result in the last run's files is replaced by the season played again", async () => {
+  const r = await runs(seasonTimes());
+  const real = r.read("S001.json").result;
+  const forged = copyOut(r.out, (j) => { j.result.prizes = [{ player: EVE, place: 1, vhp: 4 }, { player: BOB, place: 2, vhp: 2 }]; });
+  const again = await runs([S.dayStart(FIRST + 4) + 3600000], {}, forged);
+  assert.deepEqual(again.read("S001.json").result.prizes, real.prizes);
+});
+
+test("Repo Lense SV-A3 / SV-A7: a stake counts only from 1 VHP, and a failed stake read is tried again, not dropped", async () => {
+  const vhp = async () => ({ [ALICE]: "100000000", [BOB]: "99999999" });
+  const stakes = { [BOB]: { stake: "0" }, [CAROL]: { stake: "1" }, [DAVE]: { stake: "60000000", pending: "40000000" } };
+  const held = await readRanked("n", [ALICE, BOB, CAROL, DAVE], "1tok", A("G"), { vhp, player: async (n, g, a) => stakes[a] });
+  assert.deepEqual([...held].sort(), [ALICE, DAVE].sort(), "a 1e-8 VHP stake doesn't count; 0.6 staked + 0.4 pending does");
+  await assert.rejects(readRanked("n", [CAROL], "1tok", A("G"), { vhp, player: async () => { throw new Error("rate limited"); } }), /rate limited/);
+  // In a run, a failed check leaves the day for the next run instead of marking the player.
+  const start = S.dayStart(FIRST - 1) + 3600000;
+  const times = [start, start + 60000, start + 120000, start + 180000, S.dayStart(FIRST + 1) + 3600000];
+  const r = await runs(times, { rankedOf: async () => { throw new Error("rate limited"); } });
+  assert.equal(r.read("S001.json").days.length, 0);
+  assert.ok(r.r.problems.some((p) => /VHP check: rate limited/.test(p)));
+  // No Knode contract on mainnet: no season is recorded, and it says so.
+  const r2 = await runs(times, { rankedOf: undefined, gameContract: "" });
+  assert.ok(!fs.existsSync(path.join(r2.out, "S001.json")) || r2.read("S001.json").days.length === 0);
+  assert.ok(r2.r.problems.some((p) => /names no Knode contract/.test(p)));
+});
+
+test("Repo Lense SV-A8: a bad saved day end is checked before any download, and searched again in the same run", async () => {
+  const t = S.dayStart(FIRST - 1) + 3600000;
+  for (const [why, end] of [["beyond the irreversible block", 10 ** 12], ["far too early", 5]]) {
+    const r = await runs([t]);
+    const j = r.read("days.json"), last = j.days[j.days.length - 1];
+    last.heights = [Math.min(end, 1), end]; last.blocks = end - last.heights[0] + 1; last.counts = [[PRODS[0], last.blocks]];
+    fs.writeFileSync(path.join(r.out, "days.json"), JSON.stringify(j));
+    let asked = 0;
+    const counting = (node, a, b) => { asked += b - a + 1; return blocksOf()(node, a, b); };
+    const r2 = await runs([t + 60000], { blocksOf: counting }, r.out);
+    const rec = r2.read("days.json").days.find((x) => x.day === last.day + 1);
+    assert.ok(rec && rec.blocks === 28800, `${why}: the next day is recorded in full`);
+    assert.ok(asked < 3 * 30000 * 2, `${why}: ${asked} blocks downloaded`);
+    assert.ok(r2.r.problems.some((p) => p.includes("searched again")), why);
+  }
+});
+
+test("Repo Lense SV-A12 / SV-A14: game 3 is read on both nodes, enabled and picks per day are checked, a pending change is reported", async () => {
+  const start = S.dayStart(FIRST - 1) + 3600000;
+  const times = [start, start + 60000, start + 120000, start + 180000, S.dayStart(FIRST + 1) + 3600000];
+  for (const [why, gameOf] of [
+    ["closed", async () => ({ ...GAME3, enabled: false })],
+    ["picks per day", async () => ({ ...GAME3, max_picks_per_day: 50 })],
+    ["nodes disagree", async (node) => (node === "check" ? { ...GAME3, max_changes: 4 } : GAME3)],
+  ]) {
+    const r = await runs(times, { gameOf });
+    assert.ok(!fs.existsSync(path.join(r.out, "S001.json")) || r.read("S001.json").days.length === 0, why);
+    assert.ok(r.r.problems.some((p) => /game 3/.test(p)), why);
+  }
+  const pending = { game: GAME3, pending: { game: { ...GAME3, lead: "600000" }, eta: String(Date.now()) } };
+  const r = await runs(times, { gameOf: async () => pending });
+  assert.equal(r.read("S001.json").days.length, 1, "a pending change doesn't stop the season");
+  assert.ok(r.r.problems.some((p) => /change to game 3 is announced.*lead/.test(p)), JSON.stringify(r.r.problems));
+});
+
+test("Repo Lense SV-A16: one node only is reported, and its days are checked again once a second node is back", async () => {
+  const t = S.dayStart(FIRST - 1) + 3600000;
+  const r = await runs([t], { check: null });
+  assert.ok(r.r.problems.some((p) => /only one node/.test(p)));
+  assert.ok(r.read("days.json").days.every((x) => x.checked === 1));
+  const r2 = await runs([t + 60000, t + 120000, t + 180000, t + 240000], {}, r.out);
+  assert.ok(r2.read("days.json").days.every((x) => x.checked === 2), "checked again on the second node");
+  // A day the second node disagrees with is reported, not changed.
+  const r3 = await runs([t], { check: null });
+  const j = r3.read("days.json"), d = j.days[0].day;
+  const r4 = await runs([t + 60000, t + 120000, t + 180000], { blocksOf: blocksOf(d) }, r3.out);
+  assert.ok(r4.r.problems.some((p) => /second node disagrees/.test(p)), JSON.stringify(r4.r.problems));
 });

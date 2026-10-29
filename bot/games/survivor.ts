@@ -24,6 +24,7 @@
 import { Provider, Contract } from "koilib";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import { pathToFileURL } from "node:url";
 import { readVhp, MAINNET_VHP, withRetry } from "../../common.ts";
 await import("../../site/survivor-math.js");
@@ -34,11 +35,14 @@ let S: any = MAINNET_S;
 const E = process.env;
 const RPC = E.RPC || "https://koinos.armana.io";
 const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
+// Repo Lense SV-A16: a second node set to the same address as the first is no second node; say so every run.
+const SAME_CHECK = !!E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK === RPC;
 const MAX_DAYS_PER_RUN = 3;
 const KEEP_DAYS = 60;                         // days.json keeps the last 60 recorded days
 const CATCHUP_DAYS = 50;                      // after an outage, a season's older days are recorded back to 50 days
 const BACK_DAYS = S.FORM_DAYS + S.FORM_GAP - 1;  // today's field needs days d−8 … d−2; tomorrow's needs d−7 … d−1
 const ONE_VHP = 100000000n;
+const SIZE_WARN = 1.9 * 1024 * 1024;          // the publish job refuses a file over 2 MB (Repo Lense SV-A5)
 const isAddr = (a: unknown) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
 
 type Counts = [string, number][];
@@ -47,6 +51,9 @@ type Field = { a: string; k: number; h: number }[];
 // noVhp: the players still in who did NOT hold 1 VHP or a stake at that day's check (usually few; audit SV-2).
 type SeasonDay = { n: number; day: number; field: Field; counts: Counts; picks: [string, string][]; noVhp: string[] };
 type SeasonFile = { v: 1; season: number; startDay: number; days: SeasonDay[]; result: any };
+/** On disk (Repo Lense SV-A5): each wallet and producer is written once, in `who` and `prods`, and the days refer to them
+ *  by position. picks: [[wallet index, producer index]]; noVhp: [wallet index]. */
+type SeasonFileV2 = { v: 2; season: number; startDay: number; who: string[]; prods: string[]; days: any[]; result: any };
 export type Blocks = { ts: number[]; signers: string[] };
 export type RawPick = { player: string; producer: string; time: number };
 type Opts = {
@@ -86,7 +93,8 @@ function loadDays(dir: string | undefined): Map<number, DayRec> {
 }
 function loadSeason(dir: string | undefined, season: number, startDay: number): SeasonFile {
   const fresh: SeasonFile = { v: 1, season, startDay, days: [], result: null };
-  const old = readJson(dir, sName(season));
+  let old = readJson(dir, sName(season));
+  if (old && old.v === 2) old = decodeSeason(old);
   if (!old || old.v !== 1 || old.season !== season || old.startDay !== startDay || !Array.isArray(old.days)) return fresh;
   // Keep the recorded days in order from day 1, without gaps.
   for (const d of old.days) {
@@ -94,8 +102,30 @@ function loadSeason(dir: string | undefined, season: number, startDay: number): 
     if (!d.picks.every((x: any) => Array.isArray(x) && x.length === 2 && isAddr(x[0]) && isAddr(x[1])) || !d.noVhp.every(isAddr)) break;
     fresh.days.push({ n: d.n, day: d.day, field: d.field, counts: d.counts, picks: d.picks, noVhp: d.noVhp });
   }
-  if (old.result && old.result.final === true && fresh.days.length === old.days.length) fresh.result = old.result;
+  // The result is never taken from the file: every run plays the season again from its days (Repo Lense SV-A4).
   return fresh;
+}
+/** v2 on disk → the days the math plays. Anything out of range ends the days there (the rest is recorded again). */
+function decodeSeason(j: any): any {
+  if (!Array.isArray(j.who) || !Array.isArray(j.prods) || !j.who.every(isAddr) || !j.prods.every(isAddr) || !Array.isArray(j.days)) return null;
+  const W = (i: any) => (Number.isInteger(i) && i >= 0 && i < j.who.length ? j.who[i] : null);
+  const P = (i: any) => (Number.isInteger(i) && i >= 0 && i < j.prods.length ? j.prods[i] : null);
+  const days: any[] = [];
+  for (const d of j.days) {
+    if (!d || !Array.isArray(d.picks) || !Array.isArray(d.noVhp)) break;
+    const picks = d.picks.map((x: any) => (Array.isArray(x) && x.length === 2 ? [W(x[0]), P(x[1])] : [null, null]));
+    const noVhp = d.noVhp.map(W);
+    if (picks.some((x: any) => !x[0] || !x[1]) || noVhp.some((x: any) => !x)) break;
+    days.push({ n: d.n, day: d.day, field: d.field, counts: d.counts, picks, noVhp });
+  }
+  return { v: 1, season: j.season, startDay: j.startDay, days, result: null };
+}
+export function encodeSeason(sf: SeasonFile): SeasonFileV2 {
+  const who: string[] = [], prods: string[] = [], wi = new Map<string, number>(), pi = new Map<string, number>();
+  const at = (list: string[], m: Map<string, number>, a: string) => { let i = m.get(a); if (i === undefined) { i = list.length; list.push(a); m.set(a, i); } return i; };
+  const days = sf.days.map((d) => ({ n: d.n, day: d.day, field: d.field, counts: d.counts,
+    picks: d.picks.map(([p, q]) => [at(who, wi, p), at(prods, pi, q)]), noVhp: d.noVhp.map((a) => at(who, wi, a)) }));
+  return { v: 2, season: sf.season, startDay: sf.startDay, who, prods, days, result: sf.result };
 }
 function defaultPicksContract(): string | null {
   try { const d = JSON.parse(fs.readFileSync(new URL("../../picks-data/deployment.json", import.meta.url), "utf8")); return isAddr(d.contract) ? d.contract : null; } catch { return null; }
@@ -158,32 +188,39 @@ async function readPicks(node: any, contract: string, day: number): Promise<RawP
 /** Game 3's settings must be exactly what site/survivor-math.js assumes (audit SV-9). Returns a problem, or "". */
 export function gameProblem(g: any): string {
   if (!g) return "game 3 isn't registered on the Picks contract";
-  const want: Record<string, string> = { id: String(S.GAME_ID), kind: "1", list_size: "1", lock_mode: "2", round_size: String(S.DAY), round_offset: "0", lead: String(S.LEAD_MS), ahead: String(S.AHEAD_MS), max_changes: String(S.MAX_CHANGES) };
-  for (const [k, v] of Object.entries(want)) if (String(g[k] ?? "0") !== v) return `game 3's ${k} on the chain is ${g[k] ?? "0"}, the Survivor math expects ${v}`;
+  // Repo Lense SV-A14: enabled and max_picks_per_day too (a closed game would make every player miss a pick).
+  const want: Record<string, string> = { id: String(S.GAME_ID), kind: "1", list_size: "1", lock_mode: "2", round_size: String(S.DAY), round_offset: "0", lead: String(S.LEAD_MS), ahead: String(S.AHEAD_MS), max_picks_per_day: String(S.PICKS_PER_DAY), max_changes: String(S.MAX_CHANGES), enabled: "true" };
+  const dflt = (k: string) => (k === "enabled" ? "false" : "0");
+  for (const [k, v] of Object.entries(want)) if (String(g[k] ?? dflt(k)) !== v) return `game 3's ${k} on the chain is ${g[k] ?? dflt(k)}, the Survivor math expects ${v}`;
   return "";
 }
 async function readGame(node: any, contract: string): Promise<any> {
   const c = new Contract({ id: contract, abi: PICKS_ABI(), provider: node });
   const r: any = await withRetry("game 3", () => (c.functions as any).get_game({ game: S.GAME_ID }));
-  return r?.result?.game ?? null;
+  return r?.result ? { game: r.result.game ?? null, pending: r.result.pending ?? null } : null;
 }
 const GAME = (() => { try { return JSON.parse(fs.readFileSync(new URL("../../game-data/deployment.json", import.meta.url), "utf8")).contract as string; } catch { return ""; } })();
 const GAME_ABI = () => JSON.parse(fs.readFileSync(new URL("../../game/abi/kpred.koilib.json", import.meta.url), "utf8"));
 /** Who may win a prize: at least 1 VHP, or a Knode stake (the owner's 1 VHP rule; a staked player's VHP sits in the vault).
  *  The testnet passes its own token (and no game contract). */
-async function readRanked(node: any, who: string[], token = MAINNET_VHP, game: string | null = GAME): Promise<Set<string>> {
+export async function readRanked(node: any, who: string[], token = MAINNET_VHP, game: string | null = GAME,
+  deps: { vhp?: (node: any, token: string, who: string[]) => Promise<Record<string, string>>; player?: (node: any, game: string, a: string) => Promise<any> } = {}): Promise<Set<string>> {
   const out = new Set<string>();
   if (!who.length) return out;
-  const vhp = (await readVhp(node, token, who)).values;
+  const vhpOf = deps.vhp ?? (async (n: any, t: string, w: string[]) => (await readVhp(n, t, w)).values);
+  const playerOf = deps.player ?? (async (n: any, g: string, a: string) => {
+    const c = new Contract({ id: g, abi: GAME_ABI(), provider: n });
+    const r: any = await withRetry(`Knode player ${a}`, () => (c.functions as any).get_player({ player: a, week: "0" }));
+    return r?.result?.player ?? {};
+  });
+  const vhp = await vhpOf(node, token, who);
   for (const a of who) {
     if (BigInt(vhp[a] || "0") >= ONE_VHP) { out.add(a); continue; }
     if (!game) continue;
-    try {
-      const c = new Contract({ id: game, abi: GAME_ABI(), provider: node });
-      const r: any = await withRetry(`Knode player ${a}`, () => (c.functions as any).get_player({ player: a, week: "0" }));
-      const p = r?.result?.player ?? {};
-      if (BigInt(p.stake || "0") + BigInt(p.pending || "0") > 0n) out.add(a);
-    } catch { /* not counted */ }
+    // A failed read throws, so the day is tried again next run instead of costing a staker the season (Repo Lense SV-A7).
+    const p = (await playerOf(node, game, a)) ?? {};
+    // At least 1 VHP staked, the same as the wallet rule: a dust stake doesn't count (Repo Lense SV-A3).
+    if (BigInt(p.stake || "0") + BigInt(p.pending || "0") >= ONE_VHP) out.add(a);
   }
   return out;
 }
@@ -236,18 +273,30 @@ export async function run(o: Opts) {
   const seasons: SeasonFile[] = [], active: SeasonFile[] = [];
   let seasonsOn = firstDay !== null && !!picksRead;
   // Game 3's settings on the chain must match the math (audit SV-9).
+  // Read on both nodes, which must agree (Repo Lense SV-A12). An announced change is reported (Repo Lense SV-A14).
   if (seasonsOn && gameRead) {
-    try { const pr = gameProblem(await gameRead(o.p)); if (pr) { problems.push(`Survivor: ${pr}; seasons not recorded this run`); seasonsOn = false; } }
+    try {
+      const split = (r: any) => (r && typeof r === "object" && "game" in r ? r : { game: r, pending: null });
+      const mine = split(await gameRead(o.p));
+      let pr = gameProblem(mine.game);
+      if (!pr && o.check && JSON.stringify(split(await gameRead(o.check)).game) !== JSON.stringify(mine.game)) pr = "the two nodes disagree about game 3's settings";
+      if (pr) { problems.push(`Survivor: ${pr}; seasons not recorded this run`); seasonsOn = false; }
+      const pg = mine.pending && mine.pending.game;
+      if (pg) { const why = gameProblem(pg); problems.push(`Survivor: a change to game 3 is announced (it can be applied from ${new Date(Number(mine.pending.eta || 0)).toISOString()})${why ? `: once applied, ${why}` : "; it matches the Survivor math"}`); }
+    }
     catch (e) { problems.push(`Survivor: game 3's settings: ${(e as Error).message} (tried again next run)`); seasonsOn = false; }
   }
+  // A stake can only be read with the Knode contract's address (Repo Lense SV-A7).
+  if (seasonsOn && !o.rankedOf && holdGame === "") { problems.push("Survivor: game-data/deployment.json names no Knode contract, so stakes can't be checked; seasons not recorded this run"); seasonsOn = false; }
+  if (SAME_CHECK) problems.push("RPC_CHECK is the same node as RPC, so nothing is checked on a second node; set RPC_CHECK to another node");
+  else if (!o.check) problems.push("only one node is read this run (no RPC_CHECK): days are saved as checked on 1 node and checked again once a second node is set");
   if (firstDay !== null) {
     // Every known season stays on the list until it is final (audit SV-4), plus the last and the current one.
     const cur = S.seasonOf(Math.max(firstDay, today), firstDay).season;
     const list = new Set<number>(known);
     for (const s of [cur - 1, cur]) if (s >= 1 && S.seasonStartDay(s, firstDay) <= lastDone) list.add(s);
     for (const s of [...list].sort((x, y) => x - y)) {
-      const sf = loadSeason(PREV, s, S.seasonStartDay(s, firstDay));
-      if (sf.result && sf.result.final) seasons.push(sf); else active.push(sf);
+      active.push(loadSeason(PREV, s, S.seasonStartDay(s, firstDay)));     // every season is played again (Repo Lense SV-A4)
     }
   }
 
@@ -255,19 +304,42 @@ export async function run(o: Opts) {
   /** Record day d. Its start comes from the day before's record when there is one, and is always checked against the
    *  block before it (audit SV-6); if that start doesn't fit, it is searched again from scratch (fix-check FC-1).
    *  Returns true when the day was recorded. */
+  // A day has about 28,800 blocks; a range far bigger than that comes from a bad saved boundary (Repo Lense SV-A8).
+  const MAX_DAY_BLOCKS = Math.ceil(S.DAY / 1000) + 100;
+  /** Node C's blocks a−1 … b+1: the same blocks as node P inside, and the day's edges on its own reading too (Repo Lense SV-A12). */
+  async function sameOnCheck(d: number, a: number, b: number, counts: Counts | null, B: Blocks | null): Promise<boolean> {
+    const lo = Math.max(1, a - 1), C = await rangeC!(lo, b + 1), off = a - lo;
+    if (C.ts.length !== b + 1 - lo + 1) return false;
+    if (a > 1 && C.ts[0] >= S.dayStart(d)) return false;
+    if (C.ts[C.ts.length - 1] < S.dayStart(d + 1)) return false;
+    const inner = { ts: C.ts.slice(off, off + b - a + 1), signers: C.signers.slice(off, off + b - a + 1) };
+    if (inner.ts[0] < S.dayStart(d) || inner.ts[inner.ts.length - 1] >= S.dayStart(d + 1)) return false;
+    if (B) return inner.ts.every((t, i) => t === B.ts[i] && inner.signers[i] === B.signers[i]);
+    return JSON.stringify(tally(inner.signers)) === JSON.stringify(counts);
+  }
   async function recordDay(d: number): Promise<boolean> {
     const prevRec = days.get(d - 1);
     for (const usePrev of prevRec ? [true, false] : [false]) {
       let a: number;
-      if (usePrev) a = prevRec!.heights[1] + 1;
-      else {
+      if (usePrev) {
+        a = prevRec!.heights[1] + 1;
+        // Check the saved start before downloading anything: a bad one is searched again, never followed (Repo Lense SV-A8).
+        if (a < 2 || a > head!.lib || (await timeP(a)) < S.dayStart(d) || (await timeP(a - 1)) >= S.dayStart(d)) {
+          problems.push(`${S.dayLabel(d)}: the day before's recorded end doesn't fit; searched again`); continue;
+        }
+      } else {
         const est = Math.ceil((head!.libTime - S.dayStart(d)) / 3000) + 600;
         let lo = Math.max(1, head!.lib - est);
         while (lo > 1 && (await timeP(lo)) >= S.dayStart(d)) lo = Math.max(1, lo - est);
         a = await heightAt(timeP, S.dayStart(d), lo, head!.lib);
       }
       const b = (await heightAt(timeP, S.dayStart(d + 1), a, head!.lib)) - 1;
-      if (b < a || b >= head!.lib) { problems.push(`${S.dayLabel(d)}: its blocks aren't all irreversible yet`); return false; }
+      if (b >= head!.lib) { problems.push(`${S.dayLabel(d)}: its blocks aren't all irreversible yet`); return false; }
+      if (b < a) { problems.push(`${S.dayLabel(d)}: no blocks found for the day; not recorded this run`); return false; }
+      if (b - a + 1 > MAX_DAY_BLOCKS) {
+        if (usePrev) { problems.push(`${S.dayLabel(d)}: the day before's recorded end gives ${b - a + 1} blocks; searched again`); continue; }
+        problems.push(`${S.dayLabel(d)}: ${b - a + 1} blocks found, more than a day can have; not recorded this run`); return false;
+      }
       const B = await rangeP(a, b);
       // The day's first block is the first at or after 00:00 UTC: the block before it is from the day before.
       if (B.ts[0] < S.dayStart(d) || B.ts[B.ts.length - 1] >= S.dayStart(d + 1) || (a > 1 && (await timeP(a - 1)) >= S.dayStart(d))) {
@@ -276,9 +348,7 @@ export async function run(o: Opts) {
       }
       let checked = 1;
       if (rangeC) {
-        const C = await rangeC(a, b);
-        const same = C.ts.length === B.ts.length && C.ts.every((t, i) => t === B.ts[i] && C.signers[i] === B.signers[i]);
-        if (!same) { problems.push(`${S.dayLabel(d)}: the two nodes disagree about the day's blocks; not recorded this run`); return false; }
+        if (!(await sameOnCheck(d, a, b, null, B))) { problems.push(`${S.dayLabel(d)}: the two nodes disagree about the day's blocks; not recorded this run`); return false; }
         checked = 2;
       }
       if (!B.signers.every(isAddr)) { problems.push(`${S.dayLabel(d)}: a block has no valid signer; not recorded this run`); return false; }
@@ -309,6 +379,16 @@ export async function run(o: Opts) {
     if (n >= MAX_DAYS_PER_RUN) break;
     n++;
     try { await recordDay(d); } catch (e) { problems.push(`${S.dayLabel(d)}: ${(e as Error).message} (tried again next run)`); }
+  }
+  // Days saved while only one node was read are checked on the second node once there is one (Repo Lense SV-A16), newest
+  // first, with what is left of this run's budget. A day the second node disagrees with is reported, not changed.
+  if (rangeC) for (const rec of [...days.values()].filter((x) => x.checked === 1).sort((x, y) => y.day - x.day)) {
+    if (n >= MAX_DAYS_PER_RUN) break;
+    n++;
+    try {
+      if (await sameOnCheck(rec.day, rec.heights[0], rec.heights[1], rec.counts, null)) { rec.checked = 2; console.log(`${S.dayLabel(rec.day)}: checked again on the second node`); }
+      else problems.push(`${S.dayLabel(rec.day)}: saved from one node, and the second node disagrees; it needs the owner (docs/SURVIVOR-RUNBOOK.md)`);
+    } catch (e) { problems.push(`${S.dayLabel(rec.day)}: checking again: ${(e as Error).message} (tried again next run)`); }
   }
 
   // ── 2. fields for today and tomorrow ──
@@ -351,7 +431,9 @@ export async function run(o: Opts) {
       // Only picks made before the lock count (the chain refuses later ones; checked again here).
       const picks: [string, string][] = raw.filter((x) => x.time < S.lockTime(d) && (!alive || alive.has(x.player)))
         .map((x) => [x.player, x.producer] as [string, string]).sort((u, v) => (u[0] < v[0] ? -1 : 1));
-      const inNow = alive ? [...alive] : [...new Set(picks.map((x) => x[0]))];
+      // A player who already missed a check can't win this season, so is not read again or listed again (Repo Lense SV-A5).
+      const already = new Set<string>(played.players.filter((x: any) => !x.eligible).map((x: any) => x.a));
+      const inNow = (alive ? [...alive] : [...new Set(picks.map((x) => x[0]))]).filter((a) => !already.has(a));
       let noVhp: string[];
       try { const h = await heldOf(inNow); noVhp = inNow.filter((a) => !h.has(a)).sort(); }
       catch (e) { problems.push(`season ${s} day ${nDay}: VHP check: ${(e as Error).message} (tried again next run)`); break; }
@@ -367,18 +449,27 @@ export async function run(o: Opts) {
   seasons.sort((x, y) => x.season - y.season);
 
   // ── 4. write ──
-  fs.mkdirSync(OUT, { recursive: true });
+  // Everything is written to a side folder first and moved in at the end, so a run that crashes half-way never leaves
+  // new days next to old season files (Repo Lense SV-A26).
+  // (The side folder is outside OUT's parent, so a leftover one is never published.)
+  const FINAL = OUT, STAGE = fs.mkdtempSync(path.join(os.tmpdir(), "survivor-out-"));
   const keep = [...days.values()].sort((x, y) => x.day - y.day).slice(-KEEP_DAYS);
-  fs.writeFileSync(path.join(OUT, "days.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), days: keep }) + "\n");
-  fs.writeFileSync(path.join(OUT, "fields.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), fields }) + "\n");
+  fs.writeFileSync(path.join(STAGE, "days.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), days: keep }) + "\n");
+  fs.writeFileSync(path.join(STAGE, "fields.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), fields }) + "\n");
   for (const sf of seasons) {
     // A season is kept from the day its day 1 is over, even with no day recorded yet, so it can't drop off the list
     // unnoticed (fix-check FC-2).
     if (!sf.days.length && (!seasonsOn || sf.startDay > lastDone)) continue;
     known.add(sf.season);
-    fs.writeFileSync(path.join(OUT, sName(sf.season)), JSON.stringify(sf) + "\n");
+    const text = JSON.stringify(encodeSeason(sf)) + "\n";
+    if (Buffer.byteLength(text) > SIZE_WARN) problems.push(`Survivor: ${sName(sf.season)} is ${(Buffer.byteLength(text) / 1048576).toFixed(2)} MB, near or over the 2 MB publish limit; only that file is left out (docs/SURVIVOR-RUNBOOK.md)`);
+    fs.writeFileSync(path.join(STAGE, sName(sf.season)), text);
   }
-  fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), firstDay, contract: contract || null, seasons: [...known].sort((a, b) => a - b) }) + "\n");
+  fs.writeFileSync(path.join(STAGE, "index.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), firstDay, contract: contract || null, seasons: [...known].sort((a, b) => a - b) }) + "\n");
+  fs.mkdirSync(FINAL, { recursive: true });
+  const names = fs.readdirSync(STAGE).sort((x, y) => (x === "index.json" ? 1 : y === "index.json" ? -1 : x < y ? -1 : 1));   // index last
+  for (const f of names) fs.copyFileSync(path.join(STAGE, f), path.join(FINAL, f));
+  fs.rmSync(STAGE, { recursive: true, force: true });
   for (const pr of problems) console.log(`::warning::${pr}`);
   return { problems, days, fields, seasons };
 }

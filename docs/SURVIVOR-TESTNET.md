@@ -91,7 +91,8 @@ This takes a minute or two. It copies the audited Picks contract and changes exa
 - the owner becomes your test owner;
 - the admin wait becomes 10 minutes instead of 48 hours.
 
-Then it builds the copy and runs the contract's safety check. Expect `✔ picks check` and `✔ testnet Picks build …
+It only starts from the exact audited contract source: if `picks/assembly/Picks.ts` has changed since the audit, it
+stops and says so. Then it builds the copy and runs the contract's safety check. Expect `✔ picks check` and `✔ testnet Picks build …
 sha256 …`. (If the build says EAGAIN it retries by itself; that is a known harmless hiccup.)
 
 ```powershell

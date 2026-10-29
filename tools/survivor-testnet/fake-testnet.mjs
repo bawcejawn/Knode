@@ -20,8 +20,11 @@ const nonceB64 = (n) => { const out = [0x28]; let v = BigInt(n); do { let b = Nu
 /** A random valid address (for fake producers and the fake VHP token). */
 export const randomAddress = () => new Signer({ privateKey: crypto.randomBytes(32).toString("hex") }).getAddress();
 
-export async function startFakeTestnet({ abiFile, owner = null, producers, koin = "1FaSvLjQJsCJKq5ybmGsMMQs8RQYyVv8ju", vhp = randomAddress(), chainId = "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==", blockMs = 1000, historyMs = 3 * 86400000 } = {}) {
-  let offset = 0;
+export async function startFakeTestnet({ abiFile, owner = null, producers, koin = "1FaSvLjQJsCJKq5ybmGsMMQs8RQYyVv8ju", vhp = randomAddress(), chainId = "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==", blockMs = 1000, historyMs = 3 * 86400000, lieChainIdAfter = null, lieChainId = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==" } = {}) {
+  // lieChainIdAfter: n → the first n chain-id answers are honest, every later one is `lieChainId` (mainnet by default),
+  // as a node that passes the tool's check and then changes its answer would (audit SV-A1).
+  let offset = 0, chainIdCalls = 0;
+  const submitted = [];             // every submitted transaction header, as sent (the tests check its chain_id)
   const now = () => Date.now() + offset;
   const T0 = Math.floor((Date.now() - historyMs) / 1000) * 1000;
   const heightAt = (t) => Math.floor((t - T0) / blockMs);
@@ -121,7 +124,7 @@ export async function startFakeTestnet({ abiFile, owner = null, producers, koin 
   async function rpc(m, p) {
     const head = heightAt(now());
     switch (m) {
-      case "chain.get_chain_id": return { chain_id: chainId };
+      case "chain.get_chain_id": chainIdCalls++; return { chain_id: lieChainIdAfter !== null && chainIdCalls > lieChainIdAfter ? lieChainId : chainId };
       case "chain.get_head_info": return { head_topology: { id: idOf(head), height: String(head), previous: idOf(head - 1) }, last_irreversible_block: String(head - 20), head_block_time: String(timeOf(head)) };
       case "block_store.get_blocks_by_height": {
         const a = Number(p.ancestor_start_height), n = Math.min(Number(p.num_blocks), 1000), items = [];
@@ -144,6 +147,7 @@ export async function startFakeTestnet({ abiFile, owner = null, producers, koin 
       }
       case "chain.submit_transaction": {
         const tx = p.transaction, payer = tx.header.payer, t = timeOf(head + 1);
+        submitted.push(JSON.parse(JSON.stringify(tx.header)));
         if (tx.header.chain_id !== chainId) throw new Error("fake: wrong chain id");
         if (BigInt(tx.header.rc_limit) > getBal(koin, payer)) throw new Error("fake: not enough Mana for the rc limit");
         for (const op of tx.operations) {
@@ -181,7 +185,7 @@ export async function startFakeTestnet({ abiFile, owner = null, producers, koin 
   await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
   const url = `http://127.0.0.1:${server.address().port}`;
   return {
-    url, server, T0, now, heightAt, timeOf, vhp, koin,
+    url, server, T0, now, heightAt, timeOf, vhp, koin, submitted, chainIdCalls: () => chainIdCalls,
     advance: (ms) => { offset += ms; },
     faucet: (addr, koinAmount) => bal.set(`${koin}|${addr}`, getBal(koin, addr) + BigInt(Math.round(koinAmount * 1e8))),
     setVhp: (addr, v) => bal.set(`${vhp}|${addr}`, BigInt(Math.round(v * 1e8))),

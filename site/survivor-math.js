@@ -25,7 +25,8 @@
  * LIVES AND PICKS
  * - 2 lives. You lose one when your producer lands in the out-zone, or when you have no valid pick: no pick, a
  *   producer not in the day's field, or a producer you already used this season (each producer once a season).
- * - Safety net: if everyone still in would lose a life on the same day, nobody loses one for the out-zone. A missing
+ * - Safety net: if nobody still in has a safe pick that day (each landed in the out-zone or made no valid pick),
+ *   nobody loses a life for the out-zone. A missing
  *   pick, a producer not in the field or a reused producer still costs the life (audit SV-1: otherwise wallets that
  *   pick on day 1 and never again would all be saved every day). A producer picked on a saved day still counts as used.
  * - The season ends after the day on which 2 or fewer players are left (if it started with more than 2), or after
@@ -35,11 +36,10 @@
  * RANKING: still in (or out later) first, then more lives left, then the higher total score of your picks.
  *   Equal on all three: the same place.
  * PRIZES at season end: 4 VHP for 1st and 2 VHP for 2nd (two weeks of the free-game 2 + 1), ties split the places
- *   they cover. Only for wallets that held at least 1 VHP (or a Knode stake) at every daily check while they were in
- *   the season, so a farm of empty wallets can't win it. Defaults pending the owner's OK (audit SV-1 and its
- *   fix-check): only in a season with at least 3 players who made at least 2 valid picks, and not for a player who
- *   went out by missing a pick. So wallets that pick on day 1 and never again win nothing. The vault pays them
- *   (Build 1).
+ *   they cover. Only for wallets that held at least 1 VHP (or at least 1 VHP staked in Knode) at every daily check
+ *   while they were in the season, and that weren't knocked out by a missed pick; and only in a season with at least
+ *   3 such players who each made 2+ valid picks (owner, 28 Oct; Repo Lense SV-A2, SV-A3). Wallets that hold nothing,
+ *   or pick on day 1 and never again, win nothing and don't count toward the 3. The vault pays (Build 1).
  *
  * THE CLOCK (testnet only): KSurvivor is the mainnet game, exactly as above. KSurvivor.withConfig({ day, firstDay,
  * outFloor }) makes the same game with a faster clock for the testnet: a "day" (one round) lasts `day` ms instead of
@@ -56,13 +56,14 @@
     const SEASON_DAYS = 14, LIVES = 2, USES = 1;
     // The field's entry level: 280 blocks over 7 days on mainnet (40 a day), scaled to a shorter test day.
     const FORM_DAYS = 7, FORM_GAP = 2, MIN_FORM = Math.max(1, Math.round((280 * DAY) / MAINNET_DAY));
-    const LEAD_MS = 5 * 60000, AHEAD_MS = 7 * DAY, PICKS_PER_DAY = 20, MAX_CHANGES = 5;
+    // Picks a wallet may make a UTC day: 20 on mainnet; 50 on a test clock (24+ rounds a day).
+    const LEAD_MS = 5 * 60000, AHEAD_MS = 7 * DAY, PICKS_PER_DAY = DAY === MAINNET_DAY ? 20 : 50, MAX_CHANGES = 5;
     const OUT_FLOOR = cfg.outFloor;
-    const PRIZES = [4, 2];
+    const PRIZES = Object.freeze([4, 2]);
     const MIN_PRIZE_PLAYERS = 3;             // a season needs at least this many real players for prizes (default, SV-1)
     const MIN_VALID_PICKS = 2;               // … where a real player made at least this many valid picks
     /** One letter a day in a player's log: s safe, o out-zone, n no pick, f not in the field, u already used, v saved. */
-    const CODE = { safe: "s", out: "o", none: "n", field: "f", used: "u", saved: "v" };
+    const CODE = Object.freeze({ safe: "s", out: "o", none: "n", field: "f", used: "u", saved: "v" });
     const CORRECTION_MS = DAY / 2;           // a season's result is final 12 hours after it ends (half a test day)
     /** Season 1's first UTC day (days since 1970), a Monday. null until the owner sets the launch. */
     const FIRST_DAY = cfg.firstDay;
@@ -197,8 +198,11 @@
     /** Went out on a day with no pick (not by the out-zone or a wrong pick). */
     const outByMissing = (x) => x.outN !== null && x.outN !== undefined && String(x.log || "")[x.outN - 1] === CODE.none;
     function prizes(players, amounts = PRIZES) {
-      if (players.filter((x) => validPicks(x) >= MIN_VALID_PICKS).length < MIN_PRIZE_PLAYERS) return [];
-      const ranked = rank(players.filter((x) => x.eligible && !outByMissing(x)));
+      // Only players who can win count toward the 3-player minimum: they held 1 VHP at every check, weren't knocked
+      // out by a missed pick, and made 2+ valid picks (Repo Lense SV-A2: empty wallets used to count).
+      const canWin = players.filter((x) => x.eligible && !outByMissing(x));
+      if (canWin.filter((x) => validPicks(x) >= MIN_VALID_PICKS).length < MIN_PRIZE_PLAYERS) return [];
+      const ranked = rank(canWin);
       const out = [];
       for (let i = 0; i < ranked.length && i < amounts.length; ) {
         let j = i;

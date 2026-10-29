@@ -181,7 +181,13 @@ test("prizes: 4 VHP and 2 VHP among wallets that held 1 VHP at every check; ties
   assert.deepEqual(plain(S.prizes([P(U1, 2, 10), P(U2, 2, 10), P(U3, 1, 5)])), [{ player: U1, place: 1, vhp: 3 }, { player: U2, place: 1, vhp: 3 }]);
   assert.deepEqual(plain(S.prizes([P(U1, 2, 10), P(U2, 1, 9), P(U3, 1, 9)])), [{ player: U1, place: 1, vhp: 4 }, { player: U2, place: 2, vhp: 1 }, { player: U3, place: 2, vhp: 1 }]);
   // The winner held no VHP: the places move to the eligible.
-  assert.deepEqual(plain(S.prizes([P(U1, 2, 10, false), P(U2, 1, 9), P(U3, 1, 5)])), [{ player: U2, place: 1, vhp: 4 }, { player: U3, place: 2, vhp: 2 }]);
+  const U4 = "1" + "Q".repeat(33);
+  assert.deepEqual(plain(S.prizes([P(U1, 2, 10, false), P(U2, 1, 9), P(U3, 1, 5), P(U4, 1, 4)])), [{ player: U2, place: 1, vhp: 4 }, { player: U3, place: 2, vhp: 2 }]);
+  // Repo Lense SV-A2: only players who can win count toward the 3: one funded wallet and two empty ones win nothing.
+  assert.deepEqual(plain(S.prizes([P(U1, 2, 10), P(U2, 2, 10, false), P(U3, 2, 10, false)])), [], "1 funded + 2 empty: no prizes");
+  assert.deepEqual(plain(S.prizes([P(U1, 2, 10), P(U2, 2, 10), P(U3, 2, 10, false)])), [], "2 funded + 1 empty: no prizes");
+  assert.deepEqual(plain(S.prizes([P(U1, 2, 10), P(U2, 1, 9), P(U3, 1, 8), { ...P(U4, 0, 1), outN: 2, log: "nn" }])).length, 2, "a missed-pick knockout doesn't count, the other 3 do");
+  assert.ok(Object.isFrozen(S.PRIZES) && Object.isFrozen(S.CODE), "Repo Lense SV-A20");
   const three = S.prizes([P(U1, 2, 1), P(U2, 2, 1), P(U3, 2, 1)]);
   assert.ok(three.every((x) => x.vhp === 2) && three.reduce((s, x) => s + x.vhp, 0) <= 6, "three tied: 2 each");
   assert.deepEqual(plain(S.prizes([])), []);
@@ -244,4 +250,14 @@ test("fix-check SV-1: wallets that pick on day 1 and never again win nothing, wh
     if (nReal < 3) assert.deepEqual(plain(won), [], `${nReal} real players: no prizes`);
     else assert.equal(won.reduce((s, w) => s + w.vhp, 0), 6);
   }
+});
+
+test("Repo Lense SV-A6 / SV-A21 / SV-A5: picking waits for a clean read of my picks, the lock uses the chain's clock, v2 season files load", () => {
+  const js = read("survivor.js");
+  assert.match(js, /Promise\.allSettled\(days\.map/, "one failed read doesn't empty the list");
+  assert.match(js, /if \(sending \|\| !mineOk \|\|/, "Pick and Change are off until the picks are read in full");
+  assert.match(js, /if \(!mineOk\) return pickModal/, "and sendPick refuses too");
+  assert.match(js, /skew = Math\.abs\(t - Date\.now\(\)\) > 30000/, "the chain's head time sets the page clock");
+  assert.ok(!/S\.lockTime\(d\) - Date\.now\(\)/.test(js), "no lock check on the viewer's own clock");
+  assert.match(js, /j\.v === 1 \|\| j\.v === 2/);
 });

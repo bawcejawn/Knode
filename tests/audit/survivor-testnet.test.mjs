@@ -55,6 +55,18 @@ test("the testnet Picks build: the audited source with exactly two constants cha
   assert.throws(() => T.patchPicksSource(src, "not-an-address"), /address/);
 });
 
+test("audit SV-A22: the testnet build starts only from the audited Picks.ts, and changes each line exactly once", () => {
+  const src = fs.readFileSync(path.join(APP, "picks/assembly/Picks.ts"), "utf8"), owner = randomAddress();
+  assert.equal(crypto.createHash("sha256").update(src).digest("hex"), T.PICKS_SOURCE_SHA256, "the pinned hash is the source in the repo");
+  assert.equal(T.patchPicksSource(src.replace(/\n/g, "\r\n"), owner), T.patchPicksSource(src, owner), "Windows line endings give the same build");
+  assert.throws(() => T.patchPicksSource(src + "\n// one more line\n", owner), /changed since the audit/);
+  // Without the pin (an edited source), each of the two lines must appear exactly once.
+  const owner1 = 'export const INITIAL_OWNER: Uint8Array = Base58.decode("1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717");';
+  assert.throws(() => T.patchPicksSource(src + "\n" + owner1 + "\n", owner, null), /exactly once \(owner line found 2×/);
+  assert.throws(() => T.patchPicksSource(src + "\nexport const TIMELOCK_MS: u64 = 2 * DAY_MS;\n", owner, null), /admin-wait line 2×/);
+  assert.throws(() => T.patchPicksSource(src.replace(owner1, ""), owner, null), /owner line found 0×/);
+});
+
 test("game 3's testnet settings fit the Picks contract's rules and pass the recorder's check", () => {
   const g = T.testGame(3600000);
   assert.equal(g.kind, 1); assert.equal(g.list_size, 1, "a one-producer game has list_size 1"); assert.equal(g.lock_mode, 2);
@@ -112,8 +124,7 @@ async function withServer(fn) {
   fs.mkdirSync(path.join(DIR, "data"), { recursive: true });
   fs.writeFileSync(path.join(DIR, "data", "fields.json"), "{}");
   const port = 19000 + Math.floor(Math.random() * 900);
-  const server = await T.startSite({ port });
-  await new Promise((ok) => server.on("listening", ok));
+  const server = await T.startSite({ port });                       // resolves once it is listening
   const base = `http://127.0.0.1:${port}`;
   try { await fn(base, port, fake); } finally { server.close(); await fake.close(); }
 }
@@ -170,6 +181,77 @@ test("the test server: no other website can use it, and it signs nothing but a S
     assert.equal(r.status, 400); assert.match(await r.text(), /isn't a Survivor pick for this test player/);
   }
 })));
+
+test("audit SV-A22/A23/A24/A26: the settings script isn't served to other sites; JSON answers carry nosniff; only an open round is signed", async () => quiet(() => withServer(async (base) => {
+  assert.equal((await fetch(base + "/testnet/survivor-net.js", { headers: { "sec-fetch-site": "cross-site" } })).status, 403, "another site can't load it as a script");
+  assert.equal((await fetch(base + "/testnet/survivor-net.js", { headers: { "sec-fetch-site": "same-site" } })).status, 403);
+  assert.equal((await fetch(base + "/testnet/survivor-net.js", { headers: { "sec-fetch-site": "same-origin" } })).status, 200, "the test page loads it");
+  assert.equal((await fetch(base + "/testnet/survivor-net.js")).status, 200, "no Sec-Fetch-Site (older browser, curl)");
+  const s = await fetch(base + "/testnet/session", { headers: { "sec-fetch-site": "same-origin" } });
+  assert.equal(s.headers.get("x-content-type-options"), "nosniff");
+  const token = (await s.json()).token;
+  const post = (p, body) => fetch(base + p, { method: "POST", headers: { "content-type": "application/json", origin: base }, body: JSON.stringify(body) });
+  const r0 = await post("/rpc", { method: "chain.get_head_info" });
+  assert.equal(r0.headers.get("x-content-type-options"), "nosniff");
+  // p1's own pick, but for a round that is locked (the current one) or not open yet (8 rounds ahead).
+  const { Contract, Provider } = await import("koilib");
+  const cfg = JSON.parse(fs.readFileSync(path.join(DIR, "config.json"), "utf8")), keys = Object.fromEntries(fs.readFileSync(path.join(DIR, "keys.env"), "utf8").trim().split("\n").map((l) => l.split("_WIF=")));
+  const p1 = Signer.fromWif(keys.P1).getAddress();
+  const abi = JSON.parse(fs.readFileSync(path.join(APP, "picks/abi/picks.koilib.json"), "utf8"));
+  const pc = new Contract({ id: cfg.picks.contract, abi, provider: new Provider(["http://127.0.0.1:1"]) });
+  const cur = Math.floor(Date.now() / 3600000);
+  for (const round of [cur, cur + 9]) {
+    const { operation } = await pc.functions.pick({ player: p1, game: 3, round: String(round), producers: [randomAddress()], number: "0" }, { onlyOperation: true });
+    const r = await post("/test/send", { token, as: "p1", ops: [operation] });
+    assert.equal(r.status, 400); assert.match(await r.text(), /round isn't open/, `round ${round - cur} from now`);
+    assert.equal(r.headers.get("x-content-type-options"), "nosniff");
+  }
+})));
+
+test("audit SV-A26: the test server takes the next free port if its port is taken at the last moment", async () => quiet(async () => {
+  const fake = await startFakeTestnet({ abiFile: path.join(APP, "picks/abi/picks.koilib.json"), producers: [[randomAddress(), 1]] });
+  fs.writeFileSync(path.join(DIR, "keys.env"), keyLines());
+  fs.writeFileSync(path.join(DIR, "config.json"), JSON.stringify({ v: 1, rpc: fake.url, chainId: "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==", koin: fake.koin, vhp: fake.vhp, holdToken: fake.vhp,
+    clock: { day: 3600000, firstDay: null, outFloor: 1 }, picks: null, game: null }));
+  const net = await import("node:net");
+  // Occupy the port freePort will choose only after it has checked it: patch listen once to simulate the race.
+  const busy = net.createServer();
+  const port = await new Promise((ok) => busy.listen(0, "127.0.0.1", () => ok(busy.address().port)));
+  const http = await import("node:http");
+  const orig = http.Server.prototype.listen;
+  let first = true;
+  http.Server.prototype.listen = function (p, ...rest) { if (first) { first = false; return orig.call(this, port, ...rest); } return orig.call(this, p, ...rest); };
+  try {
+    const server = await T.startSite();
+    const got = server.address().port;
+    assert.notEqual(got, port, "not the taken port");
+    server.close();
+  } finally { http.Server.prototype.listen = orig; busy.close(); await fake.close(); }
+}));
+
+test("audit SV-A1: the contract upload is signed for the checked testnet chain id, even if the node then says mainnet", async () => quiet(async () => {
+  const fake = await startFakeTestnet({ abiFile: path.join(APP, "picks/abi/picks.koilib.json"), producers: [[randomAddress(), 1]], historyMs: 3600000, lieChainIdAfter: 1 });
+  try {
+    fs.writeFileSync(path.join(DIR, "keys.env"), keyLines());
+    const keys = Object.fromEntries(fs.readFileSync(path.join(DIR, "keys.env"), "utf8").trim().split("\n").map((l) => l.split("_WIF=")));
+    const owner = Signer.fromWif(keys.OWNER).getAddress(), picksAddr = Signer.fromWif(keys.PICKS).getAddress();
+    fs.writeFileSync(path.join(DIR, "config.json"), JSON.stringify({ v: 1, rpc: fake.url, chainId: "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==", koin: fake.koin, vhp: fake.vhp, holdToken: fake.vhp,
+      clock: { day: 3600000, firstDay: null, outFloor: 1 }, picks: null, game: null }));
+    const src = path.join(DIR, "picks-src");
+    fs.rmSync(src, { recursive: true, force: true });
+    fs.mkdirSync(path.join(src, "build", "release"), { recursive: true }); fs.mkdirSync(path.join(src, "assembly")); fs.mkdirSync(path.join(src, "abi"));
+    fs.writeFileSync(path.join(src, "build", "release", "contract.wasm"), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+    fs.writeFileSync(path.join(src, "assembly", "Picks.ts"), `// owner ${owner}\n`);
+    fs.copyFileSync(path.join(APP, "picks/abi/picks.koilib.json"), path.join(src, "abi", "picks.koilib.json"));
+    fake.faucet(picksAddr, 50);
+    await T.picksUpload(true);
+    assert.ok(fake.chainIdCalls() >= 1);
+    const ups = fake.submitted.filter((h) => h.payer === picksAddr);
+    assert.equal(ups.length, 1);
+    assert.equal(ups[0].chain_id, "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==", "signed for the testnet it checked");
+    assert.notEqual(ups[0].chain_id, T.MAINNET_CHAIN_ID);
+  } finally { await fake.close(); }
+}));
 
 test("the tool refuses mainnet: by node name and by chain id", async () => {
   for (const rpc of ["https://api.koinos.io", "https://koinos.armana.io", "https://api.koinosblocks.com"]) await assert.rejects(T.testnetProvider({ rpc }), /mainnet/i);

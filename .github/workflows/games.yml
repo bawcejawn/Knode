@@ -103,21 +103,23 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/survivor" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/survivor/\(index\|days\|fields\|S[0-9][0-9][0-9]\)\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/survivor" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9][0-9]?\)\.json" ! -regex "$IN/survivor/\(index\|days\|fields\|S[0-9][0-9][0-9][0-9]?\)\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           # Each game's folder is checked on its own: one that fails is left out (and the job fails at the end, which
           # alerts), and the other game's files are still published (audit SV-2, SV-3).
           failed=0
           drop() { echo "::error::Not publishing $1 this run: $2"; rm -rf "${IN:?}/$1"; failed=1; }
-          for g in blockx survivor; do
-            [ -d "$IN/$g" ] || continue
-            big=$(find "$IN/$g" -type f -size +2048k -print)
-            if [ -n "$big" ]; then drop "$g" "files over 2 MB: $big"; fi
-          done
+          # A file over 2 MB is left out on its own; the rest of its game still goes out (Repo Lense SV-A5).
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            echo "::error::Not publishing $f this run: over 2 MB (the published copy stays as it was)"; rm -f "$f"; failed=1
+          done < <(find "$IN" -type f -size +2048k -print)
           # The content must be the recorder's own shape, not only parse as JSON.
-          if [ -d "$IN/blockx" ] && ! /usr/bin/python3 - "$IN/blockx" <<'PY'
+          if [ -d "$IN/blockx" ] && ! /usr/bin/python3 -I - "$IN/blockx" <<'PY'
           import json, os, re, sys
           d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          def bad_constant(c): raise ValueError("not JSON: " + c)
+          iso = lambda x: type(x) is str and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{3})?Z", x) is not None
           num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
           nat = lambda x: type(x) is int and 0 <= x < 10**16
           def target_ok(t):
@@ -135,16 +137,16 @@ jobs:
               return all(type(x) is dict and set(x) == {"a", "place", "pts", "correct", "picks", "days", "lastCorrect", "ranked"} and addr.fullmatch(str(x["a"]))
                   and all(nat(x[k]) for k in ("place", "pts", "correct", "picks", "days", "lastCorrect")) and type(x["ranked"]) is bool for x in b["rows"])
           for f in os.listdir(d):
-              j = json.load(open(os.path.join(d, f), encoding="utf-8"))
+              j = json.load(open(os.path.join(d, f), encoding="utf-8"), parse_constant=bad_constant)
               if f == "board.json":
-                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1, f
+                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1 and iso(j["updated"]), f
                   assert all(rows_ok(j[k]) for k in ("today", "week", "allTime")), f
                   lw = j["lastWeek"]
                   assert lw is None or (rows_ok(lw) and type(lw.get("final")) is bool and type(lw.get("prizes")) is list and len(lw["prizes"]) <= 100000
                       and all(type(p) is dict and set(p) == {"player", "place", "vhp"} and addr.fullmatch(str(p["player"])) and nat(p["place"]) and num(p["vhp"]) and 0 < p["vhp"] <= 2 for p in lw["prizes"])), f
                   continue
               if f == "index.json":
-                  assert set(j) == {"v", "updated", "weeks", "contract"} and j["v"] == 1 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
+                  assert set(j) == {"v", "updated", "weeks", "contract"} and j["v"] == 1 and iso(j["updated"]) and type(j["weeks"]) is list and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
                   assert j["contract"] is None or addr.fullmatch(str(j["contract"])), f
                   continue
               assert set(j) == {"v", "week", "start", "end", "targets"} and j["v"] == 1 and f == "W%03d.json" % j["week"], f
@@ -152,52 +154,83 @@ jobs:
           print("blockx files ok")
           PY
           then drop blockx "its files don't have the recorder's shape"; fi
-          if [ -d "$IN/survivor" ] && ! /usr/bin/python3 - "$IN/survivor" <<'PY'
+          if [ -d "$IN/survivor" ] && ! /usr/bin/python3 -I - "$IN/survivor" <<'PY'
+          # Shape AND meaning (Repo Lense SV-A4, SV-A13): integers are real integers in range, the result agrees with
+          # itself, and prizes go only to eligible players in the season, once each, and only when the season is final.
           import json, os, re, sys
           d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          def bad_constant(c): raise ValueError("not JSON: " + c)
           isaddr = lambda x: type(x) is str and addr.fullmatch(x) is not None
-          num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
-          nat = lambda x: type(x) is int and 0 <= x < 10**16
+          iso = lambda x: type(x) is str and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{3})?Z", x) is not None
+          num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e15
+          nat = lambda x: type(x) is int and 0 <= x < 2**53
           day = lambda x: type(x) is int and 0 < x < 10**6
+          small = lambda x, lo, hi: type(x) is int and lo <= x <= hi
           def counts_ok(c): return type(c) is list and len(c) <= 500 and all(type(x) is list and len(x) == 2 and isaddr(x[0]) and nat(x[1]) for x in c)
           def field_ok(f): return type(f) is list and len(f) <= 500 and all(type(x) is dict and set(x) == {"a", "k", "h"} and isaddr(x["a"]) and nat(x["k"]) and num(x["h"]) and x["h"] >= 1 for x in f)
-          def player_ok(p):
+          def player_ok(p, endN):
               if type(p) is not dict or set(p) != {"a", "lives", "outN", "total", "used", "log", "eligible", "place"}: return False
-              if type(p["log"]) is not str or re.fullmatch(r"[sonfuv]{0,14}", p["log"]) is None: return False
-              if not (isaddr(p["a"]) and p["lives"] in (0, 1, 2) and (p["outN"] is None or p["outN"] in range(1, 15)) and num(p["total"]) and nat(p["place"]) and type(p["eligible"]) is bool): return False
-              return type(p["used"]) is list and len(p["used"]) <= 14 and all(isaddr(a) for a in p["used"])
+              if type(p["log"]) is not str or re.fullmatch(r"[sonfuv]{0,14}", p["log"]) is None or len(p["log"]) > endN: return False
+              if not (isaddr(p["a"]) and small(p["lives"], 0, 2) and (p["outN"] is None or small(p["outN"], 1, 14)) and num(p["total"]) and p["total"] >= 0 and small(p["place"], 1, 100000) and type(p["eligible"]) is bool): return False
+              if not (type(p["used"]) is list and len(p["used"]) <= 14 and all(isaddr(a) for a in p["used"]) and len(set(p["used"])) == len(p["used"])): return False
+              # The log decides the rest: a life goes on o, n, f and u; out on the second.
+              log, lost = p["log"], sum(p["log"].count(c) for c in "onfu")
+              if p["lives"] != max(0, 2 - lost) or len(p["used"]) != sum(log.count(c) for c in "sov") or lost > 2: return False
+              if p["outN"] is None: return lost < 2
+              return lost == 2 and len(log) == p["outN"] and log[-1] in "onfu"
+          def season_ok(j, f):
+              assert set(j) == {"v", "season", "startDay", "who", "prods", "days", "result"} and j["v"] == 2 and small(j["season"], 1, 9999) and f == "S%03d.json" % j["season"] and day(j["startDay"]), f
+              who, prods = j["who"], j["prods"]
+              assert type(who) is list and len(who) <= 100000 and all(isaddr(a) for a in who) and len(set(who)) == len(who), f
+              assert type(prods) is list and len(prods) <= 500 and all(isaddr(a) for a in prods) and len(set(prods)) == len(prods), f
+              assert type(j["days"]) is list and len(j["days"]) <= 14, f
+              first = None
+              for i, x in enumerate(j["days"]):
+                  assert type(x) is dict and set(x) == {"n", "day", "field", "counts", "picks", "noVhp"} and x["n"] == i + 1 and x["day"] == j["startDay"] + i, f
+                  assert field_ok(x["field"]) and counts_ok(x["counts"]), f
+                  assert type(x["picks"]) is list and len(x["picks"]) <= 100000 and all(type(p) is list and len(p) == 2 and small(p[0], 0, len(who) - 1) and small(p[1], 0, len(prods) - 1) for p in x["picks"]), f
+                  assert len({p[0] for p in x["picks"]}) == len(x["picks"]), f
+                  assert type(x["noVhp"]) is list and len(x["noVhp"]) <= 100000 and all(small(a, 0, len(who) - 1) for a in x["noVhp"]), f
+                  if i == 0: first = {who[p[0]] for p in x["picks"]}
+              r = j["result"]
+              if r is None: return
+              assert type(r) is dict and set(r) == {"over", "endN", "final", "players", "prizes"} and type(r["over"]) is bool and type(r["final"]) is bool, f
+              assert small(r["endN"], 0, len(j["days"])) and (r["over"] or not r["final"]), f
+              ps = r["players"]
+              assert type(ps) is list and len(ps) <= 100000 and all(player_ok(p, r["endN"]) for p in ps), f
+              byA = {p["a"]: p for p in ps}
+              assert len(byA) == len(ps) and set(byA) == (first or set()), f              # exactly the day-1 players
+              assert all(ps[i]["place"] <= ps[i + 1]["place"] for i in range(len(ps) - 1)) and (not ps or ps[0]["place"] == 1), f
+              pz = r["prizes"]
+              assert type(pz) is list and len(pz) <= len(ps) and all(type(p) is dict and set(p) == {"player", "place", "vhp"} and isaddr(p["player"]) and small(p["place"], 1, 2) and num(p["vhp"]) and 0 < p["vhp"] <= 4 for p in pz), f
+              assert sum(round(p["vhp"] * 1e8) for p in pz) <= 6 * 10**8, f    # in whole units of 1e-8 VHP (no float drift)
+              assert not pz or r["final"], f
+              assert len({p["player"] for p in pz}) == len(pz), f
+              can = lambda p: p["eligible"] and not (p["outN"] is not None and p["log"][p["outN"] - 1] == "n")
+              assert all(p["player"] in byA and can(byA[p["player"]]) for p in pz), f
+              assert not pz or sum(1 for p in ps if can(p) and sum(p["log"].count(c) for c in "sov") >= 2) >= 3, f
           for f in os.listdir(d):
-              j = json.load(open(os.path.join(d, f), encoding="utf-8"))
+              j = json.load(open(os.path.join(d, f), encoding="utf-8"), parse_constant=bad_constant)
+              assert type(j) is dict, f
               if f == "index.json":
-                  assert set(j) == {"v", "updated", "firstDay", "contract", "seasons"} and j["v"] == 1, f
+                  assert set(j) == {"v", "updated", "firstDay", "contract", "seasons"} and j["v"] == 1 and iso(j["updated"]), f
                   assert (j["firstDay"] is None or day(j["firstDay"])) and (j["contract"] is None or isaddr(j["contract"])), f
-                  assert type(j["seasons"]) is list and all(type(s) is int and 1 <= s < 10000 for s in j["seasons"]), f
+                  assert type(j["seasons"]) is list and all(small(s, 1, 9999) for s in j["seasons"]), f
                   continue
               if f == "days.json":
-                  assert set(j) == {"v", "updated", "days"} and j["v"] == 1 and type(j["days"]) is list and len(j["days"]) <= 60, f
+                  assert set(j) == {"v", "updated", "days"} and j["v"] == 1 and iso(j["updated"]) and type(j["days"]) is list and len(j["days"]) <= 60, f
                   for x in j["days"]:
-                      assert type(x) is dict and set(x) == {"day", "heights", "blocks", "checked", "counts"} and day(x["day"]) and x["checked"] in (1, 2), f
+                      assert type(x) is dict and set(x) == {"day", "heights", "blocks", "checked", "counts"} and day(x["day"]) and small(x["checked"], 1, 2), f
                       assert type(x["heights"]) is list and len(x["heights"]) == 2 and all(nat(h) for h in x["heights"]) and nat(x["blocks"]) and counts_ok(x["counts"]), f
                       assert sum(c for _, c in x["counts"]) == x["blocks"] == x["heights"][1] - x["heights"][0] + 1, f
                   continue
               if f == "fields.json":
-                  assert set(j) == {"v", "updated", "fields"} and j["v"] == 1 and type(j["fields"]) is list and len(j["fields"]) <= 2, f
+                  assert set(j) == {"v", "updated", "fields"} and j["v"] == 1 and iso(j["updated"]) and type(j["fields"]) is list and len(j["fields"]) <= 2, f
                   for x in j["fields"]:
                       assert type(x) is dict and set(x) == {"day", "season", "n", "out", "field"} and day(x["day"]) and nat(x["out"]) and field_ok(x["field"]), f
-                      assert (x["season"] is None or (type(x["season"]) is int and x["season"] >= 1)) and (x["n"] is None or x["n"] in range(1, 15)), f
+                      assert (x["season"] is None or small(x["season"], 1, 9999)) and (x["n"] is None or small(x["n"], 1, 14)), f
                   continue
-              assert set(j) == {"v", "season", "startDay", "days", "result"} and j["v"] == 1 and f == "S%03d.json" % j["season"] and day(j["startDay"]), f
-              assert type(j["days"]) is list and len(j["days"]) <= 14, f
-              for i, x in enumerate(j["days"]):
-                  assert type(x) is dict and set(x) == {"n", "day", "field", "counts", "picks", "noVhp"} and x["n"] == i + 1 and x["day"] == j["startDay"] + i, f
-                  assert field_ok(x["field"]) and counts_ok(x["counts"]), f
-                  assert type(x["picks"]) is list and len(x["picks"]) <= 100000 and all(type(p) is list and len(p) == 2 and isaddr(p[0]) and isaddr(p[1]) for p in x["picks"]), f
-                  assert type(x["noVhp"]) is list and len(x["noVhp"]) <= 100000 and all(isaddr(a) for a in x["noVhp"]), f
-              r = j["result"]
-              assert r is None or (type(r) is dict and set(r) == {"over", "endN", "final", "players", "prizes"} and type(r["over"]) is bool and type(r["final"]) is bool
-                  and r["endN"] in range(0, 15) and type(r["players"]) is list and len(r["players"]) <= 100000 and all(player_ok(p) for p in r["players"])
-                  and type(r["prizes"]) is list and len(r["prizes"]) <= len(r["players"]) and all(type(p) is dict and set(p) == {"player", "place", "vhp"} and isaddr(p["player"]) and nat(p["place"]) and num(p["vhp"]) and 0 < p["vhp"] <= 4 for p in r["prizes"])
-                  and sum(round(p["vhp"] * 1e8) for p in r["prizes"]) <= 6 * 10**8), f   # in whole units of 1e-8 VHP (no float drift)
+              season_ok(j, f)
           print("survivor files ok")
           PY
           then drop survivor "its files don't have the recorder's shape"; fi

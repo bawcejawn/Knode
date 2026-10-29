@@ -51,7 +51,7 @@ refuse sloppy mistakes. `MAINNET_DAY = 86400000` is one day in milliseconds (24 
 | `PICKS_PER_DAY, MAX_CHANGES` | 20, 5 | Shown on the page; the contract enforces them |
 | `OUT_FLOOR` | 0 | Testnet only: a minimum out-zone for a small field |
 | `PRIZES` | [4, 2] | VHP for 1st and 2nd |
-| `MIN_PRIZE_PLAYERS, MIN_VALID_PICKS` | 3, 2 | A season needs 3 players with 2+ picks to pay prizes |
+| `MIN_PRIZE_PLAYERS, MIN_VALID_PICKS` | 3, 2 | A season needs 3 players who can win (1 VHP at every check, not out by a missed pick) with 2+ valid picks to pay prizes |
 | `CODE` | s o n f u v | One letter per day in a player's log: safe, out-zone, no pick, not in field, used, saved |
 | `CORRECTION_MS` | half a day (12 h) | Results are final this long after the season ends |
 | `FIRST_DAY` | null | Season 1's first day. null until launch |
@@ -172,8 +172,9 @@ Each run starts from the files the previous run published.
 - `readJson` reads one file and refuses symbolic links (a trick to read other files).
 - `loadDays` keeps a recorded day only if its numbers add up: the block counts sum to the day's blocks, and the
   heights match. A damaged entry is dropped and simply recorded again.
-- `loadSeason` keeps a season's days only in order from day 1, with no gaps and with valid addresses. A final result
-  is kept only if every day behind it is intact.
+- `loadSeason` keeps a season's days only in order from day 1, with no gaps and with valid addresses. It reads both
+  file versions (v2 writes each wallet and producer once; see below) and never keeps the old result: every run plays
+  every season again from its days (Repo Lense SV-A4).
 - `defaultPicksContract` reads the Picks contract's address from `picks-data/deployment.json`.
 
 ### Lines 104–190: reading the chain
@@ -187,8 +188,9 @@ Each run starts from the files the previous run published.
 - `gameProblem` (line 159) compares game 3's settings on the chain with what the rules expect: one producer, list
   size 1, time lock, a round of exactly one day starting at 00:00, 5 minutes lead, 7 days ahead, 5 changes. If anything
   differs, seasons aren't recorded, because a mismatched round would score the wrong picks.
-- `readRanked` decides who passes the "hold 1" check: at least 1 VHP in the wallet, or a stake in the Knode game
-  contract.
+- `readRanked` decides who passes the "hold 1" check: at least 1 VHP in the wallet, or at least 1 VHP staked in the
+  Knode game contract (a dust stake doesn't count: Repo Lense SV-A3). A failed stake read is an error, so the day is
+  tried again next run instead of costing a staker the season (SV-A7).
 
 ### Lines 192–202: two helpers
 - `heightAt` finds the first block at or after a moment, by repeatedly halving the search range (a binary search).
@@ -203,8 +205,8 @@ Each run starts from the files the previous run published.
 - `lastDone`: the last day whose following day already has an irreversible block, so the day is complete and final on
   the chain.
 - Line 239: game 3's settings are checked once per run. If they're wrong, seasons pause and a warning says why.
-- Every known season stays on the list until it is final (audit SV-4). Final ones are kept as they are and never
-  replayed.
+- Every known season stays on the list (audit SV-4), and every one is played again from its days each run, final or
+  not (Repo Lense SV-A4). A final season reads nothing new from the chain.
 
 ### Lines 254–312: step 1, record days
 - **`recordDay(d)`**, lines 258–289:
@@ -253,6 +255,19 @@ Any problem becomes a warning line, which GitHub shows on the run.
 ### Lines 385–388: run it
 When started as a program (`npm run survivor`), it connects to the two nodes from the settings and runs once.
 
+### Changes after the Repo Lense audit (28 October 2026)
+Line numbers above are from before these changes; the steps are the same.
+- **Game 3's settings** are read on both nodes, which must agree; `enabled` and `max_picks_per_day` are checked too, and
+  an announced change is reported (SV-A12, SV-A14).
+- **`recordDay`** checks a saved day start against the chain *before* downloading anything, refuses a range bigger than
+  a day can hold, and in both cases searches again in the same run (SV-A8). The second node reads one block either side
+  of the day, so it confirms the day's edges on its own (SV-A12).
+- **One node only:** each run says so, and days saved that way are checked on the second node once there is one
+  (SV-A16).
+- **Season files (v2):** each wallet and producer is written once, in `who` and `prods`; the days refer to them by
+  position. A wallet that missed a VHP check is listed once, not every day. A file near 2 MB is reported (SV-A5).
+- **Writing:** everything is written to a side folder first and copied in at the end, `index.json` last (SV-A26).
+
 ---
 
 ## 3. `.github/workflows/games.yml`: the hourly job (Survivor's parts)
@@ -266,13 +281,18 @@ Two jobs, so repository code never runs next to the key that can write to GitHub
    - Survivor runs even if Block X failed, and the files are handed on.
 2. **publish** runs none of the repository's code.
    - It runs even if one recorder failed.
-   - For each game folder separately, it refuses symbolic links, unexpected file names and files over 2 MB.
+   - It refuses symbolic links and unexpected file names. A file over 2 MB is left out on its own; the rest of its
+     game still publishes (Repo Lense SV-A5).
    - It checks every file's exact shape with a short Python script. For Survivor:
      - addresses are addresses;
      - lives are 0–2;
      - logs use only the letters `sonfuv`;
      - days are numbered 1–14 in order;
-     - prizes total at most 6 VHP, counted in whole units of 0.00000001.
+     - prizes total at most 6 VHP, counted in whole units of 0.00000001;
+     - and the meaning (Repo Lense SV-A4, SV-A13): the players are exactly the day-1 pickers; lives, "out" and used
+       producers match each log; places are in order; prizes only when final, once per wallet, place 1 or 2, only to
+       eligible players not knocked out by a missed pick, and only with 3 such players; integers are real integers in
+       range; `updated` is a time; NaN is refused. Python runs isolated (`-I`).
    - A folder that fails is left out; the other game still publishes, and the job then fails so you get an alert.
    - The good files go to the `games-data` branch.
 

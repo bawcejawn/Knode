@@ -45,7 +45,11 @@
   let picksContract = null, myPicks = new Map(), usage = null, sending = false;
   const drafts = new Map();
 
-  const today = () => S.dayIndex(Date.now());
+  // The chain's clock, not the viewer's, decides the lock: the page reads the chain's head time and keeps the
+  // difference (Repo Lense SV-A21). Until it has read it, the viewer's clock.
+  let skew = 0;
+  const now = () => Date.now() + skew;
+  const today = () => S.dayIndex(now());
   /** The field for day d: its own when published, else the latest one (the page says which). */
   function fieldFor(d) {
     if (fields.has(d)) return { ...fields.get(d), exact: true };
@@ -64,7 +68,7 @@
     if (se) {
       for (const s of [se.season, se.season - 1]) {
         if (s < 1) continue;
-        try { const j = await fetchJson(`${DATA}S${String(s).padStart(3, "0")}.json`); if (j && j.v === 1 && j.season === s && Array.isArray(j.days)) { season = j; break; } } catch { /* none yet */ }
+        try { const j = await fetchJson(`${DATA}S${String(s).padStart(3, "0")}.json`); if (j && (j.v === 1 || j.v === 2) && j.season === s && Array.isArray(j.days)) { season = j; break; } } catch { /* none yet */ }
       }
     }
   }
@@ -110,21 +114,32 @@
     $("picks-soon").hidden = true;
     loadMine();
   }
+  // mineOk: my picks were read in full, without an error, for the wallet shown. Until then Pick and Change are off,
+  // because a missing pick would make a used producer look free (Repo Lense SV-A6).
+  let mineOk = false, mineWho = null;
   async function loadMine() {
     const who = me();
-    myPicks = new Map(); usage = null;
+    if (who !== mineWho) { myPicks = new Map(); usage = null; mineOk = false; mineWho = who; }
     if (picksContract && who) {
       // Every day of the current season so far (whether you joined, and the producers you already picked, before
       // the recorder has those days: audit SV-5), today, and the open days.
       const se = S.seasonOf(today());
       const past = se ? Array.from({ length: today() - se.start }, (_, i) => se.start + i) : [];
-      const days = [...past, today(), ...S.openDays(Date.now())].filter((d, i, a) => a.indexOf(d) === i);
+      const days = [...past, today(), ...S.openDays(now())].filter((d, i, a) => a.indexOf(d) === i);
+      const got = await Promise.allSettled(days.map((d) => picksContract.functions.get_pick({ game: S.GAME_ID, round: String(d), player: who })
+        .then((x) => [d, x.result && x.result.pick && Array.isArray(x.result.pick.producers) && x.result.pick.producers.length ? x.result.pick : null])));
+      const use = await Promise.allSettled([picksContract.functions.get_usage({ game: S.GAME_ID, player: who })]);
+      if (me() !== who) return;                                   // the wallet changed while reading
+      if (got.every((x) => x.status === "fulfilled") && use[0].status === "fulfilled") {
+        myPicks = new Map(got.map((x) => x.value).filter(([, p]) => p));
+        usage = use[0].value.result || null;
+        mineOk = true;
+      } else mineOk = false;                                      // keep the last good list; Pick waits for a clean read
       try {
-        const got = await Promise.all(days.map((d) => picksContract.functions.get_pick({ game: S.GAME_ID, round: String(d), player: who })
-          .then((x) => [d, x.result && x.result.pick && Array.isArray(x.result.pick.producers) && x.result.pick.producers.length ? x.result.pick : null])));
-        for (const [d, p] of got) if (p) myPicks.set(d, p);
-        usage = (await picksContract.functions.get_usage({ game: S.GAME_ID, player: who })).result || null;
-      } catch { /* shown as unknown */ }
+        const h = await provider.getHeadInfo();
+        const t = Number(h && h.head_block_time);
+        if (t > 0) skew = Math.abs(t - Date.now()) > 30000 ? t - Date.now() : 0;
+      } catch { /* the viewer's clock */ }
     }
     renderDays(true); renderToday(); renderStandings();
   }
@@ -167,8 +182,8 @@
   function renderDays(force = false) {
     const list = $("days");
     if (!force && list.contains(document.activeElement) && document.activeElement.tagName === "SELECT") return;
-    const who = me(), now = Date.now(), days = S.openDays(now).filter((d) => S.lockTime(d) - now > MARGIN);
-    const key = JSON.stringify([who, W && W.kind, days[0], sending, !!picksContract, [...fields.keys()], usage && usage.picks_today, [...myPicks.entries()].map(([d, p]) => [d, p.producers && p.producers[0]]), season && season.days.length]);
+    const who = me(), t = now(), days = S.openDays(t).filter((d) => S.lockTime(d) - t > MARGIN);
+    const key = JSON.stringify([who, W && W.kind, days[0], sending, mineOk, !!picksContract, [...fields.keys()], usage && usage.picks_today, [...myPicks.entries()].map(([d, p]) => [d, p.producers && p.producers[0]]), season && season.days.length]);
     if (!force && key === daysKey && list.childElementCount) { updateTimes(); return; }
     daysKey = key;
     const se = S.seasonOf(today());
@@ -179,7 +194,7 @@
       : `Season ${se.season}, day ${se.n}. Join season ${se.season + 1} by picking for its day 1, ${dayName(S.seasonStartDay(se.season + 1))}.`;
     const max = usage ? Number(usage.max_picks_per_day) || S.PICKS_PER_DAY : S.PICKS_PER_DAY, used = usage ? Number(usage.picks_today) || 0 : 0;
     $("picks-left").textContent = usage ? `${Math.max(0, max - used)} of ${max} picks left today` : "";
-    $("picks-who").textContent = !picksContract ? "" : who ? `Picking as ${nameOf(who)}${W.kind === "guest" ? " (guest)" : ""}.` : "Connect a wallet to pick (Kondor, KOIN Vault or a guest wallet).";
+    $("picks-who").textContent = !picksContract ? "" : who ? `Picking as ${nameOf(who)}${W.kind === "guest" ? " (guest)" : ""}.${mineOk ? "" : " Couldn't read your picks from the chain yet, so picking is paused; it tries again every minute."}` : "Connect a wallet to pick (Kondor, KOIN Vault or a guest wallet).";
     const rows = [];
     for (const d of days) {
       const sd = S.seasonOf(d), f = fieldFor(d), mine = myPicks.get(d), mineP = mine && mine.producers && mine.producers[0];
@@ -188,7 +203,7 @@
       const when = el("div", { class: "bx-when" },
         el("b", { text: dayName(d) }),
         el("span", { class: "bx-eta", text: label }),
-        el("span", { class: "bx-eta", "data-lock": String(S.lockTime(d)), text: `locks ${localTime(S.lockTime(d))} · in ${dur(S.lockTime(d) - now)}` }));
+        el("span", { class: "bx-eta", "data-lock": String(S.lockTime(d)), text: `locks ${localTime(S.lockTime(d))} · in ${dur(S.lockTime(d) - t)}` }));
       let cell;
       if (!picksContract) cell = el("div", { class: "bx-now", text: "Picks open soon" });
       else if (!sd) cell = el("div", { class: "bx-now", text: "Practice day: no season yet." });
@@ -208,12 +223,14 @@
         if (!opts.length) sel.disabled = true;
         sel.addEventListener("change", () => { if (sel.value) drafts.set(d, sel.value); else drafts.delete(d); });
         const btn = el("button", { class: "btn", type: "button", onclick: () => sendPick(d, sel.value) }, mineP ? "Change" : "Pick");
-        if (sending || used >= max || (mine && Number(mine.changes) >= S.MAX_CHANGES)) btn.disabled = true;
+        if (sending || !mineOk || used >= max || (mine && Number(mine.changes) >= S.MAX_CHANGES)) btn.disabled = true;
         const notes = [];
         if (mineP) notes.push(el("div", { class: "bx-now", text: `Your pick: ${nameOf(mineP)}${f && f.exact && !f.field.some((x) => x.a === mineP) ? " (not in this day's field: it would cost a life)" : ""}` }));
         // The warning only on the next day to lock: the later ones can wait.
         else if (sd.n > 1 && d === days[0]) notes.push(el("div", { class: "bx-now warn", text: `No pick yet: a ${S.MAINNET ? "day" : "round"} without a pick costs a life.` }));
         if (f && !f.exact) notes.push(el("div", { class: "bx-now", text: `Handicaps for this ${S.MAINNET ? "day" : "round"} aren't out yet; showing the latest. They're published the ${S.MAINNET ? "day" : "round"} before.` }));
+        // Repo Lense SV-A11: a pick made early can drop out of that day's field, and that costs a life.
+        if (mineP && !(f && f.exact)) notes.push(el("div", { class: "bx-now warn", text: `Check this pick once the ${S.MAINNET ? "day's" : "round's"} field is out: if ${nameOf(mineP)} isn't in it, the pick costs a life (the safety net doesn't cover that).` }));
         cell = el("div", { class: "bx-pick" }, sel, btn, ...notes);
       }
       rows.push(el("div", { class: `bx-row${mineP ? " mine" : ""}` }, when, cell));
@@ -221,7 +238,7 @@
     list.replaceChildren(...rows);
   }
   function updateTimes() {
-    document.querySelectorAll("#days [data-lock]").forEach((n) => { const t = Number(n.dataset.lock); n.textContent = `locks ${localTime(t)} · in ${dur(t - Date.now())}`; });
+    document.querySelectorAll("#days [data-lock]").forEach((n) => { const t = Number(n.dataset.lock); n.textContent = `locks ${localTime(t)} · in ${dur(t - now())}`; });
   }
 
   // ── the pick pop-up: wallet → sent → confirmed on the chain ──
@@ -245,12 +262,13 @@
   async function sendPick(d, producer) {
     const who = me();
     if (!who || !picksContract || sending) return;
+    if (!mineOk) return pickModal("info", "Your picks aren't loaded yet", ["The page couldn't read your earlier picks from the chain, so it can't tell which producers you've used. It tries again every minute."], [okBtn("OK")]);
     if (!isAddr(producer)) return pickModal("info", "Choose a producer first", ["Pick the producer you think stays out of the out-zone, then press Pick."], [okBtn("OK")]);
     const mine = myPicks.get(d);
     if (mine && mine.producers && mine.producers[0] === producer) return pickModal("info", "That is already your pick", [`${nameOf(producer)} for ${dayName(d)}.`], [okBtn("OK")]);
     const why = blockedFor(d).get(producer);
     if (why) return pickModal("info", "You can't use that producer again", [`${nameOf(producer)}: ${why}. Each producer once a season.`], [okBtn("OK")]);
-    if (!(S.lockTime(d) - Date.now() > MARGIN)) return pickModal("bad", "Too close to the lock", [`${dayName(d)} locks in a moment. Pick a later day.`], [okBtn("OK")]);
+    if (!(S.lockTime(d) - now() > MARGIN)) return pickModal("bad", "Too close to the lock", [`${dayName(d)} locks in a moment. Pick a later day.`], [okBtn("OK")]);
     sending = true; renderDays(true);
     const f = fieldFor(d), h = f && f.field.find((x) => x.a === producer);
     const what = `${nameOf(producer)} for ${dayName(d)} (UTC)`;
@@ -272,7 +290,7 @@
       else pickModal("info", "Sent, not seen on the chain yet", ["Your wallet sent it. It usually shows within a minute; this list updates by itself."], [okBtn("OK")]);
     } catch (e) {
       const m = String((e && e.message) || e);
-      const why2 = /locked/i.test(m) ? `That day is locked: picks close ${LOCK_TEXT}.`
+      const why2 = /locked/i.test(m) ? `The chain says that ${S.MAINNET ? "day" : "round"} is locked (picks close ${LOCK_TEXT}, by the chain's clock). Your pick wasn't saved.`
         : /not open yet/i.test(m) ? "That day isn't open yet (picks open 7 days ahead)."
         : /used up/i.test(m) ? "Today's picks are used up (changes count). More after 00:00 UTC."
         : /changed again/i.test(m) ? `That pick has been changed ${S.MAX_CHANGES} times already.`
