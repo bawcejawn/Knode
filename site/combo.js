@@ -284,7 +284,9 @@
   async function setupCards() {
     let pdep = null, dep = null;
     try { pdep = await fetchJsonAt(new URL("picks-data/deployment.json", ROOT)); } catch { return; }
-    if (!pdep || !isAddr(pdep.contract) || !provider) return;
+    // One owner switch for the page and the Mana sponsor: "cards": true in picks-data/deployment.json, set once Picks v2
+    // (CARD games) is live (sponsor chat, 2026-10-29). Until then the page stays a builder.
+    if (!pdep || !isAddr(pdep.contract) || pdep.cards !== true || !provider) return;
     try { dep = await fetchJsonAt(new URL("game-data/deployment.json", ROOT)); } catch { /* the wallet keeps its defaults */ }
     try {
       const abi = await fetchJsonAt(new URL("picks/abi/picks.koilib.json", ROOT));

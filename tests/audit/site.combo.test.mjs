@@ -245,6 +245,7 @@ test("combo page: sends only a Combo card through the Picks contract's pick, onl
   assert.doesNotMatch(js, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
   // Live only when picks-data/deployment.json names the contract and game 8 on chain is an enabled kind-4 game.
   assert.match(js, /Number\(game\.kind\) !== 4 \|\| !game\.enabled\) return;/);
+  assert.match(js, /pdep\.cards !== true/, "the page goes live only with \"cards\": true, the same switch as the sponsor");
   assert.match(js, /b\.disabled = !cardsLive \|\| sending \|\| !!why \|\| !okCard;/);
   // Stake-only: guests and wallets the Vault says aren't staked are refused before anything is signed.
   assert.match(js, /W\.kind === "guest"\) why = "The Combo Card is a staked game/);
