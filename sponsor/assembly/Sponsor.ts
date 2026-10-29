@@ -46,7 +46,8 @@ export const GAME_SETTLE: u32 = 0x6868e83d;
 export const GAME_CLAIM: u32 = 0xdd1b3c31;
 export const GAME_CLOSE_WEEK: u32 = 0x250d08be;
 export const GAME_FINALIZE_WEEK: u32 = 0x8c516995;
-export const DESK_SWAP: u32 = 0xda47c2f4;
+export const DESK_SWAP: u32 = 0xda47c2f4;   // Knode Swap's swap: never sponsored (owner, 2026-10-29)
+export const SWAPS_NOT_SPONSORED = "SPONSOR: Knode Swap swaps are not sponsored (players pay their own Mana)";
 // The Knode vault (game v6) player calls (owner, 2026-10-28: "ensure all game calls are covered"); the player is
 // argument 1 of each (game/abi/kpred.koilib.json on vault-v6). finalize_game_week has no player (anyone may send it).
 export const GAME_DEPOSIT_TO: u32 = 0x7bb5c436;
@@ -248,7 +249,10 @@ export class Sponsor {
     else if (rc > leftWeek) out.reason = "this player's weekly sponsored mana is used up";
     else if (rc > leftAll) out.reason = "today's sponsored mana is used up";
     else {
-      const player = isPlayer(cfg, args.account!, [], System.getHeadInfo().head_block_time);
+      // Audit SP-22: the call's game, as authorize reads it from the operations (0 = the question game only).
+      const games: u32[] = [];
+      if (args.game > 0) games.push(args.game);
+      const player = isPlayer(cfg, args.account!, games, System.getHeadInfo().head_block_time);
       out.free = !player;
       const f = this.get_free_usage(new sponsor.get_free_usage_arguments());
       const released = freeReleased(cfg, System.getHeadInfo().head_block_time);
@@ -354,13 +358,16 @@ export class Sponsor {
  */
 function isPlayer(cfg: sponsor.config, account: Uint8Array, games: u32[], now: u64): bool {
   if (cfg.game == null || cfg.min_vhp == 0) return false;
+  const week: u64 = now > VAULT_GENESIS_MS ? (now - VAULT_GENESIS_MS) / MS_PER_WEEK : 0;
+  // Audit SP-28: the game's own active_stake for THIS week (field 3: the stake plus a pending deposit whose week has
+  // come). The raw player.stake stays 0 for a player who deposited once and has only answered since, because the
+  // game moves a pending deposit into `stake` only on their next deposit, withdrawal or move.
   const g = System.call(cfg.game!, GAME_GET_PLAYER,
-    Protobuf.encode(new sponsor.game_get_player_args(account, 0), sponsor.game_get_player_args.encode));
+    Protobuf.encode(new sponsor.game_get_player_args(account, week), sponsor.game_get_player_args.encode));
   if (g.code == error.error_code.success && g.res.object != null) {
     const p = Protobuf.decode<sponsor.game_get_player_result>(g.res.object!, sponsor.game_get_player_result.decode);
-    if (p.player != null && p.player!.stake >= cfg.min_vhp) return true;
+    if (p.active_stake >= cfg.min_vhp) return true;
   }
-  const week: u64 = now > VAULT_GENESIS_MS ? (now - VAULT_GENESIS_MS) / MS_PER_WEEK : 0;
   for (let i = 0; i < games.length; i++) {
     const r = System.call(cfg.game!, GAME_GET_GAME_PLAYER,
       Protobuf.encode(new sponsor.game_get_game_player_args(account, games[i], week), sponsor.game_get_game_player_args.encode));
@@ -428,25 +435,6 @@ function vaultShape(entry: u32): Uint8Array | null {
 
 function hasRace(cfg: sponsor.config): bool {
   return cfg.race != null && cfg.race!.length == ADDRESS_LENGTH;
-}
-
-/** Free play (checkOperation has already accepted the operation): a game `answer`; the payee's own game `claim` (v3:
- *  so a free player, a guest included, can collect a free-game prize); a race `pick`; an allowlisted call marked free play. */
-function isFreePlay(op: protocol.operation, cfg: sponsor.config, payee: Uint8Array): bool {
-  const call = op.call_contract;
-  if (call == null || call.contract_id == null) return false;
-  if (Arrays.equal(call.contract_id!, cfg.game!)) {
-    if (call.entry_point == GAME_ANSWER) return true;
-    if (call.entry_point == GAME_CLAIM_GAME) return true;   // checkOperation already required the payee's own
-    if (call.entry_point != GAME_CLAIM) return false;
-    // Only the payee's own claim, with canonical arguments (claim_arguments: player = 1, week = 2).
-    const raw = call.args ? call.args! : new Uint8Array(0);
-    const who = argsPlayer(raw, CLAIM_ARG_TYPES);
-    return who != null && Arrays.equal(who!, payee);
-  }
-  if (hasRace(cfg) && Arrays.equal(call.contract_id!, cfg.race!)) return call.entry_point == RACE_PICK;
-  const row = allowedRow(cfg, call.contract_id!, call.entry_point);
-  return row != null && row!.free_play;
 }
 
 /** The game's claim_arguments: player (bytes), week (varint). */
@@ -565,10 +553,8 @@ function checkOperation(op: protocol.operation, cfg: sponsor.config, payee: Uint
     }
     return;
   }
-  if (Arrays.equal(target, cfg.desk!)) {
-    System.require(call.entry_point == DESK_SWAP, "SPONSOR: only swaps on Knode Swap are sponsored");
-    return;
-  }
+  // Owner, 2026-10-29 (audit SP-24): Knode Swap is never sponsored, so micro-swaps and arbitrage bots get no free Mana.
+  System.require(!Arrays.equal(target, cfg.desk!), SWAPS_NOT_SPONSORED);
   if (hasRace(cfg) && Arrays.equal(target, cfg.race!)) {
     System.require(call.entry_point == RACE_PICK, "SPONSOR: only picks on the Producer Race are sponsored");
     // Only the payee's own pick (the race contract also requires the player's signature). Audit S-1: the arguments must
@@ -591,8 +577,8 @@ function checkOperation(op: protocol.operation, cfg: sponsor.config, payee: Uint
   System.require(call.entry_point == APPROVE_ENTRY, "SPONSOR: only approve is sponsored on a token");
   const a = Protobuf.decode<sponsor.approve_args>(call.args ? call.args! : new Uint8Array(0), sponsor.approve_args.decode);
   System.require(
-    a.spender != null && (Arrays.equal(a.spender!, cfg.game!) || Arrays.equal(a.spender!, cfg.desk!)),
-    "SPONSOR: approve must name the game or Knode Swap as spender"
+    a.spender != null && Arrays.equal(a.spender!, cfg.game!),
+    "SPONSOR: approve must name the game as spender (Knode Swap is not sponsored)"
   );
   System.require(a.owner != null && Arrays.equal(a.owner!, payee), "SPONSOR: approve must be for the payee's own tokens");
 }

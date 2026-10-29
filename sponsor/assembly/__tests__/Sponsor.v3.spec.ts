@@ -71,7 +71,7 @@ function vhpBalance(v: u64): system_calls.exit_arguments {
   return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.balance_of_result(v), sponsor.balance_of_result.encode)));
 }
 function gamePlayer(stake: u64, pending: u64): system_calls.exit_arguments {
-  const r = new sponsor.game_get_player_result(new sponsor.game_player(stake, pending));
+  const r = new sponsor.game_get_player_result(new sponsor.game_player(stake, pending), stake);
   return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(r, sponsor.game_get_player_result.encode)));
 }
 let READS: system_calls.exit_arguments[] = [];
@@ -565,5 +565,85 @@ describe("v3: vault calls (deposit_to, withdraw_from, move_stake, claim_game, fi
     emptyWallet();
     OPS = [call(STAKED, STAKED_ENTRY, claimish())];
     refused(FREE_USED_UP);
+  });
+});
+
+// ── Round 3 (Repo Lens fix-check of 2026-10-29) ──
+function activePlayer(stake: u64, pending: u64, active: u64): system_calls.exit_arguments {
+  const r = new sponsor.game_get_player_result(new sponsor.game_player(stake, pending), active);
+  return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(r, sponsor.game_get_player_result.encode)));
+}
+function gameStake(weekStake: u64): system_calls.exit_arguments {
+  return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.game_get_game_player_result(weekStake), sponsor.game_get_game_player_result.encode)));
+}
+function freeUsed(): u64 { return new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day; }
+
+describe("v3 SP-28: the question game's ACTIVE stake this week decides, not the raw stake field", () => {
+  it("deposited once and only answered since (stake 0, pending now active): a real player, not the free pool", () => {
+    start();
+    READS = [activePlayer(0, 5 * MANA, 5 * MANA)];
+    OPS = [call(GAME, GAME_ANSWER, NONE)];
+    expect(pays()).toBe(true);
+    MockVM.commitTransaction();
+    expect(freeUsed()).toBe(0);
+  });
+  it("a raw stake with no active stake this week (e.g. withdrawn) is a free wallet", () => {
+    start();
+    READS = [activePlayer(10 * MANA, 0, 0)];
+    OPS = [call(GAME, GAME_ANSWER, NONE)];
+    expect(pays()).toBe(true);
+    MockVM.commitTransaction();
+    expect(freeUsed()).toBe(MANA);
+  });
+  it("a pending deposit that isn't active yet (next week) is not a stake yet", () => {
+    start();
+    READS = [activePlayer(0, 5 * MANA, 0)];
+    OPS = [call(GAME, GAME_ANSWER, NONE)];
+    expect(pays()).toBe(true);
+    MockVM.commitTransaction();
+    expect(freeUsed()).toBe(MANA);
+  });
+});
+
+describe("v3 SP-22: would_pay reads the call's game, as authorize does", () => {
+  it("free pool used up: a wallet staked only in Block X (game 2) is still told yes for its pick", () => {
+    start();
+    CFG = v3Config(); CFG.max_mana_free_day = 0; setConfig(); MockVM.commitTransaction();
+    MockVM.setCallContractResults(padReads([activePlayer(0, 0, 0), gameStake(5 * MANA)]));
+    const yes = new Sponsor().would_pay(new sponsor.would_pay_arguments(USER, MANA, false, 2));
+    expect(yes.ok).toBe(true);
+    expect(yes.free).toBe(false);
+    MockVM.setCallContractResults(padReads([activePlayer(0, 0, 0)]));
+    const no = new Sponsor().would_pay(new sponsor.would_pay_arguments(USER, MANA, false, 0));
+    expect(no.ok).toBe(false);
+    expect(no.reason).toBe("today's free-player Mana is used up (more is released on the hour)");
+  });
+  it("and authorize agrees: the same wallet's pick is paid as a real player's", () => {
+    start();
+    CFG = v3Config(); CFG.max_mana_free_day = 0; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 0), gameStake(5 * MANA)];
+    OPS = [call(PICKS, PICK, pickArgs(USER))];
+    expect(pays()).toBe(true);
+  });
+});
+
+// The auditor's round-3 test for SP-22 (Sponsor.repolens-r3.spec-append.ts), adapted: would_pay now takes the call's
+// game (field 4), which the page reads from the operations, so the test passes game 2 as the page does.
+describe("Repo Lens round 3 (auditor's tests): SP-22", () => {
+  it("SP-22: would_pay agrees with authorize for a wallet staked in Block X (game 2) only, when the free pool is used", () => {
+    start();
+    const s = new Sponsor();
+    const d: u64 = T0 / 86400000;
+    s.freeUsage.put(new sponsor.usage(d, 50 * MANA, 0, 0));
+    s.totalUsage.put(new sponsor.usage(d, 50 * MANA, 0, 0));
+    MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 0), gameStake(2 * MANA)];
+    OPS = [call(PICKS, PICK, pickArgs(USER))];
+    const paid = pays();
+    MockVM.rollbackTransaction();
+    expect(paid).toBe(true);
+    MockVM.setCallContractResults(padReads([activePlayer(0, 0, 0), gameStake(2 * MANA)]));
+    const r = new Sponsor().would_pay(new sponsor.would_pay_arguments(USER, MANA, true, 2));
+    expect(r.ok).toBe(paid);
   });
 });

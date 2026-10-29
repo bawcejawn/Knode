@@ -414,7 +414,9 @@
       throw new Error("Guest play is paused: the page's Mana sponsor settings aren't the live Knode Games sponsor. Nothing was sent.");
     if (!sp) throw new Error("Guest play works on the game pages. Nothing was sent.");
     const rcLimit = rcFor(sp, ops, String(sp.rcLimit || "100000000"));
-    if (!(await sponsorSaysYes(sp, rcLimit, true))) throw new Error(GUEST_NO_FREE);
+    // Audit SP-34: the sponsor's own reason (e.g. "released on the hour"), worded for a guest.
+    const yes = await sponsorAnswer(sp, rcLimit, gameOfOps(sp, ops));
+    if (!yes.ok) throw new Error(yes.reason ? guestRefusal(yes.reason) : GUEST_NO_FREE);
     const signer = await guestLib().signer();
     if (signer.getAddress() !== W.address) throw new Error("The guest key on this device changed. Reconnect as a guest.");
     signer.provider = W.provider;
@@ -519,7 +521,7 @@
     // Answers are light (rcLimit, 1 Mana); staking, withdrawing, swapping and claiming do much more in one transaction
     // (approve, transfer, burn, stake), so they ask for rcLimitOther (audit SP-17: the sponsor's per-transaction cap, 1 Mana).
     const rcLimit = sp ? rcFor(sp, ops, String(answerOnly ? (sp.rcLimit || "100000000") : (sp.rcLimitOther || "100000000"))) : null;
-    if (sp && await sponsorSaysYes(sp, rcLimit, answerOnly)) {
+    if (sp && (await sponsorAnswer(sp, rcLimit, gameOfOps(sp, ops))).ok) {
       try { return await sendKondorWith(label, ops, { ...opts, sponsor: sp.address, rcLimit }); }
       catch (e) {
         // The network turned the sponsored transaction down before it was included (nothing happened, nothing was
@@ -632,18 +634,54 @@
     }
     return String(sum < BigInt(fallback) ? sum : BigInt(fallback));
   }
-  /** would_pay(account, rc_limit, answer_only): true only when the sponsor answers yes (any error: no). */
-  async function sponsorSaysYes(sp, rcLimit, answerOnly) {
+  /** The call's game for would_pay (audit SP-22: so a wallet staked only in that game is told yes, as the sponsor's
+   *  authorize decides): race picks are game 7; a KnodeGames pick names it in argument field 2; 0 = none. */
+  function gameOfOps(sp, ops) {
+    for (const o of ops) {
+      const c = o && o.call_contract;
+      if (!c) continue;
+      if (sp.race && c.contract_id === sp.race && Number(c.entry_point) === PICK) return 7;
+      if (sp.picks && c.contract_id === sp.picks && Number(c.entry_point) === PICK) {
+        const g = varintField(c.args, 2);
+        if (g > 0) return g;
+      }
+    }
+    return 0;
+  }
+  /** The first varint in protobuf field `want` of base64url (or byte) arguments, else 0. */
+  function varintField(args, want) {
+    let b;
+    try { b = typeof args === "string" ? lib.utils.decodeBase64url(args) : args instanceof Uint8Array ? args : new Uint8Array(0); } catch { return 0; }
+    let i = 0;
+    const vint = () => { let v = 0, sh = 0, k = 0; for (;;) { if (i >= b.length || k > 4) return -1; const x = b[i++]; v += (x & 0x7f) * 2 ** sh; sh += 7; k++; if (!(x & 0x80)) return v; } };
+    while (i < b.length) {
+      const tag = vint(); if (tag < 0) return 0;
+      const f = Math.floor(tag / 8), wt = tag % 8;
+      if (wt === 0) { const v = vint(); if (v < 0) return 0; if (f === want) return v > 0xffffffff ? 0 : v; }
+      else if (wt === 2) { const n = vint(); if (n < 0 || i + n > b.length) return 0; i += n; }
+      else if (wt === 1) i += 8; else if (wt === 5) i += 4; else return 0;
+    }
+    return 0;
+  }
+  /** would_pay(account, rc_limit, game): { ok, reason } from the sponsor (any error: not ok, no reason). */
+  async function sponsorAnswer(sp, rcLimit, game) {
     try {
       const acct = lib.utils.decodeBase58(W.address);
       const bytes = [0x0a, acct.length, ...acct, 0x10];
-      let v = BigInt(rcLimit);
-      do { let b = Number(v & 0x7fn); v >>= 7n; if (v > 0n) b |= 0x80; bytes.push(b); } while (v > 0n);
-      if (answerOnly) bytes.push(0x18, 0x01);   // field 3 (answer_only) = true
+      const push = (v) => { v = BigInt(v); do { let x = Number(v & 0x7fn); v >>= 7n; if (v > 0n) x |= 0x80; bytes.push(x); } while (v > 0n); };
+      push(rcLimit);
+      if (game > 0) { bytes.push(0x20); push(game); }   // field 4 (game), sponsor v3 (audit SP-22)
       const r = await withTimeout(W.provider.readContract({ contract_id: sp.address, entry_point: WOULD_PAY, args: lib.utils.encodeBase64url(new Uint8Array(bytes)) }), 6000, "timeout");
       const out = r && r.result ? lib.utils.decodeBase64url(r.result) : new Uint8Array(0);
-      return out.length >= 2 && out[0] === 0x08 && out[1] === 0x01;   // field 1 (ok) = true
-    } catch { return false; }
+      const ok = out.length >= 2 && out[0] === 0x08 && out[1] === 0x01;   // field 1 (ok) = true
+      let reason = "";
+      for (let i = 0; i < out.length;) {   // field 2 (reason), a string
+        const tag = out[i++];
+        if (tag === 0x12) { const n = out[i++]; reason = String.fromCharCode(...out.subarray(i, i + n)); break; }   // the sponsor's reasons are plain ASCII
+        if ((tag & 7) === 0) { while (i < out.length && (out[i++] & 0x80)); } else break;
+      }
+      return { ok, reason };
+    } catch { return { ok: false, reason: "" }; }
   }
 
   async function sendVault(label, ops, opts = {}) {

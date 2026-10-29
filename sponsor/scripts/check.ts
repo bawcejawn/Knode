@@ -47,6 +47,13 @@ for (const [k, [a, name]] of Object.entries(pinned)) {
 const fieldsOf = (a: any, pkg: string, msg: string) => JSON.stringify(a.koilib_types?.nested?.[pkg]?.nested?.[msg]?.fields ?? null);
 ok(fieldsOf(abi, "sponsor", "race_pick_args") === fieldsOf(raceAbi, "race", "pick_arguments") && fieldsOf(abi, "sponsor", "race_pick_args") !== "null",
   "race_pick_args = the race contract's pick_arguments, field for field");
+// Audit SP-28: the sponsor reads the game's get_player exactly as the game answers it: player_object stake/pending
+// in field 1, and active_stake (the stake counting for the asked week) in field 3; get_player_arguments week = 2.
+const gf = (msg: string, field: string) => game.koilib_types?.nested?.kpred?.nested?.[msg]?.fields?.[field];
+const sf = (msg: string, field: string) => abi.koilib_types?.nested?.sponsor?.nested?.[msg]?.fields?.[field];
+ok(gf("get_player_result", "active_stake")?.id === 3 && sf("game_get_player_result", "active_stake")?.id === 3 && sf("game_get_player_result", "active_stake")?.type === gf("get_player_result", "active_stake")?.type,
+  "game_get_player_result.active_stake = the game's get_player_result.active_stake (field 3)");
+ok(gf("get_player_arguments", "week")?.id === 2 && sf("game_get_player_args", "week")?.id === 2, "game_get_player_args.week = the game's get_player_arguments.week (field 2)");
 const body = (f: string) => fs.readFileSync(f, "utf8").replace(/^\/\/ A copy of[^\n]*\n/, "");
 // v3: the tests' copy of the Picks decoder, and the Picks pick_arguments shape the tool allowlists (bot/sponsor.ts
 // PICKS_ARG_TYPES: player bytes, game varint, round varint, producers bytes, number varint).

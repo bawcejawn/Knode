@@ -71,7 +71,7 @@ function vhpBalance(v: u64): system_calls.exit_arguments {
   return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.balance_of_result(v), sponsor.balance_of_result.encode)));
 }
 function gamePlayer(stake: u64, pending: u64): system_calls.exit_arguments {
-  const r = new sponsor.game_get_player_result(new sponsor.game_player(stake, pending));
+  const r = new sponsor.game_get_player_result(new sponsor.game_player(stake, pending), stake);
   return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(r, sponsor.game_get_player_result.encode)));
 }
 let READS: system_calls.exit_arguments[] = [];

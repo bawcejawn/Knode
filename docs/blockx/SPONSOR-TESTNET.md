@@ -20,7 +20,7 @@ npm ci
 npm run admin
 ```
 
-It prints a link with a one-time key (`http://127.0.0.1:8787/?key=…`). Open it in your browser. It only works on
+It prints a link with a one-time key (`http://127.0.0.1:8787/#…`). Open it in your browser. It only works on
 this PC. Go to the **Testnet trial** section and use the numbered steps 1 to 5 in order. Each one shows a **dry run**
 first. Press **Send** only when the dry run looks right. Stop the page with Ctrl+C in PowerShell.
 

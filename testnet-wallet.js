@@ -120,8 +120,9 @@
       try { return await sendWith(ops, { payer: W.sponsor, payee: W.address, limit: SPONSORED_LIMIT }); }
       catch (e) {
         const m = String((e && e.message) || e);
-        // Only a refusal by the sponsor or the network falls back; a wallet change or a cancel never does.
-        if (!/SPONSOR|insufficient|\brc\b|rc_limit|resource|mana/i.test(m) || /Nothing was sent/.test(m)) throw e;
+        // Only a refusal by the sponsor or the network BEFORE inclusion falls back (audit SP-35); a transaction that was
+        // included and then reverted, a wallet change or a cancel never does.
+        if ((e && e.included) || !/SPONSOR|insufficient|\brc\b|rc_limit|resource|mana/i.test(m) || /Nothing was sent/.test(m)) throw e;
         W.lastSponsorRefusal = m.slice(0, 200);
       }
     }
@@ -144,7 +145,7 @@
     if (sent.length !== ops.length || sent.some((o) => !isPick(o))) throw new Error("The wallet changed what is signed. Nothing was sent.");
     tx.transaction = signed;
     const receipt = await tx.send();
-    if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "the contract refused it"));
+    if (receipt && receipt.reverted) { const err = new Error(JSON.stringify(receipt.logs || "the contract refused it")); err.included = true; throw err; }
     const id = tx.transaction && tx.transaction.id;
     if (id) { try { await W.provider.wait(id, "byBlock", 90000); } catch { /* shown as not seen yet */ } }
     return id || null;

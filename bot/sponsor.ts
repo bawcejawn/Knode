@@ -68,7 +68,8 @@ export const PICKS_GAME_ARG = 2;
  *  in about 5 days), of which free players (no VHP, no stake; guests too) share at most 2,000, so staked players always
  *  have 3,000 or more; 50 per player per day (300 a week). The caps count each transaction's Mana limit, and with the
  *  per-action limits (mana-report) a Block X pick counts about 0.1, not 1. */
-export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "50", perPlayerWeek: "300", perDay: "5000", minVhp: "1", freePerDay: "2000" };
+// Owner, 2026-10-29: 25 Mana a day (150 a week) for every wallet, free or staked; a pick uses a small part of 1 Mana.
+export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "25", perPlayerWeek: "150", perDay: "5000", minVhp: "1", freePerDay: "2000" };
 // (Audit SP-2 wording: "staked players always have 3,000 or more" held only while the free pool was the only shared
 //  one; the caps are first come, first served. Sponsor v3 counts only a STAKE as a player, and releases the free
 //  pool by the hour, so neither pool can be emptied cheaply in one burst; status warns at 80%.)
@@ -77,7 +78,7 @@ export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "50", perPlayerWeek: "30
 export const SPONSOR_SHA256 = "fa4659e65c6156da3dde34238e0545a489a8b7f00cdf51df9bf79517a0019f33";
 /** v3 release candidate (allowlist, free claims, 5,000 ceiling, per-action Mana limits): NOT yet audited, so it may go
  *  only on the testnet. After the audit and fix-check it replaces SPONSOR_SHA256. */
-export const SPONSOR_V3_CANDIDATE = "8d515d153ad7df0c7044c8b8cf3154d5fc333e56c9691b499ebd86fb23113dd7";
+export const SPONSOR_V3_CANDIDATE = "b21251d42beb1c4dd104194c6833d64abe0887c43d9631406765c8c7027aef96";
 /** The builds this network may receive. Audit SP-13: v2 stays allowed as the documented rollback target. */
 export const allowedBuilds = (mainnet: boolean) => (mainnet ? [SPONSOR_SHA256] : [SPONSOR_SHA256, SPONSOR_V3_CANDIDATE]);
 /** v3 code on chain (the per-action and allowlist fields mean nothing to v2). */
@@ -174,6 +175,14 @@ export function usageAlerts(total: any, free: any, cfg: any, now: number): strin
   return out;
 }
 
+/** The sponsor wallet's own Mana against what today's caps still allow it to spend (audit SP-31). Exported for tests. */
+export function manaAlerts(mana: bigint, cfg: any, total: any): string[] {
+  const day = BigInt(cfg?.max_mana_per_day ?? 0), used = BigInt(total?.used_day ?? 0);
+  const left = day > used ? day - used : 0n;
+  if (cfg?.enabled && left > 0n && mana < left) return [`the sponsor wallet has ${showKoin(mana)} Mana, less than the ${showKoin(left)} today's caps still allow: players may be refused before the caps are reached (add KOIN or lower --per-day)`];
+  return [];
+}
+
 /** watch: read-only, for the hourly bot: prints a ::warning:: line for each alert (exit 0 either way). */
 async function watch() {
   const { rpc } = knode();
@@ -184,8 +193,13 @@ async function watch() {
   const t = await readSponsor(provider, address, "get_total_usage");
   const fu = await readSponsor(provider, address, "get_free_usage").catch(() => ({} as any));
   const alerts = usageAlerts(t, fu, cfg, Date.now());
+  // Audit SP-31: the sponsor wallet's own Mana too (it is what actually pays).
+  const mana = BigInt(await provider.getAccountRc(address).catch(() => "0"));
+  alerts.push(...manaAlerts(mana, cfg, t));
   for (const w of alerts) console.log(`::warning::Mana sponsor: ${w.replace(/[\r\n]+/g, " ").replace(/::/g, ": ")}`);
-  if (!alerts.length) log("Mana sponsor: under 80% of today's caps.");
+  if (!alerts.length) log(`Mana sponsor: under 80% of today's caps; the wallet has ${showKoin(mana)} Mana.`);
+  // Audit SP-31: a warning fails the run, so GitHub emails the owner (the workflow step is not continue-on-error).
+  if (alerts.length) process.exitCode = 1;
 }
 
 // ═══════════════════════════════ upload ═══════════════════════════════
@@ -212,6 +226,13 @@ async function upload(send: boolean) {
   log(`Mana               has ${showKoin(have)}, the upload needs about ${showKoin(need)}`);
   if (m.exists) log(`Note               this wallet already has code (sha256 ${m.hash.replace(/^0x1220/, "")}); uploading replaces it`);
   if (have < need) throw new Error(`Send at least ${showKoin(need - have + toSat(5))} more KOIN to ${A} first (its KOIN is its Mana).`);
+  // Owner, 2026-10-29: v3 refuses Knode Swap swaps, so the live swap page must already use players' own Mana first.
+  if (mainnet && V3_BUILDS.includes(sha256hex(wasm))) {
+    let deskPayer = "unknown";
+    try { deskPayer = String((await deployedSite()).desk?.payer ?? "self"); } catch (e) { deskPayer = `unreadable (${(e as Error).message})`; }
+    log(`Knode Swap page   Mana paid by ${deskPayer === "sponsor" ? "the sponsor  ✖ (v3 refuses swaps)" : deskPayer}`);
+    if (deskPayer !== "self") { if (send) throw new Error("Not sent: the live Knode Swap page (knodegames.com/desk-data/deployment.json) must use players' own Mana before v3 goes on, because v3 refuses swaps. Run npm run sponsor -- payer sponsor --send, have the pull request to main merged, wait a few minutes, then upload again."); }
+  }
   if (!send) { log("\nDry run only. Nothing was sent. Run again with --send to upload."); return; }
   const c = new Contract({ id: A, abi, provider, signer: s, bytecode: new Uint8Array(wasm) });
   const { operation } = await c.deploy({ abi: JSON.stringify(abi), authorizesCallContract: false, authorizesTransactionApplication: true, authorizesUploadContract: false, onlyOperation: true } as any);
@@ -282,6 +303,8 @@ export async function deployedSite(fetcher: (u: string) => Promise<any> = async 
 /** What the deployed site asks for, against the chain's rows and cap (its answers' fallback and its other actions'). */
 export function siteProblems(site: { game: any; desk: any }, rows: { contract: string; entry_point: number; max_mana: string }[], perTx: bigint): string[] {
   const out: string[] = [];
+  // Owner, 2026-10-29: sponsor v3 refuses swaps, so the live Knode Swap page must already use players' own Mana.
+  if (site.desk?.payer === "sponsor") out.push("Knode Swap still asks the sponsor to pay for swaps, which sponsor v3 refuses (npm run sponsor -- payer sponsor --send, then a pull request to main)");
   for (const [name, d] of [["game pages", site.game], ["Knode Swap", site.desk]] as const) {
     const sp = d?.sponsor;
     if (!sp) continue;
@@ -297,7 +320,14 @@ async function configOn(rpc: string, address: string) {
   try { return await readSponsor(new Provider([rpc]), address, "get_config"); }
   catch (e) { throw new Error(`Couldn't read the sponsor's settings from ${rpc} (${(e as Error).message}). Nothing was sent.`); }
 }
-const CHECK_RPC = () => (E.RPC_CHECK && E.RPC_CHECK !== "off" ? E.RPC_CHECK : "https://api.koinosblocks.com");
+// Audit SP-30: RPC_CHECK=off really means "no second node" (null). Only switching off (disable) may then go ahead on
+// mainnet; config and enable refuse without a second node.
+const CHECK_RPC = (): string | null => (E.RPC_CHECK === "off" ? null : (E.RPC_CHECK || "https://api.koinosblocks.com"));
+function secondNode(): string {
+  const r = CHECK_RPC();
+  if (!r) throw new Error("RPC_CHECK=off: on mainnet this needs a second node to agree. Remove RPC_CHECK=off from .env (only disable works without one). Nothing was sent.");
+  return r;
+}
 
 async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
   const { game, desk, rpc, race, picks, picksCards } = knode();
@@ -307,9 +337,16 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
   const s = sponsorKey(provider);
   const A = s.getAddress();
   const cur = await configOn(rpc, A);
+  // Audit SP-29/SP-30: enable and disable change ONLY the switch: every cap (cur.max_mana_per_day and the rest), row
+  // and limit stays exactly as it is on chain.
+  if (enabledArg !== undefined) {
+    if (!(cur.max_mana_per_day && cur.max_mana_per_day !== "0")) throw new Error("The sponsor has no settings yet: run config first (npm run sponsor -- config, then --send).");
+    return setSwitch(rpc, provider, s, A, cur, enabledArg, send, mainnet);
+  }
   // Audit SP-5: on mainnet a second node must hold the same settings (one node can't feed values you then re-sign).
-  if (mainnet) {
-    const other = await configOn(CHECK_RPC(), A);
+  // (Never for switching off: enabledArg !== false always holds here, disable returned above.)
+  if (mainnet && enabledArg !== false) {
+    const other = await configOn(secondNode(), A);
     if (JSON.stringify(other) !== JSON.stringify(cur)) throw new Error(`The two nodes (${rpc}, ${CHECK_RPC()}) show different sponsor settings. Nothing was sent; try again in a minute.`);
   }
   const configured = !!(cur.max_mana_per_day && cur.max_mana_per_day !== "0");
@@ -368,6 +405,30 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
   if (mainnet && config.mana_caps && syncSiteLimits(limits.rows)) log(`Updated the per-action limits in ${GAME_DEP} and ${DESK_DEP} to the new ones: open a pull request to main with them (any limit that went up is used once the site updates).`);
 }
 
+/** enable / disable (audit SP-29, SP-30): re-send the settings exactly as they are on chain with only "enabled"
+ *  changed. Switching OFF is the emergency stop: no second node, website or file check may block it (a node that lied
+ *  about the other settings could only make the switched-off sponsor's settings wrong, and those don't pay anyone).
+ *  Switching ON still needs both nodes to agree (audit SP-5). Exported for the tests. */
+export function switchedConfig(cur: any, on: boolean): any {
+  if (!cur || !(cur.max_mana_per_day && cur.max_mana_per_day !== "0")) throw new Error("The sponsor has no settings yet: run config first (npm run sponsor -- config, then --send).");
+  return { ...cur, enabled: on };
+}
+async function setSwitch(rpc: string, provider: Provider, s: Signer, A: string, cur: any, on: boolean, send: boolean, mainnet: boolean) {
+  if (on && mainnet) {
+    const other = await configOn(secondNode(), A);
+    if (JSON.stringify(other) !== JSON.stringify(cur)) throw new Error(`The two nodes (${rpc}, ${CHECK_RPC()}) show different sponsor settings. Nothing was sent; try again in a minute.`);
+  }
+  const config = switchedConfig(cur, on);
+  log(`To the sponsor contract ${A} on ${rpc}${mainnet ? "   ⚠ MAINNET" : ""}, signed and paid by the sponsor wallet:`);
+  log(`  switched                     ${cur.enabled ? "ON" : "off"} → ${on ? "ON" : "off"}`);
+  log("  every cap, limit and covered action: unchanged (as on chain now)");
+  if (!send) { log("\nDry run only. Nothing was sent. Add --send to send it."); return; }
+  const chain = new KoinosChain(rpc, A);
+  const r = await chain.send([{ contract: A, abi: loadAbi(), method: "set_config", args: { config } }], [s], { payer: A, rcLimitKoin: 2 });
+  log(r.ok ? `✔ done (Mana used ${showKoin(r.rcUsed)})  transaction ${r.txId}` : `✖ ${r.error}`);
+  if (!r.ok) process.exitCode = 1;
+}
+
 /** Copies the per-action limits into the website's sponsor block (game and desk deployment files), if it has one. */
 export function syncSiteLimits(rows: ReturnType<typeof readLimits>["rows"], files = { game: GAME_DEP, desk: DESK_DEP }): boolean {
   let changed = false;
@@ -413,8 +474,10 @@ async function chainPerTx(): Promise<bigint> {
   const cur = await currentChainConfig();
   return BigInt(cur.max_mana_per_tx && cur.max_mana_per_tx !== "0" ? cur.max_mana_per_tx : units(DEFAULT_CAPS.perTx));
 }
+/** Audit SP-33: a failed read stops (it never becomes "nothing set"), as config does. */
 async function currentChainConfig(): Promise<any> {
-  try { const { rpc } = knode(); const address = readJson(STATE)?.address ?? PINNED_MAINNET.sponsor; return await readSponsor(new Provider([rpc]), address, "get_config"); } catch { return {}; }
+  const { rpc } = knode(); const address = readJson(STATE)?.address ?? PINNED_MAINNET.sponsor;
+  return configOn(rpc, address);
 }
 /** Step 1 of a limits change (review L1): the website gets, for each action, the lower of the sponsor's current limit
  *  and the new one, so whatever the page asks for is accepted before and after the chain changes. */
@@ -463,7 +526,7 @@ async function manaReport(a: string[]) {
   }
   // Audit SP-6: every measured transaction's receipt is read again from the second node; a difference drops it.
   if (onMainnet(rpc)) {
-    const check = new Provider([CHECK_RPC()]);
+    const check = new Provider([secondNode()]);
     const ch: any = await check.getHeadInfo();
     const keep: Sample[] = [];
     const heights = [...new Set(samples.map((x: any) => x.height))];
@@ -510,7 +573,8 @@ export function setPayer(choice: "sponsor" | "self", rcLimitMana = "1", files: {
   if (choice === "sponsor" && !st?.address) throw new Error(`${files.state} has no sponsor yet: upload it first (npm run sponsor -- upload --send).`);
   const block = st?.address ? {
     address: st.address,
-    covers: [game.contract, desk.contract, game.vhp ?? PINNED_MAINNET.vhp, game.koin ?? PINNED_MAINNET.koin, ...(race ? [race] : []), ...(picks ? [picks] : [])],
+    // Owner, 2026-10-29: Knode Swap is never sponsored, so it isn't among what the sponsor covers.
+    covers: [game.contract, game.vhp ?? PINNED_MAINNET.vhp, game.koin ?? PINNED_MAINNET.koin, ...(race ? [race] : []), ...(picks ? [picks] : [])],
     // Producer Race picks: free play like answers (the website asks with the answers' Mana limit).
     ...(race ? { race } : {}),
     // KnodeGames picks (sponsor v3): free play like answers.
@@ -526,7 +590,10 @@ export function setPayer(choice: "sponsor" | "self", rcLimitMana = "1", files: {
       for (const [k, v] of Object.entries(next)) out[k] = now[k] !== undefined && BigInt(now[k]) < BigInt(v as string) ? now[k] : (v as string);
       return out; })(),
   } : undefined;
-  for (const [f, d] of [[files.game, game], [files.desk, desk]] as const) {
+  // Owner, 2026-10-29: Knode Swap pages always use the player's own Mana (sponsor v3 refuses swaps).
+  desk.payer = "self"; delete desk.sponsor;
+  writeJson(files.desk, desk);
+  for (const [f, d] of [[files.game, game]] as const) {
     d.payer = choice;
     // Keep the owner's guest-play switch ("sponsor": { "guest": true }) when the sponsor block is rewritten.
     if (block && (d as any).sponsor?.guest === true) (block as any).guest = true;
@@ -554,6 +621,12 @@ async function main() {
   const [cmd = "status", ...a] = process.argv.slice(2).filter((x) => x !== "--testnet");
   if (cmd === "keys") return keys();
   const send = a.includes("--send");
+  // Audit SP-32: --testnet always uses the testnet's own files, decided before (and whatever) the chain-id read.
+  if (TESTNET) {
+    STATE = path.join("sponsor-data", "testnet", "deployment.json");
+    LIMITS_FILE = path.join("sponsor-data", "testnet", "mana-limits.json");
+    if (cmd === "payer" || cmd === "site-limits") throw new Error(`${cmd} changes the website, which runs on mainnet: not on the testnet.`);
+  }
   // Audit SP-12: mainnet or not by the node's chain id; the testnet keeps its own files.
   try {
     const id = await new Provider([knode().rpc]).getChainId();

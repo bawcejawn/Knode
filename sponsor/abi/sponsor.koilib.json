@@ -40,7 +40,7 @@
       "argument": "sponsor.would_pay_arguments",
       "return": "sponsor.would_pay_result",
       "read_only": true,
-      "description": "Would the sponsor pay a transaction from this player with this Mana limit (on/off, caps and the player rule; the operations themselves are checked when it is sent). answer_only = the transaction is only free play (game answers and race picks)."
+      "description": "Would the sponsor pay a transaction from this player with this Mana limit (on/off, caps and the player rule; the operations themselves are checked when it is sent). game = the call's game, so a wallet staked only in that game counts as a real player, as authorize does."
     },
     "set_config": {
       "entry_point": 1269140617,
@@ -313,6 +313,10 @@
               "answer_only": {
                 "type": "bool",
                 "id": 3
+              },
+              "game": {
+                "type": "uint32",
+                "id": 4
               }
             }
           },
@@ -453,6 +457,13 @@
               "player": {
                 "type": "game_player",
                 "id": 1
+              },
+              "active_stake": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },
