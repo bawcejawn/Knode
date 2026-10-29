@@ -393,12 +393,12 @@
   // ── leaderboard (the recorder's board.json, shown by the shared Knode Games board in board.js) ──
   const lb = window.KBoard ? window.KBoard.create($("race-board"), {
     label: "Race leaderboard",
-    columns: [{ key: "pts", label: "Points" }, { key: "correct", label: "Wins" }, { key: "shows", label: "Shows" }, { key: "picks", label: "Picks", wide: true }, { key: "answers", label: "Question answers", wide: true }],
+    columns: [{ key: "pts", label: "Points" }, { key: "correct", label: "Wins" }, { key: "shows", label: "Shows" }, { key: "picks", label: "Picks", wide: true }],
     scored: (r) => (r.pts ?? r.correct) > 0,
     summary: (r) => `${fmt(r.pts ?? 0)} pts · ${fmt(r.correct)} W ${fmt(r.shows ?? 0)} S`,
     name: nameOf, link: (a) => EXPLORER + a,
     me: (r, place) => `${place ? `You: #${place} with` : "Your score (only you see this):"} ${fmt(r.pts ?? 0)} points (${fmt(r.correct)} wins, ${fmt(r.shows ?? 0)} shows) from ${fmt(r.picks)} picks.`,
-    unranked: "To be ranked, hold at least 1 VHP or stake in Knode Games.",
+    unranked: "To play on the Staked board, stake VHP in the Producer Race (once the Knode Games vault is live).",
     free: { show: 6, prize: "1st and 2nd at the end of the week win the free-play prize (paid once the Knode Games vault is live)." },
   }) : null;
   async function loadBoard() {
