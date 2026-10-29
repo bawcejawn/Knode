@@ -101,11 +101,15 @@ test("results files become points, prize winners and a seal; the week finalizes 
   const again: string[] = [];
   await vaultResultsPass(vctx(sim, results), sendAs(sim, operator, again));
   assert.deepEqual(again, []);
-  // too early to finalize; 12 hours after the seal it finalizes; winners claim
+  // too early to finalize, also 12 hours after the seal (the owner can still correct); a day after the seal it
+  // finalizes; winners claim
   const fin: string[] = [];
   await vaultFinalizePass(vctx(sim, results), sendAs(sim, operator, fin));
   assert.deepEqual(fin, []);
   at(sim.time + 12 * HOUR + 1);
+  await vaultFinalizePass(vctx(sim, results), sendAs(sim, operator, fin));
+  assert.deepEqual(fin, []);
+  at(sim.time + 12 * HOUR);
   await vaultFinalizePass(vctx(sim, results), sendAs(sim, operator, fin));
   assert.deepEqual(fin, ["Fantasy week 1: finalize (find the winners)", "Block X week 1: finalize (find the winners)"]);
   await ok([["claim_game", { player: addr(B), game: 2, week: "1" }]], [B]);

@@ -27,7 +27,15 @@ const expected = ["get_state", "get_player", "get_question", "get_week", "list_p
   "settle", "claim", "compound", "close_week", "finalize_week", "post_question", "resolve_question", "correct_question", "set_operator",
   "set_paused", "propose_owner", "accept_owner", "register_key", "schedule_upgrade", "claim_creator_fee", "claim_owner_share",
   "seed_deposit_vhp", "seed_deposit_koin", "request_seed_withdrawal", "execute_seed_withdrawal", "cancel_upgrade", "set_sponsor_limit", "set_min_stake"];
+// v6, the KnodeGames Vault (audit V6-13)
+expected.push("deposit_to", "withdraw_from", "move_stake", "claim_game", "post_results", "post_prize_winners", "seal_results",
+  "correct_result", "void_game_week", "finalize_game_week", "propose_game", "apply_game", "deactivate_game", "claim_fee_vhp",
+  "get_game", "list_games", "get_game_player");
 for (const m of expected) ok(!!abi.methods[m], `ABI has ${m}`);
+// The entry points the sponsor pays for (claude/handoff-sponsor-vault-calls.md) must not move.
+ok(abi.methods.deposit_to?.entry_point === 0x7bb5c436 && abi.methods.withdraw_from?.entry_point === 0x5b0aaef8
+  && abi.methods.move_stake?.entry_point === 0x7c268e69 && abi.methods.claim_game?.entry_point === 0x4107e3ab
+  && abi.methods.finalize_game_week?.entry_point === 0xec300c11, "the vault entry points match the sponsor hand-off");
 ok(abi.methods.answer?.entry_point === 0x0db52f40 && abi.methods.settle?.entry_point === 0x6868e83d && abi.methods.claim?.entry_point === 0xdd1b3c31,
   "sponsored entry points match the ones hard-coded in the contract");
 
@@ -45,6 +53,10 @@ await round("deposit_vhp", { from: A, amount: "100000000" });
 await round("withdraw", { to: A, amount: "100000000" });
 await round("settle", { player: A, week: "3" });
 await round("claim", { player: A, week: "3" });
+await round("deposit_to", { from: A, game: 2, amount: "100000000", koin: true });
+await round("withdraw_from", { to: A, game: 2, amount: "100000000" });
+await round("move_stake", { player: A, from_game: 1, to_game: 2, amount: "100000000" });
+await round("claim_game", { player: A, game: 2, week: "3" });
 await round("post_question", { k: 4, lock_time: "1000", window_start: "1001", window_end: "2000", params_hash: "0x" + "ab".repeat(32) });
 await round("resolve_question", { id: 7, outcome: 1, data_hash: "0x" + "cd".repeat(32) });
 

@@ -215,8 +215,9 @@ export async function vaultResultsPass(ctx: VaultCtx, send: Send, only?: { game:
   }
 }
 
-/** Finalizes other games' weeks once they may be: after the seal and the last correction have stood for close_delay,
- *  or (no results) once the deadline has passed, or when the owner voided them. Pages until done. */
+/** Finalizes other games' weeks once they may be: a day (2 × close_delay) after the seal, once the last correction has
+ *  stood for close_delay (the owner's correction window has closed: audit V6-1), or (no results) once the deadline has
+ *  passed, or when the owner voided them. A week already started pages on at once. Pages until done. */
 export async function vaultFinalizePass(ctx: VaultCtx, send: Send) {
   const view = await vaultView(ctx.chain);
   if (!view) return;
@@ -229,8 +230,9 @@ export async function vaultFinalizePass(ctx: VaultCtx, send: Send) {
       for (let page = 0; page < 20; page++) {
         const gw = (await ctx.chain.read("get_game", { game: id, week: String(w) })).week ?? {};
         if (!gw.closed || gw.finalized) break;
-        const last = Math.max(num(gw.seal_time), num(gw.last_change_time));
-        const ready = gw.voided || (gw.sealed ? k.time >= last + k.closeDelay : k.time >= k.resultsDue(w));
+        const ready = gw.voided || gw.fin_started || (gw.sealed
+          ? k.time >= num(gw.seal_time) + 2 * k.closeDelay && k.time >= num(gw.last_change_time) + k.closeDelay
+          : k.time >= k.resultsDue(w));
         if (!ready) break;
         const what = gw.sealed && !gw.voided ? "find the winners" : "no results: roll the week over";
         if (!(await send(`${g.name ?? `game ${id}`} week ${w}: finalize (${what})`, [{ method: "finalize_game_week", args: { game: id, week: String(w) } }])) || ctx.dryRun) break;

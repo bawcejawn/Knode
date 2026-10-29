@@ -255,7 +255,7 @@ export async function rehearseV6(snap: Snapshot, opts: { weeks?: number; reward?
     files[`mem:3/W${w}`] = { game: 3, week: w, final: true, rows: [], first: [S6], second: [S5] };
     await vaultResultsPass(vctx, opSend);
     check(vctx.problems.length === 0, `week ${w}: results posted and sealed for every game${vctx.problems.length ? `: ${vctx.problems.join("; ")}` : ""}`);
-    now += closeDelay + 1;
+    now += 2 * closeDelay + 1;                       // a day after the seal: the owner's correction window has closed
     at(now);
     await vaultFinalizePass(vctx, opSend);
     now = Math.max(now, num(wk.settle_end) + 1);
