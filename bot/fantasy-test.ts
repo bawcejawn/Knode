@@ -18,7 +18,8 @@
  *   npm run fantasy-test -- team <player> <a,b,c,d,e> [--send]   save a team as a test player (captain first; #n = nth on the price list)
  *   npm run fantasy-test -- rival <player> <address|pN> [--send] challenge a rival for the next test week
  *   npm run fantasy-test -- record                  one recorder run (writes testnet-data/fantasy/data)
- *   npm run fantasy-test -- run [--bots]            the practice page + the recorder every 2 minutes (+ robot players)
+ *   npm run fantasy-test -- run [--bots]            the practice page (opens in your browser; --no-open not) + the recorder
+ *                                                   every 2 minutes (+ robot players)
  *
  * Everything it makes stays in testnet-data/fantasy/ (git-ignored): keys.env (the throwaway TEST keys; never use them on
  * mainnet), config.json, picks/ (the testnet build), race/ (the race cards), data/ (the recorder's files), bots.json.
@@ -598,10 +599,18 @@ export async function tick(withBots: boolean) {
   catch (e) { log(`[${new Date().toLocaleTimeString()}] recorder: ${(e as Error).message}`); }
   if (withBots) { try { await bots(); } catch (e) { log(`robots: ${(e as Error).message}`); } }
 }
-async function runAll(withBots: boolean) {
+/** Open the practice page in the default browser (the address is this server's own, nothing from outside). */
+async function openBrowser(url: string) {
+  if (!/^http:\/\/127\.0\.0\.1:\d+\/site\/fantasy-testnet\.html$/.test(url)) return;
+  const { spawn } = await import("node:child_process");
+  const [cmd, args] = process.platform === "win32" ? ["explorer.exe", [url]] : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
+  try { spawn(cmd, args as string[], { stdio: "ignore", detached: true }).on("error", () => {}).unref(); } catch { /* open it by hand */ }
+}
+async function runAll(withBots: boolean, open: boolean) {
   const c = readConfig(); readKeys();
   if (c.clock.genesis === null) throw new Error("Set the test week first: npm run fantasy-test -- week next");
-  await startSite();
+  const server = await startSite();
+  if (open) await openBrowser(`http://127.0.0.1:${(server.address() as any).port}/site/fantasy-testnet.html`);
   await tick(withBots);
   setInterval(() => tick(withBots), 2 * 60_000);
   log("Running. Leave this window open; press Ctrl+C to stop.");
@@ -623,7 +632,7 @@ async function main() {
     case "record": { const r = await record(); log(r.problems.length ? r.problems.join("\n") : "recorded, no problems"); return; }
     case "bots": return bots();
     case "site": await startSite(); return;
-    case "run": return runAll(a.includes("--bots"));
+    case "run": return runAll(a.includes("--bots"), !a.includes("--no-open"));
     default: throw new Error(`Unknown command "${cmd}". Commands: setup, status, fund, picks-build, picks-upload, games, week, team, rival, record, run`);
   }
 }

@@ -16,6 +16,31 @@ anything to mainnet. It only reads mainnet blocks, the same way the website does
 
 ---
 
+## Quick start: Claude already deployed it
+
+If Claude sent you a file named **`fantasy-testnet.zip`**, the testnet contract, the two games and the test week are
+already set up, and the zip holds the test wallets. You only need the page and the robots on your PC (they read
+mainnet blocks, which only your PC can reach):
+
+```powershell
+cd C:\
+git clone https://github.com/bawcejawn/Knode.git C:\kprediction-fantasy
+cd C:\kprediction-fantasy
+git checkout fantasy
+npm ci
+Expand-Archive "$HOME\Downloads\fantasy-testnet.zip" -DestinationPath C:\kprediction-fantasy\testnet-data\fantasy
+npm run fantasy-test -- status
+npm run fantasy-test -- run --bots
+```
+
+What to expect:
+- `status` lists the wallets with their test KOIN, games 4 and 5 **ON**, and the test week's start time.
+- `run --bots` opens the practice page in your browser and keeps running. **Leave that window open.**
+
+Then go to **7. Play** below. Steps 1 to 6 are only for setting it up yourself.
+
+---
+
 ## 1. Get a separate copy of the code
 
 Use a **separate folder**, so your mainnet scheduled tasks (which run from `C:\kprediction`) never see this branch.
@@ -129,7 +154,8 @@ Press **Ctrl+C** to stop it. Running it again carries on where it left off.
 
 ## 7. Play
 
-Open the address `run` printed, usually **http://127.0.0.1:8380/site/fantasy-testnet.html**. You are **p1** (red bar,
+The page opens by itself (or open the address `run` printed, usually
+**http://127.0.0.1:8380/site/fantasy-testnet.html**). You are **p1** (red bar,
 top right). You can switch to any robot to see its side, for example to check a rival match.
 
 1. When the price list is out, press **Add** on five producers. The bar shows what you've spent of 100.
