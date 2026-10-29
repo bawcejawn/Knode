@@ -54,7 +54,8 @@ The first run puts every game that is already live on the course straight away.
 - For each final staked week the recorder writes the Vault's file `games-data:golf/vault/W<week>.json` (game 6; every
   player staked in Block Golf that week, `week_stake` at least that week's Vault minimum, with 1+ points, 1–255; empty
   rows when nobody staked scored; no free-prize winners). The hourly vault bot posts it. Its line for
-  `game-data/deployment.json` → `vaultGames`: `"6": { "name": "Block Golf", "results": "games-data:golf/vault" }`. A sent file can't be changed by
+  `game-data/deployment.json` → `vaultGames`: `"6": { "name": "Block Golf", "results": "games-data:golf/vault" }`. File names have no padding
+  (`W57.json`), the one rule in `bot/vault.ts` and the `games-data` README (Vault chat, 2026-10-29). A sent file can't be changed by
   the recorder (the publish job refuses it); corrections go through the owner's 24-hour correction window on the Vault.
 
 ## No testnet run (owner, 2026-10-28)
@@ -71,8 +72,8 @@ the Race's real week; its first mainnet weeks are practice weeks with no prizes,
   least 1 VHP, read from the vault on two nodes) who scored on that game, **counted by whole VHP staked, not by
   wallets** (owner, 2026-10-28). Your own stake never moves you (you count as one unit among the others' stake), so
   moving VHP into idle wallets changes nothing. A hole needs at least 5 Block Golf stakers AND 10 VHP of Block Golf
-  stake among its scorers (fixed numbers nobody can move; `MIN_FIELD` and `MIN_FIELD_VHP` in `site/golf-math.js`). A week with no staked scorecards gets no vault
-  file, so the Vault rolls that week's bucket over in Block Golf. Players not staked in Block Golf still get a scorecard (Free
+  stake among its scorers (fixed numbers nobody can move; `MIN_FIELD` and `MIN_FIELD_VHP` in `site/golf-math.js`). A week with no staked scorecards gets a vault
+  file with empty rows, so the Vault rolls that week's bucket over in Block Golf. Players not staked in Block Golf still get a scorecard (Free
   play board) but never make up a field.
 - The question game hole keeps Block Golf's simple rule (owner, 2026-10-28).
 - Staked weeks need the vault (v6) live and merged: the recorder refuses to start if `GOLF_STAKED_FROM_WEEK` is set
