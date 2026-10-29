@@ -18,6 +18,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as zlib from "node:zlib";
 import { withRetry } from "../../../common.ts";
+import { tokenAbi } from "../../../bot/token-abi.ts";   // the same reads the race recorder uses (balance_of, total_supply)
 
 const E = process.env;
 const RPC = E.RPC || "https://api.koinos.io", RPC_CHECK = E.RPC_CHECK || "";
@@ -120,7 +121,7 @@ async function main() {
   const who = [...new Set([...signer, ...events.flatMap((x) => [x.from, x.to].filter(Boolean) as string[])])].filter((a) => typeof a === "string");
   const signersOnly = [...new Set(signer)];
   async function balances(node: Provider) {
-    const vhp = new Contract({ id: VHP, abi: utils.tokenAbi as any, provider: node });
+    const vhp = new Contract({ id: VHP, abi: tokenAbi as any, provider: node });
     const before: any = await withRetry("head", () => node.getHeadInfo());
     const out: Record<string, string> = {};
     for (const a of signersOnly) { const r: any = await withRetry(`VHP ${a}`, () => (vhp.functions as any).balance_of({ owner: a })); out[a] = String(r?.result?.value ?? "0"); }
