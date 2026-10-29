@@ -187,7 +187,7 @@ test("an event never finished within 3 days is void, and last week is final only
 import { execFileSync } from "node:child_process";
 const yml = fs.readFileSync(path.resolve(APP, ".github/workflows/lastnode.yml"), "utf8");
 const checkPy = yml.match(/<<'PY'\n([\s\S]*?)\n\s*PY\n/)[1].split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n");
-const shapeOk = (dir) => { try { execFileSync("python3", ["-c", checkPy, dir], { stdio: "pipe" }); return true; } catch { return false; } };
+const shapeOk = (dir) => { try { execFileSync("python3", ["-I", "-c", checkPy, dir], { stdio: "pipe", env: { ...process.env, RUNNER_TEMP: fs.mkdtempSync(path.join(os.tmpdir(), "lns-rt-")) } }); return true; } catch { return false; } };
 
 test("the publish check accepts the recorder's files and refuses tampered ones", async () => {
   const out = tmp();

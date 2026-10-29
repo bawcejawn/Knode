@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 const APP = process.env.APP || ".";
 const { run, vaultScores } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
@@ -28,11 +28,38 @@ test("scores: tie-breaks (rides, then fewer jumps) become separate places, ties 
   assert.deepEqual(vaultScores([]), [], "nobody qualifies: no rows");
 });
 
-test("scores: more than 255 different places fall back to points, still in order", () => {
-  const rows = Array.from({ length: 300 }, (_, i) => row("1" + i.toString(36).padStart(33, "x"), 200 - Math.floor(i / 2), i % 2, 0));
+test("scores: more than 255 different places: the top 254 keep their tie-breaks, only the tail shares 1 (audit LN-13)", () => {
+  const rows = Array.from({ length: 300 }, (_, i) => row("1" + i.toString(36).padStart(33, "x"), 200 - Math.floor(i / 2), i % 2 ? 0 : 1, 0));
   const r = vaultScores(rows);
   assert.ok(r.every((x) => x.points >= 1 && x.points <= 255));
   assert.ok(r.every((x, i) => i === 0 || r[i - 1].points >= x.points));
+  // Each pair ties on points; the rides tie-break must still separate them at the top.
+  assert.deepEqual(r.slice(0, 4).map((x) => x.points), [255, 254, 253, 252]);
+  assert.equal(new Set(r.slice(0, 254).map((x) => x.points)).size, 254, "254 different places at the top");
+  assert.ok(r.slice(254).every((x) => x.points === 1), "the tail shares 1");
+});
+
+test("audit LN-12: the minimum stake is the vault's for that week", async () => {
+  const { minStakeOf } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+  assert.equal(minStakeOf({ min_stake: "100000000" }, 5), 100000000n);
+  assert.equal(minStakeOf({ min_stake: "100000000", min_stake_next: "50000000", min_stake_next_week: "6" }, 5), 100000000n);
+  assert.equal(minStakeOf({ min_stake: "100000000", min_stake_next: "50000000", min_stake_next_week: "6" }, 6), 50000000n);
+  assert.equal(minStakeOf({}, 1), 0n, "no answer: 0, which the reader refuses");
+  const src = fs.readFileSync(path.resolve(APP, "bot/games/lastnode.ts"), "utf8");
+  assert.match(src, /if \(min <= 0n\) throw/);
+  assert.match(src, /week_stake \|\| "0"\) >= min\)/);
+});
+
+test("audit LN-2: who is staked must agree on both nodes, or no file this run", async () => {
+  const { stakedOnBoth } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+  const same = await stakedOnBoth(async (n) => new Set(n === "p" ? [P1, P2] : [P2, P1]), "p", "c");
+  assert.deepEqual([...same].sort(), [P1, P2].sort());
+  await assert.rejects(stakedOnBoth(async (n) => new Set(n === "p" ? [] : [P1]), "p", "c"), /disagree on who is staked/, "an empty answer on one node");
+  await assert.rejects(stakedOnBoth(async () => new Set([P1]), "p", null), /no second node/);
+  await assert.rejects(stakedOnBoth(async (n) => (n === "p" ? null : new Set()), "p", "c"), /one node only/);
+  assert.equal(await stakedOnBoth(async () => null, "p", "c"), null, "before v6 on both: no file, no error");
+  const src = fs.readFileSync(path.resolve(APP, "bot/games/lastnode.ts"), "utf8");
+  assert.match(src, /stakedOnBoth\(\(n\) => readStakedV6\(n, lw, players\), o\.p, o\.check\)/, "the run uses both nodes");
 });
 
 // A whole week of events from the recorder's own files, then the run after the week ends.
@@ -82,29 +109,119 @@ test("no vault file while stakes can't be read (before v6), and never in testnet
   assert.equal(r2.vault, null);
 });
 
-// The publish job's shape check accepts the recorder's vault file and refuses a bad one.
+// The publish job's shape check accepts the recorder's vault file and refuses a bad one. Run for real (python3), with
+// the clock set to 13 hours after week 3 ended (KG_TEST_NOW).
 const yml = fs.readFileSync(path.resolve(APP, ".github/workflows/lastnode.yml"), "utf8");
 const checkPy = yml.match(/<<'PY'\n([\s\S]*?)\n\s*PY\n/)[1].split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n");
-const shapeOk = (dir) => { try { execFileSync("python3", ["-c", checkPy, dir], { stdio: "pipe" }); return true; } catch { return false; } };
-
-test("the publish check: vault files of game 13 only, with points rows and no prize places", () => {
+const AT = (w, h) => String(L.weekStart(w) + h * 3600000);
+const shapeRun = (dir, now = AT(4, 13)) => { const t = fs.mkdtempSync(path.join(os.tmpdir(), "lns-rt-"));
+  try { execFileSync("python3", ["-I", "-c", checkPy, dir], { stdio: "pipe", env: { ...process.env, KG_TEST_NOW: now, RUNNER_TEMP: t } }); return { ok: true, skip: fs.readFileSync(path.join(t, "vault-skip.txt"), "utf8") }; }
+  catch (e) { return { ok: false, err: String(e.stderr) }; } };
+const shapeOk = (dir, now) => shapeRun(dir, now).ok;
+const brow = (a, place, pts) => ({ a, place, pts, rides: 0, jumps: 0, events: 1, ranked: true });
+const board = (week, rows, final = true) => ({ v: 1, updated: "x", today: { rows: [] }, week: { rows: [] }, lastWeek: { week, final, rows }, allTime: { rows: [] } });
+const P4 = A("S");
+function vaultDir(j, name = "W3.json", b = board(3, [brow(P1, 1, 9), brow(P2, 1, 9), brow(P4, 3, 4), brow(P3, 4, 2)])) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lns-vp-"));
   fs.mkdirSync(path.join(dir, "vault"));
-  const good = { game: 13, week: 3, final: true, rows: [{ player: P1, points: 9 }, { player: P2, points: 9 }, { player: P3, points: 2 }], first: [], second: [] };
-  const put = (j, name = "W3.json") => fs.writeFileSync(path.join(dir, "vault", name), JSON.stringify(j));
-  put(good); assert.ok(shapeOk(dir));
+  fs.writeFileSync(path.join(dir, "board.json"), JSON.stringify(b));
+  if (j) fs.writeFileSync(path.join(dir, "vault", name), JSON.stringify(j));
+  return dir;
+}
+const good = { game: 13, week: 3, final: true, rows: [{ player: P1, points: 9 }, { player: P2, points: 9 }, { player: P3, points: 2 }], first: [], second: [] };
+
+test("the publish check: vault files of game 13 only, with points rows and no prize places", () => {
+  assert.ok(shapeOk(vaultDir(good)));
   for (const [k, bad] of [["game", { ...good, game: 2 }], ["final", { ...good, final: false }], ["prize", { ...good, first: [P1] }],
     ["points 0", { ...good, rows: [{ player: P1, points: 0 }] }], ["points 256", { ...good, rows: [{ player: P1, points: 256 }] }],
     ["order", { ...good, rows: [{ player: P1, points: 2 }, { player: P2, points: 9 }] }], ["twice", { ...good, rows: [{ player: P1, points: 2 }, { player: P1, points: 2 }] }],
     ["extra", { ...good, note: "x" }], ["address", { ...good, rows: [{ player: "<b>", points: 2 }] }]]) {
-    put(bad); assert.equal(shapeOk(dir), false, k);
+    assert.equal(shapeOk(vaultDir(bad)), false, k);
   }
-  put(good); put(good, "W4.json"); assert.equal(shapeOk(dir), false, "a file name that isn't its week");
+  assert.equal(shapeOk(vaultDir(good, "W4.json")), false, "a file name that isn't its week");
 });
 
-test("the publish step: vault files are added, never replaced once published", () => {
-  assert.match(yml, /! -path "\$IN\/lastnode\/vault"/);
-  assert.match(yml, /! -regex "\$IN\/lastnode\/vault\/W\[0-9\]\[0-9\]\*\\.json"/);
-  assert.match(yml, /is already published; keeping it unchanged/);
-  assert.match(yml, /if \[ -n "\$parent" \] && old=\$\(git rev-parse -q --verify "\$parent:\$name" 2>\/dev\/null\); then/);
+test("audit LN-19: the game must be the whole number 13 (a JSON 13.0 is refused)", () => {
+  const dir = vaultDir(null);
+  fs.writeFileSync(path.join(dir, "vault", "W3.json"), JSON.stringify(good).replace('"game":13', '"game":13.0'));
+  assert.equal(shapeOk(dir), false);
+});
+
+test("audit LN-1: only last week's file, only inside its window, only the final board's players in the board's order", () => {
+  for (const w of [0, 1, 2, 4, 5, 9999]) assert.equal(shapeOk(vaultDir({ ...good, week: w }, `W${w}.json`)), false, `week ${w} while week 3 is last week`);
+  assert.equal(shapeOk(vaultDir(good), AT(4, 11)), false, "before the week is final (12 h)");
+  assert.equal(shapeOk(vaultDir(good), AT(4, 12)), true, "from 12 h");
+  assert.equal(shapeOk(vaultDir(good), AT(4, 72.5)), true, "a little leeway past 3 days for the runner's clock");
+  assert.equal(shapeOk(vaultDir(good), AT(4, 73.5)), false, "after the Vault's 3 days");
+  assert.equal(shapeOk(vaultDir(good), AT(5, 13)), false, "a week later, the file is two weeks old");
+  assert.equal(shapeOk(vaultDir({ ...good, rows: [...good.rows, { player: A("Z"), points: 1 }] })), false, "a wallet not on the board");
+  assert.equal(shapeOk(vaultDir({ ...good, rows: [{ player: P3, points: 9 }, { player: P1, points: 2 }] })), false, "rows out of the board's order");
+  assert.equal(shapeOk(vaultDir(good, "W3.json", board(3, [brow(P1, 1, 9), brow(P2, 1, 9), brow(P3, 3, 2)], false))), false, "board's last week not final");
+  assert.equal(shapeOk(vaultDir(good, "W3.json", board(2, [brow(P1, 1, 9), brow(P2, 1, 9), brow(P3, 3, 2)]))), false, "board's last week is another week");
+  // A staked subset that skips some board players is fine.
+  assert.equal(shapeOk(vaultDir({ ...good, rows: [{ player: P2, points: 9 }, { player: P4, points: 4 }] })), true);
+  // No rows while the board has scoring players: checked, but listed to skip (not published).
+  const e = shapeRun(vaultDir({ ...good, rows: [] }));
+  assert.equal(e.ok, true); assert.equal(e.skip, "W3.json\n");
+  const e2 = shapeRun(vaultDir({ ...good, rows: [] }, "W3.json", board(3, [])));
+  assert.equal(e2.ok, true); assert.equal(e2.skip, "", "nobody scored: an empty file is right");
+});
+
+// The publish step's real shell against a throwaway bare repository (bash, git): skipped on Windows.
+const linux = process.platform === "win32" ? (name, fn) => test.skip(name, fn) : test;
+function publishScript() {
+  const lines = yml.split("\n");
+  const i = lines.findIndex((l) => /name:\s*Push games-data\/lastnode/.test(l));
+  const r = lines.findIndex((l, j) => j > i && /^\s+run:\s*\|\s*$/.test(l));
+  const indent = lines[r + 1].match(/^\s*/)[0].length;
+  const out = [];
+  for (let j = r + 1; j < lines.length; j++) { const l = lines[j]; if (l.trim() && l.match(/^\s*/)[0].length < indent) break; out.push(l.slice(indent)); }
+  const s = out.join("\n");
+  assert.match(s, /^remote=.*$/m);
+  return s.replace(/^remote=.*$/m, 'remote="$FAKE_REMOTE"').replace(/sleep \$\(\(try \* 5\)\)/g, "sleep 0");
+}
+function publisher() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lns-pub-"));
+  const remote = path.join(root, "remote.git");
+  const env = { ...process.env, HOME: root, GIT_CONFIG_NOSYSTEM: "1", FAKE_REMOTE: remote, GH_TOKEN: "x", KG_TEST_NOW: AT(4, 13) };
+  execFileSync("git", ["init", "-q", "--bare", remote], { env });
+  let n = 0;
+  return {
+    remote, env,
+    publish(files) {
+      const t = path.join(root, `run${++n}`), IN = path.join(t, "incoming");
+      fs.mkdirSync(path.join(IN, "lastnode", "vault"), { recursive: true });
+      for (const [k, v] of Object.entries(files)) fs.writeFileSync(path.join(IN, "lastnode", k), typeof v === "string" ? v : JSON.stringify(v));
+      const r = spawnSync("bash", ["-c", publishScript()], { cwd: t, env: { ...env, IN, RUNNER_TEMP: t }, encoding: "utf8" });
+      return { status: r.status, out: r.stdout + r.stderr };
+    },
+    show: (name) => { try { return execFileSync("git", ["--git-dir", remote, "show", `games-data:lastnode/${name}`], { env, encoding: "utf8" }); } catch { return null; } },
+  };
+}
+const idx = { v: 1, updated: "x", days: [], contract: null, game: 13 };
+const brd = board(3, [brow(P1, 1, 9), brow(P2, 1, 9), brow(P4, 3, 4), brow(P3, 4, 2)]);
+
+linux("audit LN-1: the publish step refuses a planted week, keeps a published file, and fails loudly on a different copy", () => {
+  const pub = publisher();
+  const planted = pub.publish({ "index.json": idx, "board.json": brd, "vault/W9.json": { ...good, week: 9 } });
+  assert.notEqual(planted.status, 0); assert.match(planted.out, /W9.json: only last week's file/); assert.equal(pub.show("vault/W9.json"), null, "nothing published from a run with a planted week");
+  assert.equal(pub.show("index.json"), null);
+  const first = pub.publish({ "index.json": idx, "board.json": brd, "vault/W3.json": good });
+  assert.equal(first.status, 0, first.out); assert.deepEqual(JSON.parse(pub.show("vault/W3.json")), good);
+  const same = pub.publish({ "index.json": idx, "board.json": brd, "vault/W3.json": good });
+  assert.equal(same.status, 0, same.out);
+  const other = { ...good, rows: [{ player: P1, points: 9 }] };
+  const diff = pub.publish({ "index.json": { ...idx, updated: "y" }, "board.json": brd, "vault/W3.json": other });
+  assert.notEqual(diff.status, 0, "a different copy fails the run"); assert.match(diff.out, /::error::Already published, and this run's copy is DIFFERENT/);
+  assert.deepEqual(JSON.parse(pub.show("vault/W3.json")), good, "the published file is kept");
+  assert.equal(JSON.parse(pub.show("index.json")).updated, "y", "the rest of the run is still published");
+});
+
+linux("audit LN-1/LN-2: a file with no rows while the board has scoring players is not published", () => {
+  const pub = publisher();
+  const r = pub.publish({ "index.json": idx, "board.json": brd, "vault/W3.json": { ...good, rows: [] } });
+  assert.equal(r.status, 0, r.out); assert.match(r.out, /has no rows while last week's board has scoring players; not published/);
+  assert.equal(pub.show("vault/W3.json"), null); assert.ok(pub.show("board.json"));
+  const later = pub.publish({ "index.json": idx, "board.json": brd, "vault/W3.json": good });
+  assert.equal(later.status, 0, later.out); assert.deepEqual(JSON.parse(pub.show("vault/W3.json")), good, "the real file still gets in later");
 });

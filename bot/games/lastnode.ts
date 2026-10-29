@@ -184,19 +184,40 @@ const GAME = (() => { try { return JSON.parse(fs.readFileSync(new URL("../../gam
 const GAME_ABI = () => JSON.parse(fs.readFileSync(new URL("../../game/abi/kpred.koilib.json", import.meta.url), "utf8"));
 /** Who may be ranked: at least 1 VHP, or a Knode stake (as the race and Block X boards). */
 /** Vault v6 (owner's player rule, 2026-10-28): a staked player in this game is a wallet whose stake in THIS game counts
- *  for that week (week_stake, at least 1 VHP). Returns null while the game contract has no per-game stakes (before v6),
- *  so no vault file is written on a guess. */
-async function readStakedV6(node: any, week: number, who: string[]): Promise<Set<string> | null> {
-  if (!GAME) return null;
-  const abi = GAME_ABI();
-  if (!abi?.methods?.get_game_player) return null;
-  const c = new Contract({ id: GAME, abi, provider: node });
+ *  for that week (week_stake, at least the vault's minimum stake for that week: 1 VHP unless the owner changes it).
+ *  Returns null while the game contract has no per-game stakes (before v6), so no vault file is written on a guess.
+ *  Audit LN-12: the minimum is the vault's own for that week (get_state), not a number in this file. */
+/** The vault's minimum stake for a week, from get_state's config (as the vault bot's minStakeFor). Exported for the tests. */
+export function minStakeOf(cf: any, week: number): bigint {
+  const next = BigInt(cf?.min_stake_next || "0");
+  return next > 0n && week >= Number(cf?.min_stake_next_week || 0) ? next : BigInt(cf?.min_stake || "0");
+}
+export async function readStakedV6(node: any, week: number, who: string[], game = GAME, abiOf = GAME_ABI): Promise<Set<string> | null> {
+  if (!game) return null;
+  const abi = abiOf();
+  if (!abi?.methods?.get_game_player || !abi?.methods?.get_state) return null;
+  const c = new Contract({ id: game, abi, provider: node });
+  const st: any = await withRetry("the vault's settings", () => (c.functions as any).get_state({}));
+  const min = minStakeOf(st?.result?.config ?? {}, week);
+  if (min <= 0n) throw new Error("the vault's minimum stake could not be read (0)");
   const out = new Set<string>();
   for (const a of who) {
     const r: any = await withRetry(`stake of ${a} in game ${L.GAME_ID}`, () => (c.functions as any).get_game_player({ player: a, game: L.GAME_ID, week: String(week) }));
-    if (BigInt(r?.result?.week_stake || "0") >= ONE_VHP) out.add(a);
+    if (BigInt(r?.result?.week_stake || "0") >= min) out.add(a);
   }
   return out;
+}
+/** Audit LN-2: who is staked, read on BOTH mainnet nodes; any difference holds the vault file (tried again next run).
+ *  An empty answer reads as "no stake", so one faulty node could otherwise drop staked wallets from a file that is
+ *  never replaced. Exported for the tests. */
+export async function stakedOnBoth(read: (node: any) => Promise<Set<string> | null>, p: any, check: any): Promise<Set<string> | null> {
+  const a = await read(p);
+  if (!check) throw new Error("no second node to check the stakes on (RPC_CHECK)");
+  const b = await read(check);
+  if (a === null || b === null) { if (a !== b) throw new Error("the stakes could be read on one node only"); return null; }
+  const only = [...a].filter((x) => !b.has(x)).concat([...b].filter((x) => !a.has(x)));
+  if (only.length) throw new Error(`the two nodes disagree on who is staked (${only.length} wallet${only.length === 1 ? "" : "s"}, e.g. ${only[0]})`);
+  return a;
 }
 /** The vault file's scores: the week's board order (points, then rides, then fewer jumps) as whole numbers 1–255, ties
  *  kept. The real points when they already give that order and fit; else each tie group's rank counted from the bottom.
@@ -208,11 +229,9 @@ export function vaultScores(ranked: { a: string; pts: number; rides: number; jum
   for (const r of rows) if (groups[groups.length - 1] !== key(r)) groups.push(key(r));
   const pointsKeepOrder = rows.every((r, i) => i === 0 || (rows[i - 1].pts === r.pts) === (key(rows[i - 1]) === key(r))) && rows.every((r) => r.pts <= 255);
   if (pointsKeepOrder) return rows.map((r) => ({ player: r.a, points: r.pts }));
-  if (groups.length > 255) {
-    // More than 255 different places: keep the points order (ties on points share), capped at 255.
-    return rows.map((r) => ({ player: r.a, points: Math.min(255, r.pts) }));
-  }
-  const rank = new Map(groups.map((g, i) => [g, groups.length - i]));
+  // Audit LN-13: more than 255 different places: the top 254 places keep every tie-break (where the payouts are), and
+  // only the tail below them shares the lowest score, 1.
+  const rank = new Map(groups.map((g, i) => [g, Math.max(1, Math.min(255, groups.length) - i)]));
   return rows.map((r) => ({ player: r.a, points: rank.get(key(r))! }));
 }
 async function readRanked(node: any, who: string[]): Promise<Set<string>> {
@@ -381,7 +400,7 @@ export async function run(o: Opts) {
   let vault: any = null;
   if (!o.practice && lastWeek && lastWeek.final && now.time < L.weekStart(nowW) + 3 * L.DAY) {
     const players = lastWeek.rows.filter((r: any) => r.pts >= 1).map((r: any) => r.a);
-    const staked = await (o.stakedOf ? o.stakedOf(lw, players) : readStakedV6(o.p, lw, players)).catch((e: Error) => { problems.push(`vault file for week ${lw}: ${e.message} (tried again next run)`); return null; });
+    const staked = await (o.stakedOf ? o.stakedOf(lw, players) : stakedOnBoth((n) => readStakedV6(n, lw, players), o.p, o.check)).catch((e: Error) => { problems.push(`vault file for week ${lw}: ${e.message} (tried again next run)`); return null; });
     if (staked) vault = { game: L.GAME_ID, week: lw, final: true, rows: vaultScores(lastWeek.rows.filter((r: any) => staked.has(r.a))), first: [], second: [] };
     else if (!o.stakedOf) console.log(`week ${lw} is final; no vault file yet (the game contract has no per-game stakes before v6)`);
   }

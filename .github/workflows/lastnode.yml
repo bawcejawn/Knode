@@ -156,16 +156,37 @@ jobs:
               return all(type(x) is dict and set(x) == {"a", "place", "pts", "rides", "jumps", "events", "ranked"} and isa(x["a"])
                   and all(nat(x[k]) for k in ("place", "pts", "rides", "jumps", "events")) and type(x["ranked"]) is bool for x in b["rows"])
           # The weekly vault file (Vault v6 hand-off, 2026-10-28): game 13, a staked game, so points rows and no prize places.
+          # Audit LN-1: only LAST week's file, and only while the recorder may write it (from 12 h after the week ends, when
+          # it is final, to the Vault's 3-day limit; a few minutes' leeway for the runner's clock against chain time). Its
+          # rows must be the final "Last week" board's players, in the board's order. Nothing else can reach the Vault.
+          WEEK0 = datetime.datetime(2026, 10, 19, tzinfo=datetime.timezone.utc).timestamp() * 1000
+          WEEK, HOUR = 7 * 86400000, 3600000
+          now = float(os.environ.get("KG_TEST_NOW") or datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)  # tests only
+          now_w = int((now - WEEK0) // WEEK)
+          ws = WEEK0 + now_w * WEEK
+          board = json.load(open(os.path.join(d, "board.json"), encoding="utf-8")) if os.path.isfile(os.path.join(d, "board.json")) else None
           vd = os.path.join(d, "vault")
+          skip = []
           if os.path.isdir(vd):
               for f in os.listdir(vd):
                   j = json.load(open(os.path.join(vd, f), encoding="utf-8"))
                   assert type(j) is dict and set(j) == {"game", "week", "final", "rows", "first", "second"}, f
-                  assert j["game"] == 13 and nat(j["week"]) and j["week"] < 10000 and f == "W%d.json" % j["week"] and j["final"] is True, f
+                  assert type(j["game"]) is int and j["game"] == 13 and nat(j["week"]) and f == "W%d.json" % j["week"] and j["final"] is True, f
+                  assert j["week"] == now_w - 1, "%s: only last week's file (week %d) may be published" % (f, now_w - 1)
+                  assert ws + 12 * HOUR - 10 * 60000 <= now < ws + 3 * 24 * HOUR + HOUR, "%s: outside the vault file's window" % f
                   assert j["first"] == [] and j["second"] == [], f
                   rs = j["rows"]
                   assert type(rs) is list and len(rs) <= 100000 and all(type(x) is dict and set(x) == {"player", "points"} and isa(x["player"]) and type(x["points"]) is int and 1 <= x["points"] <= 255 for x in rs), f
                   assert len({x["player"] for x in rs}) == len(rs) and all(rs[i]["points"] >= rs[i + 1]["points"] for i in range(len(rs) - 1)), f
+                  lw = board and board.get("lastWeek")
+                  assert type(lw) is dict and lw.get("week") == j["week"] and lw.get("final") is True and type(lw.get("rows")) is list, "%s: board.json's Last week is not that final week" % f
+                  order = {x["a"]: i for i, x in enumerate(lw["rows"]) if type(x) is dict and type(x.get("pts")) is int and x["pts"] >= 1}
+                  assert all(x["player"] in order for x in rs), "%s: a row that is not on the Last week board" % f
+                  assert all(order[rs[i]["player"]] < order[rs[i + 1]["player"]] for i in range(len(rs) - 1)), "%s: rows not in the board's order" % f
+                  # No rows while the board has scoring players: the stakes may not have been read. Don't publish it (the
+                  # Vault keeps the week's bucket in the game if no file comes); the recorder tries again next run.
+                  if rs == [] and order: skip.append(f)
+          open(os.path.join(os.environ["RUNNER_TEMP"], "vault-skip.txt"), "w").write("".join(x + "\n" for x in skip))
           for f in os.listdir(d):
               if f == "vault": continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
@@ -202,22 +223,26 @@ jobs:
               blob=$(git hash-object -w "$f")
               git update-index --add --cacheinfo 100644 "$blob" "lastnode/$(basename "$f")"
             done
-            # A vault file is final: once published it is never replaced (the Vault posts it within the hour).
+            # A vault file is final: once published it is never replaced (the Vault posts it within the hour). Audit LN-1: a
+            # different copy is an error you are told about (the run fails after publishing the rest).
+            differs=""
             for f in "$IN"/lastnode/vault/W*.json; do
               [ -e "$f" ] || continue
               name="lastnode/vault/$(basename "$f")"
+              if grep -qxF "$(basename "$f")" "$RUNNER_TEMP/vault-skip.txt"; then echo "::warning::$name has no rows while last week's board has scoring players; not published (tried again next run)."; continue; fi
               blob=$(git hash-object -w "$f")
               if [ -n "$parent" ] && old=$(git rev-parse -q --verify "$parent:$name" 2>/dev/null); then
-                if [ "$old" != "$blob" ]; then echo "::warning::$name is already published; keeping it unchanged."; fi
+                if [ "$old" != "$blob" ]; then differs="$differs $name"; fi
                 continue
               fi
               git update-index --add --cacheinfo 100644 "$blob" "$name"
             done
             tree=$(git write-tree)
-            if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi
+            if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; nochange=1; break; fi
             commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "games: last node standing")
             if git push -q "$remote" "$commit:refs/heads/games-data"; then break; fi
             if [ "$try" = 3 ]; then echo "::error::Couldn't push games-data after 3 tries."; exit 1; fi
             sleep $((try * 5))
           done
-          echo "Last Node Standing files published."
+          if [ -n "$differs" ]; then echo "::error::Already published, and this run's copy is DIFFERENT (kept the published one; check it before the Vault seals):$differs"; exit 1; fi
+          [ -n "${nochange:-}" ] || echo "Last Node Standing files published."
