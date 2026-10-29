@@ -766,6 +766,7 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .kstake-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .kstake-claims { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 6px; }
 .kstake-claims li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px; }
+.kstake-claims .btn { padding: 8px 16px; }
 .kstake-note { margin: 10px 0 0; }
 .kstake-dialog select { width: 100%; padding: 10px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; }
 @media (max-width: 520px) { .kstake-stats { gap: 6px; } .kstake-stats > div { padding: 8px 10px; } .kstake-stats span { font-size: .72rem; } .kstake-stats b { font-size: .95rem; } }
