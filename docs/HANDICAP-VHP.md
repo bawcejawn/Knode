@@ -21,9 +21,9 @@ for the next hour, and its own wallets pick it. Only *looking small* pays; looki
 
 1. **Effective VHP** for every card (`readVhp(..., { effective: true })` in `common.ts`), on both nodes. The "holds
    1 VHP to be ranked" rule still reads the plain balance.
-2. **Random samples.** `.github/workflows/race-samples.yml` runs every 10 minutes; inside the run `bot/race.ts --sample`
-   waits a random 0 to 8 minutes (Node's crypto random, never published ahead), reads every producer's effective VHP
-   on both nodes (more than 0.5% apart: no sample) and keeps the last 8 hours on the `race-samples` branch
+2. **Random samples.** `.github/workflows/race-samples.yml` runs every 5 minutes; inside the run `bot/race.ts --sample`
+   waits a random 0 to 4 minutes (Node's crypto random, never published ahead), reads every producer's effective VHP
+   on both nodes (producer by producer: one that differs counts at the higher read, capped at the top both agree on) and keeps the last 8 hours on the `race-samples` branch
    (`vhp-samples.json`, shape-checked before publishing). The hourly race recorder takes those samples; a producer's
    card VHP = the **highest** of its samples in the last 6 hours and the read at card time. Samples after the card's
    time never count.
@@ -41,3 +41,14 @@ workflow too).
 4. Alerts and holds: flag a producer whose VHP drops more than 20% and comes back within a day; hold its targets in a
    prize week for review.
 5. Prize-side pattern watch: wallets that pick a producer exactly when its multiplier jumps.
+
+## After the Repo Lens fix-check (2026-10-28)
+
+- The 6-hour block window behind each card (who produces, how often) is read on both nodes ending at the lower
+  irreversible block and must match; the card's time is the later of the two heads (BX-36).
+- Samples from the future are refused and dropped; a published sample is never dropped early; each card says how many
+  samples it used, and Block X doesn't score with a card made from fewer than 12 (BX-38).
+- Block X scores each target with the LOWER multiplier of the card at the lock and the first card after the block, so
+  moving VHP in right after a card doesn't pay either (BX-35).
+- The production floor raises several producers together (BX-43); samples are capped at the VHP total supply and only
+  the last hour's producers are sampled (BX-44, BX-45); published cards never change (BX-44).

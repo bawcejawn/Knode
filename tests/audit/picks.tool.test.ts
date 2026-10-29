@@ -137,3 +137,12 @@ test("BX-9/BX-20: the contract must check out on BOTH mainnet nodes before the o
   assert.match(src, /Do not announce games/);
   assert.match(src, /holds \$\{showKoin\(held\)\} KOIN/, "BX-22: a Picks wallet holding KOIN is refused");
 });
+
+test("audit BX-47: the check node must be a different node from the primary", async () => {
+  const { sameNode } = await import("../../bot/picks.ts");
+  assert.equal(sameNode("https://api.koinosblocks.com/", "https://API.koinosblocks.com"), true);
+  assert.equal(sameNode("https://koinos.armana.io", "https://api.koinosblocks.com"), false);
+  const src = fs.readFileSync("bot/picks.ts", "utf8");
+  assert.match(src, /is the same node as RPC: the check needs a second, independent node/);
+  assert.match(src, /rpc: \[E\.RPC \|\| MAINNET_RPCS\[0\]\]/, "one primary node (no quiet fallback to the check node)");
+});

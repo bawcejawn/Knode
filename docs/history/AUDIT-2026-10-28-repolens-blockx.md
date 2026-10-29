@@ -66,3 +66,62 @@ The prize is 3 VHP a week. From lightest to strongest:
    costs something.
 3. Prize only to wallets at least N weeks old with picks on N days.
 4. Prize only on the Staked board (Free play plays for the board, not VHP).
+
+# Round 2: Repo Lens fix-check of Block X + first audit of sponsor v3 (report @ 148c00f)
+
+Report: `docs/history/AUDIT-2026-10-28-repolens-fixcheck.md` (verdict **fix first** for both parts; no Critical; Block X
+2 High, 3 Medium, 9 Low, 4 Info; sponsor v3 8 Medium, 6 Low, 7 Info). Owner decisions the same night: guest keys on
+the old address get a move-and-erase page; only a STAKE in the game makes a staked player (sponsor too); the free pool
+is released by the hour with an 80% alert; Picks launches with no per-action Mana limit. Also folded in: Block X takes
+stakes (Vault chat, 2026-10-28) and the Combo Card's sponsor needs (Build 8).
+
+Picks is unchanged (`700c296a…`, testnet `39cc5e00…`). **Sponsor v3 changed: `3cdab1a7…` (34,374 bytes, 162 tests).**
+
+## Block X (Part A), new findings
+
+| ID | Finding | Status |
+|---|---|---|
+| BX-35 (High) | VHP moved in right after the card scores ×3 | **Fixed**: each target scores the LOWER multiplier of the lock's card and the first card taken after the block (it waits for it, 3 h at most, then void) |
+| BX-36 (High) | One lying primary node shapes the card (producers, counts, blocks per race, time) | **Fixed**: the 6-hour block window is read on both nodes ending at the lower irreversible block, and must match exactly; the card's time is the later of the two heads (never back-dated) |
+| BX-37 (Medium) | One producer's disagreement holds the whole card / sample | **Fixed**: producer by producer (`combineReads`): the higher read, capped at the top both nodes agree on; never all-or-nothing |
+| BX-38 (Medium) | Samples fail open; a future time freezes the samples branch | **Fixed**: samples more than 60 s ahead of the check node or the clock are refused and dropped; the publish check refuses future samples and any file that drops a published sample of the last 8 h; cards carry `samples` and Block X never scores with a card from fewer than 12 |
+| BX-39 (Medium) | Guest keys made on bawcejawn.github.io | **Owner action ready**: `tools/old-origin-guest/guest-move.html` (move to knodegames.com, then erase); the move is now in the branch (main merged: site at the root, CNAME) |
+| BX-40 / BX-51 | Guard covered create/sign only; suffix denylist | **Fixed**: an allowlist (knodegames.com, www, localhost, 127.0.0.1) on every guest path; elsewhere the key is never read or written |
+| BX-41 | Places by row on the Staked board and "You: #n" | **Fixed**: `boardPlace` everywhere, podium included |
+| BX-42 | Sample window visible on the public repo | **Fixed**: every 5 minutes with a 0-4 minute secret wait |
+| BX-43 | Floor raises one at a time | **Fixed**: raises solved jointly |
+| BX-44 | Loose race card/sample shapes; cards not write-once; huge sample values | **Fixed**: exact keys; a published card can never change; samples capped at the VHP total supply |
+| BX-45 | Sampled addresses grow forever | **Fixed**: only the last hour's producers |
+| BX-46 | `get_game` check fails open | **Fixed**: both nodes, refuses on an error or a missing game, also with a given head |
+| BX-47 | "Two nodes" can be one | **Fixed**: the same URL is refused, the check node's chain id must be mainnet; one primary node only (no silent fallback) |
+| BX-48 | A target with no possible card waits 3 days | **Fixed**: void once 3 h past the lock |
+| BX-49 (Info) | Source-text tests | **Partly**: new behaviour tests (guest paths on 5 origins, vault rows, after-card, flagged cards, sampler, publish checks, board places in data); the auditor's own tests are kept as written |
+| BX-50 (Info) | Args compared as text | **Fixed**: compared as bytes |
+| BX-52 (Info) | Global yarn; protoc without prebuild | **Documented** in MAINNET-LAUNCH (yarn 1.x once); prebuild always runs in `npm test` |
+| BX-18 (race) | Race `readPicks` page size | **Fixed**: until an empty page |
+
+## Sponsor v3 (Part B)
+
+| ID | Finding | Status |
+|---|---|---|
+| SP-1 | `config` kept v2's caps | **Fixed**: the owner's caps by default, old → new shown; runbook has the full line |
+| SP-2 | 1 VHP passed between wallets locks out staked players | **Fixed (contract)**: a real player has an ACTIVE stake (question game, or the call's own game via `game_arg` / race game 7); VHP balance and pending stakes don't count |
+| SP-3 | 40 empty wallets empty the free pool | **Fixed (contract)**: released by the hour; 80% alert in status and the hourly bot |
+| SP-4 | 0.15 pick limit unmeasured | **Owner decision**: no per-action row at launch; set from a day of mainnet receipts |
+| SP-5 | Failed read switches the sponsor off; one node; disable can refuse | **Fixed** |
+| SP-6 | Report: one node, receipts by position, 0 used | **Fixed**: receipts by id, missing dropped, second-node re-read, 20 samples minimum |
+| SP-7 | Run-out with no row gets a tiny limit | **Fixed**: no row, reported |
+| SP-8 | Site check used the local file | **Fixed**: the deployed knodegames.com files, fallbacks included; runbook goes through a PR to `main` |
+| SP-9 | Mempool reservation at day start | Accepted (per-day cap well below the wallet's Mana: 5,000 of ~25,000) |
+| SP-10 | Too-low row: run-outs | Covered by SP-4, SP-7, SP-11 |
+| SP-11 | Run-out detection | **Fixed**: the receipt's out-of-resources log, or 99% used |
+| SP-12 | Network by name | **Fixed**: by chain id; testnet files separate; payer/site-limits refused on testnet |
+| SP-13 | Runbook order; no rollback | **Fixed**: per-action line removed; v2 stays an allowed rollback build |
+| SP-14 | v3 fields to v2 code; Picks row dropped silently | **Fixed** |
+| SP-15 | Rows aren't a ceiling | Documented (README) |
+| SP-16 | Repeated non-player field | **Fixed (contract)**: only fields marked 0x10 may repeat |
+| SP-17 | Other actions asked 3 Mana | **Fixed**: 1 Mana (the cap) in the site and both deployment files |
+| SP-18 | Guest messages | **Fixed**: which limit (this hour, today, this week, page limit, network) |
+| SP-19 | Payer wrote new rows only | **Fixed**: the lower of old and new |
+| SP-20 | Rounded values | **Fixed**: exact |
+| SP-21 | S3-2 tool-side only | Kept in `npm run check` and the runbook |

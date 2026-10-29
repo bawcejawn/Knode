@@ -322,7 +322,8 @@ export async function assertAuditedContract(net: { testnet: boolean; picks: stri
     const url = MAINNET_CHECK_RPC();
     if ((net.rpc ?? MAINNET_RPCS).slice(0, 1).some((u) => sameNode(u, url))) throw new Error(`RPC_CHECK (${url}) is the same node as RPC: the check needs a second, independent node. Nothing was signed.`);
     const cp = new Provider([url]);
-    if ((await cp.getChainId()) !== MAINNET_CHAIN_ID) throw new Error(`The check node ${url} is not on Koinos mainnet. Nothing was signed.`);
+    // (Tests pass their own `meta` and no network: the chain id is checked on real runs.)
+    if (meta === contractMetadata && (await cp.getChainId()) !== MAINNET_CHAIN_ID) throw new Error(`The check node ${url} is not on Koinos mainnet. Nothing was signed.`);
     extra = [cp];
   }
   const nodes = [p, ...(extra ?? [])];
