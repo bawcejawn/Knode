@@ -39,6 +39,8 @@ const windowOf = async (node, t0, t1) => {
   for (let k = 0; k <= i && k < 3; k++) delete c[GONE[k]];
   return { from: i * 400, to: i * 400 + 399, counts: c };
 };
+// The form's 48 hours before the card (mainnet nodes only): no race cards for them here, so the field has no form.
+const hoursOf = async (node, t0, n) => { assert.ok(node === "main" || node === "check"); assert.equal(t0 + n * 3600000, EV.cardTime); return Array.from({ length: n }, () => ({})); };
 const PICKS = { 0: [[ALICE, N4], [BOB, N3]], 2: [[BOB, N4]] };
 const picksOf = async (node, round) => {
   assert.equal(node, "testnet", "picks come only from the testnet node");
@@ -48,7 +50,7 @@ const picksOf = async (node, round) => {
 test("the fast game: field, 20-minute cuts, jump, points; picks from the testnet, blocks from mainnet", async () => {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "lns-tn-"));
   const r = await run({ p: "main", check: "check", pp: "testnet", pcheck: null, game: L0.FAST_GAME, picksContract: "1PicksPicksPicksPicksPicksPicks",
-    raceDir: raceDir(), out, windowOf, picksOf, rankedOf: async (w) => new Set(w), trials: 300, now: { time: EV.start + 70 * 60000, libTime: EV.start + 61 * 60000 } });
+    raceDir: raceDir(), out, windowOf, hoursOf, picksOf, rankedOf: async (w) => new Set(w), trials: 300, now: { time: EV.start + 70 * 60000, libTime: EV.start + 61 * 60000 } });
   assert.deepEqual(r.problems, []);
   const d = JSON.parse(fs.readFileSync(path.join(out, "D2026-11-03T08.json"), "utf8"));
   assert.equal(d.hours.length, 3); assert.equal(d.winner, N4);
@@ -77,7 +79,7 @@ test("practice mode starts with the event running at the first run and never rea
   const win = async (node, t0, t1) => { seen.push(t0); return windowOf(node, t0, t1); };
   const now = EV.start + 30 * 60000;
   await run({ p: "main", check: "check", pp: "testnet", pcheck: null, game: L0.FAST_GAME, practice: true, picksContract: "1PicksPicksPicksPicksPicksPicks",
-    raceDir: raceDir(), out, windowOf: win, picksOf, rankedOf: async (w) => new Set(w), trials: 300, now: { time: now, libTime: now - 60000 } });
+    raceDir: raceDir(), out, windowOf: win, hoursOf, picksOf, rankedOf: async (w) => new Set(w), trials: 300, now: { time: now, libTime: now - 60000 } });
   assert.ok(seen.every((t) => t >= EV.start), "no window before the current event");
   const idx = JSON.parse(fs.readFileSync(path.join(out, "index.json"), "utf8"));
   assert.equal(idx.since, EV.start);
@@ -85,7 +87,7 @@ test("practice mode starts with the event running at the first run and never rea
   // A later run keeps the same start.
   const later = EV.start + 5 * 3600000;
   await run({ p: "main", check: "check", pp: "testnet", pcheck: null, game: L0.FAST_GAME, practice: true, picksContract: "1PicksPicksPicksPicksPicksPicks",
-    raceDir: raceDir(), prev: out, out, windowOf: win, picksOf, rankedOf: async (w) => new Set(w), trials: 300, now: { time: later, libTime: later - 60000 } });
+    raceDir: raceDir(), prev: out, out, windowOf: win, hoursOf, picksOf, rankedOf: async (w) => new Set(w), trials: 300, now: { time: later, libTime: later - 60000 } });
   assert.equal(JSON.parse(fs.readFileSync(path.join(out, "index.json"), "utf8")).since, EV.start);
 });
 

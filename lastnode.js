@@ -111,34 +111,16 @@
       const j = await fetchJson(`${DATA}D${day}.json`);
       // Audit LN-24/LN-32: the event's own start, and no more nodes than the rules allow.
       if (j && j.v === 1 && j.day === day && ev0 && j.start === ev0.start && (j.field === null || (j.field && Array.isArray(j.field.nodes) && j.field.nodes.length <= L.MAX_FIELD))) {
-        if (j.field) j.field.nodes = j.field.nodes.filter((n) => n && isAddr(n.a) && Number.isFinite(n.h) && n.h > 0);
+        if (j.field) j.field.nodes = j.field.nodes.filter((n) => n && isAddr(n.a) && Number.isFinite(n.h) && n.h > 0 && (n.r === undefined || (Number.isFinite(n.r) && n.r >= L.FORM_MIN && n.r <= L.FORM_MAX)));
         days.set(day, j);
         return;
       }
     } catch (e) {
       // Audit LN-29: a failed read (not "not published yet") keeps the recorder's file the page already has.
       const have = days.get(day);
-      if (String((e && e.message) || e) !== "404" && have && !have.provisional) return;
+      if (String((e && e.message) || e) !== "404" && have) return;
     }
-    // No recorder file yet: work the field out here from the same card (it is only shown as provisional).
-    const ev = L.eventOf(day);
-    if (nowT() < ev.opens) return;
-    try {
-      const c = await raceCardAt(ev.cardTime, ev.opens);
-      const f = c && L.makeField(c);
-      // Audit LN-31: the same address check as the recorder's files.
-      if (f) f.nodes = f.nodes.filter((n) => n && isAddr(n.a));
-      if (f && f.nodes.length >= 2) days.set(day, { v: 1, day, start: ev.start, field: f, hours: [], provisional: true });
-    } catch { /* none */ }
-  }
-  async function raceCardAt(t, opens) {
-    const ra = M.raceAt(t), w = M.weekOf(ra.start);
-    const wf = await fetchJson(`${RACE_DATA}W${String(w).padStart(3, "0")}.json`);
-    const race = wf && Array.isArray(wf.races) ? wf.races.find((r) => r && r.id === ra.id) : null;
-    if (!race || !Array.isArray(race.cards)) return null;
-    const leg = M.legOf(ra.start, t, M.legsOf(race.cards));
-    for (const l of [leg, leg + 1]) { const c = race.cards[l]; if (c && Array.isArray(c.field) && c.field.length && Number(c.at) < opens) return c; }
-    return null;
+    // No recorder file yet: the field waits for it (it needs each node's form, from 48 hours of blocks).
   }
   async function loadAll() {
     const now = nowT();
@@ -196,7 +178,7 @@
       $("ev-clockbox").className = "ln-clock";
       $("ev-clock").textContent = timer(nx.start - now);
       $("ev-clock-label").textContent = `until the ${clock(nx.start)} drop`;
-      $("ev-sub").textContent = df && df.void ? `No race this time: ${df.void}.` : "The field is set from a Producer Race card before picks open.";
+      $("ev-sub").textContent = df && df.void ? `No race this time: ${df.void}.` : "The field is set from a Producer Race card and each node's form, a few minutes after picks open.";
       track.replaceChildren(el("p", { class: "note", style: "margin:6px 2px", text: `No race in the arena right now. The next one starts at ${clock(nx.start)}: pick your node below.` }));
       $("fallen").replaceChildren();
       renderField(null); renderMe(ev, null, null); return;
@@ -214,7 +196,7 @@
     const recorded = (df.hours || []).length;
     $("ev-sub").textContent = res.done ? `${res.cuts.length} cuts, ${clock(ev.start)} to ${clock(df.start + res.cuts.length * H)}.`
       : now < ev.start ? `${n} nodes. Picks close at ${clock(cutoff(ev.round))}, first cut at ${clock(ev.start + H)}.`
-      : `${res.standing.length} of ${n} still standing${recorded < res.cuts.length ? " · latest cut not final yet" : ""}${df.provisional ? " · field provisional" : ""}`;
+      : `${res.standing.length} of ${n} still standing${recorded < res.cuts.length ? " · latest cut not final yet" : ""}`;
     const mine = myState(ev, df, res);
     const tot = new Map(live.totals.map((t) => [t.a, t]));
     // The node that would go if the cut were now: the live cut beyond the recorded ones (none before the start).
@@ -294,12 +276,14 @@
 
   function renderField(df) {
     const rel = reliability();
-    $("field-sub").textContent = !df || !df.field ? "The field appears when picks open." : `Each node's chance to be last standing: ${fmt(df.field.fairness[0] * 100, 1)}–${fmt(df.field.fairness[1] * 100, 1)}% (fair is ${fmt(100 / df.field.nodes.length, 1)}%). Luck trim c = ${fmt(df.field.c, 1)}.`;
+    const fo = df && df.field && df.field.form;
+    $("field-sub").textContent = !df || !df.field ? "The field appears a few minutes after picks open." : `Each node's chance to be last standing: ${fmt(df.field.fairness[0] * 100, 1)}–${fmt(df.field.fairness[1] * 100, 1)}% (fair is ${fmt(100 / df.field.nodes.length, 1)}%). Luck trim c = ${fmt(df.field.c, 1)}.${fo && fo.hours ? ` Form from ${fo.hours} hours of blocks.` : fo && fo.note ? ` No form this event (${fo.note}).` : ""}`;
     $("field-rows").replaceChildren(...(df && df.field ? df.field.nodes : []).map((nd) => {
-      const r = rel.get(nd.a), pct = Number.isFinite(r) ? r * 100 : null;
+      // On par = signing what the handicap expects (its VHP share × its form).
+      const r = rel.get(nd.a), pct = Number.isFinite(r) ? (r / (nd.r || 1)) * 100 : null;
       return el("tr", {},
         el("td", { class: "who" }, el("span", { class: "ln-whobox" }, badge(nd.a, "sm"), el("a", { href: EXPLORER + nd.a, target: "_blank", rel: "noopener noreferrer", text: nameOf(nd.a) }))),
-        el("td", { class: "num hide-sm", text: fmt(nd.kh, 0) }), el("td", { class: "num", text: `×${fmt(nd.h, 2)}` }),
+        el("td", { class: "num hide-sm", text: fmt(nd.kh, 0) }), el("td", { class: "num hide-sm", text: Number.isFinite(nd.r) ? fmt(nd.r, 2) : "–" }), el("td", { class: "num", text: `×${fmt(nd.h, 2)}` }),
         el("td", { class: "rel" }, pct == null ? "–" : el("span", { class: "relbar" }, el("i", { class: pct < 90 ? "lo" : pct < 98 ? "mid" : "hi", style: `width:${Math.min(100, Math.round(pct))}%` })), pct == null ? null : `${fmt(pct, 0)}%`));
     }));
   }
@@ -320,7 +304,7 @@
     const rel = reliability();
     const want = round != null && drafts.has(round) ? drafts.get(round) : current;
     const cards = el("div", { class: "ln-cards", role: "group", "aria-label": label }, ...options.map((a) => {
-      const info = nodeInfo(a, df), r = rel.get(a);
+      const info = nodeInfo(a, df), r0 = rel.get(a), r = Number.isFinite(r0) && info && info.r ? r0 / info.r : r0;
       const b = el("button", { type: "button", class: "ln-card", style: `--node:${colorOf(a)}`, "aria-pressed": String(a === want),
         onclick: () => { if (round != null) drafts.set(round, a); render(); } },
         badge(a, "sm"), el("b", { text: NAMES[a] || `${a.slice(0, 4)}…${a.slice(-3)}` }),
@@ -384,7 +368,7 @@
     if (nf && nf.field && !nx.open) parts.push(el("p", { class: "note", style: "margin:0", text: `Picks for the ${dayTime(nx.start)} event open at ${clock(nx.opens)} (in ${dur(nx.opens - now)}).` }));
     else if (nf && nf.field) parts.push(el("div", { class: "ln-act" },
       el("p", { class: "ln-cta", text: startMine ? `You drop in on ${nameOf(startMine)} at ${clock(nx.start)}` : `Pick your node for the ${clock(nx.start)} drop` }),
-      el("p", { class: "note", style: "margin:0", text: `${nf.provisional ? "Field provisional (the recorder's file isn't out yet). " : ""}Picks close in ${dur(cutoff(nx.round) - now)}, at ${clock(cutoff(nx.round))}${startMine ? "; you can switch until then" : ""}. Tip: a node that signs every block it should is hard to knock out.` }),
+      el("p", { class: "note", style: "margin:0", text: `Picks close in ${dur(cutoff(nx.round) - now)}, at ${clock(cutoff(nx.round))}${startMine ? "; you can switch until then" : ""}. Tip: a node that signs every block it should is hard to knock out.` }),
       picker(startMine ? "Switch to" : "Drop in", nf.field.nodes.map((x) => x.a), startMine, (a) => sendPick(nx.round, a, `your node for the ${clock(nx.start)} event`), "", nx.round, nf)));
     else parts.push(el("p", { class: "note", style: "margin:0", text: `The field for the ${dayTime(nx.start)} event appears when picks open, at ${clock(nx.opens)}.` }));
     box.replaceChildren(...parts);

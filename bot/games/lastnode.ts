@@ -70,6 +70,8 @@ type Opts = {
   picksContract?: string | null;
   now?: { time: number; libTime: number };                                // for the tests
   windowOf?: (node: any, t0: number, t1: number) => Promise<Window>;
+  /** Form: blocks per hour on a node over [t0, t0 + n h) (tests pass fake nodes). */
+  hoursOf?: (node: any, t0: number, n: number) => Promise<Record<string, number>[]>;
   picksOf?: (node: any, round: number) => Promise<Pick[]>;
   rankedOf?: (who: string[]) => Promise<Set<string>>;
   /** Vault v6: the wallets with at least 1 VHP staked in this game for a vault week (null = can't tell yet). */
@@ -94,7 +96,8 @@ function loadDay(dir: string | undefined, day: string): DayFile {
   const f = freshDay(day), o = readJson(dir, dName(day));
   if (!o || o.v !== 1 || o.day !== f.day || o.start !== f.start) return f;
   if (o.field && Array.isArray(o.field.nodes) && o.field.nodes.length >= 2 && o.field.nodes.length <= L.MAX_FIELD && o.field.nodes.every((n: any) => isAddr(n?.a) && Number.isFinite(n.h) && n.h > 0 && Number.isFinite(n.vhp)))
-    f.field = { at: Number(o.field.at) || 0, c: Number(o.field.c) || 0, fairness: o.field.fairness ?? null, nodes: o.field.nodes.map((n: any) => ({ a: n.a, vhp: n.vhp, kh: n.kh, h: n.h })) };
+    f.field = { at: Number(o.field.at) || 0, c: Number(o.field.c) || 0, fairness: o.field.fairness ?? null, nodes: o.field.nodes.map((n: any) => ({ a: n.a, vhp: n.vhp, kh: n.kh, h: n.h, ...(Number.isFinite(n.r) ? { r: n.r } : {}) })),
+      ...(o.field.form && typeof o.field.form === "object" ? { form: o.field.form } : {}) } as any;
   if (typeof o.void === "string") f.void = o.void.slice(0, 200);
   if (Array.isArray(o.hours)) for (const [k, h] of o.hours.entries()) {
     if (!h || h.i !== k || !Number.isInteger(h.from) || !Number.isInteger(h.to) || typeof h.blocks !== "object" || h.blocks === null) break;
@@ -123,6 +126,32 @@ function cardAt(raceDir: string | undefined, t: number, opens: number): any | nu
     if (c && Array.isArray(c.field) && c.field.length && Number(c.at) < opens) return c;
   }
   return null;
+}
+
+/** Form (owner, 2026-10-29): each hour's VHP shares from the race card in force at that hour (the latest one taken at
+ *  or before the hour's start), every producer on the card counted (field and paddock). null for an hour with no card. */
+function cardsIn(raceDir: string | undefined, t0: number, t1: number): any[] {
+  const out: any[] = [];
+  for (let w = M.weekOf(t0) - 1; w <= M.weekOf(t1); w++) {
+    if (w < 0) continue;
+    const wf = readJson(raceDir, wName(w));
+    if (wf && Array.isArray(wf.races)) for (const r of wf.races) for (const c of r?.cards || []) if (c && Number.isFinite(Number(c.at)) && Array.isArray(c.field)) out.push(c);
+  }
+  return out.sort((a, b) => Number(a.at) - Number(b.at));
+}
+export function sharesByHour(cards: any[], t0: number, hours: number): (Record<string, number> | null)[] {
+  const out: (Record<string, number> | null)[] = [];
+  for (let k = 0; k < hours; k++) {
+    const t = t0 + k * 3600000;
+    let c: any = null;
+    for (const x of cards) { if (Number(x.at) <= t) c = x; else break; }
+    // Not older than 3 hours: a gap in the race recorder is left out, not filled with an old card.
+    if (!c || t - Number(c.at) > 3 * 3600000) { out.push(null); continue; }
+    const all = [...c.field, ...(c.paddock || [])].filter((x: any) => x && isAddr(x.a) && Number.isFinite(x.vhp) && x.vhp > 0);
+    const tot = all.reduce((s: number, x: any) => s + x.vhp, 0);
+    out.push(tot > 0 ? Object.fromEntries(all.map((x: any) => [x.a, x.vhp / tot])) : null);
+  }
+  return out;
 }
 
 // ── chain reads ──
@@ -163,6 +192,32 @@ function windowReader(node: any) {
       }
     }
     return { from: a, to: b, counts };
+  };
+}
+/** Blocks signed per hour over [t0, t0 + n hours), irreversible only, in one pass (for the form). */
+function hourlyReader(node: any) {
+  let headP: Promise<any> | null = null;
+  const head = () => (headP ??= headOf(node));
+  const timeOf = async (h: number) => (await blocksAt(node, (await head()).id, h, 1))[0].time;
+  const firstAtOrAfter = async (t: number, lo: number, hi: number) => {
+    while (lo < hi) { const m = Math.floor((lo + hi) / 2); if ((await timeOf(m)) < t) lo = m + 1; else hi = m; }
+    return lo;
+  };
+  return async (t0: number, n: number): Promise<Record<string, number>[]> => {
+    const t1 = t0 + n * 3600000, hd = await head(), libT = await timeOf(hd.lib);
+    if (libT < t1) throw new Error("not irreversible yet");
+    let lo = Math.max(1, hd.lib - Math.ceil((libT - t0) / 3000) - 2400);
+    while (lo > 1 && (await timeOf(lo)) >= t0) lo = Math.max(1, lo - 2400);
+    const a = await firstAtOrAfter(t0, lo, hd.lib), b = (await firstAtOrAfter(t1, a, hd.lib)) - 1;
+    const out: Record<string, number>[] = Array.from({ length: n }, () => ({}));
+    for (let s = a; s <= b; s += 200) {
+      for (const x of await blocksAt(node, hd.id, s, Math.min(200, b - s + 1))) {
+        const k = Math.floor((x.time - t0) / 3600000);
+        if (k < 0 || k >= n) throw new Error(`block ${x.h} outside the form window`);
+        out[k][x.signer] = (out[k][x.signer] || 0) + 1;
+      }
+    }
+    return out;
   };
 }
 const PICKS_ABI = () => JSON.parse(fs.readFileSync(new URL("../../picks/abi/picks.koilib.json", import.meta.url), "utf8"));
@@ -276,6 +331,33 @@ export async function run(o: Opts) {
   }
   const winP = o.windowOf ? (a: number, b: number) => o.windowOf!(o.p, a, b) : windowReader(o.p);
   const winC = o.check ? (o.windowOf ? (a: number, b: number) => o.windowOf!(o.check, a, b) : windowReader(o.check)) : null;
+  // With fake block windows (the tests) and no fake hours, the form is read hour by hour from those windows.
+  const viaWindows = (node: any) => async (a: number, n: number) => { const out = []; for (let k = 0; k < n; k++) out.push((await o.windowOf!(node, a + k * 3600000, a + (k + 1) * 3600000)).counts); return out; };
+  const hoursFor = (node: any) => (o.hoursOf ? (a: number, n: number) => o.hoursOf!(node, a, n) : o.windowOf ? viaWindows(node) : hourlyReader(node));
+  const hrsP = hoursFor(o.p), hrsC = o.check ? hoursFor(o.check) : null;
+  /** The form for an event's field (owner, 2026-10-29): the 48 hours before its card, irreversible blocks, matching on
+   *  both nodes, against each hour's race card. "wait": try again next run (until an hour after picks open, then the
+   *  field is set without form so the event still runs); otherwise { form, info } (form null: not enough race cards). */
+  async function formFor(ev: any): Promise<"wait" | { form: Record<string, number> | null; info: any }> {
+    const t1 = ev.cardTime, t0 = t1 - L.FORM_HOURS * 3600000;
+    const late = now.time >= ev.opens + 3600000;
+    const giveUp = (why: string) => { problems.push(`${ev.day}: form not measured (${why}); field set without it`); return { form: null, info: { hours: 0, note: why.slice(0, 120) } }; };
+    if (now.libTime < t1) return late ? giveUp("blocks not irreversible") : "wait";
+    let a: Record<string, number>[], b: Record<string, number>[] | null = null;
+    try {
+      a = await hrsP(t0, L.FORM_HOURS);
+      if (hrsC) b = await hrsC(t0, L.FORM_HOURS);
+    } catch (e: any) { if (late) return giveUp(`couldn't read the blocks: ${e.message}`); problems.push(`${ev.day}: form: ${e.message} (tried again next run)`); return "wait"; }
+    if (b && JSON.stringify(a.map((x) => Object.entries(x).sort())) !== JSON.stringify(b.map((x) => Object.entries(x).sort()))) {
+      if (late) return giveUp("the two nodes disagree about the blocks");
+      problems.push(`${ev.day}: form: the two nodes disagree about the blocks; tried again next run`); return "wait";
+    }
+    const shares = sharesByHour(cardsIn(RACE, t0, t1).filter((c) => Number(c.at) < ev.opens), t0, L.FORM_HOURS);
+    const hours = a.map((blocks, k) => ({ blocks, shares: shares[k] }));
+    const used = hours.filter((h) => h.shares && Object.values(h.blocks).some((x) => x > 0)).length;
+    const form = L.formOf(hours);
+    return { form, info: form ? { hours: used, from: t0, to: t1 } : { hours: used, note: `race cards for only ${used} of ${L.FORM_HOURS} hours` } };
+  }
   const picksRead = o.picksOf ?? (contract ? (node: any, r: number) => readPicks(node, contract, r) : null);
   const pMain = o.pp ?? o.p, pCheck = o.pp ? (o.pcheck ?? null) : o.check;
   const rankedRead = o.rankedOf ?? ((who: string[]) => readRanked(o.p, who));
@@ -310,8 +392,11 @@ export async function run(o: Opts) {
       if (!df.field) {
         const card = cardAt(RACE, ev.cardTime, ev.opens);
         if (card) {
-          const f = L.makeField(card, o.trials);
-          if (f) { df.field = f; touched.add(df.day); console.log(`${df.day}: field of ${f.nodes.length}, c = ${f.c}`); }
+          const fm = await formFor(ev);
+          if (fm === "wait") continue;
+          const f = L.makeField(card, o.trials, fm.form, fm.info);
+          if (f && !fm.form) f.form = fm.info;          // says why there is no form
+          if (f) { df.field = f; touched.add(df.day); console.log(`${df.day}: field of ${f.nodes.length}, c = ${f.c}${fm.form ? `, form over ${fm.info.hours} h: ${f.nodes.map((x: any) => x.r).join(" ")}` : `, no form (${fm.info.note})`}`); }
           else if (now.time >= ev.lock) { df.void = "fewer than 2 nodes at 20 blocks an hour"; touched.add(df.day); }
         } else if (now.time >= ev.lock) { df.void = "no race card for the field"; touched.add(df.day); }
         if (!df.field) continue;

@@ -94,9 +94,11 @@ test("LN-7, LN-15, LN-16, LN-17: node info per event, the Jump note only while t
 
 test("LN-24, LN-28, LN-29, LN-31, LN-32: the page's checks on the files it reads", () => {
   assert.match(page, /j\.start === ev0\.start && \(j\.field === null \|\| \(j\.field && Array\.isArray\(j\.field\.nodes\) && j\.field\.nodes\.length <= L\.MAX_FIELD\)\)/);
-  assert.match(page, /!== "404" && have && !have\.provisional\) return;/);
-  assert.match(page, /if \(f\) f\.nodes = f\.nodes\.filter\(\(n\) => n && isAddr\(n\.a\)\)/);
-  assert.match(page, /Field provisional/);
+  assert.match(page, /!== "404" && have\) return;/);
+  // LN-31 (2026-10-29): the page no longer works out a provisional field of its own (the field needs form, from 48 h
+  // of blocks); it shows only the recorder's, with each node's form checked.
+  assert.ok(!/makeField|raceCardAt|provisional: true/.test(page), "no provisional field");
+  assert.match(page, /n\.r === undefined \|\| \(Number\.isFinite\(n\.r\) && n\.r >= L\.FORM_MIN && n\.r <= L\.FORM_MAX\)/);
   assert.match(page, /if \(cfg\.faucet != null && !\/\^https:/);
   assert.match(fs.readFileSync(path.resolve(APP, "lastnode.css"), "utf8"), /\.ln-flash \{ position: fixed;/, "LN-33: the note moves nothing");
 });

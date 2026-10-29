@@ -8,6 +8,11 @@
  *   day before (race-math.js), so the field is known when picks open (24 hours ahead): producers expected to sign
  *   at least 20 blocks an hour (the 23 biggest if more, so an event never reaches the next day's start round).
  * - Handicap (the race formula): h = (kTop ÷ k) × (1 − c ÷ √k) ÷ (1 − c ÷ √kTop), k = expected blocks an hour.
+ * - FORM (owner, 2026-10-29): k is the card's VHP share × the node's form, and form = the blocks the node actually
+ *   signed in the 48 hours before the card ÷ the blocks its VHP share (hour by hour, from that hour's race card) gave
+ *   it, kept between 0.80 and 1.20. Real blocks showed nodes signing a steady 78% to 108% of their VHP share; with VHP
+ *   alone, the steady over-signers won most events and the under-signers never did. Form takes the part that can be
+ *   seen in advance out of the handicap, so what's left is luck on the day.
  *   c (0.0 to 2.5 in steps of 0.1) is the value that gives every node the most equal chance of being last standing,
  *   from 20,000 simulated events with a fixed seed, so anyone re-running it gets the same c (0.2 on 2026-10-27).
  *   h is kept in ten-thousandths (an integer), so steps are exact integers and the browser and the bot never differ.
@@ -32,7 +37,8 @@
   "use strict";
   const HOUR = 3600000, DAY = 24 * HOUR, WEEK = 7 * DAY, MIN = 60000;
   const GENESIS = 1792368000000;     // KnodeGames week 0: Monday 2026-10-19 00:00 UTC (as race-math.js)
-  const MIN_KH = 20;                 // expected blocks an hour to be in the field
+  const MIN_KH = 20;                 // expected blocks an hour to be in the field (by VHP, before form)
+  const FORM_HOURS = 48, FORM_MIN = 0.8, FORM_MAX = 1.2, FORM_MIN_HOURS = 24;
   const BONUS = Object.freeze({ stayed: 5, jumped: 3 });
   const C_GRID = Array.from({ length: 26 }, (_, i) => i / 10);
   const SEED = 20261027, TRIALS = 20000;
@@ -106,6 +112,24 @@
     return { c: best.c, min: best.min, max: best.max };
   }
   const hInt = (node) => Math.round(node.h * H_SCALE);
+  /** Form from hourly windows: hours = [{ blocks: { address: count } (every signer), shares: { address: VHP share } }].
+   *  Each node's blocks ÷ (each hour's total × its share that hour), kept within FORM_MIN..FORM_MAX, 3 decimals.
+   *  Hours without shares (no race card) are left out; fewer than FORM_MIN_HOURS usable hours gives null (no form). */
+  function formOf(hours) {
+    const A = {}, E = {};
+    let used = 0;
+    for (const h of hours || []) {
+      if (!h || !h.blocks || !h.shares) continue;
+      const N = Object.values(h.blocks).reduce((s, x) => s + (Number(x) || 0), 0);
+      if (!N) continue;
+      used++;
+      for (const [a, sh] of Object.entries(h.shares)) { if (!(sh > 0)) continue; A[a] = (A[a] || 0) + (Number(h.blocks[a]) || 0); E[a] = (E[a] || 0) + N * sh; }
+    }
+    if (used < FORM_MIN_HOURS) return null;
+    const out = {};
+    for (const a of Object.keys(E)) out[a] = round(Math.min(FORM_MAX, Math.max(FORM_MIN, A[a] / E[a])), 3);
+    return out;
+  }
   const weekOf = (t) => (t <= GENESIS ? 0 : Math.floor((t - GENESIS) / WEEK));
   const weekStart = (w) => GENESIS + w * WEEK;
 
@@ -170,7 +194,9 @@
     /** The event's field from the race card of its cardTime. card: { at, field: [{ a, vhp, k }] } (k = expected blocks
      *  in a 6-hour race). Returns { at, c, fairness, nodes: [{ a, vhp, kh, h }] }, biggest first, or null when fewer
      *  than 2 nodes sign 20 blocks an hour. */
-    function makeField(card, trials = TRIALS) {
+    /** The field from a race card. form (optional, from formOf): { address: factor }; a node's expected blocks are its
+     *  VHP share × its form (1 if missing). Who is in the field is still decided by VHP alone. formInfo is stored as is. */
+    function makeField(card, trials = TRIALS, form = null, formInfo = null) {
       if (!card || !Array.isArray(card.field)) return null;
       const rows = card.field
         .filter((r) => r && typeof r.a === "string" && Number.isFinite(r.vhp) && r.vhp > 0 && Number.isFinite(r.k) && r.k > 0)
@@ -179,11 +205,19 @@
         .sort((x, y) => y.vhp - x.vhp || (x.a < y.a ? -1 : 1))
         .slice(0, MAX_FIELD);
       if (rows.length < 2) return null;
-      const ks = rows.map((r) => r.kh * KSCALE), cal = calibrate(ks, trials);
-      return {
+      const fo = (a) => { const x = form && Number(form[a]); return Number.isFinite(x) && x > 0 ? Math.min(FORM_MAX, Math.max(FORM_MIN, x)) : 1; };
+      for (const r of rows) { r.r = fo(r.a); r.kh = r.kh * r.r; }
+      // The biggest expected k sets the scale (with form, that may not be the biggest VHP).
+      // Without form this is exactly the earlier rule (the biggest VHP sets the scale).
+      const ks = rows.map((r) => r.kh * KSCALE), order = ks.map((k, i) => i);
+      if (form) order.sort((x, y) => ks[y] - ks[x] || x - y);
+      const kTop = ks[order[0]], cal = calibrate(order.map((i) => ks[i]), trials);
+      const f = {
         at: Number(card.at) || 0, c: cal.c, fairness: [round(cal.min, 4), round(cal.max, 4)],
-        nodes: rows.map((r, i) => ({ a: r.a, vhp: round(r.vhp, 2), kh: round(r.kh, 2), h: Math.round(handicapOf(ks[i], ks[0], cal.c) * H_SCALE) / H_SCALE })),
+        nodes: rows.map((r, i) => ({ a: r.a, vhp: round(r.vhp, 2), kh: round(r.kh, 2), h: Math.round(handicapOf(ks[i], kTop, cal.c) * H_SCALE) / H_SCALE, ...(form ? { r: r.r } : {}) })),
       };
+      if (form) f.form = formInfo || { hours: FORM_HOURS };
+      return f;
     }
 
     // ── the cuts ──
@@ -256,7 +290,7 @@
 
     return {
       GAME: g, GAME_ID: g.id, PICKS_GAME, CUT, LEAD, OFFSET, AHEAD, PERIOD, PHASE, MAX_FIELD, JUMP_WINDOW: OFFSET - LEAD,
-      HOUR, DAY, WEEK, GENESIS, MIN_KH, BONUS, SEED, TRIALS, H_SCALE, START_HOUR: PERIOD === DAY ? PHASE / HOUR : null,
+      HOUR, DAY, WEEK, GENESIS, MIN_KH, FORM_HOURS, FORM_MIN, FORM_MAX, FORM_MIN_HOURS, formOf, BONUS, SEED, TRIALS, H_SCALE, START_HOUR: PERIOD === DAY ? PHASE / HOUR : null,
       roundOf, roundTime, lockTime, isOpen, eventOf, nextEvent, pickable, nextEntry, weekOf, weekStart, rng, handicapOf, calibrate, makeField, hInt,
       cutsFrom, playerResult, canJump, byOffset, roundForJump, board, places, forGame, MAINNET_GAME, FAST_GAME,
     };

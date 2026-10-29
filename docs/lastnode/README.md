@@ -19,6 +19,11 @@ A testnet practice copy runs on the owner's PC (`docs/lastnode/TESTNET.md`).
   - h = (kTop / k) × (1 − c / √k) ÷ (1 − c / √kTop), where k is the node's expected blocks per cut window;
   - c is in steps of 0.1 from 0.0 to 2.5. It is chosen so every node has the most equal chance of being last standing, using 20,000 simulated events with a fixed seed;
   - h is kept to 4 decimals, so step totals are exact integers in ten-thousandths.
+- **Form (owner, 2026-10-29):** k = the card's VHP share × the node's form. Form = blocks the node signed in the 48 hours before the card ÷ the blocks its VHP share gave it, hour by hour against that hour's race card, kept between 0.80 and 1.20 (`formOf` in `lastnode-math.js`).
+  - Why: on real blocks (25–29 Oct) nodes signed a steady 78%–108% of their VHP share. With VHP alone, the steadiest over-signer won 35–40% of events and two under-signers never won (`tools/sim/lastnode/form/`). On 123 days of June–October blocks, the form rule gave a fair spread for the daily game (chi² 7.4 on 7 degrees of freedom).
+  - Read on both mainnet nodes (irreversible blocks, must match). If the reads fail or disagree, the field waits; an hour after picks open it is set without form (`field.form.note` says why). Who is in the field is still decided by VHP.
+  - Gaming: a producer would have to sign fewer blocks for 2 days (losing real block rewards) to look weak, and the boost is capped at 1 ÷ 0.80.
+- **No VHP rebase:** handicaps are fixed for the whole event from the field's card; VHP changes after it are not followed.
 - **The cut:** the node with the fewest handicapped steps since the start goes. Ties: fewer raw blocks, then smaller card VHP, then the address that sorts later. Totals never reset during an event; handicaps and c are fixed per event.
 - **Picks (Picks contract, game 13):**
   - Settings: one producer, TIME lock, round_size 3,600,000 ms, round_offset 900,000, lead 300,000, ahead 86,400,000, at most 5 changes, at most 30 picks a day.

@@ -119,11 +119,16 @@ jobs:
           isa = lambda x: type(x) is str and addr.fullmatch(x) is not None
           def field_ok(f):
               if f is None: return True
-              if type(f) is not dict or set(f) != {"at", "c", "fairness", "nodes"} or not num(f["at"]) or not num(f["c"]) or not 0 <= f["c"] <= 2.5: return False
+              if type(f) is not dict or not ({"at", "c", "fairness", "nodes"} <= set(f) <= {"at", "c", "fairness", "nodes", "form"}) or not num(f["at"]) or not num(f["c"]) or not 0 <= f["c"] <= 2.5: return False
+              # Form (2026-10-29): how it was measured, or why not.
+              fm = f.get("form")
+              if "form" in f and not (type(fm) is dict and set(fm) in ({"hours", "from", "to"}, {"hours", "note"}) and nat(fm["hours"]) and fm["hours"] <= 48
+                  and (("note" in fm and type(fm["note"]) is str and len(fm["note"]) <= 120) or (nat(fm.get("from")) and nat(fm.get("to")) and fm["to"] - fm["from"] == 48 * 3600000))): return False
               if not (f["fairness"] is None or (type(f["fairness"]) is list and len(f["fairness"]) == 2 and all(num(x) and 0 <= x <= 1 for x in f["fairness"]))): return False
               n = f["nodes"]
               return type(n) is list and 2 <= len(n) <= 23 and len({x.get("a") for x in n if type(x) is dict}) == len(n) and all(
-                  type(x) is dict and set(x) == {"a", "vhp", "kh", "h"} and isa(x["a"]) and num(x["vhp"]) and x["vhp"] > 0 and num(x["kh"]) and x["kh"] >= 20 and num(x["h"]) and 0 < x["h"] < 1e4 for x in n)
+                  type(x) is dict and set(x) in ({"a", "vhp", "kh", "h"}, {"a", "vhp", "kh", "h", "r"}) and isa(x["a"]) and num(x["vhp"]) and x["vhp"] > 0 and num(x["kh"]) and x["kh"] >= 16 and num(x["h"]) and 0 < x["h"] < 1e4
+                  and ("r" not in x or (num(x["r"]) and 0.8 <= x["r"] <= 1.2)) for x in n) and len({("r" in x) for x in n}) == 1
           def day_ok(f, j):
               keys = {"v", "day", "start", "week", "field", "hours", "picks", "cuts", "standing", "winner", "done", "players"}
               if type(j) is not dict or not (keys <= set(j) <= keys | {"void"}) or j["v"] != 1: return False

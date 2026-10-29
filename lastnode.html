@@ -106,8 +106,8 @@
       <section class="ln-panel" id="field-box">
         <div class="ln-panel-head"><h2>Scouting report</h2></div>
         <p class="note" id="field-sub"></p>
-        <table class="hist"><thead><tr><th>Node</th><th class="num hide-sm">Per hour</th><th class="num">Handicap</th><th>Last 24 h</th></tr></thead><tbody id="field-rows"></tbody></table>
-        <p class="note">"Last 24 h" is how many blocks a node actually signed compared with what its VHP says it should: 100% is on par. Nodes that miss blocks fall behind, and that's where the skill is. Big nodes are steady; small nodes are boom or bust.</p>
+        <table class="hist"><thead><tr><th>Node</th><th class="num hide-sm">Per hour</th><th class="num hide-sm">Form</th><th class="num">Handicap</th><th>Last 24 h</th></tr></thead><tbody id="field-rows"></tbody></table>
+        <p class="note"><b>Form</b> is what a node signed in the 48 hours before the field was set, against its VHP share (kept between 0.80 and 1.20). The handicap already allows for it: a node that keeps missing blocks gets a bigger multiplier, and one that signs extra gets a smaller one, so no node starts with an edge you could look up. <b>Last 24 h</b> compares the latest blocks with what the handicap expects: 100% is on par. Who runs hot or cold on the day is the luck. Big nodes are steady; small nodes are boom or bust.</p>
       </section>
     </div>
 
@@ -121,7 +121,7 @@
       <h2>How it works</h2>
       <p><b>The event.</b> Every day at 14:00 UTC. One cut every hour on the hour until one node is left: about 9 hours with 10 nodes. Your pick locks at 13:10 UTC (this page sends until 13:09, a minute early to be safe); picks open 24 hours before.</p>
       <p><b>The field.</b> Producers expected to sign at least 20 blocks an hour, from a Producer Race card taken before picks open.</p>
-      <p><b>The handicap.</b> Big nodes sign more blocks, so smaller nodes move further per block. A small luck trim, set for each event, gives every node about the same chance to be last standing.</p>
+      <p><b>The handicap.</b> Big nodes sign more blocks, so smaller nodes move further per block. Each node's form (what it actually signed in the 48 hours before the field is set, against its VHP) is built in, and a small luck trim, set for each event, gives every node about the same chance to be last standing. The multipliers are fixed for the whole event.</p>
       <p><b>The cut.</b> At each cut, the node with the fewest steps since the start is knocked out. Ties go to fewer blocks, then less VHP.</p>
       <p><b>Your run.</b> Drop in on one node. If it's knocked out, jump once to a node still standing, or set a backup in advance and it jumps for you (a backup covers the next cut only). Lose a second node, or miss the jump, and your run ends (your points so far count). If the chain stalls for 10 minutes or more across a cut, that cut's jump can't be made in time.</p>
       <p><b>Fair checks.</b> Results come from irreversible blocks that match on two independent Koinos nodes, and the page and the recorder run the same rules file.</p>
