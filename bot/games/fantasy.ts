@@ -9,7 +9,7 @@
  *  1. Days. Every day whose last block is irreversible gets each producer's index (blocks signed ÷ expected, from the
  *     race cards' VHP shares). Its blocks must match on two nodes (RPC and RPC_CHECK) to be final. Today so far is
  *     published too, marked provisional (irreversible blocks only, one node), so the page can show a live score.
- *  2. Price sheet. From its time (real clock: Sunday 12:00 UTC), the sheet for the coming week: the race field on the
+ *  2. Price sheet. From its time (real clock: Saturday 00:00 UTC), the sheet for the coming week: the race field on the
  *     card in force then, each producer's form over the 7 days before, its price. Its sha256 is published with it and
  *     it is never made again.
  *  3. Teams and rivals (once the Picks contract is set). A day's team picks are read once the day's start is

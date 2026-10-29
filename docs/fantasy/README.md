@@ -76,7 +76,7 @@ node --import tsx tools/fantasy-testnet/rehearse.mjs        # about 5 minutes: 2
 ## Before launch (needs the vault and the Picks contract live)
 1. Independent audit and fix-check of this branch.
 2. Register Picks games 4 and 5 on mainnet (48 h wait), with the settings `KFantasyMath.games()` prints.
-3. Merge; set `FANTASY_ENABLED=true`; first price list the Sunday before the launch Monday.
+3. Merge; set `FANTASY_ENABLED=true`; first price list the Saturday (00:00 UTC) before the launch Monday.
 4. Vault v6: register Fantasy as staked game 4; add `games-data:fantasy` to `vaultGames`. Once the v6 ABI is in
    `game/abi`, the recorder reads Fantasy stakes and writes the vault files by itself; the vault bot posts them.
 5. Add the page to the menus, `tools/site-seo.mjs` and the sitemap; remove the noindex.
