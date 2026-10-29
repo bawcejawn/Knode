@@ -83,9 +83,9 @@
     const lockOfWeek = (w) => weekStart(w) - LEAD_MS;
     /** The Picks contract's game settings for this clock (owner announces them; the contract enforces them). */
     const games = (ids = GAMES, perDay = 20) => ({
-      team: { id: ids.team, kind: 2, list_size: TEAM, number_min: "0", number_max: "0", lock_mode: 2, round_size: String(C.day), round_offset: "0",
+      team: { id: ids.team, name: "Fantasy Producers", kind: 2, list_size: TEAM, number_min: "0", number_max: "0", lock_mode: 2, round_size: String(C.day), round_offset: "0",
         lead: String(LEAD_MS), ahead: String(WEEK), max_picks_per_day: perDay, max_changes: 20, enabled: true },
-      rival: { id: ids.rival, kind: 1, list_size: 1, number_min: "0", number_max: "0", lock_mode: 2, round_size: String(C.day), round_offset: "0",
+      rival: { id: ids.rival, name: "Weekly Rival", kind: 1, list_size: 1, number_min: "0", number_max: "0", lock_mode: 2, round_size: String(C.day), round_offset: "0",
         lead: String(LEAD_MS), ahead: String(WEEK), max_picks_per_day: 10, max_changes: 5, enabled: true },
     });
 

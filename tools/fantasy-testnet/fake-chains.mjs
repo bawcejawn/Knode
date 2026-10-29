@@ -54,6 +54,7 @@ export async function startFakeChain({ name, clock, chainId, producers, blockMs 
   const log = [];                                           // every accepted pick, for the rehearsal's checks
 
   function checkGame(g) {
+    if (typeof g.name !== "string" || !g.name || Buffer.byteLength(g.name) > 40) fail("PICKS: name must be 1 to 40 bytes");
     const kind = Number(g.kind), ls = Number(g.list_size);
     if (kind === 1 && ls !== 1) fail("PICKS: a one-producer game has list_size 1 and no number range");
     if (kind === 2 && !(ls >= 2 && ls <= 10)) fail("PICKS: a list game has list_size 2 to 10 and no number range");

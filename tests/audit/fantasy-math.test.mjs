@@ -207,6 +207,7 @@ test("clock: the real clock is the game week (Monday 00:00 UTC) and its Picks ga
     assert.ok(Number(x.lead) >= 300000 && Number(x.ahead) > Number(x.lead) && Number(x.ahead) <= 35 * R.DAY);
   }
   assert.equal(g.team.kind, 2); assert.equal(g.team.list_size, 5); assert.equal(g.rival.kind, 1);
+  for (const x of [g.team, g.rival]) assert.ok(x.name && Buffer.byteLength(x.name) <= 40, "the contract needs a name of 1 to 40 bytes");
   // A team pick's round is its day: the contract's target r × day is the day's start, locking 5 minutes before.
   const d = DAYS[3];
   assert.equal(d * Number(g.team.round_size) + Number(g.team.round_offset), F.dayStart(d));
