@@ -22,6 +22,6 @@ jobs:
           RPC_CHECK: https://api.koinosblocks.com
           BOT_DEBUG_STACK: "1"
         run: |
-          npx tsx diag.ts || true; echo > out.txt
+          npx tsx diag.ts 2>&1 | head -20 | while IFS= read -r l; do case "$l" in ::*) echo "$l";; *) echo "::warning::$l";; esac; done; echo > out.txt
           grep -nE "✖|✔|failed|error|Error|parse" out.txt | head -60 | while IFS= read -r l; do echo "::warning::$l"; done
           tail -5 out.txt | while IFS= read -r l; do echo "::notice::$l"; done
