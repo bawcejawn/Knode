@@ -106,13 +106,13 @@ test("the recorder sets the field with form from the 48 h before the card, on bo
   execFileSync("python3", ["-I", "-c", checkPy, pub], { stdio: "pipe", env: { ...process.env, RUNNER_TEMP: fs.mkdtempSync(path.join(os.tmpdir(), "rt-")) } });
 });
 
-test("the two nodes disagree on the form's blocks: no field this run; an hour after picks open, the field is set without form", async () => {
+test("the two nodes disagree on the form's blocks: no field this run; 3 hours after picks open, the field is set without form", async () => {
   const dir = raceDir(), out = fs.mkdtempSync(path.join(os.tmpdir(), "lns-f2-"));
   const early = EV.opens + 15 * 60000;
   const r1 = await run(base({ raceDir: dir, out, hoursOf: hoursOf(true), now: { time: early, libTime: early } }));
   assert.ok(r1.problems.some((p) => /form: the two nodes disagree/.test(p)), r1.problems.join("; "));
   assert.ok(!fs.existsSync(path.join(out, "D2026-11-03T08.json")), "no field yet, so no file");
-  const late = EV.opens + 61 * 60000;
+  const late = EV.opens + 3 * 3600000 + 60000;   // fix-check LNF-16: 3 hours after picks open
   const r2 = await run(base({ raceDir: dir, prev: out, out, hoursOf: hoursOf(true), now: { time: late, libTime: late } }));
   assert.ok(r2.problems.some((p) => /form not measured/.test(p)));
   const d = JSON.parse(fs.readFileSync(path.join(out, "D2026-11-03T08.json"), "utf8"));
@@ -124,4 +124,12 @@ test("sharesByHour: each hour's card (never one older than 3 hours), every produ
   const s = sharesByHour([c1], 0, 5);
   assert.deepEqual(s[0], { [N1]: 0.75, [N2]: 0.25 });
   assert.ok(s[3]); assert.equal(s[4], null, "a card over 3 hours old isn't used");
+});
+
+test("fix-check LNF-6: a 48-hour read that never answers is cut off, and the run still finishes", async () => {
+  const dir = raceDir(), out = fs.mkdtempSync(path.join(os.tmpdir(), "lns-f3-")), t = EV.opens + 15 * 60000;
+  const started = Date.now();
+  const r = await run(base({ raceDir: dir, out, hoursOf: () => new Promise(() => {}), formDeadlineMs: 300, now: { time: t, libTime: t } }));
+  assert.ok(Date.now() - started < 30000, "finished");
+  assert.ok(r.problems.some((p) => /took over/.test(p)), r.problems.join("; "));
 });

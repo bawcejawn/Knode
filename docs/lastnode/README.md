@@ -23,6 +23,7 @@ A testnet practice copy runs on the owner's PC (`docs/lastnode/TESTNET.md`).
   - Why: on real blocks (25–29 Oct) nodes signed a steady 78%–108% of their VHP share. With VHP alone, the steadiest over-signer won 35–40% of events and two under-signers never won (`tools/sim/lastnode/form/`). On 123 days of June–October blocks, the form rule gave a fair spread for the daily game (chi² 7.4 on 7 degrees of freedom).
   - Read on both mainnet nodes (irreversible blocks, must match). If the reads fail or disagree, the field waits; an hour after picks open it is set without form (`field.form.note` says why). Who is in the field is still decided by VHP.
   - Gaming: a producer would have to sign fewer blocks for 2 days (losing real block rewards) to look weak, and the boost is capped at 1 ÷ 0.80.
+- **Known limits (fix-check, 29 Oct):** the fast test (20-minute cuts) still leans to small nodes (big third about 0.73× a fair share, small third about 1.21×); form weighs all 48 hours the same, while in race hours the main producers sign up to 1.6% off their average.
 - **No VHP rebase:** handicaps are fixed for the whole event from the field's card; VHP changes after it are not followed.
 - **The cut:** the node with the fewest handicapped steps since the start goes. Ties: fewer raw blocks, then smaller card VHP, then the address that sorts later. Totals never reset during an event; handicaps and c are fixed per event.
 - **Picks (Picks contract, game 13; owner, 2026-10-29):**
@@ -30,6 +31,7 @@ A testnet practice copy runs on the owner's PC (`docs/lastnode/TESTNET.md`).
   - Settings: a list of up to 2 producers (kind 2, list_size 2), TIME lock, one round a day (round_size 86,400,000 ms), round_offset 50,100,000 (13:55 UTC), lead 300,000, ahead 86,400,000, at most 5 changes, at most 10 picks a day.
   - Picks open at 13:55 UTC the day before and lock at 13:50 UTC, 10 minutes before the start. Nothing can be picked or changed during the race.
   - **Backup:** the first time your node is cut, the backup takes over automatically if it is still standing then (a jump; one per event). No backup, a backup already cut, or a cut of the node you jumped to, and you're out.
+  - The cut where your backup takes over doesn't count as a cut survived (your node was cut); the backup's later cuts do.
 - **Points:**
   - 1 for each cut your node survives;
   - +5 for riding the last node without jumping, +3 after a jump.

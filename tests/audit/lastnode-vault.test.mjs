@@ -147,7 +147,7 @@ test("audit LN-19: the game must be the whole number 13 (a JSON 13.0 is refused)
   assert.equal(shapeOk(dir), false);
 });
 
-test("audit LN-1: only last week's file, only inside its window, only the final board's players in the board's order", () => {
+test("audit LN-1: only last week's file, only inside its window (the rows themselves: the push step's tests below)", () => {
   for (const w of [0, 1, 2, 4, 5, 9999]) assert.equal(shapeOk(vaultDir({ ...good, week: w }, `W${w}.json`)), false, `week ${w} while week 3 is last week`);
   assert.equal(shapeOk(vaultDir(good), AT(4, 11.9)), false, "before the week is final (12 h)");
   assert.equal(shapeOk(vaultDir(good), AT(4, 12)), true, "from 12 h");
@@ -155,17 +155,6 @@ test("audit LN-1: only last week's file, only inside its window, only the final 
   const late = shapeRun(vaultDir(good), AT(4, 73.5));
   assert.equal(late.ok, true, "after the Vault's 3 days: the rest of the run still publishes"); assert.equal(late.skip, "W3.json\n", "but not the vault file");
   assert.equal(shapeOk(vaultDir(good), AT(5, 13)), false, "a week later, the file is two weeks old");
-  assert.equal(shapeOk(vaultDir({ ...good, rows: [...good.rows, { player: A("Z"), points: 1 }] })), false, "a wallet not on the board");
-  assert.equal(shapeOk(vaultDir({ ...good, rows: [{ player: P3, points: 9 }, { player: P1, points: 2 }] })), false, "rows out of the board's order");
-  assert.equal(shapeOk(vaultDir(good, "W3.json", board(3, [brow(P1, 1, 9), brow(P2, 1, 9), brow(P3, 3, 2)], false))), false, "board's last week not final");
-  assert.equal(shapeOk(vaultDir(good, "W3.json", board(2, [brow(P1, 1, 9), brow(P2, 1, 9), brow(P3, 3, 2)]))), false, "board's last week is another week");
-  // A staked subset that skips some board players is fine.
-  assert.equal(shapeOk(vaultDir({ ...good, rows: [{ player: P2, points: 9 }, { player: P4, points: 4 }] })), true);
-  // No rows while the board has scoring players: checked, but listed to skip (not published).
-  const e = shapeRun(vaultDir({ ...good, rows: [] }));
-  assert.equal(e.ok, true); assert.equal(e.skip, "W3.json\n");
-  const e2 = shapeRun(vaultDir({ ...good, rows: [] }, "W3.json", board(3, [])));
-  assert.equal(e2.ok, true); assert.equal(e2.skip, "", "nobody scored: an empty file is right");
 });
 
 // The publish step's real shell against a throwaway bare repository (bash, git): skipped on Windows.
@@ -189,11 +178,11 @@ function publisher() {
   let n = 0;
   return {
     remote, env,
-    publish(files) {
+    publish(files, extraEnv = {}) {
       const t = path.join(root, `run${++n}`), IN = path.join(t, "incoming");
       fs.mkdirSync(path.join(IN, "lastnode", "vault"), { recursive: true });
       for (const [k, v] of Object.entries(files)) fs.writeFileSync(path.join(IN, "lastnode", k), typeof v === "string" ? v : JSON.stringify(v));
-      const r = spawnSync("bash", ["-c", publishScript()], { cwd: t, env: { ...env, IN, RUNNER_TEMP: t }, encoding: "utf8" });
+      const r = spawnSync("bash", ["-c", publishScript()], { cwd: t, env: { ...env, IN, RUNNER_TEMP: t, ...extraEnv }, encoding: "utf8" });
       return { status: r.status, out: r.stdout + r.stderr };
     },
     /** Put files on games-data directly, as earlier runs would have published them. */
@@ -209,60 +198,130 @@ function publisher() {
   };
 }
 const idx = { v: 1, updated: "x", days: [], contract: null, game: 13 };
-const brd = board(3, [brow(P1, 1, 9), brow(P2, 1, 9), brow(P4, 3, 4), brow(P3, 4, 2)]);
 
-// Last week's published history (week 3 starts Monday 2026-11-09): one event with the four players' points.
-const dayW3 = { v: 1, day: "2026-11-10", start: Date.UTC(2026, 10, 10, 14), week: 3, field: null, hours: [], picks: {}, cuts: [], standing: [], winner: null, done: true,
-  players: [[P1, 9], [P2, 9], [P4, 4], [P3, 2]].map(([a, points]) => ({ a, start: P1, jumpTo: null, out: 0, survived: 0, rode: false, jumped: false, points, ranked: true })) };
-const history = (b = brd) => ({ "board.json": b, "D2026-11-10.json": dayW3, "index.json": idx });
+// Last week's history (week 3 starts Monday 2026-11-09), made by the real rules: one event, an 11-node field, one cut
+// an hour. P1 and P2 ride the winner (10 + 5 = 15), P4's node goes at cut 5 (4), P3's at cut 3 (2).
+const NODES = Array.from({ length: 11 }, (_, i) => A("ABCDEFGHJKL"[i]));
+const CUT_ORDER = NODES.slice(1), WINNER = NODES[0];
+function dayFile(day, pickRows, { hours = 10, extra = {} } = {}) {
+  const start = Date.parse(`${day}T14:00:00Z`);
+  const field = { at: start - 26 * 3600000, c: 0, fairness: null, nodes: NODES.map((a, i) => ({ a, vhp: 2000 - i * 10, kh: 100, h: 1 })) };
+  const hs = Array.from({ length: hours }, (_, i) => ({ i, from: 1000 + i * 1200, to: 2199 + i * 1200, checked: 2,
+    blocks: Object.fromEntries(NODES.filter((a) => !CUT_ORDER.slice(0, i).includes(a)).map((a) => [a, a === CUT_ORDER[i] ? 0 : 100])) }));
+  const res = L.cutsFrom(field, hs);
+  const picks = { 0: pickRows.map(([w, s0, b]) => (b ? [w, s0, start - 3600000, b] : [w, s0, start - 3600000])) };
+  const players = pickRows.map(([w, s0, b]) => ({ a: w, r: L.playerResult(field, res, { start: s0, backup: b || null }) })).filter((x) => x.r.entered)
+    .map(({ a, r }) => ({ a, start: r.start, jumpTo: r.jumpTo, out: r.out, survived: r.survived, rode: r.rode, jumped: r.jumped, points: r.points, ranked: true }))
+    .sort((x, y) => y.points - x.points || (x.a < y.a ? -1 : 1));
+  return { v: 1, day, start, week: L.weekOf(start), field, hours: hs, picks, cuts: res.cuts, standing: res.standing, winner: res.winner, done: res.done, players, ...extra };
+}
+const boardOf = (days, final = true, week = 3) => {
+  const rows = days.flatMap((d) => d.players.map((p) => ({ player: p.a, points: p.points, rode: p.rode, jumped: p.jumped, ranked: p.ranked })));
+  const rk = new Set(rows.filter((x) => x.ranked).map((x) => x.player));
+  const view = L.places(L.board(rows)).map((x) => ({ a: x.player, place: x.place, pts: x.pts, rides: x.rides, jumps: x.jumps, events: x.events, ranked: rk.has(x.player) }));
+  return { v: 1, updated: "x", today: { rows: [] }, week: { rows: [] }, lastWeek: { week, start: L.weekStart(week), final, rows: view }, allTime: { rows: [] } };
+};
+const PICKS = [[P1, WINNER], [P2, WINNER], [P4, CUT_ORDER[4]], [P3, CUT_ORDER[2]]];
+const dayW3 = dayFile("2026-11-10", PICKS);
+const brd = boardOf([dayW3]);
+const vgood = { game: 13, week: 3, final: true, rows: [{ player: P1, points: 15 }, { player: P2, points: 15 }, { player: P3, points: 2 }], first: [], second: [] };
+const history = (b = brd, day = dayW3) => ({ "board.json": b, "D2026-11-10.json": day, "index.json": { ...idx, days: ["2026-11-10"] } });
+
+test("the test history follows the rules: 15, 15, 4 and 2 points", () => {
+  assert.deepEqual(brd.lastWeek.rows.map((r) => [r.a, r.pts]), [[P1, 15], [P2, 15], [P4, 4], [P3, 2]]);
+  assert.deepEqual(vaultScores(brd.lastWeek.rows.filter((r) => r.a !== P4)), vgood.rows);
+  assert.ok(shapeOk((() => { const dir = vaultDir(vgood, "W3.json", brd); fs.writeFileSync(path.join(dir, "D2026-11-10.json"), JSON.stringify(dayW3)); return dir; })()), "and passes the shape check");
+});
 
 linux("audit LN-1: the publish step refuses a planted week, keeps a published file, and fails loudly on a different copy", () => {
   const pub = publisher();
-  const planted = pub.publish({ "index.json": idx, "board.json": brd, "vault/W9.json": { ...good, week: 9 } });
+  const planted = pub.publish({ "index.json": idx, "board.json": brd, "vault/W9.json": { ...vgood, week: 9 } });
   assert.notEqual(planted.status, 0); assert.match(planted.out, /W9.json: only last week's file/); assert.equal(pub.show("vault/W9.json"), null, "nothing published from a run with a planted week");
   assert.equal(pub.show("index.json"), null);
   pub.seed(history());
-  const first = pub.publish({ "index.json": idx, "board.json": brd, "vault/W3.json": good });
-  assert.equal(first.status, 0, first.out); assert.deepEqual(JSON.parse(pub.show("vault/W3.json")), good);
-  const same = pub.publish({ "index.json": idx, "board.json": brd, "vault/W3.json": good });
+  const first = pub.publish(history(brd));
+  assert.equal(first.status, 0, first.out);
+  const withVault = pub.publish({ ...history(), "vault/W3.json": vgood });
+  assert.equal(withVault.status, 0, withVault.out); assert.deepEqual(JSON.parse(pub.show("vault/W3.json")), vgood);
+  const same = pub.publish({ ...history(), "vault/W3.json": vgood });
   assert.equal(same.status, 0, same.out);
-  const other = { ...good, rows: [{ player: P1, points: 9 }] };
-  const diff = pub.publish({ "index.json": { ...idx, updated: "y" }, "board.json": brd, "vault/W3.json": other });
+  const other = { ...vgood, rows: [{ player: P1, points: 15 }] };
+  const diff = pub.publish({ ...history(), "index.json": { ...idx, days: ["2026-11-10"], updated: "y" }, "vault/W3.json": other });
   assert.notEqual(diff.status, 0, "a different copy fails the run"); assert.match(diff.out, /::error::Already published, and this run's copy is DIFFERENT/);
-  assert.deepEqual(JSON.parse(pub.show("vault/W3.json")), good, "the published file is kept");
+  assert.deepEqual(JSON.parse(pub.show("vault/W3.json")), vgood, "the published file is kept");
   assert.equal(JSON.parse(pub.show("index.json")).updated, "y", "the rest of the run is still published");
 });
 
-linux("fix-check: one run can't bring its own board: the rows are checked against what is already published", () => {
+linux("fix-check LNF-1: a vault file must have exactly the points last week's day files give, not only their order", () => {
   const pub = publisher();
-  // Nothing published yet: the vault file waits.
-  const r0 = pub.publish({ "index.json": idx, "board.json": brd, "vault/W3.json": good });
-  assert.equal(r0.status, 0, r0.out); assert.match(r0.out, /Holding lastnode\/vault\/W3\.json/); assert.equal(pub.show("vault/W3.json"), null);
-  // The published board isn't final yet: still waits.
-  pub.seed(history(board(3, brd.lastWeek.rows, false)));
-  const r1 = pub.publish({ "index.json": idx, "board.json": brd, "vault/W3.json": good });
-  assert.equal(r1.status, 0, r1.out); assert.match(r1.out, /until the final Last week board is published/); assert.equal(pub.show("vault/W3.json"), null);
   pub.seed(history());
-  // A bad run's own board giving a stranger 255 points: refused against the published board.
-  const X = A("X");
-  const evil = pub.publish({ "index.json": idx, "board.json": board(3, [brow(X, 1, 255)]), "vault/W3.json": { ...good, rows: [{ player: X, points: 255 }] } });
-  assert.notEqual(evil.status, 0); assert.match(evil.out, /not on the published Last week board/); assert.equal(pub.show("vault/W3.json"), null);
-  assert.deepEqual(JSON.parse(pub.show("board.json")), brd, "and nothing else from that run is published (not its board)");
-  // The published board itself must add up from the published day files.
-  pub.seed({ "board.json": board(3, [brow(P1, 1, 50), brow(P2, 2, 9), brow(P4, 3, 4), brow(P3, 4, 2)]) });
-  const pumped = pub.publish({ "index.json": idx, "board.json": board(3, [brow(P1, 1, 50), brow(P2, 2, 9), brow(P4, 3, 4), brow(P3, 4, 2)]), "vault/W3.json": { ...good, rows: [{ player: P1, points: 50 }] } });
-  assert.notEqual(pumped.status, 0); assert.match(pumped.out, /don't give the board's points/);
-  pub.seed(history());
-  const ok = pub.publish({ "index.json": idx, "board.json": brd, "vault/W3.json": good });
-  assert.equal(ok.status, 0, ok.out); assert.deepEqual(JSON.parse(pub.show("vault/W3.json")), good);
+  for (const [why, rows] of [["inflated points, same order", [{ player: P1, points: 255 }, { player: P2, points: 1 }, { player: P3, points: 1 }]],
+    ["a stranger", [{ player: A("X"), points: 255 }]], ["out of order", [{ player: P3, points: 15 }, { player: P1, points: 2 }]]]) {
+    const r = pub.publish({ ...history(), "vault/W3.json": { ...vgood, rows } });
+    assert.notEqual(r.status, 0, why); assert.match(r.out, /its rows aren't what last week's day files give/, why);
+    assert.equal(pub.show("vault/W3.json"), null, why);
+  }
+  // A staked subset (P4 not staked) with the board's own points is what the recorder writes: accepted.
+  const ok = pub.publish({ ...history(), "vault/W3.json": vgood });
+  assert.equal(ok.status, 0, ok.out); assert.deepEqual(JSON.parse(pub.show("vault/W3.json")), vgood);
 });
 
-linux("audit LN-1/LN-2: a file with no rows while the board has scoring players is not published", () => {
+linux("fix-check LNF-5: a vault file that doesn't match is left out, the rest is published, and the run fails", () => {
   const pub = publisher();
   pub.seed(history());
-  const r = pub.publish({ "index.json": idx, "board.json": brd, "vault/W3.json": { ...good, rows: [] } });
-  assert.equal(r.status, 0, r.out); assert.match(r.out, /has no rows while last week's board has scoring players; not published/);
+  const r = pub.publish({ ...history(), "index.json": { ...idx, days: ["2026-11-10"], updated: "z" }, "vault/W3.json": { ...vgood, rows: [{ player: P1, points: 255 }] } });
+  assert.notEqual(r.status, 0); assert.equal(JSON.parse(pub.show("index.json")).updated, "z", "the rest is published"); assert.equal(pub.show("vault/W3.json"), null);
+});
+
+linux("fix-check LNF-2: published history can't be rewritten (days, fields, picks, a final week)", () => {
+  const pub = publisher();
+  pub.seed(history());
+  const X = A("X");
+  // A bad run adds a stranger to a finished day, with a board that adds up: refused, nothing published.
+  const planted = dayFile("2026-11-10", [...PICKS, [X, WINNER]]);
+  const r1 = pub.publish(history(boardOf([planted]), planted));
+  assert.notEqual(r1.status, 0); assert.match(r1.out, /picks changed after they were published|finished event's results changed/);
+  assert.deepEqual(JSON.parse(pub.show("D2026-11-10.json")), dayW3, "the published day is kept");
+  // A changed field (other handicaps) after picks open.
+  const f2 = { ...dayW3, field: { ...dayW3.field, nodes: dayW3.field.nodes.map((n, i) => (i === 3 ? { ...n, h: 1.5 } : n)) } };
+  const r2 = pub.publish(history(brd, f2));
+  assert.notEqual(r2.status, 0); assert.match(r2.out, /field changed after it was published/);
+  // Players that don't follow from the picks (LNF-23), even on a first publish.
+  const pub2 = publisher();
+  const fake = { ...dayW3, players: dayW3.players.map((p) => (p.a === P3 ? { ...p, points: 70 } : p)) };
+  const r3 = pub2.publish(history(boardOf([fake]), fake));
+  assert.notEqual(r3.status, 0); assert.match(r3.out, /players don't follow from its picks and cuts/);
+  // A board whose final last week doesn't add up from the day files.
+  const r4 = pub.publish(history({ ...brd, lastWeek: { ...brd.lastWeek, rows: brd.lastWeek.rows.map((r) => (r.a === P3 ? { ...r, pts: 50 } : r)) } }));
+  assert.notEqual(r4.status, 0); assert.match(r4.out, /last week's rows don't add up from the day files/);
+});
+
+linux("fix-check LNF-2: a running day may only add hours; LNF-10: a day's week must be its start's", () => {
+  const pub = publisher();
+  const part = dayFile("2026-11-10", PICKS, { hours: 4 });
+  pub.seed({ "D2026-11-10.json": part, "index.json": { ...idx, days: ["2026-11-10"] } });
+  const more = pub.publish({ "D2026-11-10.json": dayW3, "board.json": brd, "index.json": { ...idx, days: ["2026-11-10"] } });
+  assert.equal(more.status, 0, more.out);
+  const pub2 = publisher();
+  const wrongWeek = { ...dayW3, week: 2 };
+  const r = pub2.publish({ "D2026-11-10.json": wrongWeek, "index.json": { ...idx, days: ["2026-11-10"] } });
+  assert.notEqual(r.status, 0);
+});
+
+linux("audit LN-1/LN-2: a file with no rows while the week has scoring players is not published", () => {
+  const pub = publisher();
+  pub.seed(history());
+  const r = pub.publish({ ...history(), "vault/W3.json": { ...vgood, rows: [] } });
+  assert.equal(r.status, 0, r.out); assert.match(r.out, /has no rows while last week has scoring players; not published/);
   assert.equal(pub.show("vault/W3.json"), null); assert.ok(pub.show("board.json"));
-  const later = pub.publish({ "index.json": idx, "board.json": brd, "vault/W3.json": good });
-  assert.equal(later.status, 0, later.out); assert.deepEqual(JSON.parse(pub.show("vault/W3.json")), good, "the real file still gets in later");
+  const later = pub.publish({ ...history(), "vault/W3.json": vgood });
+  assert.equal(later.status, 0, later.out); assert.deepEqual(JSON.parse(pub.show("vault/W3.json")), vgood, "the real file still gets in later");
+});
+
+linux("fix-check LNF-12: the Vault's 3 days end with no file while the week had scoring players: the run fails so you're told", () => {
+  const pub = publisher();
+  pub.seed(history());
+  const env = { KG_TEST_NOW: AT(4, 72.5) };
+  const r = pub.publish(history(), env);
+  assert.notEqual(r.status, 0); assert.match(r.out, /no vault file was published/);
 });

@@ -111,9 +111,9 @@
       const j = await fetchJson(`${DATA}D${day}.json`);
       // Audit LN-24/LN-32: the event's own start, and no more nodes than the rules allow.
       if (j && j.v === 1 && j.day === day && ev0 && j.start === ev0.start && (j.field === null || (j.field && Array.isArray(j.field.nodes) && j.field.nodes.length <= L.MAX_FIELD))) {
-        if (j.field) j.field.nodes = j.field.nodes.filter((n) => n && isAddr(n.a) && Number.isFinite(n.h) && n.h > 0 && (n.r === undefined || (Number.isFinite(n.r) && n.r >= L.FORM_MIN && n.r <= L.FORM_MAX)));
-        days.set(day, j);
-        return;
+        // Fix-check LNF-15: one bad node and the whole file is refused (never a field with a node quietly left out).
+        const nodeOk = (n) => n && isAddr(n.a) && Number.isFinite(n.h) && n.h > 0 && (n.r === undefined || (Number.isFinite(n.r) && n.r >= L.FORM_MIN && n.r <= L.FORM_MAX));
+        if (!j.field || j.field.nodes.every(nodeOk)) { days.set(day, j); return; }
       }
     } catch (e) {
       // Audit LN-29: a failed read (not "not published yet") keeps the recorder's file the page already has.
@@ -346,6 +346,9 @@
         TESTNET ? el("button", { class: "ln-go", type: "button", onclick: () => walletButton() }, "Play free") : null);
       return;
     }
+    // Fix-check LNF-25: between the lock and the start, your locked pick for the race about to start.
+    const locked = df && df.field && now < ev.start && now >= lockAt(ev.round) ? picksFor(ev) : null;
+    if (locked) parts.push(el("p", { class: "ln-cta", text: `Locked in for the ${clock(ev.start)} race: ${nameOf(locked.start)}${locked.backup ? `, backup ${nameOf(locked.backup)}` : ", no backup"}` }));
     // The event running now: your run (nothing can be picked or changed once it starts).
     if (df && df.field && res && now >= ev.start && !res.done) {
       // Audit LN-4: until your picks have been read, the page doesn't say you're not in (or out).
@@ -368,7 +371,7 @@
         !start ? "Choose your node" : same ? "Locked in. Tap a card to change it" : `Lock in: ${nameOf(start)}${backup ? `, backup ${nameOf(backup)}` : ", no backup"}`);
       if (sending || !start || same) go.disabled = true;
       parts.push(el("div", { class: "ln-act" },
-        el("p", { class: "ln-cta", text: mineNext ? `You drop in on ${nameOf(mineNext.start)} at ${clock(nx.start)}${mineNext.backup ? `, backup ${nameOf(mineNext.backup)}` : ""}` : `Pick your node for the ${clock(nx.start)} drop` }),
+        el("p", { class: "ln-cta", text: mineNext ? `You drop in on ${nameOf(mineNext.start)} ${dayTime(nx.start)}${mineNext.backup ? `, backup ${nameOf(mineNext.backup)}` : ""}` : `Pick your node for the ${dayTime(nx.start)} drop` }),
         el("p", { class: "note", style: "margin:0", text: `Picks close in ${dur(cutoff(nx.round) - now)}, at ${clock(cutoff(nx.round))}${mineNext ? "; you can change your pick until then" : ""}. Nothing can be picked or changed once the race starts. Tip: a node that signs every block it should is hard to knock out.` }),
         el("h3", { class: "ln-pick-h", text: "Your node" }),
         picker("Your node", nodes, mineNext && mineNext.start, null, "", kS, nf, false),
@@ -524,6 +527,9 @@
     const producers = isAddr(backup) && backup !== start ? [start, backup] : [start];
     const cur = myPicks.get(round);
     if (cur && cur.start === start && (cur.backup || null) === (producers[1] || null)) return pickModal("info", "That is already your pick", [`${nameOf(start)}${producers[1] ? `, backup ${nameOf(producers[1])}` : ""} is ${what}.`], [okBtn("OK")]);
+    if (!offsets.length) return pickModal("info", "Checking the time…", ["The page is still reading the chain's time. Try again in a moment."], [okBtn("OK")]);
+    // Fix-check LNF-29: the wallet that loaded these picks is the one sending.
+    if (who !== mineWho) return;
     if (!pickable(round)) return pickModal("bad", nowT() < openAt(round) ? "Not open yet" : "Too close to the lock", [nowT() < openAt(round) ? `Picks for this event open at ${clock(openAt(round))}.` : "Picks lock in under a minute. Yours can't be sent safely now."], [okBtn("OK")]);
     sending = true; render();
     const line = `${nameOf(start)}${producers[1] ? `, backup ${nameOf(producers[1])}` : ", no backup"} as ${what} (locks ${clock(lockAt(round))})`;
@@ -578,6 +584,8 @@
     await loadBlocks(); render();
     await picksReady; await loadMine(); render();
     setInterval(() => { if (!document.hidden) loadBlocks().then(render); }, 30000);
+    // Fix-check LNF-11: after the tab or device sleeps, the steady timer may have stopped: read the chain's time again.
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) { offsets.length = 0; loadBlocks().then(render); } });
     setInterval(() => { if (!document.hidden) loadAll().then(() => { render(); renderBoard(); }); }, 120000);
     setInterval(() => { if (!document.hidden && picksContract) loadMine().then(render); }, 60000);
     setInterval(() => { if (!document.hidden) tick(); }, 1000);

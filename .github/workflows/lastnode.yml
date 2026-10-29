@@ -108,12 +108,14 @@ jobs:
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
           bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/lastnode" ! -path "$IN/lastnode/vault" \) -o \( -type f ! -regex "$IN/lastnode/\(index\|board\|D[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\)\.json" ! -regex "$IN/lastnode/vault/W[0-9][0-9]*\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
+          # Fix-check LNF-7: a file over 2 MB is left out (and the run fails at the end so you're told); the rest publishes.
           big=$(find "$IN" -type f -size +2048k -print)
-          if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
+          if [ -n "$big" ]; then echo "::error::Not publishing files over 2 MB: $big"; find "$IN" -type f -size +2048k -delete; fi
           # The content must be the recorder's own shape, not only parse as JSON.
           /usr/bin/python3 - "$IN/lastnode" <<'PY'
           import json, os, re, sys, datetime
           d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}"); dayre = re.compile(r"\d{4}-\d{2}-\d{2}")
+          WEEK0, WEEK = 1792368000000, 7 * 86400000
           num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
           nat = lambda x: type(x) is int and 0 <= x < 10**16
           isa = lambda x: type(x) is str and addr.fullmatch(x) is not None
@@ -126,15 +128,18 @@ jobs:
                   and (("note" in fm and type(fm["note"]) is str and len(fm["note"]) <= 120) or (nat(fm.get("from")) and nat(fm.get("to")) and fm["to"] - fm["from"] == 48 * 3600000))): return False
               if not (f["fairness"] is None or (type(f["fairness"]) is list and len(f["fairness"]) == 2 and all(num(x) and 0 <= x <= 1 for x in f["fairness"]))): return False
               n = f["nodes"]
-              return type(n) is list and 2 <= len(n) <= 23 and len({x.get("a") for x in n if type(x) is dict}) == len(n) and all(
-                  type(x) is dict and set(x) in ({"a", "vhp", "kh", "h"}, {"a", "vhp", "kh", "h", "r"}) and isa(x["a"]) and num(x["vhp"]) and x["vhp"] > 0 and num(x["kh"]) and x["kh"] >= 16 and num(x["h"]) and 0 < x["h"] < 1e4
-                  and ("r" not in x or (num(x["r"]) and 0.8 <= x["r"] <= 1.2)) for x in n) and len({("r" in x) for x in n}) == 1
+              return (type(n) is list and 2 <= len(n) <= 23 and len({x.get("a") for x in n if type(x) is dict}) == len(n) and all(
+                  type(x) is dict and set(x) in ({"a", "vhp", "kh", "h"}, {"a", "vhp", "kh", "h", "r"}) and isa(x["a"]) and num(x["vhp"]) and x["vhp"] > 0 and num(x["kh"]) and num(x["h"]) and 0 < x["h"] < 1e4
+                  # Fix-check LNF-14: 20 blocks an hour by VHP (kh ÷ form when there is form).
+                  and ("r" not in x or (num(x["r"]) and 0.8 <= x["r"] <= 1.2)) and x["kh"] / x.get("r", 1) >= 19.99 for x in n) and len({("r" in x) for x in n}) == 1
+                  # The form's note and its numbers go together.
+                  and (("r" in n[0]) == (type(fm) is dict and "from" in fm)))
           def day_ok(f, j):
               keys = {"v", "day", "start", "week", "field", "hours", "picks", "cuts", "standing", "winner", "done", "players"}
               if type(j) is not dict or not (keys <= set(j) <= keys | {"void"}) or j["v"] != 1: return False
               if not (type(j["day"]) is str and dayre.fullmatch(j["day"]) and f == "D%s.json" % j["day"]): return False
               start = int(datetime.datetime.strptime(j["day"], "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).timestamp() * 1000) + 14 * 3600000
-              if j["start"] != start or not nat(j["week"]) or not field_ok(j["field"]): return False
+              if j["start"] != start or not nat(j["week"]) or j["week"] != (0 if start <= WEEK0 else (start - WEEK0) // WEEK) or not field_ok(j["field"]): return False
               if "void" in j and (type(j["void"]) is not str or len(j["void"]) > 200): return False
               names = {x["a"] for x in j["field"]["nodes"]} if j["field"] else set()
               hs = j["hours"]
@@ -163,17 +168,13 @@ jobs:
                   and all(nat(x[k]) for k in ("place", "pts", "rides", "jumps", "events")) and type(x["ranked"]) is bool for x in b["rows"])
           # The weekly vault file (Vault v6 hand-off, 2026-10-28): game 13, a staked game, so points rows and no prize places.
           # Audit LN-1: only LAST week's file, and only while the recorder may write it (from 12 h after the week ends, when
-          # it is final, to the Vault's 3-day limit; a few minutes' leeway for the runner's clock against chain time). Its
-          # rows must be the final "Last week" board's players, in the board's order. Nothing else can reach the Vault.
-          # A file that arrives after the window (a long queue on GitHub) is left out with a warning, not the whole run.
-          # The push step below also checks the rows against what earlier runs already PUBLISHED (fix-check: one bad run
-          # can't bring its own board).
-          WEEK0 = datetime.datetime(2026, 10, 19, tzinfo=datetime.timezone.utc).timestamp() * 1000
-          WEEK, HOUR = 7 * 86400000, 3600000
+          # it is final, to the Vault's 3-day limit). A file that arrives after the window (a long queue on GitHub) is left
+          # out with a warning, not the whole run. Its rows are checked in the push step (histcheck.py): exactly what last
+          # week's day files give, and those day files can't be rewritten once published.
+          HOUR = 3600000
           now = float(os.environ.get("KG_TEST_NOW") or datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)  # tests only
           now_w = int((now - WEEK0) // WEEK)
           ws = WEEK0 + now_w * WEEK
-          board = json.load(open(os.path.join(d, "board.json"), encoding="utf-8")) if os.path.isfile(os.path.join(d, "board.json")) else None
           vd = os.path.join(d, "vault")
           skip = []
           if os.path.isdir(vd):
@@ -188,14 +189,7 @@ jobs:
                   rs = j["rows"]
                   assert type(rs) is list and len(rs) <= 100000 and all(type(x) is dict and set(x) == {"player", "points"} and isa(x["player"]) and type(x["points"]) is int and 1 <= x["points"] <= 255 for x in rs), f
                   assert len({x["player"] for x in rs}) == len(rs) and all(rs[i]["points"] >= rs[i + 1]["points"] for i in range(len(rs) - 1)), f
-                  lw = board and board.get("lastWeek")
-                  assert type(lw) is dict and lw.get("week") == j["week"] and lw.get("final") is True and type(lw.get("rows")) is list, "%s: board.json's Last week is not that final week" % f
-                  order = {x["a"]: i for i, x in enumerate(lw["rows"]) if type(x) is dict and type(x.get("pts")) is int and x["pts"] >= 1}
-                  assert all(x["player"] in order for x in rs), "%s: a row that is not on the Last week board" % f
-                  assert all(order[rs[i]["player"]] < order[rs[i + 1]["player"]] for i in range(len(rs) - 1)), "%s: rows not in the board's order" % f
-                  # No rows while the board has scoring players: the stakes may not have been read. Don't publish it (the
-                  # Vault keeps the week's bucket in the game if no file comes); the recorder tries again next run.
-                  if rs == [] and order: skip.append(f)
+                  # The rows themselves are checked in the push step (histcheck.py): exactly what last week's day files give.
           open(os.path.join(os.environ["RUNNER_TEMP"], "vault-skip.txt"), "w").write("".join(x + "\n" for x in skip))
           for f in os.listdir(d):
               if f == "vault": continue
@@ -215,35 +209,175 @@ jobs:
           print("lastnode files ok")
           PY
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          # The vault file's rows against the published "Last week" board and the published day files of that week:
-          # exit 3 = not final there yet (try next run), 1 = a mismatch (not published, the run fails).
-          cat > vaultcheck.py <<'PY'
-          import json, subprocess, sys, datetime
-          parent, f = sys.argv[1], sys.argv[2]
-          show = lambda p: subprocess.run(["git", "show", "%s:%s" % (parent, p)], capture_output=True, text=True)
-          j = json.load(open(f, encoding="utf-8")); w = j["week"]
-          r = show("lastnode/board.json")
-          if r.returncode: sys.exit(3)
-          lw = json.loads(r.stdout).get("lastWeek")
-          if type(lw) is not dict or lw.get("week") != w or lw.get("final") is not True: sys.exit(3)
-          rows = [x for x in lw.get("rows") or [] if type(x) is dict and type(x.get("pts")) is int and x["pts"] >= 1]
-          order = {x["a"]: i for i, x in enumerate(rows)}
-          rs = j["rows"]
-          if not all(x["player"] in order for x in rs): sys.exit("::error::%s: a row that is not on the published Last week board" % f)
-          if not all(order[rs[i]["player"]] < order[rs[i + 1]["player"]] for i in range(len(rs) - 1)): sys.exit("::error::%s: rows not in the published board's order" % f)
-          # The published board's points must be the sum of the published day files of that week.
-          start = datetime.datetime(2026, 10, 19, tzinfo=datetime.timezone.utc) + datetime.timedelta(weeks=w)
-          pts = {}
-          for k in range(7):
-              d = show("lastnode/D%s.json" % (start + datetime.timedelta(days=k)).strftime("%Y-%m-%d"))
-              if d.returncode: continue
-              dj = json.loads(d.stdout)
-              if dj.get("week") != w or "void" in dj: continue
-              for p in dj.get("players") or []:
-                  if type(p) is dict and type(p.get("points")) is int: pts[p.get("a")] = pts.get(p.get("a"), 0) + p["points"]
-          bad = [x["player"] for x in rs if pts.get(x["player"], 0) != rows[order[x["player"]]]["pts"]]
-          if bad: sys.exit("::error::%s: the published day files don't give the board's points for %s" % (f, bad[0]))
-          PY
+          # Fix-check LNF-1, LNF-2, LNF-10, LNF-12, LNF-23: every incoming file against the rules and against what is already
+          # published (histcheck.py, below). Exit 1 = a file breaks the rules or rewrites history: nothing is published.
+          cat > histcheck.py <<'HIST'
+          import json, math, os, subprocess, sys
+          # Fix-check LNF-1, LNF-2, LNF-10, LNF-12, LNF-23: the incoming files against the rules and against what is already
+          # published. Every day file is replayed (cuts, standing, winner, players from its field, hours and picks); a published
+          # field, its picks, its hours so far, a finished event and a final week never change; last week's board must add up
+          # from the day files; a vault file must be exactly what that board gives (the recorder's vaultScores) for the wallets
+          # it lists. Usage: histcheck.py <parent commit or ""> <incoming lastnode dir> <now ms> <status file>
+          # Exit 1 = something doesn't follow the rules or rewrites history: nothing from this run is published.
+          parent, d, now, status = sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4]
+          H, DAY, WEEK0, WEEK = 3600000, 86400000, 1792368000000, 7 * 86400000
+          weekOf = lambda t: 0 if t <= WEEK0 else (t - WEEK0) // WEEK
+          errs = []
+          def bad(msg): errs.append(msg)
+          def show(p):
+              if not parent: return None
+              r = subprocess.run(["git", "show", "%s:%s" % (parent, p)], capture_output=True, text=True)
+              return json.loads(r.stdout) if r.returncode == 0 else None
+          def published_days():
+              if not parent: return []
+              r = subprocess.run(["git", "ls-tree", "--name-only", parent, "lastnode/"], capture_output=True, text=True)
+              return [os.path.basename(x)[1:-5] for x in r.stdout.split() if os.path.basename(x).startswith("D") and x.endswith(".json")]
+
+          # ── the rules (ports of lastnode-math.js cutsFrom and playerResult; the board as the recorder builds it) ──
+          BONUS_STAYED, BONUS_JUMPED = 5, 3
+          def h_int(n): return math.floor(n["h"] * 10000 + 0.5)           # JavaScript's Math.round
+          def cuts_from(field, hours):
+              nodes = field["nodes"]; n = len(nodes)
+              steps, blocks, out, cuts = [0] * n, [0] * n, [0] * n, []
+              for hr, hrow in enumerate(hours):
+                  if len(cuts) >= n - 1: break
+                  b = hrow.get("blocks") or {}
+                  for i in range(n):
+                      if not out[i]: k = int(b.get(nodes[i]["a"], 0)); blocks[i] += k; steps[i] += k * h_int(nodes[i])
+                  worst = -1
+                  for i in range(n):
+                      if out[i]: continue
+                      if worst < 0: worst = i; continue
+                      w = worst
+                      if steps[i] < steps[w] or (steps[i] == steps[w] and (blocks[i] < blocks[w] or (blocks[i] == blocks[w] and
+                          (nodes[i]["vhp"] < nodes[w]["vhp"] or (nodes[i]["vhp"] == nodes[w]["vhp"] and nodes[i]["a"] > nodes[w]["a"]))))): worst = i
+                  out[worst] = len(cuts) + 1
+                  cuts.append({"at": hr + 1, "a": nodes[worst]["a"], "steps": steps[worst], "blocks": blocks[worst]})
+              standing = [x["a"] for i, x in enumerate(nodes) if not out[i]]
+              done = len(cuts) == n - 1
+              return {"cuts": cuts, "standing": standing, "done": done, "winner": standing[0] if done else None}
+          def player_result(field, res, start, backup):
+              names = [x["a"] for x in field["nodes"]]
+              r = {"start": start, "jumpTo": None, "out": 0, "survived": 0, "rode": False, "jumped": False, "points": 0}
+              if backup == start or backup not in names: backup = None
+              node, standing = start, set(names)
+              for k, c in enumerate(res["cuts"]):
+                  standing.discard(c["a"])
+                  if r["out"]: continue
+                  if c["a"] != node: r["survived"] += 1; continue
+                  if not r["jumped"] and backup and backup in standing: r["jumped"] = True; r["jumpTo"] = backup; node = backup
+                  else: r["out"] = k + 1
+              if res["done"] and not r["out"] and node == res["winner"]: r["rode"] = True; r["points"] = r["survived"] + (BONUS_JUMPED if r["jumped"] else BONUS_STAYED)
+              else: r["points"] = r["survived"]
+              return r
+          def replay(j):
+              """The cuts and players a day file's own field, hours and picks give (None for a void or field-less day)."""
+              if "void" in j or not j["field"]: return None
+              res = cuts_from(j["field"], j["hours"])
+              names = {x["a"] for x in j["field"]["nodes"]}
+              by = {}
+              for row in j["picks"].get("0", []): by[row[0]] = (row[1], row[3] if len(row) == 4 else None)
+              players = []
+              for a, (s, b) in by.items():
+                  if s not in names: continue
+                  p = player_result(j["field"], res, s, b); p["a"] = a; players.append(p)
+              players.sort(key=lambda p: (-p["points"], p["a"]))
+              return res, players
+          def strip_ranked(ps): return [{k: v for k, v in p.items() if k != "ranked"} for p in ps]
+          def board_rows(days):
+              """The recorder's view(): points, rides, fewer jumps, address; places shared by equal players; ranked if any row was."""
+              by, rk = {}, set()
+              for j in days:
+                  if "void" in j: continue
+                  for p in j["players"]:
+                      b = by.setdefault(p["a"], {"a": p["a"], "pts": 0, "rides": 0, "jumps": 0, "events": 0})
+                      b["pts"] += p["points"]; b["rides"] += 1 if p["rode"] else 0; b["jumps"] += 1 if p["jumped"] else 0; b["events"] += 1
+                      if p["ranked"]: rk.add(p["a"])
+              rows = sorted(by.values(), key=lambda b: (-b["pts"], -b["rides"], b["jumps"], b["a"]))
+              place, out = 0, []
+              for i, r in enumerate(rows):
+                  q = rows[i - 1] if i else None
+                  if not q or q["pts"] != r["pts"] or q["rides"] != r["rides"] or q["jumps"] != r["jumps"]: place = i + 1
+                  out.append({"a": r["a"], "place": place, "pts": r["pts"], "rides": r["rides"], "jumps": r["jumps"], "events": r["events"], "ranked": r["a"] in rk})
+              return out
+          def vault_scores(ranked):
+              """The recorder's vaultScores: the board's order and ties on 1–255."""
+              rows = [r for r in ranked if r["pts"] >= 1]
+              key = lambda r: (r["pts"], r["rides"], r["jumps"])
+              groups = []
+              for r in rows:
+                  if not groups or groups[-1] != key(r): groups.append(key(r))
+              keep = all(i == 0 or ((rows[i - 1]["pts"] == r["pts"]) == (key(rows[i - 1]) == key(r))) for i, r in enumerate(rows)) and all(r["pts"] <= 255 for r in rows)
+              if keep: return [{"player": r["a"], "points": r["pts"]} for r in rows]
+              rank = {g: max(1, min(255, len(groups)) - i) for i, g in enumerate(groups)}
+              return [{"player": r["a"], "points": rank[key(r)]} for r in rows]
+
+          # ── day files: the rules, and what is already published ──
+          inc = {}
+          for f in os.listdir(d):
+              if f.startswith("D") and f.endswith(".json"): inc[f[1:-5]] = json.load(open(os.path.join(d, f), encoding="utf-8"))
+          merged = {}
+          for day in published_days():
+              j = show("lastnode/D%s.json" % day)
+              if j is not None: merged[day] = j
+          pub = dict(merged)
+          for day, j in inc.items():
+              f = "D%s.json" % day
+              if j["week"] != weekOf(j["start"]): bad("%s: week %s isn't the week of its start" % (f, j["week"]))       # LNF-10
+              for i in range(len(j["hours"])):
+                  if j["start"] + (i + 1) * H > now + 120000: bad("%s: hour %d is recorded before it ended" % (f, i))
+              rp = replay(j)
+              if rp is not None:
+                  res, players = rp
+                  if [j["cuts"], j["standing"], j["winner"], j["done"]] != [res["cuts"], res["standing"], res["winner"], res["done"]]: bad("%s: the cuts don't follow from its field and hours" % f)
+                  if strip_ranked(j["players"]) != players: bad("%s: the players don't follow from its picks and cuts" % f)          # LNF-23
+              elif j["players"] or j["cuts"]: bad("%s: players or cuts without a field" % f)
+              old = pub.get(day)
+              if old is not None:
+                  if old.get("field") and j["field"] != old["field"]: bad("%s: the field changed after it was published" % f)        # LNF-2
+                  if old["picks"] and j["picks"] != old["picks"]: bad("%s: the picks changed after they were published" % f)
+                  if j["hours"][:len(old["hours"])] != old["hours"]: bad("%s: published hours changed" % f)
+                  if "void" in old and j != old: bad("%s: a void event changed" % f)
+                  if "void" in j and "void" not in old and (old["done"] or now - j["start"] <= 3 * DAY): bad("%s: made void while it can still be recorded" % f)
+                  if old["done"] and strip_ranked(j["players"]) != strip_ranked(old["players"]): bad("%s: a finished event's results changed" % f)
+              merged[day] = j
+
+          # ── last week's board and the vault file ──
+          now_w = weekOf(now)
+          lw_days = [j for j in merged.values() if j["week"] == now_w - 1 and j["start"] < now]
+          want = board_rows(lw_days)
+          def week_board(b):
+              lw = b and b.get("lastWeek")
+              return lw if type(lw) is dict and lw.get("week") == now_w - 1 else None
+          inc_board = json.load(open(os.path.join(d, "board.json"), encoding="utf-8")) if os.path.isfile(os.path.join(d, "board.json")) else None
+          pub_board = show("lastnode/board.json")
+          ib, pb = week_board(inc_board), week_board(pub_board)
+          if ib and ib["rows"] != want: bad("board.json: last week's rows don't add up from the day files")
+          if pb and pb.get("final") and ib and (ib.get("final") is not True or ib["rows"] != pb["rows"]): bad("board.json: last week was final and has changed")
+          final = bool((ib and ib.get("final")) or (pb and pb.get("final")))
+          lines = []
+          vd = os.path.join(d, "vault")
+          for f in sorted(os.listdir(vd)) if os.path.isdir(vd) else []:
+              j = json.load(open(os.path.join(vd, f), encoding="utf-8"))
+              if j["week"] != now_w - 1: continue                                            # the shape check refuses these
+              if not final: lines.append("%s hold" % f); continue
+              listed = {x["player"] for x in j["rows"]}
+              scoring = {r["a"] for r in want if r["pts"] >= 1}
+              # No rows while the week has scoring players: the stakes may not have been read (audit LN-2). Not published; the
+              # recorder tries again next run (the Vault keeps the bucket in the game if no file comes).
+              if not listed and scoring: lines.append("%s empty" % f); continue
+              exp = vault_scores([r for r in want if r["a"] in listed])                       # LNF-1: points, not only order
+              if not listed <= scoring or j["rows"] != exp: lines.append("%s bad" % f); print("::error::vault/%s: its rows aren't what last week's day files give" % f)
+              else: lines.append("%s ok" % f)
+          # LNF-12: the Vault's 3 days end with no file while the week had scoring players: say so (the run fails at the end).
+          ws = WEEK0 + now_w * WEEK
+          if ws + 3 * DAY <= now < ws + 3 * DAY + 2 * H and any(r["pts"] >= 1 for r in want) and parent and show("lastnode/vault/W%d.json" % (now_w - 1)) is None:
+              lines.append("W%d.json unfiled" % (now_w - 1))
+          open(status, "w").write("".join(x + "\n" for x in lines))
+          for e in errs: print("::error::" + e)
+          sys.exit(1 if errs else 0)
+          HIST
+          now_ms=${KG_TEST_NOW:-$(date +%s%3N)}
           git init -q work && cd work
           export GIT_AUTHOR_NAME=kpred-bot GIT_AUTHOR_EMAIL=kpred-bot@users.noreply.github.com GIT_COMMITTER_NAME=kpred-bot GIT_COMMITTER_EMAIL=kpred-bot@users.noreply.github.com
           # Other games publish to the same branch: if a push loses the race, take the new branch tip and try again.
@@ -258,6 +392,7 @@ jobs:
               git show "$parent:lastnode/index.json" > ../old-index.json
               /usr/bin/python3 -c 'import json,sys; o=set(json.load(open(sys.argv[1])).get("days") or []); n=set(json.load(open(sys.argv[2]))["days"]); missing=sorted(o-n); sys.exit("::error::Refusing to publish: days missing from index.json: %s" % missing[:10]) if missing else None' ../old-index.json "$IN/lastnode/index.json"
             fi
+            if ! /usr/bin/python3 -I ../histcheck.py "$parent" "$IN/lastnode" "$now_ms" ../vault-status.txt; then echo "::error::Refusing to publish this run: its files break the rules or change published history."; exit 1; fi
             for f in "$IN"/lastnode/*.json; do
               blob=$(git hash-object -w "$f")
               git update-index --add --cacheinfo 100644 "$blob" "lastnode/$(basename "$f")"
@@ -268,22 +403,21 @@ jobs:
             for f in "$IN"/lastnode/vault/W*.json; do
               [ -e "$f" ] || continue
               name="lastnode/vault/$(basename "$f")"
-              if grep -qxF "$(basename "$f")" "$RUNNER_TEMP/vault-skip.txt"; then echo "::warning::$name has no rows while last week's board has scoring players; not published (tried again next run)."; continue; fi
+              if grep -qxF "$(basename "$f")" "$RUNNER_TEMP/vault-skip.txt"; then echo "::warning::$name arrived after the Vault's 3 days; not published."; continue; fi
               blob=$(git hash-object -w "$f")
               if [ -n "$parent" ] && old=$(git rev-parse -q --verify "$parent:$name" 2>/dev/null); then
                 if [ "$old" != "$blob" ]; then differs="$differs $name"; fi
                 continue
               fi
-              # First publish of this week's file: its rows must match the board and day files already on games-data.
-              if [ -z "$parent" ]; then echo "Holding $name: nothing published yet to check it against."; continue; fi
-              rc=0; /usr/bin/python3 -I ../vaultcheck.py "$parent" "$f" || rc=$?
-              if [ "$rc" = 3 ]; then echo "Holding $name until the final Last week board is published (next run)."; continue; fi
-              if [ "$rc" != 0 ]; then vbad="$vbad $name"; continue; fi
-              git update-index --add --cacheinfo 100644 "$blob" "$name"
+              # First publish of this week's file: histcheck.py compared it with last week's day files.
+              st=$(grep -E "^$(basename "$f") " ../vault-status.txt | cut -d' ' -f2 || true)
+              case "$st" in
+                ok) git update-index --add --cacheinfo 100644 "$blob" "$name" ;;
+                hold) echo "Holding $name until last week is final (next run)." ;;
+                empty) echo "::warning::$name has no rows while last week has scoring players; not published (tried again next run)." ;;
+                *) vbad="$vbad $name" ;;
+              esac
             done
-            # A vault file that doesn't match the published history: nothing from this run is published (its board and
-            # day files are suspect too).
-            if [ -n "$vbad" ]; then echo "::error::Refusing to publish this run: the vault file doesn't match what is already published:$vbad"; exit 1; fi
             tree=$(git write-tree)
             if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; nochange=1; break; fi
             commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "games: last node standing")
@@ -291,5 +425,9 @@ jobs:
             if [ "$try" = 3 ]; then echo "::error::Couldn't push games-data after 3 tries."; exit 1; fi
             sleep $((try * 5))
           done
+          # Fix-check LNF-5: a vault file that doesn't match is left out; the rest is published, and the run fails here.
+          if [ -n "$vbad" ]; then echo "::error::Not published: the vault file doesn't match last week's day files:$vbad"; exit 1; fi
+          if grep -q " unfiled$" ../vault-status.txt 2>/dev/null; then echo "::error::The Vault's 3 days for last week are over and no vault file was published (the week's bucket stays in the game). Check the recorder."; exit 1; fi
+          if [ -n "${big:-}" ]; then echo "::error::Left out (over 2 MB): $big"; exit 1; fi
           if [ -n "$differs" ]; then echo "::error::Already published, and this run's copy is DIFFERENT (kept the published one; check it before the Vault seals):$differs"; exit 1; fi
           [ -n "${nochange:-}" ] || echo "Last Node Standing files published."

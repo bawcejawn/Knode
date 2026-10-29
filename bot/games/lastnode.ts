@@ -40,8 +40,11 @@ let L: any = L0;
 const E = process.env;
 const RPC = E.RPC || "https://koinos.armana.io";
 /** The same node however it is spelled (case, a trailing slash, a default port): fix-check, as picks.ts's sameNode. */
-export const nodeKey = (u: string) => { try { const x = new URL(u); return `${x.protocol}//${x.host.toLowerCase()}${x.pathname.replace(/\/+$/, "")}`; } catch { return String(u).trim().toLowerCase().replace(/\/+$/, ""); } };
+/** Fix-check LNF-13: http and https, a trailing dot, the default port and letter case name the same node. (Two host
+ *  names for one machine still can't be told apart from here; use two different providers.) */
+export const nodeKey = (u: string) => { try { const x = new URL(String(u).trim()); return `${x.hostname.toLowerCase().replace(/\.$/, "")}:${x.port || "443"}${x.pathname.replace(/\/+$/, "")}`; } catch { return String(u).trim().toLowerCase().replace(/\/+$/, ""); } };
 const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && nodeKey(E.RPC_CHECK) !== nodeKey(RPC) ? E.RPC_CHECK : "";
+const BOARD_ROWS = 2000;                     // rows kept in each shown board list (fix-check LNF-7)
 const LOOKBACK_MS = 3 * 86400000;           // an event not finished 3 days after its start is closed as void
 const MAX_HOURS_PER_RUN = 30;               // a long outage catches up over a few runs
 const CORRECTION_MS = 12 * 3600000;         // a week is final 12 hours after it ends
@@ -79,6 +82,8 @@ type Opts = {
   /** Vault v6: the wallets with at least 1 VHP staked in this game for a vault week (null = can't tell yet). */
   stakedOf?: (week: number, who: string[]) => Promise<Set<string> | null>;
   trials?: number;
+  /** Fix-check LNF-6: the most time the 48 h form read may take in one run (default 4 minutes). */
+  formDeadlineMs?: number;
 };
 
 // ── files ──
@@ -138,7 +143,10 @@ function cardsIn(raceDir: string | undefined, t0: number, t1: number): any[] {
   for (let w = M.weekOf(t0) - 1; w <= M.weekOf(t1); w++) {
     if (w < 0) continue;
     const wf = readJson(raceDir, wName(w));
-    if (wf && Array.isArray(wf.races)) for (const r of wf.races) for (const c of r?.cards || []) if (c && Number.isFinite(Number(c.at)) && Array.isArray(c.field)) out.push(c);
+    // Fix-check LNF-18: only cards of the race recorder's shape (a bad one is skipped, never stalls the field).
+    const rowOk = (x: any) => x && typeof x === "object" && isAddr(x.a) && Number.isFinite(x.vhp) && x.vhp >= 0;
+    if (wf && Array.isArray(wf.races)) for (const r of wf.races) for (const c of Array.isArray(r?.cards) ? r.cards : [])
+      if (c && Number.isFinite(Number(c.at)) && Array.isArray(c.field) && c.field.every(rowOk) && (c.paddock === undefined || c.paddock === null || (Array.isArray(c.paddock) && c.paddock.every(rowOk)))) out.push(c);
   }
   return out.sort((a, b) => Number(a.at) - Number(b.at));
 }
@@ -150,7 +158,7 @@ export function sharesByHour(cards: any[], t0: number, hours: number): (Record<s
     for (const x of cards) { if (Number(x.at) <= t) c = x; else break; }
     // Not older than 3 hours: a gap in the race recorder is left out, not filled with an old card.
     if (!c || t - Number(c.at) > 3 * 3600000) { out.push(null); continue; }
-    const all = [...c.field, ...(c.paddock || [])].filter((x: any) => x && isAddr(x.a) && Number.isFinite(x.vhp) && x.vhp > 0);
+    const all = [...c.field, ...(Array.isArray(c.paddock) ? c.paddock : [])].filter((x: any) => x && isAddr(x.a) && Number.isFinite(x.vhp) && x.vhp > 0);
     const tot = all.reduce((s: number, x: any) => s + x.vhp, 0);
     out.push(tot > 0 ? Object.fromEntries(all.map((x: any) => [x.a, x.vhp / tot])) : null);
   }
@@ -166,6 +174,7 @@ async function blocksAt(node: any, headId: string, from: number, n: number) {
   const res: any = await withRetry(`blocks at ${from}`, () => node.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(from), num_blocks: n, return_block: true, return_receipt: false }));
   const items = res?.block_items ?? [];
   if (!items.length) throw new Error(`no blocks returned at ${from}`);
+  if (items.length > n) throw new Error(`more blocks returned than asked at ${from}`);
   return items.map((it: any, k: number) => {
     if (Number(it.block_height) !== from + k) throw new Error(`blocks out of order at ${from}`);
     return { h: from + k, signer: String(it.block.header.signer), time: Number(it.block.header.timestamp) };
@@ -188,11 +197,14 @@ function windowReader(node: any) {
     while (lo > 1 && (await timeOf(lo)) >= t0) lo = Math.max(1, lo - 1200);
     const a = await firstAtOrAfter(t0, lo, hd.lib), b = (await firstAtOrAfter(t1, a, hd.lib)) - 1;
     const counts: Record<string, number> = {};
-    for (let s = a; s <= b; s += 200) {
-      for (const x of await blocksAt(node, hd.id, s, Math.min(200, b - s + 1))) {
+    // Fix-check LNF-17: move on by what the node returned (it may send fewer than asked), so no block is skipped.
+    for (let s = a; s <= b;) {
+      const got = await blocksAt(node, hd.id, s, Math.min(200, b - s + 1));
+      for (const x of got) {
         if (x.time < t0 || x.time >= t1) throw new Error(`block ${x.h} outside the hour`);
         counts[x.signer] = (counts[x.signer] || 0) + 1;
       }
+      s += got.length;
     }
     return { from: a, to: b, counts };
   };
@@ -213,19 +225,34 @@ function hourlyReader(node: any) {
     while (lo > 1 && (await timeOf(lo)) >= t0) lo = Math.max(1, lo - 2400);
     const a = await firstAtOrAfter(t0, lo, hd.lib), b = (await firstAtOrAfter(t1, a, hd.lib)) - 1;
     const out: Record<string, number>[] = Array.from({ length: n }, () => ({}));
-    for (let s = a; s <= b; s += 200) {
-      for (const x of await blocksAt(node, hd.id, s, Math.min(200, b - s + 1))) {
+    for (let s = a; s <= b;) {
+      const got = await blocksAt(node, hd.id, s, Math.min(200, b - s + 1));
+      for (const x of got) {
         const k = Math.floor((x.time - t0) / 3600000);
         if (k < 0 || k >= n) throw new Error(`block ${x.h} outside the form window`);
         out[k][x.signer] = (out[k][x.signer] || 0) + 1;
       }
+      s += got.length;
     }
     return out;
   };
 }
 const PICKS_ABI = () => JSON.parse(fs.readFileSync(new URL("../../picks/abi/picks.koilib.json", import.meta.url), "utf8"));
+/** Fix-check LNF-22: the game as registered must be this game's shape before any of its picks are counted. */
+const shapeChecked = new WeakMap<object, Set<string>>();
+export async function checkRegistration(c: any, node: any, contract: string) {
+  const seen = shapeChecked.get(node) ?? new Set<string>();
+  if (seen.has(contract)) return;
+  const g: any = (await withRetry(`game ${L.GAME_ID}`, () => c.functions.get_game({ game: L.GAME_ID })))?.result?.game;
+  const want = L.PICKS_GAME;
+  if (!g || Number(g.kind) !== want.kind || Number(g.list_size) !== want.list_size || Number(g.lock_mode) !== want.lock_mode
+    || String(g.round_size) !== String(want.round_size) || String(g.round_offset) !== String(want.round_offset))
+    throw new Error(`game ${L.GAME_ID} isn't registered with this game's rules in the Picks contract; its picks aren't counted`);
+  seen.add(contract); if (typeof node === "object" && node) shapeChecked.set(node, seen);
+}
 async function readPicks(node: any, contract: string, round: number): Promise<Pick[]> {
   const c = new Contract({ id: contract, abi: PICKS_ABI(), provider: node });
+  await checkRegistration(c, node, contract);
   const out: Pick[] = [];
   let after: string | undefined;
   for (let page = 0; page < 1000; page++) {
@@ -345,13 +372,19 @@ export async function run(o: Opts) {
    *  field is set without form so the event still runs); otherwise { form, info } (form null: not enough race cards). */
   async function formFor(ev: any): Promise<"wait" | { form: Record<string, number> | null; info: any }> {
     const t1 = ev.cardTime, t0 = t1 - L.FORM_HOURS * 3600000;
-    const late = now.time >= ev.opens + 3600000;
+    // Fix-check LNF-16: a field without form only 3 hours after picks open (a node that disagrees can't force it sooner).
+    const late = now.time >= ev.opens + 3 * 3600000;
     const giveUp = (why: string) => { problems.push(`${ev.day}: form not measured (${why}); field set without it`); return { form: null, info: { hours: 0, note: why.slice(0, 120) } }; };
     if (now.libTime < t1) return late ? giveUp("blocks not irreversible") : "wait";
     let a: Record<string, number>[], b: Record<string, number>[] | null = null;
     try {
-      a = await hrsP(t0, L.FORM_HOURS);
-      if (hrsC) b = await hrsC(t0, L.FORM_HOURS);
+      // Fix-check LNF-6: both reads together under one deadline, so a slow node can't hold up the run (the running
+      // event's hours are recorded first, and this is tried again next run).
+      const ms = o.formDeadlineMs ?? 4 * 60000;
+      let timer: any;
+      const deadline = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error(`the 48-hour block read took over ${Math.round(ms / 1000)} s`)), ms); });
+      try { [a, b] = await Promise.race([Promise.all([hrsP(t0, L.FORM_HOURS), hrsC ? hrsC(t0, L.FORM_HOURS) : Promise.resolve(null)]), deadline]); }
+      finally { clearTimeout(timer); }
     } catch (e: any) { if (late) return giveUp(`couldn't read the blocks: ${e.message}`); problems.push(`${ev.day}: form: ${e.message} (tried again next run)`); return "wait"; }
     if (b && JSON.stringify(a.map((x) => Object.entries(x).sort())) !== JSON.stringify(b.map((x) => Object.entries(x).sort()))) {
       if (late) return giveUp("the two nodes disagree about the blocks");
@@ -480,10 +513,12 @@ export async function run(o: Opts) {
   }
   const board = {
     v: 1, updated: new Date(now.time).toISOString(),
-    today: { day: today.day, rows: view(rowsOf((df) => df.day === today.day)) },
-    week: { week: nowW, start: L.weekStart(nowW), rows: view(rowsOf(inWeek(nowW))) },
+    // Fix-check LNF-7: the shown lists keep their top 2,000 rows, so board.json stays under the publish job's 2 MB
+    // however many wallets ever played. Last week stays whole (the vault file is checked against it).
+    today: { day: today.day, rows: view(rowsOf((df) => df.day === today.day)).slice(0, BOARD_ROWS) },
+    week: { week: nowW, start: L.weekStart(nowW), rows: view(rowsOf(inWeek(nowW))).slice(0, BOARD_ROWS) },
     lastWeek,
-    allTime: { rows: view(rowsOf((df) => df.start < now.time)) },
+    allTime: { rows: view(rowsOf((df) => df.start < now.time)).slice(0, BOARD_ROWS) },
   };
 
   // ── the vault file (hand-off from the Vault v6 chat, 2026-10-28) ──
@@ -566,7 +601,7 @@ async function main() {
   if (tChain === MAINNET_CHAIN_ID || (cfg.chainId && tChain !== cfg.chainId)) throw new Error(`the node at ${cfg.rpc} is on chain ${tChain}, not the testnet in testnet/lastnode.json`);
   // The mainnet nodes for the blocks (MAINNET_RPC / MAINNET_RPC_CHECK, never .env.testnet's RPC).
   const mr = E.MAINNET_RPC || cfg.mainnet.rpc, mc = E.MAINNET_RPC_CHECK || cfg.mainnet.check;
-  const p = new Provider([mr]), check = mc && mc !== "off" && mc !== mr ? new Provider([mc]) : null;
+  const p = new Provider([mr]), check = mc && mc !== "off" && nodeKey(mc) !== nodeKey(mr) ? new Provider([mc]) : null;
   for (const [node, url] of [[p, mr], [check, mc]] as const) if (node && (await withRetry("mainnet chain id", () => node.getChainId())) !== MAINNET_CHAIN_ID) throw new Error(`${url} is not a Koinos mainnet node (the race is read from mainnet)`);
   // Audit LN-26: the testnet's own names (TESTNET_…), so a mainnet LASTNODE_OUT / LASTNODE_PREV / RACE_DATA left in the
   // shell can't redirect it, and every folder must be inside testnet-data/.

@@ -146,8 +146,8 @@ test("LN-19: week 0 is the vault's genesis in the rules, the publish check and d
   assert.equal(L.GENESIS, dep.genesisTime); assert.equal(L.WEEK, dep.weekLength);
   const yml = fs.readFileSync(path.resolve(APP, ".github/workflows/lastnode.yml"), "utf8");
   assert.equal(Date.UTC(2026, 9, 19), dep.genesisTime);
-  assert.match(yml, /WEEK0 = datetime\.datetime\(2026, 10, 19, tzinfo=datetime\.timezone\.utc\)/);
-  assert.match(yml, /start = datetime\.datetime\(2026, 10, 19, tzinfo=datetime\.timezone\.utc\) \+ datetime\.timedelta\(weeks=w\)/);
+  assert.match(yml, new RegExp(`WEEK0, WEEK = ${dep.genesisTime}, 7 \\* 86400000`), "the shape check");
+  assert.match(yml, new RegExp(`H, DAY, WEEK0, WEEK = 3600000, 86400000, ${dep.genesisTime}, 7 \\* 86400000`), "the history check");
 });
 
 test("fix-check: the two mainnet nodes are compared however they are spelled", async () => {
