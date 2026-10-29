@@ -1,6 +1,7 @@
-# Audit prompt: Who Signs Block X (after testnet testing)
+# Audit prompt: Who Signs Block X (after testnet testing; for Repo Lens or any auditor)
 
-Copy everything below the line into the audit bot. Attach or give it the repository at branch `picks`.
+Copy everything below the line into the auditor. Give it the repository `bawcejawn/Knode` at branch `picks`, or the
+audit package `blockx-audit-package.zip` (the same files, with this prompt as `00-AUDIT-PROMPT.md`).
 
 ---
 
@@ -24,9 +25,10 @@ and confirm the hash. The testnet build is the same source with exactly three co
 **Earlier audits.** `docs/history/AUDIT-2026-10-27-picks.md` and `-fixcheck.md`. Check that P-1, P-2, P-4, P-7 and
 PF-1 are still fixed, and look for regressions.
 
-**Testnet results to use.** The `testnet-data/lock-test-*.json` and `mana-test-*.json` files and the owner's
-test-plan notes (`docs/blockx/TEST-PLAN.md`). Lock-test answers audit P-5: does a pick's stored height equal the
-block it lands in, and is a pick at `X − lead` refused?
+**Testnet results (2026-10-28, `docs/blockx/TESTNET-RESULTS.md`).** On the Koinos Foundation testnet the contract
+stored the height of the block a pick landed in, and a pick landing at `X − lead` was refused ("this round is locked").
+A pick costs about 0.05 Mana (0.031 each when 7 share a transaction). The owner played the testnet page end to end
+with no problems. Check these conclusions against the code; P-5 asked for exactly this.
 
 **Look hardest at:**
 
@@ -49,10 +51,17 @@ block it lands in, and is a pick at `X − lead` refused?
 7. **The page and wallets.** XSS (everything should be built with `textContent`), the CSP, framing, what the page
    asks the wallet to sign (only `pick` on the Picks contract, payer and Mana limit), the guest wallet path. Testnet
    page: can it ever sign for mainnet, touch mainnet wallet storage (same origin), or reach a mainnet node?
-8. **CI.** `games.yml` and `games-testnet.yml`: can repository code run next to a write token? Can a crafted file
+8. **The testnet-only tools** (`tools/testnet-site.mjs`, `site/testnet-wallet.js`, `site/blockx-testnet.html`):
+   the local page server holds a testnet key to fund "Play free" wallets (5 test KOIN, POST /api/fund). Can any
+   other site, another device, or a mainnet node make it send, or read `.env.testnet`? Can the testnet page or its
+   wallet ever sign for mainnet or touch mainnet wallet storage?
+9. **CI.** `games.yml` and `games-testnet.yml`: can repository code run next to a write token? Can a crafted file
    name or content reach a shell or get published? Is only the expected branch pushed?
-9. **Admin tool** (`bot/picks.ts`): key handling, mainnet guards (`--mainnet` + `CONFIRM_MAINNET`), chain-id checks,
+10. **Admin tool** (`bot/picks.ts`): key handling, mainnet guards (`--mainnet` + `CONFIRM_MAINNET`), chain-id checks,
    uploads only the audited build on mainnet.
+
+**Out of scope.** The Mana sponsor contract (`sponsor/`, its v3 is audited separately) and the game vault. Do
+note anything in Block X that relies on the sponsor (what a sponsored pick must look like, the spam budget).
 
 **Report.** A table of findings: ID (BX-1, BX-2, …), severity (Critical/High/Medium/Low/Info), file:line, a concrete
 attack or failure scenario, and a fix. Then a verdict: "ready for mainnet", "fix first" or "not ready", and the

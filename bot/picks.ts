@@ -18,7 +18,8 @@
  * Keys come from the root .env / .env.testnet (never GitHub, never printed):
  *   PICKS_WIF   a brand-new wallet that becomes the Picks contract. Needed for the upload only; once uploaded, the
  *               contract decides for its own account (it refuses to move anything or pay Mana; new code needs the
- *               owner's key and the timelock), so this key has no power left.
+ *               owner's key and the timelock), so this key has no power left. Never send it KOIN: it would be stuck.
+ *   PAYER_WIF   pays the upload's Mana (both sign the upload). Default: OPERATOR_WIF (the bot wallet, which holds KOIN).
  *   OWNER_WIF   the KnodeGames owner (mainnet: 1635QUr…H717; testnet: the test owner from npm run bot -- keys --testnet).
  *   PLAYER_WIF  testnet only: the test player for lock-test and mana-test.
  */
@@ -122,8 +123,9 @@ function keys() {
   fs.writeFileSync(file, text, { mode: 0o600 });
   try { fs.chmodSync(file, 0o600); } catch {}
   log(`Added PICKS_WIF (new) to ${file}. The Picks contract will live at:\n  ${Signer.fromWif(wif).getAddress()}`);
-  log(TESTNET ? "Testnet: get free test KOIN for it from the faucet bot (Telegram @KoinosTestnetFaucetBot: /faucet <address>). About 35 tKOIN covers the upload."
-    : "Mainnet: write its recovery key down offline. Send it about 50 KOIN for the upload's Mana (you can move it out afterwards).");
+  log("Don't send KOIN to this address: once the contract is uploaded it refuses to move anything out of its own account,");
+  log("so anything sent there stays there for good. The upload's Mana is paid by another wallet (PAYER_WIF, else OPERATOR_WIF).");
+  if (!TESTNET) log("Write its recovery key down offline (it is only needed for the upload, but keep it until the upload is checked).");
 }
 
 // ═══════════════════════════════ reads ═══════════════════════════════
@@ -172,6 +174,20 @@ export function uploadBuild(testnet: boolean, files = { mainnet: MAINNET_WASM, t
   return { wasm, sha256: h, what: `the testnet build (audited code, owner ${man.owner}, waits of ${man.timelockMs / 60000} min)` };
 }
 
+/** The upload transaction: the Picks wallet signs the upload (all three overrides on), another wallet signs to pay
+ *  the Mana. Exported for the tests (with a nonce given, it needs no node until it is sent). */
+export async function uploadTx(p: Provider, s: Signer, payer: Signer, wasm: Uint8Array, abi: any, chainId: string, rc: bigint, nonce?: string) {
+  const A = s.getAddress();
+  const c = new Contract({ id: A, abi, provider: p, signer: s, bytecode: new Uint8Array(wasm) });
+  const { operation } = await c.deploy({ abi: JSON.stringify(abi), authorizesCallContract: true, authorizesTransactionApplication: true, authorizesUploadContract: true, onlyOperation: true } as any);
+  const tx = new Transaction({ signer: s, provider: p, options: { payer: payer.getAddress(), chainId, rcLimit: rc.toString(), ...(nonce ? { nonce } : {}) } });
+  await tx.pushOperation(operation);
+  await tx.prepare();
+  await tx.sign();                                    // the Picks wallet authorizes the upload
+  await payer.signTransaction(tx.transaction as any); // the payer authorizes paying its Mana
+  return tx;
+}
+
 async function upload(send: boolean) {
   const net = network();
   mainnetGuard(net, send);
@@ -181,18 +197,20 @@ async function upload(send: boolean) {
   const m = await contractMetadata(p, A);
   if (m.exists) throw new Error(`${A} already has a contract (sha256 ${m.hash}). See npm run picks -- status.`);
   const abi = loadAbi();
-  const have = BigInt(await p.getAccountRc(A));
-  const needRc = toSat(Math.ceil(b.wasm.length / 1024 * (net.testnet ? 0.35 : 1.2) + (net.testnet ? 5 : 10)));
-  log(`Picks wallet       ${A}${net.testnet ? "  (testnet)" : "   ⚠ MAINNET"}`);
+  // The Mana is paid by another wallet, so the Picks wallet never needs KOIN (anything it held would be stuck there).
+  const payerKey = E.PAYER_WIF ? "PAYER_WIF" : "OPERATOR_WIF";
+  if (!E[payerKey]) throw new Error(`${payerKey} is missing from ${net.testnet ? ".env.testnet" : ".env"}: the wallet that pays the upload's Mana.`);
+  const payer = signerOf(payerKey, p), PA = payer.getAddress();
+  if (PA === A) throw new Error(`${payerKey} is the Picks wallet itself; use another wallet to pay the Mana.`);
+  const have = BigInt(await p.getAccountRc(PA));
+  const needRc = toSat(Math.ceil(b.wasm.length / 1024 * 0.35 + 5));   // testnet upload of 31.9 KB used 2.8 Mana
+  log(`Picks wallet       ${A}${net.testnet ? "  (testnet)" : "   ⚠ MAINNET"}  (send it no KOIN)`);
   log(`Code               ${b.what}, ${(b.wasm.length / 1024).toFixed(1)} KB, sha256 ${b.sha256}`);
   log(`Overrides          all three ON: it refuses to move anything or pay Mana; new code only by the owner after the wait`);
-  log(`Mana               has ${showKoin(have)}, the upload needs about ${showKoin(needRc)}`);
-  if (have < needRc) throw new Error(`Send at least ${showKoin(needRc - have + toSat(5))} more ${net.testnet ? "test KOIN (faucet)" : "KOIN"} to ${A} first.`);
+  log(`Mana paid by       ${PA} (${payerKey}): has ${showKoin(have)}, the upload may use up to ${showKoin(needRc)} (the testnet upload used 2.8)`);
+  if (have < needRc) throw new Error(`${PA} needs at least ${showKoin(needRc)} Mana; it has ${showKoin(have)}. Send it ${net.testnet ? "test KOIN (faucet)" : "KOIN"} first.`);
   if (!send) { log("\nDry run only. Nothing was sent. Run again with --send to upload."); return; }
-  const c = new Contract({ id: A, abi, provider: p, signer: s, bytecode: new Uint8Array(b.wasm) });
-  const { operation } = await c.deploy({ abi: JSON.stringify(abi), authorizesCallContract: true, authorizesTransactionApplication: true, authorizesUploadContract: true, onlyOperation: true } as any);
-  const tx = new Transaction({ signer: s, provider: p, options: { payer: A, chainId, rcLimit: (needRc * 13n / 10n < have * 95n / 100n ? needRc * 13n / 10n : have * 95n / 100n).toString() } });
-  await tx.pushOperation(operation);
+  const tx = await uploadTx(p, s, payer, b.wasm, abi, chainId, needRc);
   const receipt: any = await tx.send();
   if (receipt?.reverted) throw new Error(`upload reverted: ${JSON.stringify(receipt.logs)}`);
   await tx.wait("byBlock", 300_000).catch(() => { throw new Error("Sent but not confirmed within 5 minutes. Check npm run picks -- status in a few minutes."); });

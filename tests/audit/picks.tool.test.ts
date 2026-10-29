@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
-import { buildGameConfig, uploadBuild, encodeNonce, network, mainnetGuard, PICKS_SHA256, MAINNET_CHAIN_ID } from "../../bot/picks.ts";
+import { buildGameConfig, uploadBuild, encodeNonce, network, mainnetGuard, uploadTx, PICKS_SHA256, MAINNET_CHAIN_ID } from "../../bot/picks.ts";
 
 const require = createRequire(import.meta.url);
 const sha = (b: Buffer) => crypto.createHash("sha256").update(b).digest("hex");
@@ -102,4 +102,22 @@ test("a mainnet send needs --mainnet on the command line every time, not only CO
     delete process.env.CONFIRM_MAINNET;
     assert.throws(() => mainnetGuard({ testnet: false }, true, ["node", "picks.ts", "announce", "2", "--send", "--mainnet"]), /CONFIRM_MAINNET/);
   } finally { if (was === undefined) delete process.env.CONFIRM_MAINNET; else process.env.CONFIRM_MAINNET = was; }
+});
+
+test("upload: another wallet pays the Mana, so the Picks wallet never needs KOIN (it could never move it out)", async () => {
+  const { Signer, Provider } = await import("koilib");
+  const picksW = Signer.fromSeed("picks wallet for the test"), payerW = Signer.fromSeed("payer wallet for the test");
+  const p: any = new Provider(["http://127.0.0.1:1"]);
+  const abi = JSON.parse(fs.readFileSync("picks/abi/picks.koilib.json", "utf8"));
+  const tx: any = await uploadTx(p, picksW, payerW, new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]), abi, "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==", 1000000000n, encodeNonce(1));
+  const t = tx.transaction;
+  assert.equal(t.header.payer, payerW.getAddress(), "the payer pays the Mana");
+  assert.equal(t.header.rc_limit, "1000000000");
+  const up = t.operations[0].upload_contract;
+  assert.equal(up.contract_id, picksW.getAddress());
+  assert.ok(up.authorizes_call_contract && up.authorizes_transaction_application && up.authorizes_upload_contract, "all three overrides on");
+  const who = await Signer.recoverAddresses(t);
+  assert.deepEqual(who.sort(), [picksW.getAddress(), payerW.getAddress()].sort(), "both signed");
+  const src = fs.readFileSync("bot/picks.ts", "utf8");
+  assert.ok(!/you can move it out afterwards/.test(src), "never tells the owner to fund the Picks wallet");
 });
