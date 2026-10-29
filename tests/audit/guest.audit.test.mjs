@@ -11,9 +11,9 @@ import { createRequire } from "node:module";
 
 const APP = path.resolve(process.env.APP || path.join(path.dirname(new URL(import.meta.url).pathname), "..", ".."));
 const koilib = createRequire(APP + "/")("koilib");
-const guestSrc = fs.readFileSync(`${APP}/site/guest.js`, "utf8");
-const walletSrc = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
-const appSrc = fs.readFileSync(`${APP}/site/app.js`, "utf8");
+const guestSrc = fs.readFileSync(`${APP}/guest.js`, "utf8");
+const walletSrc = fs.readFileSync(`${APP}/wallet.js`, "utf8");
+const appSrc = fs.readFileSync(`${APP}/app.js`, "utf8");
 const MAINNET = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";
 const GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", DESK = "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR";
 const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK";

@@ -1,12 +1,16 @@
-// Writes the phone navigation (the bottom tab bar and the "More" sheet) into every page that has it, so all pages
-// stay the same. Edit the lists here, then run:   node tools/site-nav.mjs
-// Tab bar (owner's default 2026-10-27, option A): Games · Play · Race · Swap · More. The question game's
-// leaderboard moved into the More sheet, since every game page now has its own leaderboard.
+// Writes the site's navigation into every page, so all pages stay the same. Edit the lists here, then run:
+//   node tools/site-nav.mjs
+// - TOP: the menu at the top (computers and tablets): Games ▾ · Leaderboards · Results · Tools ▾ · Rules ·
+//   New to Koinos? · Info ▾ (owner, 2026-10-28). Dropdowns are <details> menus (they work without JavaScript;
+//   nav.js closes them on an outside tap or Escape).
+// - TABS + MORE: the phone tab bar (Games · Leaders · Results · Swap · More, owner 2026-10-28) and the "More" sheet,
+//   grouped like the top menu (Play, Tools, Learn, About).
+// - FOOT: the footer's links: only the few that belong at the bottom of every site (the rest is in the menus).
 // On index.html the question-game views are links to "#view" with data-view (app.js switches views in place);
 // on every other page they link to "index.html#view".
 import fs from "node:fs";
 
-const ROOT = new URL("../site/", import.meta.url).pathname;
+const ROOT = new URL("../", import.meta.url).pathname;
 
 const I = {
   games: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect>',
@@ -29,13 +33,28 @@ const I = {
 };
 
 // [label, link, icon]. A link starting with "#" is a question-game view on index.html.
-export const TABS = [["Games", "games.html", "games"], ["Play", "#play", "play"], ["Race", "race.html", "race"], ["Swap", "swap.html", "swap"]];
-export const MORE = [
-  ["Question leaderboard", "#leaderboard", "leaders"], ["Results", "#results", "results"], ["Rules", "#how", "rules"],
-  ["Get VHP", "get.html", "get"], ["Mana levels", "mana.html", "mana"], ["Network pulse", "pulse.html", "pulse"],
-  ["Producer lookup", "node.html", "lookup"], ["Burn KOIN", "burn.html", "burn"], ["New here?", "#welcome", "welcome"],
-  ["Install app", "install.html", "install"], ["Trust", "trust.html", "trust"], ["Terms &amp; risks", "terms.html", "terms"],
+export const TABS = [["Games", "games.html", "games"], ["Leaders", "#leaderboard", "leaders"], ["Results", "#results", "results"], ["Swap", "swap.html", "swap"]];
+// The More sheet, in groups (each group a heading, then its links).
+export const MORE_GROUPS = [
+  ["Play", [["Daily Questions", "#play", "play"], ["Producer Race", "race.html", "race"], ["Rules", "#how", "rules"]]],
+  ["Tools", [["Burn KOIN", "burn.html", "burn"], ["Mana levels", "mana.html", "mana"], ["Producer lookup", "node.html", "lookup"], ["Network pulse", "pulse.html", "pulse"]]],
+  ["Learn", [["New to Koinos?", "start.html", "welcome"], ["New here? Quick tour", "#welcome", "welcome"], ["Get VHP", "get.html", "get"]]],
+  ["About", [["Install app", "install.html", "install"], ["Trust", "trust.html", "trust"], ["Terms &amp; risks", "terms.html", "terms"]]],
 ];
+export const MORE = MORE_GROUPS.flatMap(([, links]) => links);
+// The top menu: a link, or a dropdown { label, items }. Add a new live game to the Games dropdown when it ships.
+export const TOP = [
+  { label: "Games", items: [["All games", "games.html"], ["Daily Questions", "#play"], ["Producer Race", "race.html"]] },
+  { label: "Leaderboards", link: "#leaderboard" },
+  { label: "Results", link: "#results" },
+  { label: "Tools", items: [["Swap VHP → KOIN", "swap.html"], ["Burn KOIN", "burn.html"], ["Mana levels", "mana.html"], ["Producer lookup", "node.html"], ["Network pulse", "pulse.html"]] },
+  { label: "Rules", link: "#how" },
+  { label: "New to Koinos?", link: "start.html", cls: "tab-start" },
+  { label: "Info", items: [["Get VHP", "get.html"], ["New here? Quick tour", "#welcome"], ["Install app", "install.html"], ["Trust", "trust.html"], ["Terms &amp; risks", "terms.html"]] },
+];
+// Rules opens on the page's own game where there is one.
+const RULES_TAB = { "race.html": "race", "swap.html": "swap" };
+export const FOOT = [["Trust", "trust.html"], ["Terms &amp; risks", "terms.html"], ["Install app", "install.html"], ["Source code", "https://github.com/bawcejawn/Knode"]];
 
 const svg = (k) => `<svg aria-hidden="true" viewBox="0 0 24 24">${I[k]}</svg>`;
 function href(file, link) {
@@ -46,7 +65,7 @@ function href(file, link) {
 /** The tab bar and More sheet for one page. */
 export function navBlock(file) {
   const tabs = TABS.map(([l, h, i]) => `    <a ${href(file, h)}>${svg(i)}${l}</a>`);
-  const more = MORE.map(([l, h, i]) => `      <a ${href(file, h)}>${svg(i)}<span>${l}</span></a>`);
+  const more = MORE_GROUPS.flatMap(([g, links]) => [`      <p class="ms-h">${g}</p>`, ...links.map(([l, h, i]) => `      <a ${href(file, h)}>${svg(i)}<span>${l}</span></a>`)]);
   return [
     '<nav class="tabbar" aria-label="Main">',
     ...tabs,
@@ -60,14 +79,44 @@ export function navBlock(file) {
   ].join("\n");
 }
 
-/** Replace the existing block in a page's HTML (from the tab bar to the end of the More sheet). */
+/** The page a link points at, for marking the current page: "race.html", or "index.html#play". */
+const target = (link) => (link.startsWith("#") ? "index.html" + link.split("/")[0] : link);
+const cur = (file, link) => (!link.startsWith("#") && !link.startsWith("http") && target(link) === file ? ' aria-current="page"' : "");
+
+/** The top menu for one page. */
+export function topBlock(file) {
+  const a = (l, h, cls) => `<a ${href(file, h === "#how" && RULES_TAB[file] ? `#how/${RULES_TAB[file]}` : h)}${cls ? ` class="${cls}"` : ""}${cur(file, h)}>${l}</a>`;
+  const rows = TOP.map((t) => {
+    if (!t.items) return `        ${a(t.label, t.link, t.cls)}`;
+    const on = t.items.some(([, h]) => cur(file, h));
+    return [`        <details class="dd${on ? " on" : ""}">`, `          <summary>${t.label}</summary>`, '          <div class="dd-menu">',
+      ...t.items.map(([l, h]) => `            ${a(l, h)}`), "          </div>", "        </details>"].join("\n");
+  });
+  return ['<nav class="tabs" aria-label="Sections">', ...rows, "      </nav>"].join("\n");
+}
+
+/** The footer's links. */
+export function footBlock() {
+  const links = FOOT.map(([l, h]) => (h.startsWith("http") ? `<a href="${h}" target="_blank" rel="noopener">${l}</a>` : `<a href="${h}">${l}</a>`));
+  return `<span class="foot-links">${links.join(" · ")}</span>`;
+}
+
+/** Replace the existing blocks in a page's HTML: the top menu, the footer's links, and the tab bar + More sheet. */
 export function withNav(file, html) {
-  const i = html.indexOf('<nav class="tabbar"');
-  if (i < 0) return html;
-  const sheet = html.indexOf('<div class="more-sheet"', i);
-  const close = html.indexOf("</nav>\n  </div>", sheet);
+  let out = html;
+  const t = out.indexOf('<nav class="tabs"');
+  if (t >= 0) {
+    // The top menu ends at its own closing </nav> (dropdowns use <details>, never a nested <nav>).
+    const end = out.indexOf("</nav>", t);
+    out = out.slice(0, t) + topBlock(file) + out.slice(end + "</nav>".length);
+  }
+  out = out.replace(/<span class="foot-links">[^\n]*?<\/span>/, footBlock());
+  const i = out.indexOf('<nav class="tabbar"');
+  if (i < 0) return out;
+  const sheet = out.indexOf('<div class="more-sheet"', i);
+  const close = out.indexOf("</nav>\n  </div>", sheet);
   if (sheet < 0 || close < 0) throw new Error(`${file}: tab bar found but no More sheet after it`);
-  return html.slice(0, i) + navBlock(file) + html.slice(close + "</nav>\n  </div>".length);
+  return out.slice(0, i) + navBlock(file) + out.slice(close + "</nav>\n  </div>".length);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

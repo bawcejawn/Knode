@@ -36,8 +36,8 @@ import * as crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { withRetry } from "../../common.ts";
 import { chainNode, heightAt, bookFor } from "../vhp-chain.ts";
-await import("../../site/race-math.js");
-await import("../../site/bracket-math.js");
+await import("../../race-math.js");
+await import("../../bracket-math.js");
 const M: any = (globalThis as any).KRaceMath;
 const B: any = (globalThis as any).KBracketMath;
 

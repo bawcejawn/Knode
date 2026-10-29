@@ -1,6 +1,6 @@
 // Producer Bracket: field size by week and all-pair fairness over the real block history. Run: node tools/sim/bracket/hist.mjs
 import fs from "node:fs"; import zlib from "node:zlib";
-const REPO = new URL("../../..", import.meta.url).pathname.replace(/\/$/, ""); await import(REPO+"/site/race-math.js"); const M=globalThis.KRaceMath;
+const REPO = new URL("../../..", import.meta.url).pathname.replace(/\/$/, ""); await import(REPO+"/race-math.js"); const M=globalThis.KRaceMath;
 const lines=zlib.gunzipSync(fs.readFileSync(REPO+"/data/blocks-compact.csv.gz")).toString().split("\n");
 const S=lines[0].split(",").length-1; let t=Number(lines[1].split(",")[2]); const days=new Map();
 for(let i=2;i<lines.length;i++){if(!lines[i])continue;const[s,dt]=lines[i].split(",");t+=Number(dt);const d=Math.floor(t/864e5);let m=days.get(d);if(!m)days.set(d,m=new Float64Array(S));m[+s]++;}

@@ -1,7 +1,7 @@
 // Producer Bracket simulation (2026-10-27): head-to-head fairness (plain vs race handicap), real-history backtest, player strategies over a month. Run: node tools/sim/bracket/sim.mjs
 import fs from "node:fs"; import zlib from "node:zlib"; import { execSync } from "node:child_process";
 const REPO = new URL("../../..", import.meta.url).pathname.replace(/\/$/, "");
-await import(REPO + "/site/race-math.js");
+await import(REPO + "/race-math.js");
 const M = globalThis.KRaceMath;
 const git = (s) => execSync(`git -C ${REPO} show ${s}`, { maxBuffer: 1 << 28 }).toString();
 const pct = (x) => (100 * x).toFixed(1) + "%";

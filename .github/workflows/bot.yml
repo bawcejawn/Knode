@@ -22,6 +22,8 @@ name: Kpred bot
 on:
   schedule:
     - cron: "7 * * * *"      # every hour at minute 7
+    - cron: "48 11 * * 1-6"  # the daily release run, Mon-Sat: starts early and waits for 12:00 UTC (GitHub can start
+                             # scheduled runs late, so the PC also starts this run: bot/release-kick.mjs)
   workflow_dispatch: {}       # "Run workflow" button for a manual run
 
 concurrency:

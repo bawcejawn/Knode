@@ -7,7 +7,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const src = fs.readFileSync(`${APP}/site/extras.js`, "utf8");
+const src = fs.readFileSync(`${APP}/extras.js`, "utf8");
 const ctx = { window: {}, globalThis: {}, Date, String, Promise, Math };
 ctx.globalThis = ctx;
 vm.runInNewContext(src, ctx);
@@ -45,9 +45,10 @@ test("extras: nothing in extras.js reaches the network", () => {
   for (const bad of [/\bfetch\s*\(/, /XMLHttpRequest/, /sendBeacon/, /new\s+Image\b/, /WebSocket/, /importScripts/]) assert.ok(!bad.test(src), String(bad));
 });
 
+// Changed once on purpose (2026-10-28): the Leaderboards page reads the race recorder's board.json (read-only JSON).
 test("extras: the game page's Content-Security-Policy is unchanged", () => {
-  const html = fs.readFileSync(`${APP}/site/index.html`, "utf8");
+  const html = fs.readFileSync(`${APP}/index.html`, "utf8");
   const csp = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1];
-  assert.equal(csp, "default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://koinvault.app; manifest-src 'self'; worker-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'");
+  assert.equal(csp, "default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://koinvault.app https://raw.githubusercontent.com/bawcejawn/Knode/race-data/; manifest-src 'self'; worker-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'");
   assert.match(html, /<script src="extras\.js"><\/script>/);
 });

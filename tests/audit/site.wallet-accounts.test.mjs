@@ -7,7 +7,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const src = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
+const src = fs.readFileSync(`${APP}/wallet.js`, "utf8");
 const SECRET = "S3CR3T-vault-session-secret-0123456789abcdef";
 const VAULT = "https://koinvault.app";
 const OP = [{ call_contract: { contract_id: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", entry_point: 0x12345678, args: "CgA=" } }];
@@ -198,14 +198,19 @@ test("KOIN Vault, remembered: the same account approved again → the action goe
   assert.ok(h.log.fetches.some((f) => f.path === "request"), "the request went to KOIN Vault for the user's approval");
 });
 
-test("every page with a header loads the shared wallet button after wallet.js; Pulse and Mana are footer-only", () => {
-  for (const p of fs.readdirSync(`${APP}/site`).filter((f) => f.endsWith(".html"))) {
-    const h = fs.readFileSync(`${APP}/site/${p}`, "utf8");
+// Menus (owner, 2026-10-28): Games ▾ · Leaderboards · Results · Tools ▾ · Rules · New to Koinos? · Info ▾ at the top; the
+// footer keeps only Trust · Terms & risks · Install app · Source code.
+test("every page with a header loads the shared wallet button after wallet.js, and has the same top menu and footer", () => {
+  for (const p of fs.readdirSync(`${APP}`).filter((f) => f.endsWith(".html"))) {
+    const h = fs.readFileSync(`${APP}/${p}`, "utf8");
     if (!/top-row/.test(h)) continue;
     assert.match(h, /<script src="wallet\.js"><\/script>\s*<script src="header-wallet\.js"><\/script>/, `${p}: header wallet`);
     const nav = h.match(/<nav class="tabs"[\s\S]*?<\/nav>/)[0];
-    assert.doesNotMatch(nav, /pulse\.html|mana\.html/, `${p}: top nav`);
-    assert.match(nav, /race\.html/, `${p}: Race in the top nav`);
-    assert.match(h, /class="foot-links"[^\n]*pulse\.html[^\n]*mana\.html/, `${p}: footer keeps Pulse and Mana`);
+    const top = [...nav.matchAll(/^        (?:<a [^>]*>([^<]+)<\/a>|<details[^>]*>)$|^          <summary>([^<]+)<\/summary>$/gm)].map((m) => m[1] || m[2]).filter(Boolean);
+    assert.deepEqual(top, ["Games", "Leaderboards", "Results", "Tools", "Rules", "New to Koinos?", "Info"], `${p}: top menu`);
+    for (const f of ["games.html", "race.html", "swap.html", "burn.html", "mana.html", "node.html", "pulse.html", "get.html", "start.html", "trust.html", "terms.html", "install.html"])
+      assert.ok(nav.includes(`href="${f}"`), `${p}: top menu reaches ${f}`);
+    const foot = h.match(/<span class="foot-links">[^\n]*<\/span>/)[0];
+    assert.deepEqual([...foot.matchAll(/>([^<]+)<\/a>/g)].map((m) => m[1]), ["Trust", "Terms &amp; risks", "Install app", "Source code"], `${p}: footer links`);
   }
 });

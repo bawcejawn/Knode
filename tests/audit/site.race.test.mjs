@@ -1,13 +1,13 @@
 // Producer Race (site/race-math.js, shared by race.js and the recorder bot/race.ts): race timing (UTC windows, the game
 // week), resets, the 2-hourly handicap cards, the finish line, the 6-hour handicap's fairness, and the page rules
-// (no odds, nobody past the line, read only). Offline.
+// (no odds, nobody past the line, the live order always shown, read only). Offline.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const read = (f) => fs.readFileSync(`${APP}/site/${f}`, "utf8");
+const read = (f) => fs.readFileSync(`${APP}/${f}`, "utf8");
 const box = { window: {} };
 vm.runInNewContext(read("race-math.js"), box);
 const M = box.window.KRaceMath;
@@ -98,15 +98,21 @@ test("finish line = the biggest horse's expected steps over the race (a third pe
   assert.equal(M.finishLine([c1, c2, null]), Math.round(((100 + 130 + 130) / 3) * 100) / 100);
 });
 
-test("the live track never draws a horse past the finish line, and hides the order at the line until the end", () => {
+test("the live track shows the real order to the end: nobody waits at the line, nobody reaches it before the finish", () => {
   const st = [{ a: A, steps: 130, blocks: 1 }, { a: Bb, steps: 110, blocks: 1 }, { a: C, steps: 90, blocks: 1 }];
   const live = M.track(st, 100, false);
-  assert.ok(live.every((r) => r.x <= 1));
-  assert.deepEqual(plain(live.map((r) => r.atLine)), [true, true, false]);
-  assert.deepEqual(plain(live.map((r) => r.behind)), [0, 0, 10], "behind the leader as drawn (at the line), with the handicap");
+  assert.ok(live.every((r) => r.x < 1), "no horse at the line while the race runs, even ahead of pace");
+  assert.ok(live[0].x > live[1].x && live[1].x > live[2].x, "the drawn order is the real order");
+  assert.ok(Math.abs(live[0].x - M.LIVE_MAX) < 1e-9, "a leader ahead of pace is drawn just short of the line");
+  assert.deepEqual(plain(live.map((r) => r.behind)), [0, 20, 40], "real gaps to the leader, with the handicap");
+  const slow = M.track([{ a: A, steps: 50, blocks: 1 }, { a: Bb, steps: 25, blocks: 1 }], 100, false);
+  assert.deepEqual(plain(slow.map((r) => r.x)), [0.5, 0.25], "behind pace: drawn against the finish line itself");
   const done = M.track(st, 100, true);
   assert.deepEqual(plain(done.map((r) => r.behind)), [0, 20, 40], "after the race: the real gaps");
+  assert.equal(done[0].x, 1, "the winner sits on the line at the end");
   assert.ok(done.every((r) => r.x <= 1));
+  assert.deepEqual(plain(M.track([], 100, false)), []);
+  assert.deepEqual(plain(M.track([{ a: A, steps: 0, blocks: 0 }], 0, false).map((r) => r.x)), [0], "no steps, no cards: nobody moves");
   assert.deepEqual([...M.winners(st)], [A]);
   assert.deepEqual([...M.winners([{ a: A, steps: 0 }])], [], "no blocks, no winner");
 });

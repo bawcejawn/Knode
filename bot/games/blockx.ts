@@ -26,8 +26,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { readVhp, MAINNET_VHP, withRetry } from "../../common.ts";
-await import("../../site/race-math.js");
-await import("../../site/blockx-math.js");
+await import("../../race-math.js");
+await import("../../blockx-math.js");
 const M: any = (globalThis as any).KRaceMath;
 const X: any = (globalThis as any).KBlockX;
 

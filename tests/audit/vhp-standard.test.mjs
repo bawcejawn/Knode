@@ -8,7 +8,7 @@ import vm from "node:vm";
 
 const APP = process.env.APP || ".";
 const box = { window: {} };
-vm.runInNewContext(fs.readFileSync(`${APP}/site/race-math.js`, "utf8") + "\n" + fs.readFileSync(`${APP}/site/vhp-standard.js`, "utf8"), box);
+vm.runInNewContext(fs.readFileSync(`${APP}/race-math.js`, "utf8") + "\n" + fs.readFileSync(`${APP}/vhp-standard.js`, "utf8"), box);
 const V = box.window.KVhp, R = box.window.KRaceMath;
 
 // ── the contract, as written (only the arithmetic; u64 subtraction never goes below 0 here) ──
@@ -84,7 +84,7 @@ test("the standard measures: card = most over the 7,200 blocks before; seeding =
 });
 
 test("the standard is pure (no network, storage or wallet)", () => {
-  const src = fs.readFileSync(`${APP}/site/vhp-standard.js`, "utf8");
+  const src = fs.readFileSync(`${APP}/vhp-standard.js`, "utf8");
   assert.doesNotMatch(src, /fetch\(|XMLHttpRequest|localStorage|\.send\(|signTransaction/);
 });
 

@@ -123,6 +123,8 @@ type BotState = {
   lastProduced: number; producedByDay: Record<string, number>; producerScannedTo: number;
   /** Owner-only changes already emailed about (so each one fails a run, and emails you, once — not every hour). */
   notified?: string[];
+  /** Mana the bot wallet spent per UTC day ("YYYY-MM-DD" → units), last 60 days: for the platform's daily Mana budget. */
+  manaByDay?: Record<string, string>;
   /** Block-producer keys first seen on record for the game and the desk (used when deployment.json names none). */
   producerKey?: string; deskProducerKey?: string;
   /** The owner-only settings seen on the last run (to report a change). */
@@ -173,7 +175,12 @@ export type Ctx = {
   recentSigners?: (lib: number, maxBlocks: number) => Promise<{ blocks: SignedBlock[]; from: number; to: number }>;
   /** Things that need a human. A scheduled run with problems ends as "failed", which makes GitHub email you. */
   problems: string[];
+  /** Mana (units) this run's bot-paid transactions used, from their receipts. */
+  manaUsed?: bigint;
   quiet?: boolean;
+  /** Real runs only: when the day's release time is this close (ms), wait for it instead of leaving it to the next
+   *  run, so questions come out on the dot (the release run is started a few minutes early). */
+  releaseWaitMs?: number;
   /** A question window's blocks read fresh from the chain (irreversible blocks only). Without it the bot uses
    *  blocks.csv (simulations and tests). */
   windowBlocks?: (from: number, to: number) => Promise<Blk[]>;
@@ -234,12 +241,13 @@ export const BOT_MANA_FLOOR = toSat(Number(E.BOT_MANA_FLOOR ?? 2));
 async function sendOp(ctx: Ctx, what: string, calls: Call[], opts: { sponsored?: boolean } = {}): Promise<boolean> {
   if (ctx.dryRun) { log(`  [dry run] would send: ${what}`); return true; }
   let r = await ctx.chain.send(calls, [ctx.operator], opts);
+  const contractPaid = !!opts.sponsored && r.ok;
   if (!r.ok && opts.sponsored) {
     // The contract only sponsors what it can verify is valid; if it declines, the bot pays instead, a few per run.
     ctx.botPaid = (ctx.botPaid ?? 0) + 1;
     if (!ctx.botPaidUncapped && ctx.botPaid > MAX_BOT_PAID_SETTLES) {
       if (ctx.botPaid === MAX_BOT_PAID_SETTLES + 1) {
-        ctx.problems.push(`The contract declined to pay for more than ${MAX_BOT_PAID_SETTLES} settles this run. The bot paid for ${MAX_BOT_PAID_SETTLES} and left the rest for later runs (anyone can settle any player).`);
+        ctx.problems.push(`More than ${MAX_BOT_PAID_SETTLES} players needed settling this run. The game contract no longer pays Mana for anyone, so the bot paid for ${MAX_BOT_PAID_SETTLES} itself and left the rest for later runs (anyone can settle any player).`);
       }
       return false;
     }
@@ -252,6 +260,8 @@ async function sendOp(ctx: Ctx, what: string, calls: Call[], opts: { sponsored?:
     }
     r = await ctx.chain.send(calls, [ctx.operator], {});
   }
+  // Count what the bot wallet paid (a reverted transaction is paid too; one the contract paid for is not).
+  if (!contractPaid && r.rcUsed) { try { ctx.manaUsed = (ctx.manaUsed ?? 0n) + BigInt(r.rcUsed); } catch { /* not a number: not counted */ } }
   if (r.ok) { if (!ctx.quiet) log(`  ✔ ${what}${r.rcUsed && r.rcUsed !== "0" ? `  (Mana ${showKoin(r.rcUsed)})` : ""}`); }
   else { log(`  ✖ ${what}: ${r.error}`); ctx.problems.push(`A transaction failed: ${what} — ${String(r.error).slice(0, 200)}`); }
   return r.ok;
@@ -308,6 +318,13 @@ export async function tick(ctx: Ctx) {
   await step("health check", () => healthPass(ctx, bs));
   await step("settling players", () => settlePass(ctx));
   await step("compounding", () => compoundPass(ctx, bs));
+  if (!ctx.dryRun && ctx.manaUsed) {
+    const day = new Date().toISOString().slice(0, 10), m = { ...(bs.manaByDay ?? {}) };
+    m[day] = String(big(m[day]) + ctx.manaUsed);
+    bs.manaByDay = Object.fromEntries(Object.entries(m).sort().slice(-60));
+    ctx.manaUsed = 0n;
+    save();
+  }
   if (!ctx.dryRun) writeIndex(P);
   ctx.checkpoint("bot: tick");
 }
@@ -801,7 +818,18 @@ async function postPass(ctx: Ctx, bs: BotState) {
   if (dd >= QUESTION_DAYS) return; // Sunday: results day, no questions
   const dayStart = st.genesis + d * DAY_MS;
   const releaseAt = dayStart + RELEASE_HOUR * HOUR_MS, lockTime = dayStart + LOCK_HOUR * HOUR_MS;
-  if (time < releaseAt) { if (!ctx.quiet) log(`  today's questions come out at ${utc(releaseAt)}`); return; }
+  if (time < releaseAt) {
+    const wait = releaseAt - time;
+    if (!ctx.dryRun && ctx.releaseWaitMs && wait <= ctx.releaseWaitMs) {
+      log(`  today's questions come out at ${utc(releaseAt)}: waiting ${Math.ceil(wait / 1000)} s for it`);
+      await new Promise((r) => setTimeout(r, wait + 5_000));
+      // The chain's clock can trail by a block or two: one more short wait at most, then leave it to the next run.
+      ctx.releaseWaitMs = ctx.releaseWaitMs > 60_000 ? 60_000 : 0;
+      return postPass(ctx, bs);
+    }
+    if (!ctx.quiet) log(`  today's questions come out at ${utc(releaseAt)}`);
+    return;
+  }
   const label = `W${SPACE(w)}-D${dd + 1}`;
   const file = path.join(ctx.P.questions, `${label}.json`);
   const wEnd = weekEnd(st, w);
@@ -1125,7 +1153,7 @@ function nextMonday(): number {
 }
 
 async function deploy(send: boolean) {
-  const rpc = E.RPC ?? "https://api.koinos.io";
+  const rpc = E.RPC ?? "https://koinos.armana.io";
   const mainnet = isMainnet(rpc);
   if (send && mainnet && E.CONFIRM_MAINNET !== "yes") throw new Error(`RPC is ${rpc} (MAINNET, real KOIN). Add CONFIRM_MAINNET=yes to .env if you really mean it.`);
   const need = (k: string) => { if (!E[k]) throw new Error(`${k} is missing from .env`); return E[k]!; };
@@ -1363,10 +1391,10 @@ async function verifyResults(days: number, rpcArg?: string) {
   const P = paths(E.GEN_DIR ?? "game-data");
   const dep = readJson(P.deployment, null);
   if (!dep?.contract) throw new Error(`${P.deployment} not found.`);
-  pinDeployment("game", dep, dep.rpc ?? "https://api.koinos.io", P.deployment);
+  pinDeployment("game", dep, dep.rpc ?? "https://koinos.armana.io", P.deployment);
   // Which chain is mainnet: deployment.json's pinned id, else the public node's (one read), else the known value.
   let expect: string | null = dep.chainId ?? null;
-  if (!expect) { try { expect = await withTimeout(new Provider([dep.rpc ?? "https://api.koinos.io"]).getChainId(), 5000); } catch { expect = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA=="; } }
+  if (!expect) { try { expect = await withTimeout(new Provider([dep.rpc ?? "https://koinos.armana.io"]).getChainId(), 5000); } catch { expect = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA=="; } }
   let node: { rpc: string; lib: number; headId: string } | null;
   if (rpcArg) {
     if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(rpcArg)) throw new Error("--rpc must be a node on this computer (http://127.0.0.1:<port>).");
@@ -1379,7 +1407,7 @@ async function verifyResults(days: number, rpcArg?: string) {
     node = await findLocalNode(expect);
     if (!node) throw new Error(`No mainnet node answered on this computer (ports ${LOCAL_PORTS.join(", ")}). Is Docker running? If your node uses another port, add --rpc http://127.0.0.1:<port>.`);
   }
-  const pubLib = await withTimeout(new Provider([dep.rpc ?? "https://api.koinos.io"]).getHeadInfo(), 5000).then((h: any) => Number(h.last_irreversible_block)).catch(() => 0);
+  const pubLib = await withTimeout(new Provider([dep.rpc ?? "https://koinos.armana.io"]).getHeadInfo(), 5000).then((h: any) => Number(h.last_irreversible_block)).catch(() => 0);
   log(`Using your node at ${node.rpc} (final block ${node.lib.toLocaleString()})${pubLib && pubLib - node.lib > 200 ? ` — it is ${(pubLib - node.lib).toLocaleString()} blocks behind the network, so the newest windows are skipped` : ""}.\n`);
   const provider = new Provider([node.rpc]);
   const local = new KoinosChain(node.rpc, dep.contract);   // the contract's records, read through YOUR node too
@@ -1429,7 +1457,7 @@ async function chainCheck() {
   const P = paths(E.GEN_DIR ?? "game-data");
   const dep = readJson(P.deployment, null), deskDep = readJson(path.join("desk-data", "deployment.json"), null);
   if (!dep?.contract) throw new Error(`${P.deployment} not found.`);
-  const rpc = E.RPC ?? dep.rpc ?? "https://api.koinos.io";
+  const rpc = E.RPC ?? dep.rpc ?? "https://koinos.armana.io";
   pinDeployment("game", dep, rpc, P.deployment);
   if (deskDep?.contract) pinDeployment("desk", deskDep, rpc, path.join("desk-data", "deployment.json"));
   const provider = new Provider([rpc]);
@@ -1560,7 +1588,7 @@ async function friendly(cmd: string, a: string[], send: boolean): Promise<boolea
     case "node-key": {
       if (a[0] === "personal") {
         const pub = nodePublicKey(PERSONAL_KEY_FILE);
-        log(`Your PERSONAL node's PUBLIC key (safe to share):\n  ${pub}\n\nRegister it for your own address on https://bawcejawn.github.io/Knode/site/producer.html (signed in Kondor).\nDo NOT register this one for the game contract.`);
+        log(`Your PERSONAL node's PUBLIC key (safe to share):\n  ${pub}\n\nRegister it for your own address on https://knodegames.com/producer.html (signed in Kondor).\nDo NOT register this one for the game contract.`);
         return true;
       }
       const pub = nodePublicKey(a[0] && !a[0].startsWith("--") ? a[0] : undefined);
@@ -1644,7 +1672,7 @@ async function nodeStatus(personal = false) {
   }
   const localRpc = personal ? "http://127.0.0.1:8090" : (E.NODE_RPC ?? "http://127.0.0.1:8080");
   const local = new Provider([localRpc]);
-  const pub = new Provider([E.RPC ?? "https://api.koinos.io"]);
+  const pub = new Provider([E.RPC ?? "https://koinos.armana.io"]);
   const p: any = await pub.getHeadInfo();
   const ph = Number(p.head_topology.height);
   let lh = 0;
@@ -1666,7 +1694,7 @@ function keys() {
   const has = (k: string) => new RegExp(`^${k}=`, "m").test(text);
   const add = (k: string, v: string) => { text = (text.trim() ? text.replace(/\s*$/, "\n") : "") + `${k}=${v}\n`; E[k] = v; };
   const added: string[] = [];
-  if (!TESTNET && !has("RPC")) add("RPC", "https://api.koinos.io");
+  if (!TESTNET && !has("RPC")) add("RPC", "https://koinos.armana.io");
   if (!TESTNET && !has("CONFIRM_MAINNET")) add("CONFIRM_MAINNET", "yes");
   for (const k of ["OPERATOR_WIF", "PLAYER_WIF", "CONTRACT_WIF", "OWNER_WIF"]) {
     if (has(k)) continue;
@@ -1785,7 +1813,7 @@ function liveCtx(dryRun: boolean): Ctx {
   const dep = readJson(P.deployment, null);
   const contract = E.CONTRACT_ADDRESS ?? dep?.contract;
   if (!contract) throw new Error(`No contract yet: ${P.deployment} is missing (run deploy) or set CONTRACT_ADDRESS.`);
-  const rpc = E.RPC ?? dep?.rpc ?? "https://api.koinos.io";
+  const rpc = E.RPC ?? dep?.rpc ?? "https://koinos.armana.io";
   if (isMainnet(rpc) && !E.CONTRACT_ADDRESS && contract !== PINNED_MAINNET.game)
     throw new Error(`${P.deployment} names the game contract ${contract}, not ${PINNED_MAINNET.game}. If that change is intended, set CONTRACT_ADDRESS (and update PINNED_MAINNET in bot/bot.ts).`);
   if (dep) pinDeployment("game", { ...dep, contract }, rpc, P.deployment);
@@ -1802,6 +1830,7 @@ function liveCtx(dryRun: boolean): Ctx {
   const pob = new Contract({ id: dep?.pob ?? MAINNET.pob, abi: pobAbi as any, provider: chain.provider });
   return {
     chain, operator, P, dryRun, generator: generatorRunner(P.dir), checkpoint: gitCheckpoint(P.dir), problems: [], noSealKey: !E.OPERATOR_WIF,
+    releaseWaitMs: 12 * 60_000,
     previousOperator: E.PREVIOUS_OPERATOR_WIF ? Signer.fromWif(E.PREVIOUS_OPERATOR_WIF) : undefined,
     // Window blocks are read fresh from the chain for every resolution; the cached blocks.csv is never trusted for that.
     windowBlocks: async (from, to) => {

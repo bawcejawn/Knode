@@ -166,7 +166,7 @@ On github.com/bawcejawn/Knode:
      Don't also keep it as a repository secret.
    - **Settings → Secrets and variables → Actions**, Variables tab: add `BOT_ENABLED` = `true`.
 2. **Settings → Pages**: Source "Deploy from a branch", branch `main`, folder `/ (root)`, then Save.
-   The site appears at **https://bawcejawn.github.io/Knode/** within a few minutes. To preview it with sample data
+   The site appears at **https://knodegames.com** within a few minutes. To preview it with sample data
    at any time, add `?demo` to the address.
 3. **Actions → Kpred bot → Run workflow** starts the first run by hand. The first one takes several minutes.
 4. Emails: click your picture → **Settings → Notifications → Actions**, then tick **"Notify on failed workflows only"**.
@@ -233,18 +233,18 @@ On the testnet a "week" lasts 1 hour (5-minute corrections, 10-minute settling, 
 
 ## Changing the website (no waiting)
 
-The website is just files in the `site/` folder, served free by GitHub Pages. Any change you commit and push is live
+The website is just the files at the top of the repo (pages, scripts, styles, `media/`), served free by GitHub Pages at knodegames.com. Any change you commit and push is live
 within a few minutes. There's no timelock: the website can't touch anyone's money, it only asks Kondor to sign
 transactions that the contract then checks.
 
 ## Ads
 
-Edit `site/ads.json` (on github.com you can click the file, then the pencil icon), replace `null` for a slot, and
+Edit `ads.json` (on github.com you can click the file, then the pencil icon), replace `null` for a slot, and
 commit. Two kinds:
-- **Direct sponsor:** put their image in `site/ads/` and fill in `image`, `link` and `alt`.
+- **Direct sponsor:** put their image in `ads/` and fill in `image`, `link` and `alt`.
 - **Ad network** (A-Ads and similar): paste the ad link from the network's dashboard as `src`, with its width and height.
   These ads are shown in a frame, and the page blocks every frame by default (`frame-src 'none'` in the
-  Content-Security-Policy line at the top of `site/index.html`). Before the first network ad, change that part to the
+  Content-Security-Policy line at the top of `index.html`). Before the first network ad, change that part to the
   network's exact address, for example `frame-src https://ad.a-ads.com`, and commit both files together. Never use
   `frame-src https:` (any site).
 

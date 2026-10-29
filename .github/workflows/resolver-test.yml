@@ -4,9 +4,9 @@ name: Resolver tests
 
 on:
   push:
-    paths: ["resolver.ts", "resolver.test.ts", "generator.ts", "common.ts", "bot/**", "site/**", "docs/**", "README.md", "tests/**", "game-data/game.json", "package.json", "package-lock.json", ".github/workflows/resolver-test.yml"]
+    paths: ["resolver.ts", "resolver.test.ts", "generator.ts", "common.ts", "bot/**", "*.html", "*.js", "*.css", "*.json", "media/**", "site/**", "docs/**", "README.md", "tests/**", "game-data/game.json", "package.json", "package-lock.json", ".github/workflows/resolver-test.yml"]
   pull_request:
-    paths: ["resolver.ts", "resolver.test.ts", "generator.ts", "common.ts", "bot/**", "site/**", "docs/**", "README.md", "tests/**", "game-data/game.json", "package.json", "package-lock.json", ".github/workflows/resolver-test.yml"]
+    paths: ["resolver.ts", "resolver.test.ts", "generator.ts", "common.ts", "bot/**", "*.html", "*.js", "*.css", "*.json", "media/**", "site/**", "docs/**", "README.md", "tests/**", "game-data/game.json", "package.json", "package-lock.json", ".github/workflows/resolver-test.yml"]
   workflow_dispatch: {}
 
 permissions:

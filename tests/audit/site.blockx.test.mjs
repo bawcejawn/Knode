@@ -6,7 +6,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const read = (f) => fs.readFileSync(`${APP}/site/${f}`, "utf8");
+const read = (f) => fs.readFileSync(`${APP}/${f}`, "utf8");
 const box = { window: {} };
 vm.runInNewContext(read("race-math.js") + "\n" + read("blockx-math.js"), box);
 const X = box.window.KBlockX, RM = box.window.KRaceMath;

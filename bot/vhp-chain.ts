@@ -12,7 +12,7 @@
 import { Contract, Serializer, utils } from "koilib";
 import { withRetry } from "../common.ts";
 import { tokenAbi } from "./token-abi.ts";
-await import("../site/vhp-standard.js");
+await import("../vhp-standard.js");
 const V: any = (globalThis as any).KVhp;
 
 export type Head = { height: number; time: number; lib: number; libTime: number };

@@ -8,7 +8,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const read = (f) => fs.readFileSync(`${APP}/site/${f}`, "utf8");
+const read = (f) => fs.readFileSync(`${APP}/${f}`, "utf8");
 const box = { window: {} };
 vm.runInNewContext(read("race-math.js"), box);
 vm.runInNewContext(read("vhp-standard.js"), box);
@@ -374,7 +374,7 @@ test("the page builds everything with textContent and sends one thing: a pick of
 test("the page says what the contract and recorder do (sizes, lock, scoring, ties, own nodes)", () => {
   for (const s of ["Saturday at 12:00 UTC", "Sunday 23:55 UTC", "with 12 to 15 the top seeds get a bye", "from 32 it is a 32-producer bracket", "under 8 there is no bracket", "an exact tie goes to the lower seed", "1 point in the first round, then 2, 4, 8 (and 16 in a 32-bracket), plus 2 for the right champion", "ties go to a right champion, then more right picks"]) assert.ok(page.includes(s), s);
   assert.match(page, /Disclosure: a KnodeGames node is in this bracket/);
-  assert.match(read("terms.html"), /The Producer Bracket seeds whichever producers are in the race field/);
+  assert.match(read("terms.html"), /The Producer Bracket seeds whichever producers are in the field, by VHP/);
   assert.doesNotMatch(page + js, /\bodds\b|\bwager|\bbet\b|\bpays\s+\d/i);
 });
 

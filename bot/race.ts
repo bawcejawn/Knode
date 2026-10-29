@@ -16,7 +16,7 @@
  *     more picks placed, then more Knode questions answered, then a higher Knode score.
  *  4. Writes race-data/index.json, race-data/W<week>.json and race-data/board.json, which the publish job puts on the
  *     race-data branch for the website.
- * The scoring is site/race-math.js, the same file the website runs.
+ * The scoring is race-math.js, the same file the website runs.
  *
  *   RPC, RPC_CHECK ("off" to skip the second node), RACE_PREV (the race-data files from the last run), RACE_OUT.
  *   npm run race            (or: npx tsx bot/race.ts)
@@ -27,11 +27,11 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Contract } from "koilib";
 import { readVhp, MAINNET_VHP, withRetry, sleep } from "../common.ts";
-await import("../site/race-math.js");
+await import("../race-math.js");
 const M: any = (globalThis as any).KRaceMath;
 
 const E = process.env;
-const RPC = E.RPC || "https://api.koinos.io";
+const RPC = E.RPC || "https://koinos.armana.io";
 const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
 let PREV = E.RACE_PREV || "";
 let OUT = E.RACE_OUT || "race-data";

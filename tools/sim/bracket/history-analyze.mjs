@@ -7,7 +7,7 @@
 // the brackets' points.
 import fs from "node:fs"; import path from "node:path"; import zlib from "node:zlib";
 const REPO = new URL("../../..", import.meta.url).pathname.replace(/\/$/, "");
-await import(REPO + "/site/race-math.js"); await import(REPO + "/site/vhp-standard.js"); await import(REPO + "/site/bracket-math.js");
+await import(REPO + "/race-math.js"); await import(REPO + "/vhp-standard.js"); await import(REPO + "/bracket-math.js");
 const M = globalThis.KRaceMath, B = globalThis.KBracketMath;
 const DIR = process.argv[2];
 const H = 3600000, DAY = 24 * H;
