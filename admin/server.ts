@@ -19,7 +19,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { spawn, exec } from "node:child_process";
+import { spawn, exec, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { ACTIONS, AREAS, KINDS, commandFor } from "./actions.ts";
 
@@ -34,8 +34,13 @@ let busy = false;
 const page = fs.readFileSync(path.join(ROOT, "admin", "index.html"), "utf8");
 // What the page shows: every area of the platform, the kinds of control, and each action with its plain-words fields
 // and the command it runs (with {placeholders} for the values). The patterns stay on the server, which checks them.
+// Which version of the page this is (shown at the top), so it's easy to tell an old copy from a new one.
+const VERSION = (() => {
+  const git = (...a: string[]) => { try { return execFileSync("git", a, { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return ""; } };
+  return { branch: git("rev-parse", "--abbrev-ref", "HEAD") || "unknown", commit: git("rev-parse", "--short", "HEAD") || "unknown", date: git("log", "-1", "--format=%cd", "--date=format:%d %b %Y %H:%M") };
+})();
 const catalog = JSON.stringify({
-  areas: AREAS, kinds: KINDS,
+  version: VERSION, areas: AREAS, kinds: KINDS,
   actions: ACTIONS.map(({ id, area, kind, label, what, when, signer, effect, timing, step, tool, params, sends, args }) => ({
     id, area, kind, label, what, when, signer, effect, timing, step, sends,
     testnet: args.includes("--testnet"), command: `npm run ${tool} -- ${args.join(" ")}`,
@@ -106,9 +111,14 @@ const server = http.createServer((req, res) => {
   });
 });
 
+server.on("error", (e: any) => {
+  if (e?.code === "EADDRINUSE") console.error(`\nAn admin page is ALREADY running on this computer (port ${PORT}), probably an older one in another PowerShell window.\nClose that window (or press Ctrl+C in it), close the old browser tab, then run npm run admin again.\n`);
+  else console.error(`\nThe admin page couldn't start: ${e?.message ?? e}\n`);
+  process.exit(1);
+});
 server.listen(PORT, "127.0.0.1", () => {
   const link = `http://127.0.0.1:${PORT}/#${KEY}`;
-  console.log(`\nKnode admin is running on this computer only.\n\n  Open: ${link}\n\nKeep this window open while you use it; close it (Ctrl+C) when you're done. The key changes every start.\n`);
+  console.log(`\nKnode Games Admin is running on this computer only (branch ${VERSION.branch}, version ${VERSION.commit}${VERSION.date ? `, ${VERSION.date}` : ""}).\n\n  Open: ${link}\n\nKeep this window open while you use it; close it (Ctrl+C) when you're done. The key changes every start.\n`);
   if (process.env.ADMIN_NO_BROWSER !== "1") {
     const opener = process.platform === "win32" ? `start "" "${link}"` : process.platform === "darwin" ? `open "${link}"` : `xdg-open "${link}"`;
     exec(opener, () => {});
