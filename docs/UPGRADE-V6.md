@@ -14,7 +14,7 @@ mainnet also needs `CONFIRM_MAINNET=yes` in `.env`. Run everything in PowerShell
 
 ## Before you start (all must be true)
 
-1. **Done:** the RepoLens audit, its fix-check and the third-party audit are clean; branch `vault-v6` holds the fixed code.
+1. **Done:** the audits are clean (owner, 2026-10-29: the owner's own audit programs count; RepoLens fix-check 4 said "ready for the rehearsal"), and branch `vault-v6` holds the fixed code.
 2. **Sponsor:** sponsor v3, with the Vault's calls added (`claude/handoff-sponsor-vault-calls.md`), is live. Without it, staking in other games, moving stake and claiming their prizes aren't sponsored.
 3. **Seed:** it covers the free prizes, 3 VHP a week per game with a free prize. The question game, Block X, Survivor and the Race need 12 VHP a week, roughly **3,000 VHP** of seed at today's ~90 VHP of weekly rewards; with Producer Bracket, 15 VHP a week, roughly **3,750 VHP**. When the seed's share is short, every prize is cut that week:
    ```
@@ -26,11 +26,12 @@ mainnet also needs `CONFIRM_MAINNET=yes` in `.env`. Run everything in PowerShell
    git checkout vault-v6
    git pull
    npm ci --ignore-scripts
-   cd game; npm ci --ignore-scripts; npm test; npm run check; npm run build:sim; cd ..
-   node --import tsx --test game/scripts/storage-compat.test.ts game/scripts/storage-compat-v6.test.ts bot/vault.test.ts bot/rehearse-v6.test.ts
+   cd game; npm ci --ignore-scripts; npm test; npm run build:safe; npm run build:sim; npm run check; cd ..
+   node --import tsx --test game/scripts/storage-compat.test.ts game/scripts/storage-compat-v6.test.ts bot/*.test.ts
    certutil -hashfile game\build\release\contract.wasm SHA256
+   certutil -hashfile game\build\safe\contract.wasm SHA256
    ```
-   The hash must be the **New code** above. If it isn't, stop. (If a build step stops with `EAGAIN`, run it again.)
+   The first hash must be the **New code** above, the second the emergency build's. If either isn't, stop. (If a build step stops with `EAGAIN`, run it again.)
 5. **The rehearsal on a copy of the real contract** (read-only, no key; about 2 minutes):
    ```
    npm run bot -- vault-snapshot --out v5-snapshot.json
