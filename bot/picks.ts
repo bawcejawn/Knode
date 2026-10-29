@@ -81,7 +81,8 @@ export function network(testnet = TESTNET): Net {
     return { testnet: true, rpc: [E.TESTNET_RPC || cfg.rpc], chainId: cfg.chainId ?? null, owner, picks: isAddr(cfg.picks) ? cfg.picks : null, games: cfg.games, cfg };
   }
   const st = readJson(MAINNET_STATE);
-  return { testnet: false, rpc: E.RPC ? [E.RPC] : MAINNET_RPCS, chainId: MAINNET_CHAIN_ID, owner: MAINNET_OWNER, picks: isAddr(st?.contract) ? st.contract : null, games: MAINNET_GAMES, cfg: st };
+  // Audit BX-47: one primary node only (koilib would quietly fall back to the second, which is the check node).
+  return { testnet: false, rpc: [E.RPC || MAINNET_RPCS[0]], chainId: MAINNET_CHAIN_ID, owner: MAINNET_OWNER, picks: isAddr(st?.contract) ? st.contract : null, games: MAINNET_GAMES, cfg: st };
 }
 /** A provider for the network, after checking the node is on the expected chain (never sign for the wrong one). */
 async function connect(net: Net) {
@@ -308,12 +309,23 @@ export async function sendOps(p: Provider, chainId: string, signer: Signer, ops:
 /** Audit BX-19: before the owner key signs anything for the Picks contract, check on chain that the address named in
  *  the settings holds exactly the expected build (mainnet: the audited one; testnet: the manifest's build) with all
  *  three overrides on. A wrong or edited deployment file can't make the owner sign for another contract. */
-export async function assertAuditedContract(net: { testnet: boolean; picks: string | null; cfg?: any }, p: Provider, meta = contractMetadata, want?: string, checkNodes?: Provider[]) {
+/** Audit BX-47: two node addresses are the same node when they match after trimming case and trailing slashes. */
+export const sameNode = (a: string, b: string) => a.trim().toLowerCase().replace(/\/+$/, "") === b.trim().toLowerCase().replace(/\/+$/, "");
+export async function assertAuditedContract(net: { testnet: boolean; picks: string | null; cfg?: any; rpc?: string[] }, p: Provider, meta = contractMetadata, want?: string, checkNodes?: Provider[]) {
   if (!net.picks) throw new Error("No Picks contract yet.");
   want = want ?? (net.testnet ? (readJson(TESTNET_MANIFEST)?.sha256 ?? net.cfg?.picksSha256) : PICKS_SHA256);
   if (!want) throw new Error("No expected build for the testnet Picks contract (picks/build/testnet/manifest.json).");
   // Audit BX-9/BX-20: on mainnet a second, independent node must say the same (the testnet has one public node).
-  const nodes = [p, ...(checkNodes ?? (net.testnet ? [] : [new Provider([MAINNET_CHECK_RPC()])]))];
+  // Audit BX-47: it must be a different node from the first, and on the mainnet chain too.
+  let extra = checkNodes;
+  if (!extra && !net.testnet) {
+    const url = MAINNET_CHECK_RPC();
+    if ((net.rpc ?? MAINNET_RPCS).slice(0, 1).some((u) => sameNode(u, url))) throw new Error(`RPC_CHECK (${url}) is the same node as RPC: the check needs a second, independent node. Nothing was signed.`);
+    const cp = new Provider([url]);
+    if ((await cp.getChainId()) !== MAINNET_CHAIN_ID) throw new Error(`The check node ${url} is not on Koinos mainnet. Nothing was signed.`);
+    extra = [cp];
+  }
+  const nodes = [p, ...(extra ?? [])];
   for (const [i, node] of nodes.entries()) {
     const where = nodes.length > 1 ? ` (node ${i + 1} of ${nodes.length})` : "";
     const m = await meta(node, net.picks);

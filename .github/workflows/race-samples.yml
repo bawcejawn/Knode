@@ -1,4 +1,4 @@
-# Handicap VHP samples (audit BX-3 b; project doc claude/handicap-anti-gaming.md): about every 10 minutes, at a random
+# Handicap VHP samples (audit BX-3 b; docs/HANDICAP-VHP.md): about every 5 minutes, at a random
 # moment inside the run, reads every producer's effective VHP on two nodes and keeps the last 8 hours of samples on
 # the race-samples branch. The hourly race recorder (race.yml) uses the highest sample of the last 6 hours for each
 # producer's card VHP, so moving VHP away just before a card is taken no longer pays.
@@ -11,7 +11,7 @@ name: Race VHP samples
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"      # audit BX-42: more, shorter samples (a random wait of 0-4 minutes inside the run)
   workflow_dispatch: {}
 
 concurrency:
@@ -44,7 +44,7 @@ jobs:
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-samples 2>/dev/null; then
             if git cat-file -e "FETCH_HEAD:vhp-samples.json" 2>/dev/null; then git show "FETCH_HEAD:vhp-samples.json" > "$RUNNER_TEMP/prev/vhp-samples.json"; fi
           else echo "No race-samples branch yet."; fi
-      - name: Take a sample (at a random moment in the next 8 minutes)
+      - name: Take a sample (at a random moment in the next 4 minutes)
         run: npm run race -- --sample
         env:
           RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
@@ -78,27 +78,43 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git init -q work
+          parent=""
+          : > "$RUNNER_TEMP/published.json"
+          if git -C work fetch -q --depth 1 "$remote" race-samples 2>/dev/null; then
+            parent=$(git -C work rev-parse FETCH_HEAD)
+            git -C work show "FETCH_HEAD:vhp-samples.json" > "$RUNNER_TEMP/published.json" 2>/dev/null || : > "$RUNNER_TEMP/published.json"
+          fi
           bad=$(find "$IN" -mindepth 1 \( -type l -o -type d -o \( -type f ! -path "$IN/vhp-samples.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           big=$(find "$IN" -type f -size +1024k -print)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 1 MB: $big"; exit 1; fi
-          /usr/bin/python3 - "$IN/vhp-samples.json" <<'PY'
-          import json, re, sys
+          /usr/bin/python3 - "$IN/vhp-samples.json" "$RUNNER_TEMP/published.json" <<'PY'
+          import json, re, sys, time
           j = json.load(open(sys.argv[1], encoding="utf-8"))
+          now = int(time.time() * 1000)
           addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}"); iso = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
           assert type(j) is dict and set(j) == {"v", "updated", "samples"} and j["v"] == 1 and iso.fullmatch(str(j["updated"]))
           s = j["samples"]
-          assert type(s) is list and len(s) <= 80
+          assert type(s) is list and len(s) <= 120
           for x in s:
-              assert type(x) is dict and set(x) == {"at", "height", "vhp"} and type(x["at"]) is int and 0 < x["at"] < 10**14 and type(x["height"]) is int and 0 < x["height"] < 10**10
+              # Audit BX-38: never a sample from the future (10 minutes of clock slack).
+              assert type(x) is dict and set(x) == {"at", "height", "vhp"} and type(x["at"]) is int and 0 < x["at"] <= now + 600000 and type(x["height"]) is int and 0 < x["height"] < 10**10
               assert type(x["vhp"]) is dict and len(x["vhp"]) <= 500 and all(addr.fullmatch(a) and type(v) is str and re.fullmatch(r"\d{1,20}", v) for a, v in x["vhp"].items())
           assert all(s[i]["at"] < s[i + 1]["at"] for i in range(len(s) - 1))
+          # Audit BX-38: a new file never drops a published sample of the last 8 hours (only older ones age out).
+          try:
+              old = json.load(open(sys.argv[2], encoding="utf-8")).get("samples", [])
+          except Exception:
+              old = []
+          mine = {(x["at"], x["height"]) for x in s}
+          for x in old:
+              if type(x) is dict and type(x.get("at")) is int and now - 8 * 3600000 + 600000 < x["at"] <= now + 600000:
+                  assert (x["at"], x.get("height")) in mine, "a published sample of the last 8 hours would be dropped"
           print("samples ok")
           PY
-          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git init -q work && cd work
-          parent=""
-          if git fetch -q --depth 1 "$remote" race-samples 2>/dev/null; then parent=$(git rev-parse FETCH_HEAD); fi
+          cd work
           blob=$(git hash-object -w "$IN/vhp-samples.json")
           git read-tree --empty
           git update-index --add --cacheinfo 100644 "$blob" vhp-samples.json

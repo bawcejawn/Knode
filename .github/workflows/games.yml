@@ -107,7 +107,7 @@ jobs:
               if not (nat(t.get("round")) and nat(t.get("height")) and t["height"] >= t["round"] and t.get("final") is True and t.get("checked") in (0, 1, 2)): return False
               if not (t.get("signer") is None or addr.fullmatch(str(t["signer"]))) or not nat(t.get("time")) or not nat(t.get("lockTime")): return False
               c = t.get("card")
-              if c is not None and (type(c) is not dict or set(c) != {"at", "top", "signerVhp"} or not num(c["at"]) or not num(c["top"]) or not (c["signerVhp"] is None or num(c["signerVhp"]))): return False
+              if c is not None and (type(c) is not dict or set(c) not in ({"at", "top", "signerVhp"}, {"at", "top", "signerVhp", "afterAt"}) or not num(c["at"]) or not num(c["top"]) or not (c["signerVhp"] is None or num(c["signerVhp"])) or ("afterAt" in c and not (num(c["afterAt"]) and c["afterAt"] > c["at"]))): return False
               if "void" in t and (type(t["void"]) is not str or len(t["void"]) > 200): return False
               pk = t.get("picks")
               return type(pk) is list and len(pk) <= 100000 and all(type(x) is list and len(x) == 5 and addr.fullmatch(str(x[0])) and addr.fullmatch(str(x[1]))
@@ -124,11 +124,17 @@ jobs:
               return all(type(r) is dict and set(r) == {"a", "vhp", "k", "h"} and addr.fullmatch(str(r["a"])) and all(num(r[k]) for k in ("vhp", "k", "h")) for r in c["field"]) and \
                   all(type(r) is dict and set(r) == {"a", "vhp", "k"} and addr.fullmatch(str(r["a"])) and all(num(r[k]) for k in ("vhp", "k")) for r in c["paddock"])
           def vault_ok(j, f):
-              # The Vault (v6) results file of a free-prize game: no staked rows; at most 10 wallets per place, none twice.
+              # The Vault (v6) results file: staked players' points (1-255) in rows, the free board's 1st and 2nd (at
+              # most 10 per place); every wallet once.
               if type(j) is not dict or set(j) != {"game", "week", "final", "rows", "first", "second"} or j["game"] != gid or j["final"] is not True: return False
-              if not nat(j["week"]) or f != "W%d.json" % j["week"] or j["rows"] != []: return False
+              if not nat(j["week"]) or f != "W%d.json" % j["week"]: return False
+              rows = j["rows"]
+              if type(rows) is not list or len(rows) > 100000 or not all(type(x) is dict and set(x) == {"player", "points"} and type(x["player"]) is str and addr.fullmatch(x["player"])
+                  and type(x["points"]) is int and 1 <= x["points"] <= 255 for x in rows): return False
               w = j["first"] + j["second"] if type(j["first"]) is list and type(j["second"]) is list else None
-              return w is not None and len(j["first"]) <= 10 and len(j["second"]) <= 10 and all(type(a) is str and addr.fullmatch(a) for a in w) and len(set(w)) == len(w)
+              if w is None or len(j["first"]) > 10 or len(j["second"]) > 10 or not all(type(a) is str and addr.fullmatch(a) for a in w): return False
+              allw = w + [x["player"] for x in rows]
+              return len(set(allw)) == len(allw)
           if os.path.isdir(os.path.join(d, "vault")):
               for f in os.listdir(os.path.join(d, "vault")):
                   assert vault_ok(json.load(open(os.path.join(d, "vault", f), encoding="utf-8")), f), "vault/" + f

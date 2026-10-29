@@ -36,7 +36,7 @@
     if (!TESTNET) {
       let picks = null;
       try { const d = await fetchJson(new URL("picks-data/deployment.json", ROOT)); if (isAddr(d.contract)) picks = d.contract; } catch { /* not live yet */ }
-      NET = { rpc: ["https://koinos.armana.io", "https://api.koinos.io"], data: "https://raw.githubusercontent.com/bawcejawn/Knode/games-data/blockx/", raceData: "https://raw.githubusercontent.com/bawcejawn/Knode/race-data/",
+      NET = { rpc: ["https://koinos.armana.io", "https://api.koinosblocks.com"], data: "https://raw.githubusercontent.com/bawcejawn/Knode/games-data/blockx/", raceData: "https://raw.githubusercontent.com/bawcejawn/Knode/race-data/",
         cards: "race", picks, explorer: "https://koinosscan.com/address/", chainId: MAINNET_CHAIN_ID,
         prize: "1st and 2nd at the end of the week win the free-play prize (2 and 1 VHP, paid once the Knode Games vault is live)." };
       G = X;
@@ -409,7 +409,7 @@
     scored: (r) => r.pts > 0,
     link: (a) => (NET && NET.explorer ? NET.explorer + a : null),
     name: nameOf,
-    unranked: "The Staked board is for wallets holding at least 1 VHP or staking in Knode Games.",
+    unranked: "The Staked board is for wallets with at least 1 VHP staked in Block X that week (holding VHP, or a stake in another game, doesn't count).",
     free: { show: 6, prize: "" },
     // Audit BX-14: medals follow the prize rule (picks on 3+ days, a point, ties share): last week's from the recorder's
     // frozen prize list, this week's as they stand now.
@@ -464,7 +464,38 @@
       ? `${TESTNET ? "Test prizes" : "Prizes"} for week ${lw.week + 1}: ${prizes.map((p) => `${nameOf(p.player)} ${fmt(p.vhp, p.vhp % 1 ? 2 : 0)} VHP`).join(", ")}.${TESTNET ? " Nothing is paid on the testnet." : ""}`
       : NET.prize;
   }
-  function onWallet() { renderWallet(); loadMine(); renderBoard(); renderResults(); readMana(); }
+  function onWallet() { renderWallet(); loadMine(); renderBoard(); renderResults(); readMana(); readStake(); }
+
+  // ── your stake in Block X (the Knode Games vault, v6; owner 2026-10-28: every game takes stakes) ──
+  // Read-only here. The Stake / Withdraw / Move buttons are the site's shared stake panel (window.KStake, from the hub),
+  // mounted below the boards for game 2 once the vault is live; nothing here signs a stake.
+  let vault = null;
+  async function setupStake() {
+    if (TESTNET) return;
+    try {
+      const dep = await fetchJson(new URL("game-data/deployment.json", ROOT));
+      if (!dep || !isAddr(dep.contract)) return;
+      const abi = await fetchJson(new URL("game/abi/kpred-v6.koilib.json", ROOT));
+      const c = new lib.Contract({ id: dep.contract, abi, provider });
+      const st = await c.functions.get_state({});
+      if (!(Number(st?.result?.config?.v6_rule_week_plus_one || 0) > 0)) return;   // the vault isn't live yet
+      vault = c;
+      if (window.KStake && typeof window.KStake.mount === "function") { $("stake-panel").hidden = false; window.KStake.mount($("stake-panel"), { game: G.GAME_ID, name: "Who Signs Block X" }); }
+      readStake();
+    } catch { /* no vault: the boards still work */ }
+  }
+  async function readStake() {
+    const box = $("stake-mine");
+    if (!box) return;
+    const who = me();
+    if (!vault || !who) { box.hidden = true; return; }
+    try {
+      const r = (await vault.functions.get_game_player({ player: who, game: G.GAME_ID, week: String(M.weekOf(Date.now())) })).result || {};
+      const now = Number(r.week_stake || 0) / 1e8, pend = Number(r.player?.pending || 0) / 1e8;
+      box.textContent = `Your stake in Block X: ${fmt(now, 2)} VHP this week${pend ? `, plus ${fmt(pend, 2)} VHP from next week` : ""}. ${now >= 1 ? "You're on the Staked board." : "You play on the Free play board."}`;
+      box.hidden = false;
+    } catch { box.hidden = true; }
+  }
 
   function renderMults() {
     const ps = producers();
@@ -490,6 +521,7 @@
     if ($("cta")) $("cta").addEventListener("click", () => (me() ? goPick() : startPlaying()));
     renderWallet(); readMana();
     const picksReady = setupPicks().catch(() => {});
+    setupStake();
     try { await readHead(); say(""); } catch { say("Couldn't reach the Koinos network. Trying again in a moment…"); }
     await loadCard(); renderMults();
     await picksReady; renderTargets(true);

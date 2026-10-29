@@ -258,12 +258,20 @@
   // reads game-data/deployment.json and passes its sponsor settings here (setGuestConfig), so the switch is the same
   // everywhere. A guest still signs only free play (answers and race picks); anything else is refused with a reason.
   const guestCfg = () => (W.sponsor && W.sponsor.guest === true ? W.sponsor : W.guestConfig && W.guestConfig.guest === true ? W.guestConfig : null);
-  // Audit BX-1: never on a shared *.github.io address (other sites there share this storage), whatever the setting says.
-  const sharedOrigin = () => { try { return String(window.location.hostname || "").toLowerCase().endsWith(".github.io"); } catch { return false; } };
-  const guestOn = () => !sharedOrigin() && !!guestCfg();
+  // Audit BX-1 / BX-40 / BX-51: guest keys exist only on Knode Games' own address (and this computer, for testing). Not
+  // a list of bad addresses (*.github.io, a trailing dot, file: pages would slip past one) but the few good ones.
+  // Everywhere else every guest path is closed: create, restore, backup, reconnect, switch and sign never touch the key.
+  const GUEST_ORIGINS = ["knodegames.com", "www.knodegames.com", "localhost", "127.0.0.1"];
+  const guestOrigin = () => {
+    try { const l = window.location; return !!l && (l.protocol === "https:" || l.protocol === "http:") && GUEST_ORIGINS.includes(String(l.hostname || "")); } catch { return false; }
+  };
+  const NO_GUEST = () => Promise.reject(new Error("Guest play is only on knodegames.com."));
+  const guestLib = () => (guestOrigin() && window.KGuest ? window.KGuest
+    : { load: NO_GUEST, create: NO_GUEST, restore: NO_GUEST, forget: NO_GUEST, signer: NO_GUEST, backupWif: NO_GUEST, isWif: () => false, lastAddress: () => null });
+  const guestOn = () => guestOrigin() && !!guestCfg();
   // Ready only while the sponsor pays (deployment.json "payer": "sponsor"): the page's own setting, or the header's copy.
   const guestPayer = () => (W.sponsor && W.sponsor.guest === true ? W.payer : W.guestConfig ? W.guestConfig.payer : "self");
-  const guestReady = () => { const g = guestCfg(); return !!(window.KGuest && g && typeof g.address === "string" && g.address && guestPayer() === "sponsor"); };
+  const guestReady = () => { const g = guestCfg(); return !!(guestOrigin() && window.KGuest && g && typeof g.address === "string" && g.address && guestPayer() === "sponsor"); };
   function guestOption(pick) {
     if (!window.KGuest || !guestOn()) return null;   // guest.js missing, or guest play switched off (every page loads it; a guest signs only answers and picks)
     const ready = guestReady();
@@ -276,13 +284,13 @@
   }
   async function connectGuest() {
     close();
-    let g = await window.KGuest.load();
+    let g = await guestLib().load();
     const isNew = !g;
     if (!g) {
       // Audit (guest) M-2: a guest this device had before is gone (the browser cleared it): say so, don't silently start over.
-      const last = window.KGuest.lastAddress && window.KGuest.lastAddress();
+      const last = guestLib().lastAddress && guestLib().lastAddress();
       if (last) return guestMissing(last);
-      g = await window.KGuest.create();
+      g = await guestLib().create();
     }
     setAddress("guest", g.address);
     if (isNew) guestWelcome(g.address);
@@ -296,7 +304,7 @@
           h("button", { class: "kw-btn", type: "button", onclick: async () => { resolve(await restoreGuest()); } }, "Restore from backup"),
           h("button", { class: "kw-btn", type: "button", onclick: async () => {
             close();
-            try { const g = await window.KGuest.create(); setAddress("guest", g.address); guestWelcome(g.address); resolve(g.address); }
+            try { const g = await guestLib().create(); setAddress("guest", g.address); guestWelcome(g.address); resolve(g.address); }
             catch (e) { W.toast && W.toast(String(e.message || e), 8000); resolve(null); }
           } }, "Start a new guest")));
       onClose = () => resolve(null);
@@ -313,7 +321,7 @@
   }
   async function backupGuest() {
     // Audit (guest) L-4: read the key fresh, and show it only if it is the guest this page is connected as.
-    const wif = await window.KGuest.backupWif();
+    const wif = await guestLib().backupWif();
     if (!wif) { close(); W.toast && W.toast("No guest key on this device.", 6000); return; }
     let keyAddress = null;
     try { keyAddress = lib.Signer.fromWif(wif).getAddress(); } catch { /* unreadable */ }
@@ -339,10 +347,10 @@
     return new Promise((resolve) => {
       const go = h("button", { class: "kw-btn", type: "button", onclick: async () => {
         try {
-          if (!window.KGuest.isWif(input.value)) { status.textContent = "That isn't a valid private key (WIF)."; return; }
+          if (!guestLib().isWif(input.value)) { status.textContent = "That isn't a valid private key (WIF)."; return; }
           if (!window.confirm(`${RESTORE_WARN} Continue?`)) return;
-          if (await window.KGuest.load() && !window.confirm("This replaces the guest already on this device. Make sure it's backed up. Continue?")) return;
-          const g = await window.KGuest.restore(input.value);
+          if (await guestLib().load() && !window.confirm("This replaces the guest already on this device. Make sure it's backed up. Continue?")) return;
+          const g = await guestLib().restore(input.value);
           input.value = "";
           setAddress("guest", g.address); close(); resolve(g.address);
         } catch (e) { status.textContent = String(e.message || e); }
@@ -362,7 +370,7 @@
         h("button", { class: "kw-btn", type: "button", onclick: () => { close(); disconnect(); } }, "Disconnect"),
         h("button", { class: "kw-btn kw-danger", type: "button", onclick: async () => {
           if (!window.confirm("Forget this guest? Without a backup its points and any prize are gone for good.")) return;
-          await window.KGuest.forget(); close(); forget(W.address); W.toast && W.toast("Guest forgotten on this device.", 6000);
+          await guestLib().forget(); close(); forget(W.address); W.toast && W.toast("Guest forgotten on this device.", 6000);
         } }, "Forget this guest")),
       h("p", {}, "Want to stake and share the weekly pool? ", h("a", { href: "get.html" }, "Get a wallet and VHP"), "."));
   }
@@ -398,7 +406,7 @@
     if (!sp) throw new Error("Guest play works on the game pages. Nothing was sent.");
     const rcLimit = rcFor(sp, ops, String(sp.rcLimit || "100000000"));
     if (!(await sponsorSaysYes(sp, rcLimit, true))) throw new Error(GUEST_NO_FREE);
-    const signer = await window.KGuest.signer();
+    const signer = await guestLib().signer();
     if (signer.getAddress() !== W.address) throw new Error("The guest key on this device changed. Reconnect as a guest.");
     signer.provider = W.provider;
     const tx = new lib.Transaction({ signer, provider: W.provider, options: { payer: sp.address, payee: W.address, rcLimit, chainId: W.chainId } });
@@ -561,6 +569,14 @@
 
   /** The signed transaction is for this chain (when the page knows it), asks for no more Mana than the page set (when
    *  it set a limit), and carries exactly the operations the page built (same contracts, entry points and arguments). */
+  /** Audit BX-50: arguments compared as bytes, so a wallet that re-encodes the same bytes (padding, base64 flavour)
+   *  isn't refused; anything else must match exactly. */
+  function sameArgs(x, y) {
+    const bytes = (v) => { if (v instanceof Uint8Array) return v; try { return lib.utils.decodeBase64url(String(v || "").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")); } catch { return null; } };
+    const a = bytes(x), b = bytes(y);
+    if (!a || !b) return String(x || "") === String(y || "");
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
   function checkSigned(signed, ops, rcLimit) {
     const hd = signed && signed.header;
     if (!hd) throw new Error("Kondor handed back a transaction without a header. Nothing was sent.");
@@ -568,7 +584,7 @@
     if (rcLimit != null && BigInt(hd.rc_limit || 0) > BigInt(rcLimit)) throw new Error("Kondor raised the Mana limit. Nothing was sent.");
     const got = signed.operations || [];
     const same = (a, b) => !!(a && b && a.call_contract && b.call_contract && a.call_contract.contract_id === b.call_contract.contract_id
-      && Number(a.call_contract.entry_point) === Number(b.call_contract.entry_point) && String(a.call_contract.args || "") === String(b.call_contract.args || ""));
+      && Number(a.call_contract.entry_point) === Number(b.call_contract.entry_point) && sameArgs(a.call_contract.args, b.call_contract.args));
     if (got.length !== ops.length || ops.some((o, i) => !same(o, got[i]))) throw new Error("Kondor changed what is signed. Nothing was sent.");
   }
 
@@ -671,7 +687,7 @@
     W.guestConfig = cfg && typeof cfg === "object" && typeof cfg.address === "string"
       ? { address: cfg.address, guest: cfg.guest === true, payer: dep.payer === "sponsor" ? "sponsor" : "self" } : null;
     if (store.get(localStorage, "kw-kind") === "guest" && guestReady() && !W.address)
-      window.KGuest.load().then((g) => { if (g && !W.address) setAddress("guest", g.address); }).catch(() => {});
+      guestLib().load().then((g) => { if (g && !W.address) setAddress("guest", g.address); }).catch(() => {});
     notify();
   }
 
@@ -695,7 +711,7 @@
     store.set(sessionStorage, "kw-vault", null);
     // A guest chosen on this device comes back by itself (its key never left the browser).
     if (store.get(localStorage, "kw-kind") === "guest" && guestReady()) {
-      window.KGuest.load().then((g) => { if (g && !W.address) setAddress("guest", g.address); }).catch(() => {});
+      guestLib().load().then((g) => { if (g && !W.address) setAddress("guest", g.address); }).catch(() => {});
     }
     // The account that was active on this device comes back on every page (address only; nothing is asked of the
     // wallet until something has to be signed). A guest account comes back only where its key is (above).

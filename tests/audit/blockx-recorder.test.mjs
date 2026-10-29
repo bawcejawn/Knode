@@ -39,7 +39,7 @@ function raceDir({ withCards = true } = {}) {
   for (const w of [2, 3, 4]) {
     const races = [];
     // Each hourly card stamped with the time the race recorder took it (37 minutes into its hour), as on mainnet.
-    for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) { const i = M.raceIndex(t); races.push({ id: M.raceId(i), start: t, end: t + M.RACE, cards: Array.from({ length: 6 }, (_, l) => (withCards ? { ...CARD, at: t + l * 3600000 + 37 * 60000 } : null)), result: null }); }
+    for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) { const i = M.raceIndex(t); races.push({ id: M.raceId(i), start: t, end: t + M.RACE, cards: Array.from({ length: 6 }, (_, l) => (withCards ? { ...CARD, samples: 36, at: t + l * 3600000 + 37 * 60000 } : null)), result: null }); }
     fs.writeFileSync(path.join(d, `W${String(w).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), races }));
   }
   return d;
@@ -77,11 +77,14 @@ test("not recorded when the two nodes disagree about the block or the picks", as
   assert.ok(!wf.targets.some((t) => t.round === badH / X.ROUND));
 });
 
+const head0 = (lib) => T(lib);
 test("no race card: waits, and a target older than 3 days is recorded void with no points", async () => {
   const lib = H0 + 3 * X.ROUND + 50;
   const r = await quiet(() => run({ p: "main", check: null, out: tmp(), raceDir: raceDir({ withCards: false }), picksContract: "1P", blockOf: blockOf(), picksOf: picksOf(), rankedOf, head: { height: lib, time: T(lib), lib } }));
   assert.ok(r.problems.some((p) => p.includes("no handicap card yet")));
-  assert.equal((r.weeks.get(3)?.targets || []).length, 0);
+  // Audit BX-48: a lock more than 3 hours ago can never get a card (cards are only made going forward): void now.
+  const recorded = r.weeks.get(3)?.targets || [];
+  assert.ok(recorded.every((t) => t.void && head0(lib) - t.lockTime > 3 * 3600000), "only old locks are voided; recent ones wait");
   // 3 days later the old ones are void
   const later = lib + 3 * 28800 - X.ROUND;
   const r2 = await quiet(() => run({ p: "main", check: null, out: tmp(), raceDir: raceDir({ withCards: false }), picksContract: "1P", blockOf: blockOf(), picksOf: picksOf(), rankedOf, head: { height: later, time: T(later), lib: later } }));
@@ -114,17 +117,16 @@ test("no prizes are listed until PRIZES_FROM_WEEK (prizes start with the vault, 
   assert.deepEqual(later.board.lastWeek.prizes, [], "week 3 is before the first prize week 4");
 });
 
-test("prizes, from the first prize week: only after the 12-hour correction window; every Block X player may win (player rule)", async () => {
+test("prizes, from the first prize week: only after the 12-hour correction window, and only the Free play board's top 2", async () => {
   const early = await weekThenLook(picksGuest, 6, { prizesFromWeek: 3 });
   assert.equal(early.board.lastWeek.week, 3);
   assert.equal(early.board.lastWeek.final, false, "6 h after the week: still in the correction window");
   assert.deepEqual(early.board.lastWeek.prizes, []);
   const late = await weekThenLook(picksGuest, 13, { prizesFromWeek: 3 });
   assert.equal(late.board.lastWeek.final, true);
-  // Player rule (owner, 2026-10-28): only VHP staked IN a game makes a staked player there, and nobody can stake in
-  // Block X, so Bob (on the Staked board because he holds VHP) is a free player here too. The guest, right every
-  // time, is 1st (2 VHP); Bob, with fewer points, is 2nd (1 VHP).
-  assert.deepEqual(plain(late.board.lastWeek.prizes).map((x) => [x.player, x.vhp]), [[GUEST, 2], [BOB, 1]]);
+  // Player rule (owner, 2026-10-28): Bob is staked in Block X (the Staked board, the game's bucket), so only the
+  // free players play for the prize: the guest, right every time, takes 1st (2 VHP); nobody free is 2nd.
+  assert.deepEqual(plain(late.board.lastWeek.prizes).map((x) => [x.player, x.vhp]), [[GUEST, 2]]);
   const rows = late.board.lastWeek.rows;
   assert.equal(rows.find((x) => x.a === GUEST).ranked, false, "Free play board");
   assert.equal(rows.find((x) => x.a === BOB).ranked, true, "Staked board");
@@ -343,9 +345,10 @@ test("BX-5 / BX-23: a final week's prizes are frozen once (P###.json); the mainn
   assert.equal(ok.status, 0, ok.stderr);
   // The Vault (v6) results file for the week, from the frozen prize list (handoff 2026-10-28): vault/W3.json.
   const vf = JSON.parse(fs.readFileSync(path.join(out, "vault", "W3.json"), "utf8"));
-  assert.deepEqual(vf, { game: 2, week: 3, final: true, rows: [], first: frozen.prizes.filter((x) => x.place === 1).map((x) => x.player).sort(), second: frozen.prizes.filter((x) => x.place === 2).map((x) => x.player).sort() });
+  assert.deepEqual({ ...vf, rows: undefined }, { game: 2, week: 3, final: true, rows: undefined, first: frozen.prizes.filter((x) => x.place === 1).map((x) => x.player).sort(), second: frozen.prizes.filter((x) => x.place === 2).map((x) => x.player).sort() });
   assert.ok(vf.first.length === 1, "one winner in 1st");
-  for (const broken of [{ ...vf, rows: [{ player: GUEST, points: 3 }] }, { ...vf, week: 4 }, { ...vf, second: [vf.first[0]] }, { ...vf, first: Array(11).fill(0).map((_, i) => "1" + String.fromCharCode(65 + i).repeat(33)) }]) {
+  assert.deepEqual(vf.rows, [{ player: BOB, points: 255 }], "Bob, staked in Block X, is the bucket's only row");
+  for (const broken of [{ ...vf, rows: [{ player: GUEST, points: 3 }] }, { ...vf, rows: [{ player: BOB, points: 0 }] }, { ...vf, week: 4 }, { ...vf, second: [vf.first[0]] }, { ...vf, first: Array(11).fill(0).map((_, i) => "1" + String.fromCharCode(65 + i).repeat(33)) }]) {
     const d = tmp(); fs.cpSync(out, d, { recursive: true }); fs.writeFileSync(path.join(d, "vault", "W3.json"), JSON.stringify(broken));
     assert.notEqual(check(d).status, 0, JSON.stringify(broken).slice(0, 80));
   }
@@ -385,4 +388,80 @@ test("Vault results file (handoff 2026-10-28): ties share a place, 2+ tied for 1
   assert.ok(r.problems.some((x) => /12 wallets tied for 1st/.test(x)));
   const ten = f(many.slice(0, 10)).file;
   assert.equal(ten.first.length, 10, "exactly 10 is fine");
+});
+
+// ── Block X takes stakes (owner, 2026-10-28; handoff claude/handoff-stake-in-every-game.md) ──
+test("stakes: staked in Block X (≥ the vault's minimum that week) vs free; staked elsewhere is free here; a mid-week withdrawal stays staked at its lowest; before v6 nobody is staked", async () => {
+  const { vaultView, stakedSet, minStakeFor, vaultPoints } = await import(path.resolve(APP, "bot/games/blockx.ts"));
+  const V = 100000000n, cfg = { v6_rule_week_plus_one: "4", min_stake: String(V), min_stake_next: String(2n * V), min_stake_next_week: "9" };
+  assert.equal(minStakeFor(cfg, 8), V); assert.equal(minStakeFor(cfg, 9), 2n * V, "a new minimum from its own week");
+  const A = "1" + "A".repeat(33), B = "1" + "B".repeat(33), C = "1" + "C".repeat(33), D = "1" + "D".repeat(33);
+  const res = new Map([
+    [A, { active_stake: String(5n * V), week_stake: String(5n * V), entry: null }],                       // staked here
+    [B, { active_stake: "0", week_stake: "0", entry: null }],                                            // staked only in ANOTHER game: game 2 shows nothing
+    [C, { active_stake: String(V), week_stake: String(V), entry: { stake: String(V), peak_stake: String(4n * V), voided: false } }],  // withdrew 3 of 4 mid-week
+    [D, { active_stake: "0", week_stake: "0", entry: { stake: "0", peak_stake: String(3n * V), voided: true } }],                     // withdrew everything
+  ]);
+  const v = vaultView(cfg, res, 8);
+  assert.deepEqual([...stakedSet(v)].sort(), [A, C, D].sort(), "the Staked board: everyone who held the minimum here that week");
+  assert.equal(v.players.get(C).week, V, "C counts at its lowest stake that week");
+  assert.equal(v.players.get(D).week, 0n, "D withdrew everything: on the Staked board, but no bucket row and no free prize");
+  assert.ok(!stakedSet(v).has(B), "B is staked in another game only: a free player in Block X");
+  assert.equal(stakedSet(vaultView({ v6_rule_week_plus_one: "0", min_stake: String(V) }, res, 8)).size, 0, "vault not live: everyone is free");
+  // Points 1-255 keep the board's order and ties.
+  assert.deepEqual(vaultPoints([{ player: A, place: 1 }, { player: C, place: 2 }, { player: D, place: 2 }, { player: B, place: 4 }]).map((x) => x.points), [255, 254, 254, 253]);
+  const many = Array.from({ length: 300 }, (_, i) => ({ player: A, place: i + 1 }));
+  assert.ok(vaultPoints(many).every((x) => x.points >= 1 && x.points <= 255), "never below 1 or above 255");
+});
+
+test("stakes: the vault file lists only players the vault counts as staked for the week (bucket rows) and only free players as prize winners; nobody staked gives empty rows", async () => {
+  const startH = H0 - Math.floor(3600000 / 3000), endH = startH + 7 * 28800;
+  const rd = raceDir(); let prev;
+  const weekRun = async (stakeOf, rankedOfX) => {
+    prev = undefined;
+    for (let lib = startH + 12 * X.ROUND; lib <= endH + 4 * X.ROUND; lib += 12 * X.ROUND) {
+      const o = tmp();
+      await quiet(() => run({ p: "main", check: "check", prev, out: o, raceDir: rd, picksContract: "1P", blockOf: blockOf(), picksOf: picksGuest, rankedOf: rankedOfX, stakeOf, prizesFromWeek: 0, head: { height: lib, time: T(lib), lib } }));
+      prev = o;
+    }
+    const at = endH + 13 * 1200, out = tmp();
+    await quiet(() => run({ p: "main", check: "check", prev, out, raceDir: rd, picksContract: "1P", blockOf: blockOf(), picksOf: picksGuest, rankedOf: rankedOfX, stakeOf, prizesFromWeek: 0, head: { height: at, time: T(at), lib: at - 60 } }));
+    return JSON.parse(fs.readFileSync(path.join(out, "vault", "W3.json"), "utf8"));
+  };
+  // Bob is on the Staked board; the vault counts him (week stake ≥ min): one bucket row; the guest wins 1st.
+  const staked = await weekRun(async (who) => ({ min: 100000000n, week: new Map(who.map((a) => [a, a === BOB ? 300000000n : 0n])) }), rankedOf);
+  assert.deepEqual(staked.rows, [{ player: BOB, points: 255 }]); assert.deepEqual(staked.first, [GUEST]);
+  // Bob withdrew everything before the week ended (week stake 0): no bucket row (and he can't win the free prize).
+  const voided = await weekRun(async (who) => ({ min: 100000000n, week: new Map(who.map((a) => [a, 0n])) }), rankedOf);
+  assert.deepEqual(voided.rows, []); assert.ok(!voided.first.includes(BOB) && !voided.second.includes(BOB));
+  // Nobody staked: empty rows; the free players are ranked for the prize.
+  const none = await weekRun(async () => null, async () => new Set());
+  assert.deepEqual(none.rows, []); assert.ok(none.first.length >= 1);
+});
+
+test("audit BX-35 / BX-38: a target scores the LOWER multiplier of the lock's card and the first card after the block; flagged cards (too few samples) are never used", async () => {
+  const lib = H0 + 10 * X.ROUND + 50;
+  // A race dir where every card after 00:00 of week 3's day 0 shows MID twice as big (so ×1 instead of ×2).
+  const rd = raceDir();
+  for (const f of fs.readdirSync(rd)) {
+    const wf = JSON.parse(fs.readFileSync(path.join(rd, f), "utf8"));
+    for (const r of wf.races) r.cards = r.cards.map((c, i) => (c && i % 2 === 1 ? { ...c, field: c.field.map((x) => (x.a === MID ? { ...x, vhp: x.vhp * 2 } : x)) } : c));
+    fs.writeFileSync(path.join(rd, f), JSON.stringify(wf));
+  }
+  const out = tmp();
+  await quiet(() => run({ p: "main", check: "check", out, raceDir: rd, picksContract: "1P", blockOf: blockOf(), picksOf: picksOf(), rankedOf, head: { height: lib + 60, time: T(lib + 60), lib } }));
+  const wf = JSON.parse(fs.readFileSync(path.join(out, "W003.json"), "utf8"));
+  const mid = wf.targets.filter((t) => t.signer === MID && !t.void);
+  assert.ok(mid.length > 0);
+  for (const t of mid) { const alice = t.picks.find((p) => p[0] === ALICE); assert.ok(alice[3] <= 200); assert.ok(t.card.afterAt > t.card.at); }
+  assert.ok(mid.some((t) => t.picks.find((p) => p[0] === ALICE)[3] < 200), "where the next card shows MID bigger, the lower multiplier counts");
+  // Flagged cards (samples under 12) only: nothing is scored; the targets wait.
+  const flagged = raceDir();
+  for (const f of fs.readdirSync(flagged)) {
+    const wf2 = JSON.parse(fs.readFileSync(path.join(flagged, f), "utf8"));
+    for (const r of wf2.races) r.cards = r.cards.map((c) => (c ? { ...c, samples: 3 } : c));
+    fs.writeFileSync(path.join(flagged, f), JSON.stringify(wf2));
+  }
+  const r2 = await quiet(() => run({ p: "main", check: "check", out: tmp(), raceDir: flagged, picksContract: "1P", blockOf: blockOf(), picksOf: picksOf(), rankedOf, head: { height: lib + 60, time: T(lib + 60), lib } }));
+  assert.ok([...r2.weeks.values()].flatMap((w) => w.targets).every((t) => t.void || t.picks.every((p) => p[3] === 0)));
 });

@@ -85,18 +85,20 @@
       if (F && kind === "free") return renderFree(part, rows, weekly);
       const ranked = rows.filter((r) => r && r.ranked);
       sub.textContent = weekly && part && part.start ? `Week ${part.week + 1}, from ${day(part.start)} (UTC)` : mode === "today" && part && part.day ? `${part.day} (UTC)` : mode === "all" ? "Every week so far" : "";
-      podium.replaceChildren(...(weekly ? ranked.slice(0, 3).filter(o.scored).map((r, i) =>
-        el("div", { class: "champ" + (r.a === who ? " me" : "") }, el("b", { text: `${MEDAL[i]} ${ORD[i]}` }), el("span", { class: "mono", text: o.name(r.a) }), el("div", { class: "ago", text: o.summary(r) }))) : []));
+      // Audit BX-41: the row's own-board place (boardPlace, ties share it) when the game publishes one.
+      const placeOf = (r, i) => (Number.isInteger(r.boardPlace) && r.boardPlace > 0 ? r.boardPlace : i + 1);
+      podium.replaceChildren(...(weekly ? ranked.map((r, i) => [r, placeOf(r, i)]).filter(([r, p]) => p <= 3 && o.scored(r)).slice(0, 10).map(([r, p]) =>
+        el("div", { class: "champ" + (r.a === who ? " me" : "") }, el("b", { text: `${MEDAL[p - 1]} ${ORD[p - 1]}` }), el("span", { class: "mono", text: o.name(r.a) }), el("div", { class: "ago", text: o.summary(r) }))) : []));
       body.replaceChildren(...ranked.slice(0, 50).map((r, i) => {
-        const href = o.link ? o.link(r.a) : null;
-        return el("tr", { class: [i < 3 && weekly && o.scored(r) ? "top" : "", r.a === who ? "me" : ""].join(" ").trim() || null },
-          el("td", { text: i < 3 && o.scored(r) ? MEDAL[i] : String(i + 1) }),
+        const href = o.link ? o.link(r.a) : null, pl = placeOf(r, i);
+        return el("tr", { class: [pl <= 3 && weekly && o.scored(r) ? "top" : "", r.a === who ? "me" : ""].join(" ").trim() || null },
+          el("td", { text: pl <= 3 && o.scored(r) ? MEDAL[pl - 1] : String(pl) }),
           el("td", { class: "mono" }, href ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: o.name(r.a) }) : el("span", { text: o.name(r.a) })),
           ...o.columns.map((c) => el("td", { class: "num" + (c.wide ? " hide-sm" : ""), text: fmt(r[c.key]) })));
       }));
       if (!ranked.length) body.replaceChildren(el("tr", {}, el("td", { colspan: String(2 + o.columns.length), class: "ago", text: "No ranked players yet." })));
       const row = who && rows.find((r) => r && r.a === who);
-      const place = row && row.ranked ? ranked.indexOf(row) + 1 : null;
+      const place = row && row.ranked ? placeOf(row, ranked.indexOf(row)) : null;
       mine.textContent = !who ? "" : !row ? "You have no finished picks here yet." : o.me ? o.me(row, place) : place ? `You: #${place}.` : "";
       if (row && !row.ranked && o.unranked) mine.append(" ", o.unranked);
       if (row && !row.ranked && F) mine.append(" ", `Your place is on the ${F.label} board.`);

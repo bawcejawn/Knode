@@ -53,7 +53,7 @@ function world({ storage = memStorage(), sponsor = SPONSOR, covers = [GAME, DESK
     wait: async () => ({}),
   };
   const confirms = [];
-  const win = { koilib, crypto: webcrypto, localStorage: storage, confirm: (m) => { confirms.push(m); return true; }, navigator: {} };
+  const win = { location: { protocol: "https:", hostname: "knodegames.com" }, koilib, crypto: webcrypto, localStorage: storage, confirm: (m) => { confirms.push(m); return true; }, navigator: {} };
   win.top = win; win.self = win;
   const ctx = { window: win, document, localStorage: storage, sessionStorage: memStorage(), navigator: { userAgent: "test", maxTouchPoints: 0, platform: "x" },
     crypto: webcrypto, console, setTimeout, clearTimeout, Promise, URL, URLSearchParams, JSON, BigInt, Uint8Array, Array, Number, String, Object, Map, Set, Error, Math, Date };
