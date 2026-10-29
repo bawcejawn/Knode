@@ -32,7 +32,15 @@ you.
    ```
 
    Commit, open a PR, and merge it at least 7 days before that Monday, so players can pick day 1 ahead.
-4. The vault (Build 1) pays the season prizes: 4 VHP and 2 VHP per two-week season.
+4. The vault (Build 1, v6) pays the season prizes: 4 VHP and 2 VHP per two-week season.
+   - The recorder publishes one results file per vault week at `games-data:survivor/vault/W<week>.json` (vault week 0
+     began Monday 19 Oct 2026). A season's first week has no winners; its last week lists the season's 1st and 2nd.
+   - In the vault, game 3 is a free-prize game with `season_weeks` 2, and its `from_week` must be Season 1's first
+     week: `floor((FIRST_DAY − 20745) ÷ 7)`. For Monday 16 Nov 2026 that is week 4. If it is off by one week, the vault
+     looks for winners in the wrong week.
+   - `game-data/deployment.json` → `vaultGames`: `"3": { "name": "Survivor", "results": "games-data:survivor/vault" }`.
+   - More than 10 wallets tied for a place: the vault takes at most 10, so that place gets no prize (it returns to the
+     pool) and the recorder warns.
 
 ## When the workflow warns "season N is stuck"
 The recorder couldn't record a season day for more than 50 days: for example, the two nodes kept disagreeing about

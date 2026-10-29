@@ -95,6 +95,9 @@ if all of these hold:
 
 A stake counts only from 1 VHP, the same as a wallet balance.
 
+If more than 10 wallets tie for a place, that place's prize isn't paid (the vault pays at most 10 wallets per place)
+and returns to the pool.
+
 These rules stop people from farming the prize with empty or idle wallets. Prizes are paid by the vault once it is
 live; until then the page says so.
 

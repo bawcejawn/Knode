@@ -43,7 +43,12 @@ const KEEP_DAYS = 60;                         // days.json keeps the last 60 rec
 const CATCHUP_DAYS = 50;                      // after an outage, a season's older days are recorded back to 50 days
 const BACK_DAYS = S.FORM_DAYS + S.FORM_GAP - 1;  // today's field needs days d−8 … d−2; tomorrow's needs d−7 … d−1
 const ONE_VHP = 100000000n;
-const SIZE_WARN = 1.9 * 1024 * 1024;          // the publish job refuses a file over 2 MB (Repo Lense SV-A5)
+const SIZE_WARN = 1.9 * 1024 * 1024;
+// The Vault (v6) reads one results file per vault week: <OUT>/vault/W<week>.json. Vault week 0 began Monday 19 Oct 2026
+// 00:00 UTC (UTC day 20745); a vault week is 7 UTC days, so a Survivor season (two weeks from a Monday) is two vault weeks.
+export const VAULT_GENESIS_DAY = 20745;
+export const VAULT_MAX_WINNERS = 10;          // wallets per prize place (the vault contract's limit)
+export const vaultWeekOf = (day: number) => Math.floor((day - VAULT_GENESIS_DAY) / 7);          // the publish job refuses a file over 2 MB (Repo Lense SV-A5)
 const isAddr = (a: unknown) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
 
 type Counts = [string, number][];
@@ -238,6 +243,24 @@ const tally = (signers: string[]): Counts => {
   for (const a of signers) m.set(a, (m.get(a) || 0) + 1);
   return [...m.entries()].sort((x, y) => (x[0] < y[0] ? -1 : 1));
 };
+
+/** The vault files of one season, as far as they are final: { week: file }. The season's first week carries no
+ *  winners; its last week carries the whole season's 1st and 2nd (Vault v6 hand-off, 28 Oct). A place with more than
+ *  10 tied wallets is left empty (the vault refuses more), so its prize returns to the pool; `problems` says so. */
+export function vaultFiles(sf: { startDay: number; result: any }, now: number, math: any, problems: string[] = []): Record<number, any> {
+  const out: Record<number, any> = {};
+  const w1 = vaultWeekOf(sf.startDay), w2 = w1 + 1;
+  const file = (week: number, first: string[], second: string[]) => ({ game: math.GAME_ID, week, final: true, rows: [], first, second });
+  if (now >= math.dayStart(sf.startDay + 7)) out[w1] = file(w1, [], []);
+  if (sf.result && sf.result.final) {
+    const at = (place: number) => sf.result.prizes.filter((x: any) => x.place === place).map((x: any) => x.player as string).sort();
+    let first = at(1), second = at(2);
+    if (first.length > VAULT_MAX_WINNERS) { problems.push(`Survivor: ${first.length} wallets tied for 1st in the season from ${math.dayLabel(sf.startDay)}; the vault takes at most ${VAULT_MAX_WINNERS}, so no prize is posted for the season (it returns to the pool)`); first = []; second = []; }
+    if (second.length > VAULT_MAX_WINNERS) { problems.push(`Survivor: ${second.length} wallets tied for 2nd in the season from ${math.dayLabel(sf.startDay)}; the vault takes at most ${VAULT_MAX_WINNERS}, so 2nd's prize returns to the pool`); second = []; }
+    out[w2] = file(w2, first, second);
+  }
+  return out;
+}
 
 /** One run. Exported for the tests, which pass fake nodes. */
 export async function run(o: Opts) {
@@ -466,11 +489,20 @@ export async function run(o: Opts) {
     const text = JSON.stringify(encodeSeason(sf)) + "\n";
     if (Buffer.byteLength(text) > SIZE_WARN) problems.push(`Survivor: ${sName(sf.season)} is ${(Buffer.byteLength(text) / 1048576).toFixed(2)} MB, near or over the 2 MB publish limit; only that file is left out (docs/SURVIVOR-RUNBOOK.md)`);
     fs.writeFileSync(path.join(STAGE, sName(sf.season)), text);
+    // The vault's results files (mainnet only: the test clock's rounds aren't vault weeks).
+    if (S.MAINNET) for (const [w, f] of Object.entries(vaultFiles(sf, head.time, S, problems))) {
+      fs.mkdirSync(path.join(STAGE, "vault"), { recursive: true });
+      fs.writeFileSync(path.join(STAGE, "vault", `W${w}.json`), JSON.stringify(f) + "\n");
+    }
   }
   fs.writeFileSync(path.join(STAGE, "index.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), firstDay, contract: contract || null, seasons: [...known].sort((a, b) => a - b) }) + "\n");
   fs.mkdirSync(FINAL, { recursive: true });
   const names = fs.readdirSync(STAGE).sort((x, y) => (x === "index.json" ? 1 : y === "index.json" ? -1 : x < y ? -1 : 1));   // index last
-  for (const f of names) fs.copyFileSync(path.join(STAGE, f), path.join(FINAL, f));
+  if (names.includes("vault")) {
+    fs.mkdirSync(path.join(FINAL, "vault"), { recursive: true });
+    for (const f of fs.readdirSync(path.join(STAGE, "vault")).sort()) fs.copyFileSync(path.join(STAGE, "vault", f), path.join(FINAL, "vault", f));
+  }
+  for (const f of names) if (f !== "vault") fs.copyFileSync(path.join(STAGE, f), path.join(FINAL, f));
   fs.rmSync(STAGE, { recursive: true, force: true });
   for (const pr of problems) console.log(`::warning::${pr}`);
   return { problems, days, fields, seasons };

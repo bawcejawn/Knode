@@ -10,7 +10,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 const APP = process.env.APP || ".";
-const { run, encodeSeason, readRanked } = await import(path.resolve(APP, "bot/games/survivor.ts"));
+const { run, encodeSeason, readRanked, vaultFiles, vaultWeekOf } = await import(path.resolve(APP, "bot/games/survivor.ts"));
 const S = globalThis.KSurvivor;
 const A = (c) => "1" + c.repeat(33);
 const PRODS = ["A", "B", "C", "D", "E"].map(A);
@@ -149,7 +149,7 @@ test("no season before the Picks contract is live or FIRST_DAY is set; FIRST_DAY
 
 test("the files pass the publish job's shape check", async (t) => {
   const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
-  const m = /if \[ -d "\$IN\/survivor" \] && ! \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY'\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
   assert.ok(m, "the survivor check is in the workflow");
   const indent = /^(\s*)/.exec(m[1])[1].length;
   const py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
@@ -163,7 +163,7 @@ test("the files pass the publish job's shape check", async (t) => {
   assert.match(outp, /survivor files ok/);
   // And a tampered file is refused.
   const bad = tmp();
-  for (const f of fs.readdirSync(r.out)) fs.copyFileSync(path.join(r.out, f), path.join(bad, f));
+  fs.cpSync(r.out, bad, { recursive: true });
   const s = JSON.parse(fs.readFileSync(path.join(bad, "S001.json"), "utf8"));
   s.result.prizes[0].vhp = 50;
   fs.writeFileSync(path.join(bad, "S001.json"), JSON.stringify(s));
@@ -233,7 +233,7 @@ test("fix-check FC-2: a season that can't progress never stops new days and hand
 
 test("audit SV-2 and SV-3: a 1,000-player season fits under 2 MB, and a 1,000-way tie for the prize passes the check (never over 6 VHP)", async (t) => {
   const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
-  const m = /if \[ -d "\$IN\/survivor" \] && ! \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY'\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
   const indent = /^(\s*)/.exec(m[1])[1].length;
   const py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
   try { execFileSync("python3", ["--version"]); } catch { t.skip("python3 not installed"); return; }
@@ -265,14 +265,14 @@ const seasonTimes = () => {
 };
 function publishCheck() {
   const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
-  const m = /if \[ -d "\$IN\/survivor" \] && ! \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY'\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
   const indent = /^(\s*)/.exec(m[1])[1].length;
   const py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
   return (dir) => { try { execFileSync("python3", ["-I", "-", dir], { input: py, stdio: "pipe" }); return true; } catch { return false; } };
 }
 function copyOut(from, edit) {
   const dir = tmp();
-  for (const f of fs.readdirSync(from)) fs.copyFileSync(path.join(from, f), path.join(dir, f));
+  fs.cpSync(from, dir, { recursive: true });
   const j = JSON.parse(fs.readFileSync(path.join(dir, "S001.json"), "utf8"));
   edit(j);
   fs.writeFileSync(path.join(dir, "S001.json"), JSON.stringify(j));
@@ -311,11 +311,11 @@ test("Repo Lense SV-A4 / SV-A13: the publish check tests meaning, not only shape
   for (const [why, edit] of Object.entries(bad)) assert.equal(ok(copyOut(r.out, edit)), false, why);
   // A bad `updated`, and NaN, are refused too.
   const d2 = tmp();
-  for (const f of fs.readdirSync(r.out)) fs.copyFileSync(path.join(r.out, f), path.join(d2, f));
+  fs.cpSync(r.out, d2, { recursive: true });
   fs.writeFileSync(path.join(d2, "days.json"), fs.readFileSync(path.join(r.out, "days.json"), "utf8").replace(/"updated":"[^"]*"/, `"updated":"${"x".repeat(1000)}"`));
   assert.equal(ok(d2), false, "updated must be an ISO time");
   const d3 = tmp();
-  for (const f of fs.readdirSync(r.out)) fs.copyFileSync(path.join(r.out, f), path.join(d3, f));
+  fs.cpSync(r.out, d3, { recursive: true });
   fs.writeFileSync(path.join(d3, "fields.json"), fs.readFileSync(path.join(r.out, "fields.json"), "utf8").replace(/"h":[0-9.]+/, `"h":NaN`));
   assert.equal(ok(d3), false, "NaN is refused");
 });
@@ -393,4 +393,70 @@ test("Repo Lense SV-A16: one node only is reported, and its days are checked aga
   const j = r3.read("days.json"), d = j.days[0].day;
   const r4 = await runs([t + 60000, t + 120000, t + 180000], { blocksOf: blocksOf(d) }, r3.out);
   assert.ok(r4.r.problems.some((p) => /second node disagrees/.test(p)), JSON.stringify(r4.r.problems));
+});
+
+// ── Vault v6 hand-off (28 Oct): one results file per vault week ──
+test("vault files: the season's first week carries no winners, its last week the season's 1st and 2nd", async (t) => {
+  assert.equal(vaultWeekOf(S.dayIndex(Date.parse("2026-10-19T00:00:00Z"))), 0, "week 0 began Monday 19 Oct 2026");
+  assert.equal(vaultWeekOf(FIRST), 4); assert.equal(vaultWeekOf(FIRST + 13), 5, "a season is two vault weeks");
+  const r = await runs(seasonTimes());
+  const v = (w) => JSON.parse(fs.readFileSync(path.join(r.out, "vault", `W${w}.json`), "utf8"));
+  assert.ok(!fs.existsSync(path.join(r.out, "vault", "W4.json")), "the first week isn't over yet");
+  assert.deepEqual(v(5), { game: 3, week: 5, final: true, rows: [], first: [ALICE], second: [CAROL] }, "the season ended early and is final: its winners go in its last week");
+  const later = await runs([S.dayStart(FIRST + 7) + 3600000], {}, r.out);
+  const v2 = (w) => JSON.parse(fs.readFileSync(path.join(later.out, "vault", `W${w}.json`), "utf8"));
+  assert.deepEqual(v2(4), { game: 3, week: 4, final: true, rows: [], first: [], second: [] });
+  assert.deepEqual(v2(5).first, [ALICE]);
+  // Not final yet: no last-week file.
+  const early = await runs(seasonTimes().slice(0, -1));
+  assert.ok(!fs.existsSync(path.join(early.out, "vault", "W5.json")));
+  // The publish check passes the recorder's own vault files, and refuses changed ones.
+  try { execFileSync("python3", ["--version"]); } catch { t.skip("python3 not installed"); return; }
+  const ok = publishCheck();
+  assert.equal(ok(later.out), true);
+  const vaultEdit = (from, w, edit) => {
+    const dir = tmp();
+    fs.cpSync(from, dir, { recursive: true });
+    const f = path.join(dir, "vault", `W${w}.json`), j = JSON.parse(fs.readFileSync(f, "utf8"));
+    edit(j); fs.writeFileSync(f, JSON.stringify(j));
+    return dir;
+  };
+  for (const [why, w, edit] of [
+    ["a different winner", 5, (j) => { j.first = [EVE]; }],
+    ["winners in the season's first week", 4, (j) => { j.first = [ALICE]; }],
+    ["another game", 5, (j) => { j.game = 2; }],
+    ["not final", 5, (j) => { j.final = false; }],
+    ["rows in a free game", 5, (j) => { j.rows = [{ player: ALICE, points: 1 }]; }],
+    ["1st and 2nd swapped", 5, (j) => { [j.first, j.second] = [j.second, j.first]; }],
+  ]) assert.equal(ok(vaultEdit(later.out, w, edit)), false, why);
+  // A vault file with no season file next to it is removed and the run fails (exit 3), the rest still publishes.
+  const orphan = tmp();
+  fs.cpSync(later.out, orphan, { recursive: true });
+  fs.writeFileSync(path.join(orphan, "vault", "W9.json"), JSON.stringify({ game: 3, week: 9, final: true, rows: [], first: [EVE], second: [] }));
+  const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
+  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const indent = /^(\s*)/.exec(m[1])[1].length, py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
+  let code = 0;
+  try { execFileSync("python3", ["-I", "-", orphan], { input: py, stdio: "pipe" }); } catch (e) { code = e.status; }
+  assert.equal(code, 3);
+  assert.ok(!fs.existsSync(path.join(orphan, "vault", "W9.json")) && fs.existsSync(path.join(orphan, "vault", "W5.json")));
+});
+
+test("vault files: ties, more than 10 tied, nobody qualifying", () => {
+  const M = S, w = vaultWeekOf(FIRST);
+  const W = (k) => A(String.fromCharCode(65 + k)).slice(0, 34);
+  const sf = (prizes) => ({ startDay: FIRST, result: { final: true, prizes } });
+  const now = S.dayStart(FIRST + 15);
+  const f = (prizes, problems = []) => vaultFiles(sf(prizes), now, M, problems)[w + 1];
+  assert.deepEqual([f([{ player: W(1), place: 1, vhp: 3 }, { player: W(0), place: 1, vhp: 3 }]).first, f([]).second], [[W(0), W(1)], []], "tied for 1st: both listed, sorted");
+  assert.deepEqual(f([]), { game: 3, week: w + 1, final: true, rows: [], first: [], second: [] }, "nobody qualifies: empty places");
+  const eleven = Array.from({ length: 11 }, (_, k) => ({ player: W(k), place: 1, vhp: 0.54545454 }));
+  const pr = [];
+  assert.deepEqual([f(eleven, pr).first, f(eleven).second], [[], []], "11 tied for 1st: the vault takes at most 10, so nothing is posted");
+  assert.ok(pr.some((p) => /11 wallets tied for 1st/.test(p)));
+  const two = [{ player: W(20), place: 1, vhp: 4 }, ...Array.from({ length: 11 }, (_, k) => ({ player: W(k), place: 2, vhp: 0.18181818 }))];
+  assert.deepEqual([f(two).first, f(two).second], [[W(20)], []], "11 tied for 2nd: 1st is posted, 2nd's prize returns to the pool");
+  const ten = Array.from({ length: 10 }, (_, k) => ({ player: W(k), place: 1, vhp: 0.6 }));
+  assert.equal(f(ten).first.length, 10, "10 tied is fine");
+  assert.equal(vaultFiles({ startDay: FIRST, result: { final: false, prizes: [] } }, now, M)[w + 1], undefined, "not final: no last-week file");
 });

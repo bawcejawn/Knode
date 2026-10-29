@@ -48,7 +48,7 @@ jobs:
               if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:blockx/$f" > "$RUNNER_TEMP/prev/blockx/$f"; fi
             done
             for f in $(git ls-tree --name-only FETCH_HEAD:survivor 2>/dev/null); do
-              if [[ "$f" =~ ^(index|days|fields|S[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:survivor/$f" > "$RUNNER_TEMP/prev/survivor/$f"; fi
+              if [[ "$f" =~ ^(index|days|fields|S[0-9]{3,4})\.json$ ]]; then git show "FETCH_HEAD:survivor/$f" > "$RUNNER_TEMP/prev/survivor/$f"; fi
             done
           else echo "No games-data branch yet."; fi
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
@@ -103,7 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/survivor" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9][0-9]?\)\.json" ! -regex "$IN/survivor/\(index\|days\|fields\|S[0-9][0-9][0-9][0-9]?\)\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/survivor" ! -path "$IN/survivor/vault" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9][0-9]?\)\.json" ! -regex "$IN/survivor/\(index\|days\|fields\|S[0-9][0-9][0-9][0-9]?\)\.json" ! -regex "$IN/survivor/vault/W[0-9][0-9]*\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           # Each game's folder is checked on its own: one that fails is left out (and the job fails at the end, which
           # alerts), and the other game's files are still published (audit SV-2, SV-3).
@@ -154,7 +154,9 @@ jobs:
           print("blockx files ok")
           PY
           then drop blockx "its files don't have the recorder's shape"; fi
-          if [ -d "$IN/survivor" ] && ! /usr/bin/python3 -I - "$IN/survivor" <<'PY'
+          # Exit 3: everything checked out except vault files that couldn't be checked, which it removed (the run fails).
+          rc=0
+          if [ -d "$IN/survivor" ]; then /usr/bin/python3 -I - "$IN/survivor" <<'PY' || rc=$?
           # Shape AND meaning (Repo Lense SV-A4, SV-A13): integers are real integers in range, the result agrees with
           # itself, and prizes go only to eligible players in the season, once each, and only when the season is final.
           import json, os, re, sys
@@ -281,7 +283,9 @@ jobs:
               can = lambda p: p["eligible"] and not (p["outN"] is not None and p["log"][p["outN"] - 1] == "n")
               assert all(p["player"] in byA and can(byA[p["player"]]) for p in pz), f
               assert not pz or sum(1 for p in ps if can(p) and sum(p["log"].count(c) for c in "sov") >= 2) >= 3, f
+          seasons = {}
           for f in os.listdir(d):
+              if f == "vault": continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"), parse_constant=bad_constant)
               assert type(j) is dict, f
               if f == "index.json":
@@ -303,9 +307,43 @@ jobs:
                       assert (x["season"] is None or small(x["season"], 1, 9999)) and (x["n"] is None or small(x["n"], 1, 14)), f
                   continue
               season_ok(j, f)
+              seasons[j["season"]] = j
+          # The vault's results files (vault/W<week>.json, Vault v6): game 3, no rows, at most 10 wallets per place, and
+          # exactly the winners of the season file published with it. A file whose season file isn't here (left out for
+          # size) can't be checked, so it is left out too, and the run fails (exit 3) so it alerts.
+          vd, unchecked = os.path.join(d, "vault"), []
+          GENESIS_DAY = 20745   # Monday 19 Oct 2026, vault week 0
+          week_of = lambda day: (day - GENESIS_DAY) // 7
+          for f in (sorted(os.listdir(vd)) if os.path.isdir(vd) else []):
+              m = re.fullmatch(r"W(0|[1-9][0-9]{0,4})\.json", f)
+              assert m, "vault/" + f
+              j = json.load(open(os.path.join(vd, f), encoding="utf-8"), parse_constant=bad_constant)
+              w = int(m.group(1))
+              assert type(j) is dict and set(j) == {"game", "week", "final", "rows", "first", "second"} and j["game"] == 3 and type(j["game"]) is int, f
+              assert type(j["week"]) is int and j["week"] == w and j["final"] is True and j["rows"] == [], f
+              assert all(type(j[k]) is list and len(j[k]) <= 10 and all(isaddr(a) for a in j[k]) and j[k] == sorted(set(j[k])) for k in ("first", "second")), f
+              assert not set(j["first"]) & set(j["second"]), f
+              mine = [s for s in seasons.values() if week_of(s["startDay"]) in (w, w - 1)]
+              if not mine: unchecked.append(f); continue
+              s = mine[0]
+              if week_of(s["startDay"]) == w:
+                  assert j["first"] == [] and j["second"] == [], f + ": winners only in a season's last week"
+                  continue
+              r = s["result"]
+              assert r is not None and r["final"] is True, f + ": its season isn't final"
+              at = lambda place: sorted(p["player"] for p in r["prizes"] if p["place"] == place)
+              first, second = at(1), at(2)
+              if len(first) > 10: first, second = [], []
+              if len(second) > 10: second = []
+              assert j["first"] == first and j["second"] == second, f + ": not the season's winners"
+          for f in unchecked:
+              print("::error::Not publishing survivor/vault/%s this run: its season file isn't published with it" % f)
+              os.remove(os.path.join(vd, f))
           print("survivor files ok")
+          sys.exit(3 if unchecked else 0)
           PY
-          then drop survivor "its files don't have the recorder's shape"; fi
+          fi
+          if [ "$rc" = 3 ]; then failed=1; elif [ "$rc" != 0 ]; then drop survivor "its files don't have the recorder's shape"; fi
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git init -q work && cd work
           parent=""
@@ -315,10 +353,10 @@ jobs:
           else git read-tree --empty; fi
           for g in blockx survivor; do
             [ -d "$IN/$g" ] || continue
-            for f in "$IN/$g"/*.json; do
+            for f in "$IN/$g"/*.json "$IN/$g"/vault/*.json; do
               [ -e "$f" ] || continue
               blob=$(git hash-object -w "$f")
-              git update-index --add --cacheinfo 100644 "$blob" "$g/$(basename "$f")"
+              git update-index --add --cacheinfo 100644 "$blob" "$g/${f#"$IN/$g/"}"
             done
           done
           tree=$(git write-tree)

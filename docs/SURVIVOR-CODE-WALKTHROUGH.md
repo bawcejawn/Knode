@@ -266,6 +266,10 @@ Line numbers above are from before these changes; the steps are the same.
   (SV-A16).
 - **Season files (v2):** each wallet and producer is written once, in `who` and `prods`; the days refer to them by
   position. A wallet that missed a VHP check is listed once, not every day. A file near 2 MB is reported (SV-A5).
+- **Vault files (Vault v6 hand-off, 28 Oct):** `vaultFiles` writes `vault/W<week>.json` for each season: the season's
+  first vault week (once it is over) with no winners, and its last week (once the season is final) with the 1st- and
+  2nd-place wallets from the season's prizes. A place with more than 10 tied wallets is left empty. The publish check
+  compares each vault file with the season file published next to it; one it can't check is left out.
 - **Writing:** everything is written to a side folder first and copied in at the end, `index.json` last (SV-A26).
 
 ---
