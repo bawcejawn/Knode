@@ -111,16 +111,27 @@ async function sameOwner(p, b, owner) {
   if (b.man.owner !== onChain) fail(`The v2 build was made for owner ${b.man.owner}, but the contract's owner is ${onChain}. Build again with that owner's OWNER_WIF in .env.testnet (node tools/combo-testnet.mjs build --home ...).`);
   if (owner.getAddress() !== onChain) fail(`OWNER_WIF is ${owner.getAddress()}, not the contract's owner ${onChain}.`);
 }
-async function sendOps(p, chainId, s, ops, rcKoin = 3) {
-  const have = BigInt(await p.getAccountRc(s.getAddress())), cap = BigInt(Math.round(rcKoin * 1e8)), limit = (have * 95n) / 100n < cap ? (have * 95n) / 100n : cap;
-  const tx = new Transaction({ signer: s, provider: p, options: { payer: s.getAddress(), chainId, rcLimit: limit.toString() } });
-  for (const op of ops) await tx.pushOperation(op);
-  try {
-    const r = await tx.send();
-    if (r?.reverted) return { ok: false, rcUsed: String(r?.rc_used ?? 0), error: `reverted: ${JSON.stringify(r.logs ?? [])}` };
-    const w = await tx.wait("byBlock", 120000).catch(() => null);
-    return { ok: !!w, rcUsed: String(r?.rc_used ?? 0), error: w ? undefined : "not seen in a block within 2 minutes", txId: tx.transaction?.id };
-  } catch (e) { return { ok: false, error: String(e?.message ?? e).slice(0, 300) }; }
+/** The network holds each transaction's whole Mana limit aside for a few minutes after it is sent ("insufficient
+ *  pending account resources"). So limits are kept small (1 Mana: the sponsor's per-transaction cap at launch) and a
+ *  send refused for that reason is retried every minute for up to 8 minutes. */
+const HELD = /insufficient pending account resources/i;
+async function sendOps(p, chainId, s, ops, rcKoin = 1) {
+  for (let tries = 1; ; tries++) {
+    const have = BigInt(await p.getAccountRc(s.getAddress())), cap = BigInt(Math.round(rcKoin * 1e8)), limit = (have * 95n) / 100n < cap ? (have * 95n) / 100n : cap;
+    const tx = new Transaction({ signer: s, provider: p, options: { payer: s.getAddress(), chainId, rcLimit: limit.toString() } });
+    for (const op of ops) await tx.pushOperation(op);
+    try {
+      const r = await tx.send();
+      if (r?.reverted) return { ok: false, rcUsed: String(r?.rc_used ?? 0), error: `reverted: ${JSON.stringify(r.logs ?? [])}` };
+      const w = await tx.wait("byBlock", 120000).catch(() => null);
+      return { ok: !!w, rcUsed: String(r?.rc_used ?? 0), error: w ? undefined : "not seen in a block within 2 minutes", txId: tx.transaction?.id };
+    } catch (e) {
+      const error = String(e?.message ?? e).slice(0, 300);
+      if (!HELD.test(error) || tries >= 8) return { ok: false, error: HELD.test(error) ? `${error} (still held after 8 minutes: wallet ${s.getAddress()} may be low on Mana)` : error };
+      log(`  … Mana from the last transaction is still held by the network; trying again in 1 minute (${tries}/8)`);
+      await sleep(60000);
+    }
+  }
 }
 const saveOut = (name, v) => { const d = path.join(HOME, "testnet-data"); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, name), JSON.stringify(v, null, 2) + "\n"); return path.join(d, name); };
 
@@ -159,8 +170,8 @@ async function schedule() {
   log(`Announce the v2 code on ${PICKS}: sha256 ${b.sha256} (${b.wasm.length.toLocaleString("en-US")} bytes). Upload possible 10 minutes later.`);
   if (!SEND) return log("\nDry run only. Add --send.");
   const { operation } = await picksC(p, owner).functions.schedule_upgrade({ hash: "0x" + b.sha256 }, { onlyOperation: true });
-  const r = await sendOps(p, chainId, owner, [operation]);
-  log(r.ok ? `✔ announced (Mana ${mana(r.rcUsed)}). Next, in 10 minutes: upgrade --send` : `✖ ${r.error}`);
+  const r = await sendOps(p, chainId, owner, [operation], 2);
+  log(r.ok ? `✔ announced (Mana ${mana(r.rcUsed)}). Next, at ${new Date(Date.now() + 11 * 60000).toLocaleTimeString()} or later: upgrade --send` : `✖ ${r.error}`);
 }
 async function upgrade() {
   const { p, chainId } = await connect();
@@ -186,7 +197,7 @@ async function upgrade() {
   log(same ? `✔ the ${after.games?.length ?? 0} existing game(s) read back unchanged under v2` : `✖ the games read differently under v2:\n  before ${JSON.stringify(before.games)}\n  after  ${JSON.stringify(after.games)}`);
   // Audit CC-A3: clear the announced hash, so the same bytes can't be uploaded again.
   const { operation: clear } = await picksC(p, owner).functions.schedule_upgrade({ hash: "0x" }, { onlyOperation: true });
-  const r2 = await sendOps(p, chainId, owner, [clear]);
+  const r2 = await sendOps(p, chainId, owner, [clear], 2);
   log(r2.ok ? "✔ the announced hash is cleared" : `✖ clearing the hash: ${r2.error}`);
   log(`Saved ${saveOut("combo-upgrade.json", { at: new Date().toISOString(), picks: PICKS, v2: b.sha256, rcUsed: r.rcUsed, gamesUnchanged: same })}`);
 }
@@ -202,15 +213,15 @@ async function announce() {
   log(`Announce game ${GAME} "Combo test": a card game with the mainnet Combo leg types, up to 10 legs, 3 cards a day.`);
   if (!SEND) return log("\nDry run only. Add --send.");
   const { operation } = await picksC(p, owner).functions.announce_game({ game: testGame() }, { onlyOperation: true });
-  const r = await sendOps(p, chainId, owner, [operation]);
-  log(r.ok ? `✔ announced (Mana ${mana(r.rcUsed)}). Next, in 10 minutes: apply --send` : `✖ ${r.error}`);
+  const r = await sendOps(p, chainId, owner, [operation], 2);
+  log(r.ok ? `✔ announced (Mana ${mana(r.rcUsed)}). Next, at ${new Date(Date.now() + 11 * 60000).toLocaleTimeString()} or later: apply --send` : `✖ ${r.error}`);
 }
 async function apply() {
   const { p, chainId } = await connect();
   const owner = signer("OWNER_WIF", p);
   if (!SEND) return log(`Put game ${GAME} in force.\n\nDry run only. Add --send.`);
   const { operation } = await picksC(p, owner).functions.apply_game({ game: GAME }, { onlyOperation: true });
-  const r = await sendOps(p, chainId, owner, [operation]);
+  const r = await sendOps(p, chainId, owner, [operation], 2);
   log(r.ok ? `✔ game ${GAME} is in force (Mana ${mana(r.rcUsed)}). Next: cards --send` : `✖ ${r.error}`);
 }
 async function cards() {
@@ -235,7 +246,7 @@ async function cards() {
   if (!SEND) return log("\nDry run only. Add --send.");
   const out = [];
   for (const [what, slot, legs] of plan) {
-    const r = await sendOps(p, chainId, player, [await op(slot, legs)], 3);
+    const r = await sendOps(p, chainId, player, [await op(slot, legs)], 1);
     out.push({ what, legs: legs.length, ...r });
     const refusedOk = what.startsWith("MUST") ? !r.ok && /only once/.test(r.error ?? "") : null;
     log(`  ${what}: ${r.ok ? `${mana(r.rcUsed)} Mana` : `refused (${(r.error ?? "").slice(0, 120)})`}${refusedOk === true ? "  ✔ as it should be" : refusedOk === false ? "  ✖ this card should have been refused" : ""}`);
