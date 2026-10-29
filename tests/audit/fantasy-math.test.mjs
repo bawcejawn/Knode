@@ -189,3 +189,61 @@ test("rival records: made and received kept apart; mutual counts as made for bot
   assert.deepEqual(again[A].received, [1, 1, 0], "records add up week after week");
   assert.deepEqual(r[A].received, [1, 0, 0], "the old object is not changed");
 });
+
+test("clock: the real clock is the game week (Monday 00:00 UTC) and its Picks games fit the contract's rules", () => {
+  assert.equal(F.weekOf(F.weekStart(W)), W);
+  assert.equal(F.weekStart(W), R.weekStart(W));
+  assert.equal(F.DAY_MS, R.DAY);
+  const g = F.games();
+  assert.equal(g.team.id, 4); assert.equal(g.rival.id, 5);
+  for (const x of [g.team, g.rival]) {
+    assert.ok(Number(x.round_offset) < Number(x.round_size), "round_offset < round_size");
+    assert.ok(Number(x.lead) >= 300000 && Number(x.ahead) > Number(x.lead) && Number(x.ahead) <= 35 * R.DAY);
+  }
+  assert.equal(g.team.kind, 2); assert.equal(g.team.list_size, 5); assert.equal(g.rival.kind, 1);
+  // A team pick's round is its day: the contract's target r × day is the day's start, locking 5 minutes before.
+  const d = DAYS[3];
+  assert.equal(d * Number(g.team.round_size) + Number(g.team.round_offset), F.dayStart(d));
+  assert.equal(F.lockOfDay(d), F.dayStart(d) - 300000);
+  // A rival pick's round is its week: target = the week's Monday 00:00 UTC.
+  const rr = F.rivalRound(W);
+  assert.ok(Number.isInteger(rr));
+  assert.equal(rr * Number(g.rival.round_size) + Number(g.rival.round_offset), F.weekStart(W));
+  assert.equal(F.weekOfRivalRound(rr), W);
+});
+
+test("clock: the fast test clock (1 test day = 1 hour) runs the same rules in a 7-hour week", () => {
+  const genesis = Date.parse("2026-11-03T15:00:00Z");
+  const T = F.withClock({ day: R.HOUR, genesis, sheetBefore: 30 * 60000 });
+  assert.equal(T.WEEK_MS, 7 * R.HOUR);
+  assert.equal(T.weekStart(0), genesis);
+  assert.equal(T.weekOf(genesis + 7 * R.HOUR + 1), 1);
+  const days = T.weekDays(1);
+  assert.equal(T.dayStart(days[0]), genesis + 7 * R.HOUR);
+  assert.equal(T.dayStart(days[6]), genesis + 13 * R.HOUR);
+  assert.equal(T.sheetTime(1), genesis + 6.5 * R.HOUR, "30 minutes before the week");
+  const fd = T.formDays(1);
+  assert.equal(T.dayStart(fd[6]), genesis + 5 * R.HOUR, "form ends with the last full test day before the sheet");
+  assert.equal(T.dayStart(fd[0]), genesis - R.HOUR);
+  const g = T.games({ team: 94, rival: 95 }, 50);
+  assert.equal(g.team.round_size, String(R.HOUR)); assert.equal(g.team.ahead, String(7 * R.HOUR));
+  assert.equal(g.team.max_picks_per_day, 50);
+  assert.ok(Number(g.rival.round_offset) < Number(g.rival.round_size));
+  assert.equal(T.rivalRound(1) * Number(g.rival.round_size) + Number(g.rival.round_offset), T.weekStart(1));
+  // The day index of a 1-hour day uses that hour's blocks and the card in force at its start.
+  const ts = [], sig = [], t0 = T.dayStart(days[0]);
+  for (let i = 0; i < 100; i++) { ts.push(t0 + i * 36000); sig.push(i < 50 ? 0 : i < 80 ? 1 : 2); }
+  const d = T.dayIndex({ ts, sig, signers: [A, B, C] }, races, days[0]);
+  assert.equal(d.blocks, 100);
+  assert.deepEqual(d.producers[A], [50, 50, 100]);
+  assert.deepEqual(d.producers[C], [20, 20, 100]);
+  // The real clock's functions are unchanged by a test clock.
+  assert.equal(F.DAY_MS, R.DAY);
+});
+
+test("clock: refuses a clock the contract or the rules can't run", () => {
+  assert.throws(() => F.withClock({ day: 7 * 60000, genesis: 0 }), /divide 24 hours/);
+  assert.throws(() => F.withClock({ day: R.HOUR, genesis: 1000 }), /genesis/);
+  assert.throws(() => F.withClock({ day: R.HOUR, genesis: 0, sheetBefore: 2 * R.HOUR }), /sheet/);
+  assert.ok(F.withClock({ day: 20 * 60000, genesis: 0, sheetBefore: 10 * 60000 }));
+});

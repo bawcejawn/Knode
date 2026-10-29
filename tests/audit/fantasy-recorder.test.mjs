@@ -53,7 +53,7 @@ const raceData = (() => {
   return d;
 })();
 let picks = { team: {}, rival: {} };                // team: { [dayNo]: [[player, list, at]] }, rival: { [week]: [...] }
-const picksOf = async (_n, game, round) => (game === 3 ? picks.team[round] || [] : game === 4 ? picks.rival[round] || [] : []);
+const picksOf = async (_n, game, round) => (game === 4 ? picks.team[round] || [] : game === 5 ? picks.rival[round] || [] : []);
 async function hourly(at, prev, opts = {}) {
   const out = tmp();
   const log = console.log; console.log = () => {};
@@ -111,7 +111,7 @@ test("a week: teams scored day by day, final after the 12 h window, rivals count
       [days[1]]: [[pd, five, 2]],
       [days[3]]: [[pc, five, 3]],
     },
-    rival: { 2: [[pa, [pb], 1], [pb, [pa], 1], [pc, [pa], 1], [pb, [pd], 1]] },
+    rival: { [F.rivalRound(2)]: [[pa, [pb], 1], [pb, [pa], 1], [pc, [pa], 1], [pd, [pb], 1]] },
   };
   const mid = await hourly(U("2026-11-04T12:30Z"), s.out);
   const wm = read(mid.out, "W002.json");
