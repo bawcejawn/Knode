@@ -3,7 +3,7 @@
   "orphans": [],
   "lastCompound": 40602373,
   "warnings": [],
-  "lastProduced": 40612897,
+  "lastProduced": 40613703,
   "producedByDay": {
     "1402": 62,
     "1403": 68,
@@ -13,48 +13,36 @@
     "1407": 62,
     "1408": 52,
     "1409": 61,
-    "1410": 7
+    "1410": 10
   },
-  "producerScannedTo": 40612934,
+  "producerScannedTo": 40614186,
   "settings": "{\"min_stake\":\"100000000\",\"min_stake_next\":\"0\",\"min_stake_next_week\":\"0\",\"max_sponsor_rc\":\"200000000\",\"min_sponsor_rc\":\"0\",\"paused\":false}",
-  "sealedAt": 40612920,
+  "sealedAt": 40614182,
   "desk": {
     "settings": "{\"fee_bps\":300,\"min_swap\":\"100000000\",\"max_swap\":\"0\",\"paused\":false,\"timelock\":\"172800000\"}",
-    "koin": "58000423797",
+    "koin": "59697601809",
     "koinOut": "291097000000",
-    "at": 1793252543030
+    "at": 1793256450670
   },
   "deskProducerKey": "AzCYCDLDa49PPVHKk60xQbOErS6XY1TcEA8bkSo8Sk6E",
   "notified": [],
   "vhpLists": {
     "d95519164e1a7e7b5348ea4e9f8ffc97589cfcd705091768c70a6533d6df7810": {
-      "n": 27,
-      "last": 40612982
+      "n": 28,
+      "last": 40614242
     },
     "f3b4d12e4168774eb9fbb86f3be0f7b01c40976b5b74ed2d1ccbb3a91a5e95b3": {
-      "n": 5,
-      "last": 40612982
+      "n": 6,
+      "last": 40614242
     },
     "f821f023d9e30d1d63151b1c8a6cb832678e8670101241b131f31bc3389f16b8": {
-      "n": 5,
-      "last": 40612982
-    },
-    "baf445429bd58f699d16c6972b1ec871ff08cf9ad0867ebee3c237ddef41cfa4": {
-      "n": 4,
-      "last": 40611883
-    },
-    "3ed0d71e004e112d0d8c0161b34398dff8cb4c8705292a750a951587f682ca36": {
-      "n": 4,
-      "last": 40611883
-    },
-    "d142cba24296defdd25bd2e34cc07049f294bbae43a1b1afa6486fdc69b5311c": {
-      "n": 4,
-      "last": 40611883
+      "n": 6,
+      "last": 40614242
     }
   },
   "manaByDay": {
     "2026-10-28": "114631106",
     "2026-10-29": "114557267"
   },
-  "seal": "11eaf2b47400c32e1bbb3d38ee8ec213093727a30c89d91480b137bf5790b25a"
+  "seal": "8c97012c2ce4aa764f6142c502fb5f07da3efbd5221889b658a57e5c85adefd8"
 }
