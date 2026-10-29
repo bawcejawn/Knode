@@ -2,7 +2,7 @@
   "_help": [
     "Fill an ad slot by replacing null with one of these. Commit the change and the site updates in a few minutes.",
     "Direct sponsor:  { \"type\": \"sponsor\", \"image\": \"ads/your-file.png\", \"link\": \"https://sponsor.example\", \"alt\": \"Sponsor name\" }",
-    "   (put the image in the site/ads/ folder; 300x250 for the sidebar, 728x90 or 320x100 for the inline slots)",
+    "   (put the image in the ads/ folder; 300x250 for the sidebar, 728x90 or 320x100 for the inline slots)",
     "Ad network:      { \"type\": \"iframe\", \"src\": \"https://the-link-from-the-network-dashboard\", \"width\": 300, \"height\": 250 }  (its origin must also be added to frame-src in index.html's Content-Security-Policy)",
     "Slots on the page: sidebar (desktop, under the pool), in-feed (phones, under the questions), results-inline (under the results list).",
     "ecosystem: the 'Built on Koinos' list in the footer of the game page and on the New to Koinos page. Add or remove entries freely: { \"name\", \"tagline\", \"link\" (https), \"cta\" }.",

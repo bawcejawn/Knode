@@ -1,47 +1,7 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <!-- Only these sources may run scripts, load data or be framed. 'unsafe-eval' is needed by koilib (its protobuf
-       encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://koinvault.app; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Register a producer key · Knode</title>
-  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="media/icon-180.png">
-  <meta name="theme-color" content="#14213D">
-  <meta name="robots" content="noindex">
-  <link rel="stylesheet" href="styles.css">
-  <style>
-    .pk { max-width: 640px; margin: 40px auto; padding: 0 16px; }
-    .pk label { display: block; font-weight: 700; margin: 18px 0 6px; }
-    .pk input { width: 100%; box-sizing: border-box; padding: 10px 12px; font: inherit; border-radius: 10px; border: 1px solid #8884; background: transparent; color: inherit; }
-    .pk .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
-    .pk .msg { margin-top: 18px; padding: 12px 14px; border-radius: 10px; background: #8881; white-space: pre-wrap; word-break: break-all; }
-    .pk code { word-break: break-all; }
-  </style>
-</head>
-<body>
-  <main class="pk">
-    <h1>Register your node's producer key</h1>
-    <p>For your <strong>own</strong> block-producing node. This tells Koinos: "blocks signed by this node's key produce for
-      my address, using my VHP." Your wallet signs it (Kondor or KOIN Vault); this page never sees a private key.</p>
-    <p>Paste only the <strong>public</strong> key (from <code>npm run bot -- node-key personal</code>). Never paste
-      the contents of <code>private.key</code>.</p>
-
-    <p><a href="node.html">Producer lookup</a> · <a href="burn.html">Burn KOIN into VHP</a></p>
-    <div class="row"><button class="btn" id="connect">Connect wallet</button></div>
-    <label>Producer address (the connected wallet)</label>
-    <input id="addr" readonly placeholder="connect a wallet first">
-    <label for="key">Node PUBLIC key</label>
-    <input id="key" placeholder="A… (44 characters)" autocomplete="off" spellcheck="false">
-    <div class="row"><button class="btn" id="send" disabled>Register key</button></div>
-    <div class="msg" id="msg">Not connected.</div>
-  </main>
-
-  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js" integrity="sha384-IAL9o3r4bQJvWhvszkorFINY2ct4LBA/LvyXE9NSOPCyYB25BsFV12JITA7Gxbk6" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js" integrity="sha384-WOeNFfSdOron0s4x9jdzLtA7Ic7RSqZCXZAaeQd6HRL6WezQp0KAtIF2XSa+11TL" crossorigin="anonymous"></script>
-  <script src="wallet.js"></script>
-  <script src="producer.js"></script>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><title>Knode Games</title>
+<meta name="robots" content="noindex">
+<meta http-equiv="refresh" content="0; url=../producer.html">
+<link rel="canonical" href="https://knodegames.com/producer.html">
+<script>location.replace("../producer.html" + location.search + location.hash);</script>
+</head><body><p>Knode Games has moved: <a href="../producer.html">knodegames.com</a></p></body></html>

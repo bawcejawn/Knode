@@ -6,8 +6,8 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const js = fs.readFileSync(`${APP}/site/mana.js`, "utf8");
-const html = fs.readFileSync(`${APP}/site/mana.html`, "utf8");
+const js = fs.readFileSync(`${APP}/mana.js`, "utf8");
+const html = fs.readFileSync(`${APP}/mana.html`, "utf8");
 const box = { window: {} };
 vm.runInNewContext(js, box);
 const { gauge, answersFor, UNIT } = box.window.KManaMath;
@@ -61,7 +61,7 @@ test("the address from a link is checked (base58 + checksum) before any chain re
 });
 
 test("every page's header links to Mana levels", () => {
-  const pages = fs.readdirSync(`${APP}/site`).filter((f) => f.endsWith(".html"));
-  const missing = pages.filter((p) => /class="tabs"/.test(fs.readFileSync(`${APP}/site/${p}`, "utf8")) && !/<a href="mana\.html"/.test(fs.readFileSync(`${APP}/site/${p}`, "utf8")));
+  const pages = fs.readdirSync(`${APP}`).filter((f) => f.endsWith(".html"));
+  const missing = pages.filter((p) => /class="tabs"/.test(fs.readFileSync(`${APP}/${p}`, "utf8")) && !/<a href="mana\.html"/.test(fs.readFileSync(`${APP}/${p}`, "utf8")));
   assert.deepEqual(missing, []);
 });

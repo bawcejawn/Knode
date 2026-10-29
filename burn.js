@@ -2,7 +2,7 @@
 (() => {
   "use strict";
   const lib = window.koilib || window.koinos || window;
-  const RPC = "https://api.koinos.io";
+  const RPC = "https://koinos.armana.io";
   const KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK", VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", POB = "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv";
   const UNIT = 100000000n;
   const ADDR = { type: "bytes", options: { "(koinos.btype)": "ADDRESS" } };

@@ -17,9 +17,15 @@ $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
 if (-not $nodeCmd) { throw "Node.js isn't on the PATH. Open a new PowerShell window and try again." }
 $node = $nodeCmd.Source
 
-# Hidden PowerShell window that runs: node bot\heal.mjs
-$arg = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "& ''{0}'' ''{1}''"' -f $node, $script
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg -WorkingDirectory $root
+# Runs node with no window at all: "conhost --headless" gives it a console that is never shown (a hidden PowerShell
+# window still flashes on screen for a moment). Windows older than 10 version 1809 has no --headless: hidden PowerShell.
+$conhost = Join-Path $env:SystemRoot "System32\conhost.exe"
+if ([Environment]::OSVersion.Version.Build -ge 17763 -and (Test-Path $conhost)) {
+  $action = New-ScheduledTaskAction -Execute $conhost -Argument ('--headless "{0}" "{1}"' -f $node, $script) -WorkingDirectory $root
+} else {
+  $arg = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "& ''{0}'' ''{1}''"' -f $node, $script
+  $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg -WorkingDirectory $root
+}
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 20) -RepetitionDuration (New-TimeSpan -Days 3650)
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 2) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName "Knode self-heal" -Action $action -Trigger $trigger -Settings $settings -Description "Every 20 minutes: restart any Koinos node that has frozen, and email through GitHub. See C:\kprediction\bot\heal.mjs" -Force | Out-Null

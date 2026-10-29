@@ -7,7 +7,7 @@ import vm from "node:vm";
 import { utils } from "koilib";
 
 const APP = process.env.APP || ".";
-const wallet = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
+const wallet = fs.readFileSync(`${APP}/wallet.js`, "utf8");
 const PLAYER = "1JEG83vHFKLwt3dnDqjuX9s5Zc56U4bQet", GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", DESK = "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR";
 const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK", POB = "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv";
 const SPONSOR = "1AZsVFFrvKFhhxLq2jKHUUesdm2zbCcbXW";
@@ -18,11 +18,12 @@ assert.ok(s0 > 0 && s1 > s0, "sponsor helpers and sendKondor in site/wallet.js")
 
 function world({ payer = "sponsor", sponsor = { address: SPONSOR, covers: [GAME, DESK, VHP, KOIN], tokens: [VHP, KOIN], rcLimit: "100000000" }, yes = true, refuseOnSend = false } = {}) {
   const log = { built: [], sent: [], asked: [] };
+  const state = { repoint: null };
   class Transaction {
     constructor(c) { this.signer = c.signer; this.options = { ...(c.options || {}) }; this.transaction = { header: { ...(c.options?.payer ? { payer: c.options.payer } : {}), ...(c.options?.payee ? { payee: c.options.payee } : {}) }, operations: [] }; log.built.push(this.options); }
     async pushOperation(op) { this.transaction.operations.push(op); }
     async prepare() { this.transaction.id = "0x1220" + "ab".repeat(32); this.transaction.header.payer ??= PLAYER; }
-    async sign() { if (!this.transaction.id) await this.prepare(); return { ...this.transaction, signatures: ["sig"] }; }
+    async sign() { if (!this.transaction.id) await this.prepare(); const t = { ...this.transaction, signatures: ["sig"] }; if (state.repoint) t.header = { ...t.header, payer: state.repoint }; return t; }
     async send() {
       if (!this.transaction.id) await this.prepare();
       log.sent.push(this.transaction.header.payer);
@@ -43,7 +44,7 @@ function world({ payer = "sponsor", sponsor = { address: SPONSOR, covers: [GAME,
   vm.createContext(ctx);
   vm.runInContext(wallet.slice(s0, s1) + "\nthis.sendKondor = sendKondor;", ctx);
   const op = (contract, entry = 1) => ({ call_contract: { contract_id: contract, entry_point: entry, args: "" } });
-  return { log, op, send: (ops, opts = {}) => ctx.sendKondor("test", ops, opts) };
+  return { log, op, send: (ops, opts = {}) => ctx.sendKondor("test", ops, opts), set repoint(v) { state.repoint = v; } };
 }
 
 test("the sponsor pays a game action when it is on and would_pay says yes", async () => {
@@ -65,12 +66,20 @@ test("would_pay is asked about this player and the transaction's Mana limit", as
   assert.equal(args[27], 0x10);
 });
 
-test("a no from would_pay: the player's own Mana, the sponsor is not named", async () => {
+test("a no from would_pay: the player's own Mana, named as payer (never the sponsor, never the game)", async () => {
   const w = world({ yes: false });
   await w.send([w.op(GAME)]);
   assert.equal(w.log.built.length, 1);
-  assert.equal(w.log.built[0].payer, undefined);
+  assert.equal(w.log.built[0].payer, PLAYER);
   assert.deepEqual(w.log.sent, [PLAYER]);
+});
+
+test("not sponsored and the wallet re-points the payer to the game contract (free Mana option): not sent", async () => {
+  const w = world({ yes: false });
+  // Stand-in for Kondor's free Mana option: the signed transaction names the game contract as payer.
+  w.repoint = GAME;
+  await assert.rejects(w.send([w.op(GAME)]), /own Mana/);
+  assert.deepEqual(w.log.sent, []);
 });
 
 test("a call to any other contract (burning KOIN on Proof-of-Burn): never the sponsor", async () => {

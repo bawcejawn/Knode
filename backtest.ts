@@ -27,7 +27,7 @@ import * as path from "node:path";
 // ───────────────────────── Settings (override with --flags) ─────────────────────────
 
 const DEFAULTS = {
-  rpc: "https://api.koinos.io",
+  rpc: "https://koinos.armana.io",
   days: 120, // history to test on (the saved block cache is never trimmed below what it holds)
   rateDays: 2, // eligibility checks (size class, new, drifting, offline) use this many recent days
   coreRateDays: 0.25, // FORECAST rate for core producers: last 6 hours (v5 — 2 days lagged behind outages)

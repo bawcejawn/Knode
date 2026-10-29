@@ -1,4 +1,4 @@
-/* Knode website — a static page: everything is read from the Koinos chain and the bot's public
+/* Knode Games website — a static page: everything is read from the Koinos chain and the bot's public
    question files (game-data/), and every action is signed by the player's own wallet (Kondor or KOIN Vault).
    With no deployment yet (or ?demo in the address), it runs a preview on sample data. */
 (() => {
@@ -7,11 +7,11 @@
   const DAY = 28800;              // blocks per day
   const UNIT = 100000000n;        // 1 KOIN / 1 VHP = 10^8 units
   const FREE_PRIZE = 2n * UNIT;   // v5: the 2 best free players' prize, taken from each pot first (Kpred FREE_PRIZE)
-  const RPC = "https://api.koinos.io";
+  const RPC = "https://koinos.armana.io";
   // Block explorer links (change here if the explorer's address format differs).
   const EXPLORER_ADDRESS = "https://koinosscan.com/address/";
   const EXPLORER_PRODUCERS = "https://koinosscan.com/producers";
-  const BASE = location.pathname.includes("/site/") ? "../" : "./";
+  const BASE = "./";
   const DATA = BASE + "game-data/";
   const ABI_URL = BASE + "game/abi/kpred.koilib.json";
   const lib = window.koilib || window.koinos || window; // koilib's browser build exposes Contract, Provider, ...
@@ -95,7 +95,7 @@
   const fmtN = (n) => Number(n).toLocaleString();
   /** A producer as a small coloured chip; opens it in Producer lookup (blocks, share, what to expect). */
   const pchip = (a) => el("a", { class: "pchip", href: `node.html?a=${a}&w=28800`, target: "_blank", rel: "noopener", title: `${a}\nOpen in Producer lookup`, style: `--c: hsl(${hue(a)} 65% 52%)` },
-    el("i", { "aria-hidden": "true" }), a === S.dep?.contract ? "Knode pool" : short(a));
+    el("i", { "aria-hidden": "true" }), a === S.dep?.contract ? "Knode Games pool" : short(a));
   const chipify = (text) => {
     const out = []; let last = 0;
     for (const m of String(text).matchAll(ADDR_RE)) { out.push(text.slice(last, m.index)); out.push(pchip(m[0])); last = m.index + m[0].length; }
@@ -183,7 +183,7 @@
     window.scrollTo({ top: 0 });
   }
 
-  // ═══════════════ Rules: one tab per part of Knode (game, Producer Race, Swap) ═══════════════
+  // ═══════════════ Rules: one tab per part of Knode Games (game, Producer Race, Swap) ═══════════════
   const RULE_TABS = ["game", "race", "swap"];
   function showRulesTab(name) {
     const t = RULE_TABS.includes(name) ? name : "game";
@@ -475,6 +475,7 @@
     return { potA, potB: net + carried - potA };
   }
 
+  const FREE_SHOW = 6;   // the Free play board lists only its top 6 (owner, 2026-10-28)
   const W_SCALE = 10n ** 18n;
   function isqrt(n) { if (n < 2n) return n; let x = n, y = n / 2n + 1n; while (y < x) { x = y; y = (x + n / x) / 2n; } return x; }
   const rankWeight = (r) => isqrt(W_SCALE / BigInt(r));
@@ -556,15 +557,16 @@
   function friendlyError(msg) {
     const m = msg.match(/"([^"]{6,140})"/);
     const text = m ? m[1] : msg;
-    if (/insufficient\s*(rc|mana|resources?)|\bmana\b|\brc[_ ]?limit\b|out of rc/i.test(text)) return `not enough Mana. In Kondor, tick the free Mana option; in KOIN Vault, hold a little KOIN; or wait for Mana to refill. (${text.slice(0, 90)})`;
+    if (/insufficient\s*(rc|mana|resources?)|\bmana\b|\brc[_ ]?limit\b|out of rc/i.test(text)) return `not enough Mana. Today's free Mana may be used up, so this one needs your own: hold a little KOIN in your wallet (its Mana refills by itself), or try again after 00:00 UTC. (${text.slice(0, 90)})`;
     return text.slice(0, 160);
   }
 
-  // Staked players' answers are paid by the game contract (Kondor's free Mana option), so they don't use up the Mana
-  // sponsor; everything else can use the sponsor when deployment.json turns it on (site/wallet.js).
+  // Every player action, answers included, asks the Mana sponsor first (site/wallet.js); when its caps are used up the
+  // player's own Mana pays. The game contract no longer pays for anyone (owner, 2026-10-28): its Mana is kept for
+  // burning block rewards back into VHP.
   const answer = (q, option) => send(`answer ${String.fromCharCode(65 + option)}`, async () => [
     await opOf(writer(), "answer", { player: S.account, question_id: q.chainId, option }),
-  ], { gamePays: (S.activeStake ?? 0n) >= UNIT });
+  ]);
 
   const claim = (week) => send(`collect week ${week + 1} reward`, async () => [
     await opOf(writer(), "claim", { player: S.account, week: String(week) }),
@@ -1079,14 +1081,14 @@
     if (dlg.showModal) dlg.showModal();
     await drawShareNow();
   }
-  const shareText = () => { const st = weekStats(SH.week); return `I scored ${st.pts} ${st.pts === 1 ? "point" : "points"} on Knode in week ${st.week}${st.place ? ` (#${st.place} of ${st.of})` : ""}. Call the next blocks on Koinos: ${installUrl()}`; };
+  const shareText = () => { const st = weekStats(SH.week); return `I scored ${st.pts} ${st.pts === 1 ? "point" : "points"} on Knode Games in week ${st.week}${st.place ? ` (#${st.place} of ${st.of})` : ""}. Call the next blocks on Koinos: ${installUrl()}`; };
   const shareBlob = () => new Promise((res) => { const c = $("#share-canvas"); if (!c || !c.toBlob) res(null); else c.toBlob((b) => res(b), "image/png"); });
   async function shareGo() {
     const blob = await shareBlob(), text = shareText(), name = `knode-week-${SH.week + 1}.png`;
     try {
       const file = blob && typeof File === "function" ? new File([blob], name, { type: "image/png" }) : null;
-      if (file && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text, title: "Knode" }); return; }
-      if (navigator.share) { await navigator.share({ text, title: "Knode", url: installUrl() }); return; }
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text, title: "Knode Games" }); return; }
+      if (navigator.share) { await navigator.share({ text, title: "Knode Games", url: installUrl() }); return; }
     } catch (e) { if (e && e.name === "AbortError") return; }
     await shareSave();
   }
@@ -1097,7 +1099,7 @@
     catch { toast("Picture saved."); }
   }
 
-  /** Reminders. A calendar file always works; notifications only while Knode is open (no server sends them). */
+  /** Reminders. A calendar file always works; notifications only while Knode Games is open (no server sends them). */
   const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
   const lsSet = (k, v) => { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* private window */ } };
   const NOTIFY_KEY = "kn-notify-v1";
@@ -1116,12 +1118,12 @@
     const newest = Math.max(...open.map((q) => Number(q.chainId)));
     if (newest > Number(lsGet("kn-notify-q") || -1)) {
       lsSet("kn-notify-q", String(newest));
-      notify("Today's Knode questions are out", `${open.length} new questions. Answers close in ${duration(open[0].lockTime - now)}.`, "knode-new");
+      notify("Today's Knode Games questions are out", `${open.length} new questions. Answers close in ${duration(open[0].lockTime - now)}.`, "knode-new");
     }
     const left = open[0].lockTime - now, todo = open.filter((q) => myAnswer(q) === null).length;
     if (S.account && todo && left > 0 && left <= 3600000 && lsGet("kn-notify-close") !== String(open[0].lockTime)) {
       lsSet("kn-notify-close", String(open[0].lockTime));
-      notify("Under an hour left on Knode", `You have ${todo} question${todo === 1 ? "" : "s"} still to answer.`, "knode-close");
+      notify("Under an hour left on Knode Games", `You have ${todo} question${todo === 1 ? "" : "s"} still to answer.`, "knode-close");
     }
   }
   function remindersCard() {
@@ -1137,7 +1139,7 @@
         lsSet(NOTIFY_KEY, "1");
         const open = S.questions.filter((q) => nowMs() < q.lockTime);
         if (open.length) lsSet("kn-notify-q", String(Math.max(...open.map((q) => Number(q.chainId)))));
-        toast("Notifications on: you'll hear about new questions while Knode is open.");
+        toast("Notifications on: you'll hear about new questions while Knode Games is open.");
       } else toast("Notifications are blocked in this browser. The calendar reminder still works.");
       renderReminders();
     };
@@ -1145,10 +1147,10 @@
       el("p", { class: "muted" }, `New questions come out Monday to Saturday at ${localHour(12)} your time.`),
       el("div", { class: "row-btns" },
         el("button", { class: "btn btn-primary", type: "button", onclick: ics }, "Add to my calendar"),
-        canNotify() ? el("button", { class: "btn btn-ghost", type: "button", onclick: toggle }, notifyOn() ? "Turn notifications off" : "Notify me while Knode is open") : null),
+        canNotify() ? el("button", { class: "btn btn-ghost", type: "button", onclick: toggle }, notifyOn() ? "Turn notifications off" : "Notify me while Knode Games is open") : null),
       el("p", { class: "fine-print muted" }, canNotify()
-        ? "The calendar reminder works even when Knode is closed. Notifications only appear while Knode is open in a tab or as the installed app (on iPhone, only in the installed app)."
-        : "The calendar reminder works even when Knode is closed. This browser can't show notifications."));
+        ? "The calendar reminder works even when Knode Games is closed. Notifications only appear while Knode Games is open in a tab or as the installed app (on iPhone, only in the installed app)."
+        : "The calendar reminder works even when Knode Games is closed. This browser can't show notifications."));
   }
   function renderReminders() {
     for (const id of ["#remind-body", "#welcome-remind"]) { const b = $(id); if (b && b.replaceChildren) b.replaceChildren(remindersCard()); }
@@ -1194,7 +1196,20 @@
     const recent = lockedAll.filter((q) => outcomeOf(q) && myAnswer(q) !== null && num(q.windowEnd) >= S.height - 28800);
     const locked = [...waiting, ...recent].sort((a, b) => a.chainId - b.chainId);
     const oq = $("#open-questions");
-    oq.replaceChildren(...(open.length ? open.map((q) => questionCard(q, "open")) : [el("div", { class: "empty" }, `No open questions right now. New questions arrive Monday to Saturday at ${localHour(12)} your time.`)]));
+    // Between 12:00 UTC and the day's questions appearing (the bot posts them on chain, then publishes the files):
+    // say they're on their way, not "no questions", so a visitor in those minutes knows nothing is wrong.
+    const dayN = S.genesis && now >= S.genesis ? Math.floor((now - S.genesis) / 86400000) : -1;
+    const dayLock = S.genesis + (dayN + 1) * 86400000;
+    const todayLabel = dayN >= 0 ? `W${String(Math.floor(dayN / 7)).padStart(3, "0")}-D${(dayN % 7) + 1}` : "";
+    const skippedToday = (S.files || []).some(({ d }) => d && d.date === todayLabel && d.skipped);
+    const posting = dayN >= 0 && dayN % 7 < 6 && now >= dayLock - 12 * 3600000 && !skippedToday && !S.questions.some((q) => num(q.lockTime) === dayLock);
+    const late = posting && now >= dayLock - 10 * 3600000; // still not out two hours after 12:00 UTC
+    const emptyText = late
+      ? "Today's questions are running late. They'll show up here as soon as they're posted; this page checks every minute."
+      : posting
+        ? `Today's questions are on their way. They're posted on the Koinos chain at ${localHour(12)} your time and show up here within a few minutes. This page checks every minute, so there's no need to refresh.`
+        : `No open questions right now. New questions arrive Monday to Saturday at ${localHour(12)} your time.`;
+    oq.replaceChildren(...(open.length ? open.map((q) => questionCard(q, "open")) : [el("div", { class: "empty" }, emptyText)]));
     const answeredToday = open.filter((q) => myAnswer(q) !== null).length;
     const tn = $("#today-note");
     if (tn) tn.textContent = !open.length ? "" : S.account ? `${answeredToday} of ${open.length} answered${open.length && open[0] ? ` · answers close in ${duration(open[0].lockTime - now)}` : ""}` : `${open.length} to answer · answers close in ${duration(open[0].lockTime - now)}`;
@@ -1272,29 +1287,44 @@
     }
     S.boardWeek = week;
     const b = S.board[week];
-    // Everyone who answered is listed. Free players (no stake) score points but are never paid.
-    const rows = b.scored.filter((s) => s.counted > 0 || s.address === S.account);
-    if (!rows.length) { tbody.replaceChildren(el("tr", {}, el("td", { colspan: "5", class: "muted" }, "No players yet this week. Stake and answer to be the first."))); cardMsg("No players yet this week. Stake and answer to be the first."); return; }
+    // Two boards. Staked: players with a stake, who share the weekly pool. Free play: wallets with no stake; 1st and
+    // 2nd collect the weekly free-play prize. Free play lists only the top FREE_SHOW; everyone else stays private
+    // (a free player still sees their own place).
+    const kind = S.lbKind === "free" ? "free" : "main";
+    const L = (window.KBoard && window.KBoard.LABELS) || { staked: "Staked", free: "Free play" };   // same names in every game
+    $("#lb-kind").replaceChildren(...[["main", L.staked], ["free", L.free]].map(([k, label]) => el("button", {
+      type: "button", "aria-pressed": String(k === kind), onclick: () => { S.lbKind = k; renderBoard(week); },
+    }, label)));
+    const everyone = b.scored.filter((s) => s.counted > 0 || s.address === S.account);
+    const freeAll = everyone.filter((s) => s.stake < UNIT && s.counted > 0);
+    const myFree = freeAll.findIndex((s) => s.address === S.account);
+    const rows = kind === "main" ? everyone.filter((s) => s.stake >= UNIT) : freeAll.slice(0, FREE_SHOW);
+    $("#lb-me").textContent = kind === "free" && myFree >= FREE_SHOW ? `${youLabel()}: #${myFree + 1} in free play with ${freeAll[myFree].pts} points (only you see this).`
+      : kind === "main" && myFree >= 0 ? `${youLabel()} play free this week: your place is on the Free play board.` : "";
+    const empty = kind === "main" ? "No staked players yet this week. Stake at least 1 VHP and answer to be the first." : "No free-play scores yet this week.";
+    if (!rows.length) { tbody.replaceChildren(el("tr", {}, el("td", { colspan: "5", class: "muted" }, empty))); cardMsg(empty); return; }
     let lastWinnerIdx = -1;
     rows.forEach((s, i) => { if (s.winner) lastWinnerIdx = i; });
-    // Places are counted among eligible staked players only (free players never take a place).
+    // Staked: places among eligible staked players. Free play: places in the free-play order.
     let place = 0;
-    const placeOf = new Map(rows.map((s) => [s, s.eligible ? ++place : null]));
+    const placeOf = new Map(rows.map((s, i) => [s, kind === "free" ? i + 1 : s.eligible ? ++place : null]));
+    const freePrizeRow = (s) => kind === "free" && rows.indexOf(s) < 2;
+    if (kind === "free") lastWinnerIdx = -1;
     tbody.replaceChildren(...rows.map((s, i) => el("tr", { class: [s.address === S.account ? "me" : "", i === lastWinnerIdx ? "cutline" : ""].join(" ").trim() },
-      el("td", {}, el("span", { class: `rank${s.winner ? " top" : ""}` }, placeOf.get(s) ? String(placeOf.get(s)) : "–")),
+      el("td", {}, el("span", { class: `rank${s.winner || freePrizeRow(s) ? " top" : ""}` }, placeOf.get(s) ? String(placeOf.get(s)) : "–")),
       el("td", {}, el("span", { class: "addr" }, s.address === S.account ? youLabel() : short(s.address)), i === lastWinnerIdx ? el("span", { class: "cut-label" }, "winners' line") : null),
       el("td", { class: "num" }, String(s.pts)),
       el("td", { class: "num" }, s.stake < UNIT ? el("span", { class: "badge badge-free" }, "Free play") : `${amount(s.stake, 0)} VHP`),
-      el("td", { class: "num" }, s.winner && s.reward !== undefined && !(b.estimate && s.reward === 0n) ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : "–"))));
+      el("td", { class: "num" }, freePrizeRow(s) ? (rows.indexOf(s) === 0 ? "🥇 Prize" : "🥈 Prize") : s.winner && s.reward !== undefined && !(b.estimate && s.reward === 0n) ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : "–"))));
     // Phones: the same standings as cards, your own card pinned on top. Ties: players on the same points as a neighbour.
     if (cards && cards.replaceChildren) {
       const elig = rows.filter((s) => s.eligible);
       const tied = (s) => s.eligible && elig.some((o) => o !== s && o.pts === s.pts);
-      const rewardOf = (s) => (s.winner && s.reward !== undefined && !(b.estimate && s.reward === 0n) ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : null);
+      const rewardOf = (s) => (freePrizeRow(s) ? "weekly free-play prize" : s.winner && s.reward !== undefined && !(b.estimate && s.reward === 0n) ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : null);
       const card = (s, i, pinned) => el("div", { class: ["lbc", s.address === S.account ? "me" : "", s.winner ? "win" : "", pinned ? "pinned" : ""].join(" ").trim() },
         el("span", { class: `lbc-place${s.winner ? " lbc-win" : ""}` }, placeOf.get(s) ? `#${placeOf.get(s)}` : "–"),
         el("div", { class: "lbc-who" },
-          el("b", {}, pinned ? `${youLabel()}: ${placeOf.get(s) ? `#${placeOf.get(s)} of ${elig.length}` : "free play"}` : s.address === S.account ? youLabel() : short(s.address)),
+          el("b", {}, pinned ? `${youLabel()}: ${placeOf.get(s) ? `#${placeOf.get(s)}${kind === "main" ? ` of ${elig.length}` : " in free play"}` : "free play"}` : s.address === S.account ? youLabel() : short(s.address)),
           el("span", { class: "muted" }, s.stake < UNIT ? "Free play" : `${amount(s.stake, 0)} VHP staked`, tied(s) ? " · tied" : "", rewardOf(s) ? ` · ${rewardOf(s)}` : "")),
         el("span", { class: "lbc-pts" }, el("b", {}, String(s.pts)), el("small", {}, " pts")));
       const meRow = rows.find((s) => s.address === S.account);
@@ -1303,7 +1333,9 @@
       rows.forEach((s, i) => { list.push(card(s, i, false)); if (i === lastWinnerIdx && i < rows.length - 1) list.push(el("div", { class: "lbc-cut" }, "Winners' line: everyone above shares the pool")); });
       cards.replaceChildren(...list);
     }
-    $("#lb-note").textContent = week === S.week
+    $("#lb-note").textContent = kind === "free"
+      ? `Free play: wallets with no stake. 1st and 2nd at the end of the week collect the free-play prize. Only the top ${FREE_SHOW} are shown; everyone else stays private.`
+      : week === S.week
       ? "Live standings: points count as soon as each question's blocks are final. The top 30% of staked players win (ties too). Rewards shown with ~ are estimates if the week ended now."
       : b.final ? `Final: ${num(b.final.winners)} winner(s) at ${num(b.final.cutoff)}+ points shared ${amount(b.final.pot)} VHP.` : "Final standings.";
     if (week === S.week) $("#stat-players").textContent = String(b.scored.length);
@@ -1449,7 +1481,7 @@
     const isNew = (b) => b.h > tickerTop && tickerTop !== 0;
     list.replaceChildren(...blocks.slice(0, 7).map((b) => el("li", {
       class: `blk${b.signer === S.dep?.contract ? " ours" : ""}${isNew(b) ? " new" : ""}`, style: `--c: hsl(${hue(b.signer)} 70% 58%)`,
-    }, el("span", { class: "cube", "aria-hidden": "true" }), el("span", { class: "who" }, b.signer === S.dep?.contract ? "Knode pool" : short(b.signer)), el("span", { class: "h" }, `#${b.h.toLocaleString()}`))));
+    }, el("span", { class: "cube", "aria-hidden": "true" }), el("span", { class: "who" }, b.signer === S.dep?.contract ? "Knode Games pool" : short(b.signer)), el("span", { class: "h" }, `#${b.h.toLocaleString()}`))));
     tickerTop = blocks[0].h;
   }
 

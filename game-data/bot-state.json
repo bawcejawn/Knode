@@ -1,33 +1,59 @@
 {
-  "checkedUpTo": 40,
+  "checkedUpTo": 45,
   "orphans": [],
-  "lastCompound": 40573279,
+  "lastCompound": 40602373,
   "warnings": [],
-  "lastProduced": 40572668,
+  "lastProduced": 40610563,
   "producedByDay": {
-    "1400": 73,
-    "1401": 63,
     "1402": 62,
     "1403": 68,
     "1404": 66,
     "1405": 53,
     "1406": 51,
     "1407": 62,
-    "1408": 39
+    "1408": 52,
+    "1409": 61,
+    "1410": 4
   },
-  "producerScannedTo": 40573216,
+  "producerScannedTo": 40610617,
   "settings": "{\"min_stake\":\"100000000\",\"min_stake_next\":\"0\",\"min_stake_next_week\":\"0\",\"max_sponsor_rc\":\"200000000\",\"min_sponsor_rc\":\"0\",\"paused\":false}",
-  "sealedAt": 40573207,
+  "sealedAt": 40610616,
   "desk": {
     "settings": "{\"fee_bps\":300,\"min_swap\":\"100000000\",\"max_swap\":\"0\",\"paused\":false,\"timelock\":\"172800000\"}",
-    "koin": "27877762353",
+    "koin": "56727548321",
     "koinOut": "291097000000",
-    "at": 1793129957190
+    "at": 1793245411030
   },
   "deskProducerKey": "AzCYCDLDa49PPVHKk60xQbOErS6XY1TcEA8bkSo8Sk6E",
-  "notified": [
-    "upgrade:0xc17066ae988d204fd43d43f662ad87fcdc38170419943c20b5164a5bd34dd784:1793214531820",
-    "desk-upgrade:0x309506ccfaadd3427e937aa88cd34c9ea2a9e6088e49e51f014d546489dd5f35:1793214572690"
-  ],
-  "seal": "094816d5f247c260356b78216234be786fb7a9070a312d464eb4708bb52897d5"
+  "notified": [],
+  "vhpLists": {
+    "d95519164e1a7e7b5348ea4e9f8ffc97589cfcd705091768c70a6533d6df7810": {
+      "n": 25,
+      "last": 40610676
+    },
+    "f3b4d12e4168774eb9fbb86f3be0f7b01c40976b5b74ed2d1ccbb3a91a5e95b3": {
+      "n": 3,
+      "last": 40610676
+    },
+    "f821f023d9e30d1d63151b1c8a6cb832678e8670101241b131f31bc3389f16b8": {
+      "n": 3,
+      "last": 40610676
+    },
+    "baf445429bd58f699d16c6972b1ec871ff08cf9ad0867ebee3c237ddef41cfa4": {
+      "n": 3,
+      "last": 40610676
+    },
+    "3ed0d71e004e112d0d8c0161b34398dff8cb4c8705292a750a951587f682ca36": {
+      "n": 3,
+      "last": 40610676
+    },
+    "d142cba24296defdd25bd2e34cc07049f294bbae43a1b1afa6486fdc69b5311c": {
+      "n": 3,
+      "last": 40610676
+    }
+  },
+  "manaByDay": {
+    "2026-10-28": "114631106"
+  },
+  "seal": "8a182c30e085df45a912bcab3994356644413804089cf3017ce1a1a4137874ed"
 }

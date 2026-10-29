@@ -5,7 +5,7 @@ multiple-choice questions about what Koinos block producers will do next ("How m
 the next 8 hours?"). Every right answer is a point. Each week the best players share what the game's block-producing
 pool earned. It is free to play, and staking VHP lets you share the rewards.
 
-Play: <https://bawcejawn.github.io/Knode/site/> (works in any browser; on a phone you can also "Add to Home Screen" to
+Play: <https://knodegames.com> (works in any browser; on a phone you can also "Add to Home Screen" to
 install it like an app).
 
 Everything that matters runs on chain: stakes, answers, scores, the leaderboard line and the payouts are all in the
@@ -66,8 +66,9 @@ the rest by place × stake; up to 64 questions a week; no free-player prize.
 
 Koinos has no transaction fees; it uses **Mana**, which comes from holding KOIN and refills on its own.
 
-- The game contract pays the Mana for **staked players'** answers, week-end settles and reward claims (in Kondor, tick
-  the free Mana option). KOIN Vault users pay their own Mana, which needs a little KOIN in the wallet.
+- The game contract pays nobody's Mana (owner, 2026-10-28: `max_sponsor_rc` is 0). Its Mana is kept for burning block
+  rewards back into VHP (compound). The Mana sponsor below pays for players; the bot wallet pays for the bot.
+  KOIN Vault picks its own payer, so its users pay their own Mana, which needs a little KOIN in the wallet.
 - A separate **Mana sponsor** wallet (`sponsor/README.md`) can pay the rest, within per-transaction, per-player daily
   and weekly, and everyone-daily limits (a hard 1,000 Mana a day). **Answers are free for any wallet**, even one with
   no VHP; answers by wallets with no VHP and no stake share at most 300 of the 1,000 a day. Staking, withdrawing,
@@ -263,7 +264,7 @@ before the start, the override is set aside and the node starts on its old folde
 | `desk/` | Knode Swap contract and tests ([`desk/README.md`](desk/README.md)) |
 | `bot/` | The hourly operator bot, the Desk and upgrade tools, the rehearsal ([`bot/README.md`](bot/README.md)) |
 | `admin/` | The local admin page (`npm run admin`) |
-| `site/` | The website (GitHub Pages) |
+| `*.html`, `*.js`, `*.css`, `media/` | The website (GitHub Pages, https://knodegames.com) · `site/` only redirects old links |
 | `generator.ts`, `resolver.ts`, `common.ts` | Build and score the questions ([`docs/QUESTIONS.md`](docs/QUESTIONS.md)) |
 | `backtest.ts`, `export-blocks.ts`, `data/` | Tune the question templates on real history |
 | `game-data/`, `desk-data/` | The live, public game files (questions, results, deployment details) |

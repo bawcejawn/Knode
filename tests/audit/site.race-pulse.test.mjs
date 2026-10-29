@@ -6,7 +6,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const read = (f) => fs.readFileSync(`${APP}/site/${f}`, "utf8");
+const read = (f) => fs.readFileSync(`${APP}/${f}`, "utf8");
 const load = (f) => { const box = { window: {} }; vm.runInNewContext(read(f), box); return box.window; };
 const P = load("pulse.js").KPulseMath, M = load("mana.js").KManaMath;
 const DAY = 86400000;

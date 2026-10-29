@@ -47,7 +47,7 @@
     const row = document.querySelector(".top-row");
     if (!row || /[?&]demo\b/.test(location.search)) return;   // the game's demo keeps its own pretend wallet
     if (!document.getElementById("hw-css")) { const s = el("style", { id: "hw-css" }); s.textContent = css; document.head.append(s); }
-    // The game page's own button (#connect) is reused; other pages' "Play Knode" link becomes the wallet button.
+    // The game page's own button (#connect) is reused; other pages' "Play Knode Games" link becomes the wallet button.
     const old = row.querySelector("#connect, .btn-wallet");
     btn = old && old.tagName === "BUTTON" ? old : el("button", { class: "btn btn-wallet", type: "button" });
     btn.id = btn.id || "hw-btn";
@@ -102,6 +102,12 @@
   W.subscribe(() => paint());
   // Pages that set the wallet up themselves (game, swap, burn, Mana) call init with their own settings; init may run
   // more than once, so set it up here too for every other page.
-  W.init({ provider: lib && lib.Provider ? new lib.Provider(["https://api.koinos.io"]) : null, toast });
+  W.init({ provider: lib && lib.Provider ? new lib.Provider(["https://koinos.armana.io"]) : null, toast });
+  // Guest play is offered on every page: read the owner's switch (game-data/deployment.json, this site's own file).
+  if (W.setGuestConfig && window.KGuest) {
+    const base = "./";
+    fetch(base + "game-data/deployment.json", { cache: "no-cache" }).then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && d.sponsor) W.setGuestConfig({ payer: d.payer, sponsor: d.sponsor }); }).catch(() => { /* no guest option then */ });
+  }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", setup); else setup();
 })();

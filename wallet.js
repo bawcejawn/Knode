@@ -1,6 +1,6 @@
-/* Knode wallet layer: one way to connect and sign, two wallets.
+/* Knode Games wallet layer: one way to connect and sign, two wallets.
  *   - Kondor: the browser extension (desktop).
- *   - Guest: a play-only key kept in this browser (site/guest.js). It signs only game answers, paid by the Knode Mana
+ *   - Guest: a play-only key kept in this browser (site/guest.js). It signs only game answers, paid by the Knode Games Mana
  *     sponsor, so anyone can play the daily questions for free with no extension, app or KOIN.
  *   - KOIN Vault: passkey smart accounts on the phone (https://koinvault.app), via its website connection API
  *     (docs/website-integration.md in therexdev/koin-vault). The user approves every transaction in KOIN Vault;
@@ -164,12 +164,12 @@
     const go = h("a", { class: "kw-go", href: VAULT, target: "_blank", rel: "noopener noreferrer", referrerpolicy: "no-referrer", hidden: "" }, "Open KOIN Vault");
     const qr = h("div", { class: "kw-qr" });
     const box = open(h("h3", {}, "Connect KOIN Vault"),
-      h("p", {}, isPhone() ? "Tap Open KOIN Vault, approve Knode with your fingerprint or face, then come back to this tab." : "Scan with your phone (or use Connect inside KOIN Vault), approve Knode with your passkey, and this page connects by itself."),
+      h("p", {}, isPhone() ? "Tap Open KOIN Vault, approve Knode (Knode Games) with your fingerprint or face, then come back to this tab." : "Scan with your phone (or use Connect inside KOIN Vault), approve Knode (Knode Games) with your passkey, and this page connects by itself."),
       qr, go, status,
       h("p", {}, "No KOIN Vault yet? ", h("a", { href: VAULT, target: "_blank", rel: "noopener" }, "Create one at koinvault.app"), " in a minute, no extension needed."));
     let cancelled = false; onClose = () => { cancelled = true; };
     try {
-      const s = await vaultApi("create", { body: { name: "Knode" } });
+      const s = await vaultApi("create", { body: { name: "Knode" } });   // the name KOIN Vault knows this dapp by; rename only after checking with KOIN Vault
       const link = new URL(s.uri);
       if (link.origin !== VAULT || link.pathname !== "/") throw new Error("unexpected wallet address");
       go.href = s.uri; go.hidden = false;
@@ -223,7 +223,7 @@
       const vault = h("button", { class: "kw-opt", type: "button", onclick: pick(connectVault) }, h("span", { class: "kw-ic", "aria-hidden": "true" }, "📱"),
         h("div", {}, h("b", {}, "KOIN Vault", phone ? h("span", { class: "kw-tag" }, "for phones") : null), h("span", {}, "Fingerprint or face, no extension. Works on any phone")));
       const guest = guestOption(pick);
-      open(h("h3", {}, "Connect a wallet"), h("p", {}, "Your wallet signs everything. Knode never sees a key."), ...(phone ? [vault, kondor] : [kondor, vault]), guest);
+      open(h("h3", {}, "Connect a wallet"), h("p", {}, "Your wallet signs everything. Knode Games never sees a key."), ...(phone ? [vault, kondor] : [kondor, vault]), guest);
       onClose = () => resolve(null);
     });
   }
@@ -236,8 +236,8 @@
   const RESTORE_WARN = "Only paste a key you backed up yourself. Anyone who gives you a key can take it back.";
   // Audit (guest) L-3: what a guest sees when the sponsor won't pay (never Kondor or KOIN Vault advice).
   const GUEST_NO_FREE = "Free answers are used up for today — try again after 00:00 UTC (5pm PT), or connect a wallet.";
-  // Audit (guest) L-5: on Koinos mainnet a guest only ever names the live Knode sponsor as payer and only answers on the
-  // Knode game, whatever deployment.json says (pinned like the chain id).
+  // Audit (guest) L-5: on Koinos mainnet a guest only ever names the live Knode Games sponsor as payer and only answers on the
+  // Knode Games question game, whatever deployment.json says (pinned like the chain id).
   const PINNED_SPONSOR = "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8", PINNED_GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr";
   // The Producer Race picks contract, pinned the same way once it is on mainnet (race-data/deployment.json). Until
   // then guests can't pick (empty = none).
@@ -248,11 +248,17 @@
   const guestOp = (o, game, race) => !!(o && o.call_contract && ((game && o.call_contract.contract_id === game && Number(o.call_contract.entry_point) === ANSWER)
     || (race && o.call_contract.contract_id === race && Number(o.call_contract.entry_point) === PICK)));
   // Owner switch: guest play is on only when game-data/deployment.json has "sponsor": { ..., "guest": true }. Keep it off
-  // until the site has its own domain: on the shared bawcejawn.github.io origin, other pages there could read a guest key.
-  const guestOn = () => !!(W.sponsor && W.sponsor.guest === true);
-  const guestReady = () => !!(window.KGuest && guestOn() && W.payer === "sponsor" && W.sponsor && W.sponsor.address);
+  // the site now has its own domain (knodegames.com), so no other Pages site shares its storage.
+  // Pages that set the wallet up without the sponsor (swap, burn, the info pages) still offer guest play: the header
+  // reads game-data/deployment.json and passes its sponsor settings here (setGuestConfig), so the switch is the same
+  // everywhere. A guest still signs only free play (answers and race picks); anything else is refused with a reason.
+  const guestCfg = () => (W.sponsor && W.sponsor.guest === true ? W.sponsor : W.guestConfig && W.guestConfig.guest === true ? W.guestConfig : null);
+  const guestOn = () => !!guestCfg();
+  // Ready only while the sponsor pays (deployment.json "payer": "sponsor"): the page's own setting, or the header's copy.
+  const guestPayer = () => (W.sponsor && W.sponsor.guest === true ? W.payer : W.guestConfig ? W.guestConfig.payer : "self");
+  const guestReady = () => { const g = guestCfg(); return !!(window.KGuest && g && typeof g.address === "string" && g.address && guestPayer() === "sponsor"); };
   function guestOption(pick) {
-    if (!window.KGuest || !guestOn()) return null;   // pages without guest play (swap, burn), or guest play switched off
+    if (!window.KGuest || !guestOn()) return null;   // guest.js missing, or guest play switched off (every page loads it; a guest signs only answers and picks)
     const ready = guestReady();
     const btn = h("button", { class: "kw-opt", type: "button", ...(ready ? {} : { disabled: "", "aria-disabled": "true" }), onclick: ready ? pick(connectGuest) : () => {} },
       h("span", { class: "kw-ic", "aria-hidden": "true" }, "🎟️"),
@@ -291,7 +297,7 @@
   }
   function guestWelcome(address) {
     open(h("h3", {}, "You're playing as a guest"),
-      h("p", {}, "Your guest wallet is ", h("b", {}, address.slice(0, 6) + "…" + address.slice(-4)), ". Answering is free: the Knode Mana sponsor pays."),
+      h("p", {}, "Your guest wallet is ", h("b", {}, address.slice(0, 6) + "…" + address.slice(-4)), ". Answering is free: the Knode Games Mana sponsor pays."),
       h("p", { class: "kw-warn" }, GUEST_WARN),
       h("p", {}, "It lives only in this browser. Back it up if you want to keep your points when you change phone or clear your browser."),
       // Audit (guest) M-2: the browser can delete it by itself (Safari after 7 days without a visit).
@@ -376,11 +382,13 @@
   async function sendGuest(label, ops) {
     const sp = sponsorFor(ops);
     const game = guestGame();
-    if (W.chainId === MAINNET_CHAIN_ID && (!sp || sp.address !== PINNED_SPONSOR || !Array.isArray(sp.covers) || !sp.covers.includes(PINNED_GAME)))
-      throw new Error("Guest play is paused: the page's Mana sponsor settings aren't the live Knode sponsor. Nothing was sent.");
     const race = guestRace();
+    // What a guest may sign is checked first, so a swap or a stake gets "connect a real wallet", not a sponsor message.
     const freeOnly = !!game && ops.length > 0 && ops.every((o) => guestOp(o, game, race));
     if (!freeOnly) throw guestCant(ops);
+    if (W.chainId === MAINNET_CHAIN_ID && (!sp || sp.address !== PINNED_SPONSOR || !Array.isArray(sp.covers) || !sp.covers.includes(PINNED_GAME)))
+      throw new Error("Guest play is paused: the page's Mana sponsor settings aren't the live Knode Games sponsor. Nothing was sent.");
+    if (!sp) throw new Error("Guest play works on the game pages. Nothing was sent.");
     const rcLimit = String(sp.rcLimit || "100000000");
     if (!(await sponsorSaysYes(sp, rcLimit, true))) throw new Error(GUEST_NO_FREE);
     const signer = await window.KGuest.signer();
@@ -467,7 +475,7 @@
     // "chainId", confirmed with "npm run bot -- chain-check"), nothing is signed for any other chain.
     if (W.chainId) {
       const id = await W.provider.getChainId().catch(() => null);
-      if (id !== W.chainId) throw new Error("The network node reports a different chain than Knode runs on. Nothing was signed.");
+      if (id !== W.chainId) throw new Error("The network node reports a different chain than Knode Games runs on. Nothing was signed.");
     }
     if (W.kind === "guest") { if (!guestOn()) throw new Error("Guest play is paused for now. Connect Kondor or KOIN Vault to play."); return sendGuest(label, ops, opts); }
     return W.kind === "vault" ? sendVault(label, ops, opts) : sendKondor(label, ops, opts);
@@ -495,7 +503,9 @@
         W.status && W.status("The Mana sponsor couldn't cover this one. Confirm again in Kondor to use your own Mana.");
       }
     }
-    return sendKondorWith(label, ops, opts);
+    // Not sponsored: the player's own Mana, always named as payer (owner, 2026-10-28: the game contract pays for no one,
+    // so Kondor's free Mana option, which names the game, would only be refused).
+    return sendKondorWith(label, ops, { ...opts, ownMana: true });
   }
 
   async function sendKondorWith(label, ops, opts = {}) {
@@ -607,6 +617,17 @@
     } finally { close(); }
   }
 
+  /** The header passes game-data/deployment.json ({ payer, sponsor }), for the guest switch only: it never changes who
+   *  pays for this page's own transactions (W.payer / W.sponsor stay what the page set). */
+  function setGuestConfig(dep) {
+    const cfg = dep && dep.sponsor;
+    W.guestConfig = cfg && typeof cfg === "object" && typeof cfg.address === "string"
+      ? { address: cfg.address, guest: cfg.guest === true, payer: dep.payer === "sponsor" ? "sponsor" : "self" } : null;
+    if (store.get(localStorage, "kw-kind") === "guest" && guestReady() && !W.address)
+      window.KGuest.load().then((g) => { if (g && !W.address) setAddress("guest", g.address); }).catch(() => {});
+    notify();
+  }
+
   function init({ provider, onChange, toast, status, chainId, payer, sponsor, game } = {}) {
     W.gameContract = typeof game === "string" ? game : null;   // the game contract (pinned on mainnet: PINNED_GAME)
     W.payer = payer === "sponsor" ? "sponsor" : "self";
@@ -639,7 +660,7 @@
   }
 
   window.KWallet = {
-    init, connect, disconnect, send, isPhone, manageGuest, guestInfo: () => { guestCant([]); }, switchTo, forget,
+    init, setGuestConfig, connect, disconnect, send, isPhone, manageGuest, guestInfo: () => { guestCant([]); }, switchTo, forget,
     accounts: () => remembered(), subscribe: (f) => { listeners.add(f); return () => listeners.delete(f); },
     get address() { return W.address; }, get kind() { return W.kind; },
     label: () => (W.kind === "vault" ? "KOIN Vault" : W.kind === "kondor" ? "Kondor" : W.kind === "guest" ? "your guest wallet" : "your wallet"),
