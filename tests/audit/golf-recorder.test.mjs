@@ -1,15 +1,17 @@
 // Block Golf recorder (bot/games/golf.ts): the course from games.json, each hole from that game's own published
-// results, the question game read on two nodes, kept standings when a game's files move on, the 12-hour wait, the
-// 60-hour deadline, frozen final weeks and the leaderboards. Offline: fake result files and a fake question game.
+// results, the question game (answers and who is ranked) read on two nodes, kept standings when a game's files move
+// on, final holes that stay final, the 12-hour wait, the 60-hour deadline, frozen final weeks, a broken history that
+// stops the run, practice weeks and the leaderboards. Offline: fake result files and a fake question game.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 const APP = process.env.APP || ".";
-const { run, sourcesFromGames, testnetSources } = await import(path.resolve(APP, "bot/games/golf.ts"));
-const M = globalThis.KRaceMath, G = globalThis.KGolf;
+const { run, sourcesFromGames } = await import(path.resolve(APP, "bot/games/golf.ts"));
+const M = globalThis.KRaceMath;
 const H = 3600000, DAY = 24 * H;
 
 const P = Array.from({ length: 12 }, (_, i) => "1" + "ABCDEFGHJKLMNPQRSTUVWXYZ"[i].repeat(33));
@@ -18,9 +20,9 @@ const W = 3, START = M.weekStart(W), END = M.weekStart(W + 1);
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const write = (dir, name, j) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, name), JSON.stringify(j)); };
 const SOURCES = [
-  { id: "questions", name: "Daily Questions", reader: "questions" },
-  { id: "race", name: "Producer Race", reader: "race" },
-  { id: "blockx", name: "Who Signs Block X", reader: "blockx" },
+  { id: "questions", name: "Daily Questions", reader: "questions", live: true },
+  { id: "race", name: "Producer Race", reader: "race", live: true },
+  { id: "blockx", name: "Who Signs Block X", reader: "blockx", live: true },
 ];
 
 /** Race files for week W: board with this week's rows (P0 best … P9) and races final or not. */
@@ -43,11 +45,14 @@ function gamesDir({ last = false, final = false, rows = null } = {}) {
   return d;
 }
 const qWeek = ({ closed = true, resolved = 30 } = {}) => ({ closed, questions: 30, resolved, rows: P.slice(2, 9).map((a, i) => ({ a, pts: 20 - 2 * i, answered: 25 })).sort((x, y) => (x.a < y.a ? -1 : 1)) });
-const ranked = async (who) => new Set(who.filter((a) => a !== FREE));
-const base = (o) => ({ sources: SOURCES, questionsOf: async () => qWeek(), rankedOf: ranked, p: "main", check: "check", ...(o.prev === undefined && !o.fresh ? { prev: seeded({ survivor: W, bracket: W }) } : {}), ...o });
+const ranked = async (_node, who) => new Set(who.filter((a) => a !== FREE));
 /** A previous run's index, so the course already holds the three games from week W (as after a first run in W). */
-function seeded(extra = {}) { const d = tmp("golf-prev-"); write(d, "index.json", { v: 1, updated: "", weeks: [], course: { questions: W, race: W, blockx: W, ...extra } }); return d; }
+function seeded() { const d = tmp("golf-prev-"); write(d, "index.json", { v: 1, updated: "", weeks: [], course: { questions: W, race: W, blockx: W }, stakedFromWeek: 0 }); return d; }
+// Staked rules (ranked field, 5 per hole) unless a test says otherwise; practice weeks have their own test.
+const base = (o) => ({ sources: SOURCES, questionsOf: async () => qWeek(), rankedOf: ranked, p: "main", check: "check", stakedFromWeek: 0, ...(o.prev === undefined && !o.fresh ? { prev: seeded() } : {}), ...o });
 const readOut = (dir, name) => JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"));
+const holeOf = (dir, id, w = 3) => readOut(dir, `W00${w}.json`).holes.find((h) => h.id === id);
+const FINAL_GAMES = () => gamesDir({ last: true, final: true });
 
 test("mid-week, first run: every live game joins at once; live holes and scorecards", async () => {
   const out = tmp("golf-");
@@ -55,18 +60,15 @@ test("mid-week, first run: every live game joins at once; live holes and scoreca
   const wf = readOut(out, "W003.json");
   assert.deepEqual(wf.holes.map((h) => [h.id, h.status]), [["questions", "live"], ["race", "live"], ["blockx", "live"]]);
   assert.equal(wf.final, false);
-  const best = wf.cards[0];
-  assert.ok(best.place === 1);
-  // P2 plays all three holes; P0 plays race and blockx only (lost ball on questions)
+  assert.equal(wf.practice, false);
   const p0 = wf.cards.find((c) => c.a === P[0]);
-  assert.equal(p0.holes.find((x) => x[0] === "questions")[1], 7);
-  assert.equal(p0.mulligan === "questions", false, "a lost ball is never the mulligan");
-  // The free race wallet (100 pts, unranked) beats the ranked field: hole in one on the race, still placed
+  assert.equal(p0.holes.find((x) => x[0] === "questions")[1], 7, "didn't play the question game: lost ball");
+  assert.notEqual(p0.mulligan, "questions", "a lost ball is never the mulligan");
+  // The free race wallet (100 pts, unranked) beats the ranked field: hole in one, but it isn't in the field
   const free = wf.cards.find((c) => c.a === FREE);
   assert.equal(free.holes.find((x) => x[0] === "race")[1], 1);
   assert.equal(free.ranked, false);
-  const idx = readOut(out, "index.json");
-  assert.deepEqual(idx.course, { questions: W, race: W, blockx: W });
+  assert.deepEqual(readOut(out, "index.json").course, { questions: W, race: W, blockx: W });
   const board = readOut(out, "board.json");
   assert.equal(board.week.week, W);
   assert.equal(board.week.rows.length, wf.cards.length);
@@ -75,158 +77,171 @@ test("mid-week, first run: every live game joins at once; live holes and scoreca
   assert.equal(r.problems.length, 0);
 });
 
-test("a game that goes live later joins from the next Monday", async () => {
+test("a game that goes live later joins from the next Monday; one that leaves keeps its joining week", async () => {
   const prev = tmp("golf-");
-  await run(base({ fresh: true, now: START + DAY, out: prev, raceDir: raceDir(), gamesDir: gamesDir(), sources: SOURCES.slice(0, 2) }));
+  await run(base({ fresh: true, now: START + DAY, out: prev, raceDir: raceDir(), gamesDir: gamesDir(), sources: SOURCES.map((s) => ({ ...s, live: s.id !== "blockx" })) }));
   const out = tmp("golf-");
   await run(base({ now: START + 2 * DAY, prev, out, raceDir: raceDir(), gamesDir: gamesDir() }));
   assert.deepEqual(readOut(out, "index.json").course, { questions: W, race: W, blockx: W + 1 });
   assert.deepEqual(readOut(out, "W003.json").holes.map((h) => h.id), ["questions", "race"]);
+  // The race leaves games.json for a run (audit M2): it stays on this week's card and keeps its joining week
+  const out2 = tmp("golf-");
+  await run(base({ now: START + 3 * DAY, prev: out, out: out2, raceDir: raceDir(), gamesDir: gamesDir(), sources: SOURCES.map((s) => ({ ...s, live: s.id !== "race" })) }));
+  assert.deepEqual(readOut(out2, "W003.json").holes.map((h) => h.id), ["questions", "race"]);
+  assert.equal(readOut(out2, "index.json").course.race, W);
 });
 
 test("final 12 hours after the week ends when every hole is final; then frozen", async () => {
   const prev = tmp("golf-");
   await run(base({ now: START + 2 * DAY, out: prev, raceDir: raceDir(), gamesDir: gamesDir() }));
   const out = tmp("golf-");
-  // 11 hours after: everything final but still inside the correction window
-  await run(base({ now: END + 11 * H, prev, out, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true }) }));
-  assert.equal(readOut(out, "W003.json").final, false);
+  await run(base({ now: END + 11 * H, prev, out, raceDir: raceDir(), gamesDir: FINAL_GAMES() }));
+  assert.equal(readOut(out, "W003.json").final, false, "still inside the correction window");
   const out2 = tmp("golf-");
-  await run(base({ now: END + 13 * H, prev: out, out: out2, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true }) }));
+  await run(base({ now: END + 13 * H, prev: out, out: out2, raceDir: raceDir(), gamesDir: FINAL_GAMES() }));
   const wf = readOut(out2, "W003.json");
   assert.equal(wf.final, true);
   assert.ok(wf.holes.every((h) => h.status === "final"));
   const board = readOut(out2, "board.json");
   assert.equal(board.lastWeek.final, true);
   assert.ok(board.allTime.rows.length > 0);
-  // A later run with different source files changes nothing about the final week
   const out3 = tmp("golf-");
   await run(base({ now: END + 30 * H, prev: out2, out: out3, raceDir: raceDir({ rows: [] }), gamesDir: gamesDir({ last: true, final: true, rows: [] }), questionsOf: async () => ({ ...qWeek(), rows: [] }) }));
-  assert.deepEqual(readOut(out3, "W003.json"), wf);
+  assert.deepEqual(readOut(out3, "W003.json"), wf, "a final week never changes");
 });
 
-test("the question game: nodes that disagree, an unfinished week, and the scoring", async () => {
+test("a hole that was final stays final, even if a later run can't read it (audit H2)", async () => {
+  const prev = tmp("golf-");
+  // 13 h after: Block X and questions final, the race still waiting on a race
+  await run(base({ now: END + 13 * H, out: prev, raceDir: raceDir({ final: false }), gamesDir: FINAL_GAMES() }));
+  assert.equal(holeOf(prev, "blockx").status, "final");
+  assert.equal(readOut(prev, "W003.json").final, false);
+  // 61 h after: the games-data files couldn't be read this run and the question game fails
   const out = tmp("golf-");
-  const r = await run(base({ now: END + 20 * H, out, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true }),
-    questionsOf: async (node) => (node === "check" ? { ...qWeek(), rows: qWeek().rows.slice(1) } : qWeek()) }));
-  const q = readOut(out, "W003.json").holes.find((h) => h.id === "questions");
-  assert.equal(q.status, "live");
-  assert.match(q.why, /don't agree/);
-  assert.equal(readOut(out, "W003.json").final, false);
-  const out2 = tmp("golf-");
-  await run(base({ now: END + 20 * H, out: out2, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true }), questionsOf: async () => qWeek({ resolved: 29 }) }));
-  assert.equal(readOut(out2, "W003.json").holes.find((h) => h.id === "questions").status, "live", "a question still unresolved");
-  const out3 = tmp("golf-");
-  await run(base({ now: END + 20 * H, out: out3, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true }) }));
-  const q3 = readOut(out3, "W003.json").holes.find((h) => h.id === "questions");
-  assert.equal(q3.status, "final");
-  assert.equal(q3.field, 7);
-  const c = readOut(out3, "W003.json").cards.find((x) => x.a === P[2]);
-  assert.equal(c.holes.find((x) => x[0] === "questions")[1], 1, "the best question player holes in one");
-  assert.equal(r.problems.length, 0);
+  const r = await run(base({ now: END + 61 * H, prev, out, raceDir: raceDir({ final: false }), gamesDir: tmp("empty-"), questionsOf: async () => { throw new Error("node down"); } }));
+  assert.equal(holeOf(out, "blockx").status, "final", "kept");
+  assert.equal(holeOf(out, "questions").status, "final", "kept");
+  assert.equal(holeOf(out, "race").status, "final", "the race board's standings are used at the deadline (audit H3)");
+  // Every hole is final (two kept, the race by the deadline rule) and nothing needed the failing reads: final, and full
+  assert.equal(readOut(out, "W003.json").final, true);
+  assert.ok(r.problems.every((p) => !/week 3/.test(p)), "the kept holes weren't read again (only this week's question read failed)");
+  assert.ok(readOut(out, "W003.json").cards.every((c) => c.holes.length === 3));
 });
 
-test("a question game that can't be read waits, and is skipped at the 60-hour deadline", async () => {
+test("the question game: nodes that disagree on answers or on who is ranked, an unfinished week, the scoring", async () => {
+  const out = tmp("golf-");
+  await run(base({ now: END + 20 * H, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(),
+    questionsOf: async (node) => (node === "check" ? { ...qWeek(), rows: qWeek().rows.slice(1) } : qWeek()) }));
+  assert.match(holeOf(out, "questions").why, /don't agree/);
+  assert.equal(readOut(out, "W003.json").final, false);
+  const out1 = tmp("golf-");
+  await run(base({ now: END + 20 * H, out: out1, raceDir: raceDir(), gamesDir: FINAL_GAMES(),
+    rankedOf: async (node, who) => new Set(node === "check" ? who.slice(1) : who) }));
+  assert.match(holeOf(out1, "questions").why, /who is ranked/, "audit M1");
+  const out2 = tmp("golf-");
+  await run(base({ now: END + 20 * H, out: out2, raceDir: raceDir(), gamesDir: FINAL_GAMES(), questionsOf: async () => qWeek({ resolved: 29 }) }));
+  assert.equal(holeOf(out2, "questions").status, "live", "a question still unresolved");
+  const out3 = tmp("golf-");
+  await run(base({ now: END + 20 * H, out: out3, raceDir: raceDir(), gamesDir: FINAL_GAMES() }));
+  assert.equal(holeOf(out3, "questions").status, "final");
+  assert.equal(holeOf(out3, "questions").field, 7);
+  assert.equal(readOut(out3, "W003.json").cards.find((x) => x.a === P[2]).holes.find((x) => x[0] === "questions")[1], 1);
+});
+
+test("a ranked read that fails keeps the hole waiting instead of dropping players", async () => {
+  const out = tmp("golf-");
+  const r = await run(base({ now: END + 20 * H, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), rankedOf: async () => { throw new Error("rpc"); } }));
+  assert.equal(holeOf(out, "questions").status, "live");
+  assert.match(r.problems.join(" "), /rpc/);
+});
+
+test("a question game that can't be read is skipped at the 60-hour deadline, never guessed", async () => {
   const failing = async () => { throw new Error("node down"); };
   const out = tmp("golf-");
-  const r = await run(base({ now: END + 59 * H, out, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true }), questionsOf: failing }));
-  assert.equal(readOut(out, "W003.json").holes[0].status, "live");
-  assert.match(r.problems.join(" "), /node down/);
+  await run(base({ now: END + 59 * H, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), questionsOf: failing }));
+  assert.equal(holeOf(out, "questions").status, "live");
   const out2 = tmp("golf-");
-  await run(base({ now: END + 61 * H, prev: out, out: out2, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true }), questionsOf: failing }));
-  const wf = readOut(out2, "W003.json");
-  assert.deepEqual(wf.holes.map((h) => h.status), ["skipped", "final", "final"]);
-  assert.match(wf.holes[0].why, /weren't final in time/);
-  assert.equal(wf.final, true);
-  assert.ok(wf.cards.every((c) => c.holes.length === 2), "a skipped hole is off the card");
+  await run(base({ now: END + 61 * H, prev: out, out: out2, raceDir: raceDir(), gamesDir: FINAL_GAMES(), questionsOf: failing }));
+  assert.equal(holeOf(out2, "questions").status, "skipped");
+  assert.match(holeOf(out2, "questions").why, /weren't final in time/);
+  assert.equal(readOut(out2, "W003.json").final, false, "not final in a run that had a read problem");
+  const out3 = tmp("golf-");
+  await run(base({ now: END + 62 * H, prev: out2, out: out3, raceDir: raceDir(), gamesDir: FINAL_GAMES(), questionsOf: failing }));
+  const wf = readOut(out3, "W003.json");
+  assert.equal(wf.final, false, "still a read problem");
+  // A later run that can read it again (the week isn't final yet) scores the hole after all
+  const out4 = tmp("golf-");
+  await run(base({ now: END + 63 * H, prev: out3, out: out4, raceDir: raceDir(), gamesDir: FINAL_GAMES() }));
+  assert.equal(holeOf(out4, "questions").status, "final");
+  assert.equal(readOut(out4, "W003.json").final, true);
 });
 
 test("a game's board that moved on: the standings kept from the last run are used", async () => {
   const prev = tmp("golf-");
   await run(base({ now: END - H, out: prev, raceDir: raceDir(), gamesDir: gamesDir() }));
-  const out = tmp("golf-");
-  // The race board now only shows week 4 (and no lastWeek), but its week-3 races are final
   const rd = raceDir();
   const b = JSON.parse(fs.readFileSync(path.join(rd, "board.json"), "utf8"));
   b.week.week = W + 1;
   fs.writeFileSync(path.join(rd, "board.json"), JSON.stringify(b));
-  await run(base({ now: END + 13 * H, prev, out, raceDir: rd, gamesDir: gamesDir({ last: true, final: true }) }));
-  const race = readOut(out, "W003.json").holes.find((h) => h.id === "race");
-  assert.equal(race.status, "final");
-  assert.equal(race.rows.length, 11);
-});
-
-test("a race week is final once its races are, or after the race recorder's 3-day window", async () => {
   const out = tmp("golf-");
-  await run(base({ now: END + 20 * H, out, raceDir: raceDir({ final: false }), gamesDir: gamesDir({ last: true, final: true }) }));
-  assert.equal(readOut(out, "W003.json").holes.find((h) => h.id === "race").status, "live");
+  await run(base({ now: END + 13 * H, prev, out, raceDir: rd, gamesDir: FINAL_GAMES() }));
+  assert.equal(holeOf(out, "race").status, "final");
+  assert.equal(holeOf(out, "race").rows.length, 11);
+  // never read before it moved on: skipped, not guessed
   const out2 = tmp("golf-");
-  await run(base({ now: END + 3 * DAY + 3 * H, out: out2, raceDir: raceDir({ final: false }), gamesDir: gamesDir({ last: true, final: true }) }));
-  // past 60 h the hole would be skipped, but the race's own window has closed, so it's final
-  assert.equal(readOut(out2, "W003.json").holes.find((h) => h.id === "race").status, "final");
+  await run(base({ now: END + 13 * H, out: out2, raceDir: rd, gamesDir: FINAL_GAMES() }));
+  assert.equal(holeOf(out2, "race").status, "skipped");
 });
 
-test("a hole with fewer than 5 ranked players is skipped for everyone", async () => {
+test("a hole needs 5 ranked players who scored; a player who scored nothing gets a double bogey", async () => {
   const out = tmp("golf-");
-  const few = P.slice(0, 4).map((a, i) => ({ a, place: i + 1, pts: 10 - i, correct: 1, picks: 1, days: 1, lastCorrect: 0, ranked: true }));
-  await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true, rows: few }) }));
-  const bx = readOut(out, "W003.json").holes.find((h) => h.id === "blockx");
-  assert.equal(bx.status, "skipped");
-  assert.match(bx.why, /fewer than 5/);
-  assert.equal(bx.field, 4);
-});
-
-test("Survivor: standings at the week's last season day; kept when the season moves on; no season, no hole", async () => {
-  const gd = gamesDir({ last: true, final: true });
-  const sv = path.join(gd, "survivor");
-  const startDay = Math.floor(START / DAY);   // the season starts this Monday; day 7 is Sunday
-  const players = (endN) => P.slice(0, 6).map((a, i) => ({ a, lives: i < 3 ? 2 : 0, outN: i < 3 ? null : 3, total: 100 - i, used: [], log: "s", eligible: true, place: i + 1 }));
-  const season = (endN, over = false) => write(sv, "S001.json", { v: 1, season: 1, startDay, days: [], result: { over, endN, final: false, players: players(endN), prizes: [] } });
-  write(sv, "index.json", { v: 1, updated: "", firstDay: startDay, contract: null, seasons: [1] });
-  const src = [...SOURCES, { id: "survivor", name: "Survivor", reader: "survivor" }];
-  season(6);
-  const out = tmp("golf-");
-  await run(base({ sources: src, now: END + 2 * H, out, raceDir: raceDir(), gamesDir: gd }));
-  assert.equal(readOut(out, "W003.json").holes.find((h) => h.id === "survivor").status, "live", "day 7 not recorded yet");
-  season(7);
+  const four = P.slice(0, 4).map((a, i) => ({ a, place: i + 1, pts: 10 - i, correct: 1, picks: 1, days: 1, lastCorrect: 0, ranked: true }));
+  const zeros = P.slice(4, 12).map((a) => ({ a, place: 5, pts: 0, correct: 0, picks: 3, days: 1, lastCorrect: 0, ranked: true }));
+  await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true, rows: [...four, ...zeros] }) }));
+  const bx = holeOf(out, "blockx");
+  assert.equal(bx.status, "skipped", "8 idle wallets don't make up the field (audit H5)");
+  assert.match(bx.why, /fewer than 5 ranked players scored/);
   const out2 = tmp("golf-");
-  await run(base({ sources: src, now: END + 6 * H, prev: out, out: out2, raceDir: raceDir(), gamesDir: gd }));
-  const s2 = readOut(out2, "W003.json").holes.find((h) => h.id === "survivor");
-  assert.equal(s2.status, "final");
-  assert.equal(readOut(out2, "W003.json").cards.find((c) => c.a === P[0]).holes.find((x) => x[0] === "survivor")[1], 1);
-  season(9);
+  const five = P.slice(0, 5).map((a, i) => ({ a, place: i + 1, pts: 10 - i, correct: 1, picks: 1, days: 1, lastCorrect: 0, ranked: true }));
+  await run(base({ now: END + 13 * H, out: out2, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true, rows: [...five, ...zeros.slice(1)] }) }));
+  const wf = readOut(out2, "W003.json");
+  assert.equal(holeOf(out2, "blockx").field, 5);
+  assert.equal(wf.cards.find((c) => c.a === P[6]).holes.find((x) => x[0] === "blockx")[1], 6);
+  assert.equal(wf.cards.find((c) => c.a === P[4]).holes.find((x) => x[0] === "blockx")[1], 6, "5th of 5");
+});
+
+test("practice weeks (before the first staked week): every player who scored counts and 3 make a hole", async () => {
+  const few = [P[0], P[1], FREE].map((a, i) => ({ a, place: i + 1, pts: 30 - 10 * i, correct: 1, picks: 1, days: 1, lastCorrect: 0, ranked: a !== FREE }));
+  const out = tmp("golf-");
+  await run(base({ stakedFromWeek: null, now: END + 13 * H, out, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true, rows: few }) }));
+  const wf = readOut(out, "W003.json");
+  assert.equal(wf.practice, true);
+  assert.equal(holeOf(out, "blockx").status, "final");
+  assert.equal(holeOf(out, "blockx").field, 3, "the free wallet is in the practice field");
+  assert.equal(readOut(out, "index.json").stakedFromWeek, null);
+  const r = wf.cards.find((c) => c.a === P[0]).holes.find((x) => x[0] === "race");
+  assert.deepEqual([r[2], r[3]], [2, 11], "the free race wallet counts in practice");
+  const out2 = tmp("golf-");
+  await run(base({ stakedFromWeek: W, now: END + 13 * H, out: out2, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true, rows: few }) }));
+  assert.equal(readOut(out2, "W003.json").practice, false);
+  assert.equal(holeOf(out2, "blockx").status, "skipped");
   const out3 = tmp("golf-");
-  await run(base({ sources: src, now: END + 50 * H, prev: out2, out: out3, raceDir: raceDir(), gamesDir: gd }));
-  const s3 = readOut(out3, "W003.json").holes.find((h) => h.id === "survivor");
-  assert.equal(s3.status, "final");
-  assert.equal(s3.rows.length, 6, "the kept day-7 standings");
-  const out4 = tmp("golf-");
-  await run(base({ sources: src, now: END + 50 * H, out: out4, raceDir: raceDir(), gamesDir: gd }));
-  assert.equal(readOut(out4, "W003.json").holes.find((h) => h.id === "survivor").status, "skipped", "moved on and never read: skipped, not guessed");
-  // A week with no season: no hole (skipped at once)
-  const out5 = tmp("golf-");
-  await run(base({ sources: src, now: M.weekStart(W + 5) + DAY, out: out5, raceDir: raceDir({ week: W + 5 }), gamesDir: gd }));
-  const s5 = readOut(out5, "W008.json").holes.find((h) => h.id === "survivor");
-  assert.equal(s5.status, "skipped");
-  assert.match(s5.why, /no Survivor season/);
+  await run(base({ stakedFromWeek: null, now: END + 13 * H, out: out3, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true, rows: few.slice(0, 2) }) }));
+  assert.match(holeOf(out3, "blockx").why, /fewer than 3 players scored/);
 });
 
-test("Bracket: its own views; a week with no bracket is no hole", async () => {
-  const gd = gamesDir({ last: true, final: true });
-  const rows = P.slice(0, 6).map((a, i) => ({ a, place: i + 1, pts: 34 - 4 * i, champion: i === 0, correct: 10 - i, ranked: true }));
-  const view = (status, final) => ({ week: W, start: START, status, final, rows });
-  write(path.join(gd, "bracket"), "board.json", { v: 1, updated: "", next: null, week: { week: W + 1, start: END, status: "open", final: false, rows: [] }, lastWeek: view("final", true), allTime: { rows: [] } });
-  const src = [...SOURCES, { id: "bracket", name: "Producer Bracket", reader: "bracket" }];
-  const out = tmp("golf-");
-  await run(base({ sources: src, now: END + 13 * H, out, raceDir: raceDir(), gamesDir: gd }));
-  assert.equal(readOut(out, "W003.json").holes.find((h) => h.id === "bracket").status, "final");
-  write(path.join(gd, "bracket"), "board.json", { v: 1, updated: "", next: null, week: null, lastWeek: view("none", false), allTime: { rows: [] } });
-  const out2 = tmp("golf-");
-  await run(base({ sources: src, now: END + 13 * H, out: out2, raceDir: raceDir(), gamesDir: gd }));
-  assert.match(readOut(out2, "W003.json").holes.find((h) => h.id === "bracket").why, /no bracket/);
+test("a history that exists but can't be read stops the run instead of starting over (audit H1)", async () => {
+  const prev = tmp("golf-");
+  await run(base({ now: END + 13 * H, out: prev, raceDir: raceDir(), gamesDir: FINAL_GAMES() }));
+  fs.writeFileSync(path.join(prev, "index.json"), "{not json");
+  await assert.rejects(run(base({ now: END + 14 * H, prev, out: tmp("golf-"), raceDir: raceDir(), gamesDir: FINAL_GAMES() })), /can't be read/);
+  const prev2 = tmp("golf-");
+  await run(base({ now: END + 13 * H, out: prev2, raceDir: raceDir(), gamesDir: FINAL_GAMES() }));
+  fs.rmSync(path.join(prev2, "W003.json"));
+  await assert.rejects(run(base({ now: END + 14 * H, prev: prev2, out: tmp("golf-"), raceDir: raceDir(), gamesDir: FINAL_GAMES() })), /can't be read/);
 });
 
-test("files that are links or too big are ignored", async () => {
+test("files that are links are ignored", async () => {
   const gd = gamesDir();
   const evil = tmp("evil-");
   write(evil, "board.json", { v: 1, week: { week: W, rows: [{ a: P[0], pts: 999, ranked: true }] } });
@@ -234,30 +249,23 @@ test("files that are links or too big are ignored", async () => {
   fs.symlinkSync(path.join(evil, "board.json"), path.join(gd, "blockx", "board.json"));
   const out = tmp("golf-");
   await run(base({ now: START + DAY, out, raceDir: raceDir(), gamesDir: gd }));
-  const bx = readOut(out, "W003.json").holes.find((h) => h.id === "blockx");
-  assert.equal(bx.rows.length, 0);
+  assert.equal(holeOf(out, "blockx").rows.length, 0);
 });
 
-test("games.json: live games with a reader become sources; Block Golf itself never does", () => {
+test("games.json: games with a reader become sources, with their live flag; Block Golf itself never does", () => {
   const d = tmp("gj-");
   const f = path.join(d, "games.json");
   fs.writeFileSync(f, JSON.stringify({ v: 1, games: [
     { id: "race", name: "Producer Race", status: "live" }, { id: "questions", name: "Daily Questions", status: "live" },
     { id: "blockx", name: "Who Signs Block X", status: "soon" }, { id: "golf", name: "Block Golf", status: "live" },
     { id: "mystery", name: "?", status: "live" } ] }));
-  assert.deepEqual(sourcesFromGames(f).map((s) => s.id), ["race", "questions"]);
+  assert.deepEqual(sourcesFromGames(f).map((s) => [s.id, s.live]), [["race", true], ["questions", true], ["blockx", false]]);
   assert.ok(sourcesFromGames(path.join(APP, "site/games.json")).every((s) => s.id !== "golf"));
 });
 
-test("the testnet course reads only the testnet Block X games", () => {
-  const t = testnetSources(path.join(APP, "testnet/golf.json"));
-  assert.deepEqual(t.sources.map((s) => [s.id, s.reader, s.dir]), [["blockx-2", "blockx", "blockx-2"], ["blockx-92", "blockx", "blockx-92"]]);
-  assert.equal(t.minField, 1);
-});
-
-test("a whole week with every player on every hole: points add up and places are consistent", async () => {
+test("a whole week: points add up and places are consistent", async () => {
   const out = tmp("golf-");
-  await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true }) }));
+  await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: FINAL_GAMES() }));
   const wf = readOut(out, "W003.json");
   for (const c of wf.cards) {
     assert.equal(c.holes.length, 3);
@@ -269,32 +277,49 @@ test("a whole week with every player on every hole: points add up and places are
   for (let i = 1; i < wf.cards.length; i++) assert.ok(wf.cards[i].pts <= wf.cards[i - 1].pts);
 });
 
-test("the publish jobs' shape check accepts the recorder's files and refuses tampered ones", async (t) => {
-  const { execFileSync } = await import("node:child_process");
+/** The publish job's two checks, taken from the workflow file (shape, then history). */
+function checks() {
+  const y = fs.readFileSync(path.join(APP, ".github/workflows/golf.yml"), "utf8");
+  return [...y.matchAll(/<<'PY'\n([\s\S]*?)\n\s*PY\n/g)].map((m) => {
+    const f = path.join(tmp("chk-"), "check.py");
+    fs.writeFileSync(f, m[1].split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n"));
+    return f;
+  });
+}
+const copyDir = (from) => { const d = tmp("copy-"); for (const f of fs.readdirSync(from)) fs.copyFileSync(path.join(from, f), path.join(d, f)); return d; };
+
+test("the publish job's shape check accepts the recorder's files and refuses tampered ones", async (t) => {
   try { execFileSync("python3", ["--version"]); } catch { t.skip("no python3 here"); return; }
+  const [shape] = checks();
   const out = tmp("golf-");
-  await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: gamesDir({ last: true, final: true }) }));
+  await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: FINAL_GAMES() }));
   await run(base({ now: END + 2 * DAY, prev: out, out, raceDir: raceDir({ week: W + 1 }), gamesDir: gamesDir() }));
-  for (const wfName of ["golf.yml", "golf-testnet.yml"]) {
-    const y = fs.readFileSync(path.join(APP, ".github/workflows", wfName), "utf8");
-    const m = /<<'PY'\n([\s\S]*?)\n\s*PY\n/.exec(y);
-    assert.ok(m, wfName);
-    const py = m[1].split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n");
-    const check = path.join(tmp("chk-"), "check.py");
-    fs.writeFileSync(check, py);
-    assert.match(execFileSync("python3", [check, out], { encoding: "utf8" }), /golf files ok/, wfName);
-    // A card claiming 8 strokes on a hole, or a stray key, is refused
-    const bad = tmp("bad-");
-    for (const f of fs.readdirSync(out)) fs.copyFileSync(path.join(out, f), path.join(bad, f));
-    const wf = JSON.parse(fs.readFileSync(path.join(bad, "W003.json"), "utf8"));
-    wf.cards[0].holes[0][1] = 8;
-    fs.writeFileSync(path.join(bad, "W003.json"), JSON.stringify(wf));
-    assert.throws(() => execFileSync("python3", [check, bad], { stdio: "pipe" }), wfName);
-    const bad2 = tmp("bad-");
-    for (const f of fs.readdirSync(out)) fs.copyFileSync(path.join(out, f), path.join(bad2, f));
-    const b = JSON.parse(fs.readFileSync(path.join(bad2, "board.json"), "utf8"));
-    b.week.rows.push({ a: P[0], place: 1, pts: 1, topar: 0, strokes: 1, holes: 1, lost: 0, ranked: true, html: "<b>" });
-    fs.writeFileSync(path.join(bad2, "board.json"), JSON.stringify(b));
-    assert.throws(() => execFileSync("python3", [check, bad2], { stdio: "pipe" }), wfName);
-  }
+  assert.match(execFileSync("python3", [shape, out], { encoding: "utf8" }), /golf files ok/);
+  const bad = copyDir(out);
+  const wf = readOut(bad, "W003.json"); wf.cards[0].holes[0][1] = 8; write(bad, "W003.json", wf);
+  assert.throws(() => execFileSync("python3", [shape, bad], { stdio: "pipe" }), "8 strokes");
+  const bad2 = copyDir(out);
+  const b = readOut(bad2, "board.json"); b.week.rows.push({ a: P[0], place: 1, pts: 1, topar: 0, strokes: 1, holes: 1, lost: 0, ranked: true, html: "<b>" }); write(bad2, "board.json", b);
+  assert.throws(() => execFileSync("python3", [shape, bad2], { stdio: "pipe" }), "stray key");
+  const bad3 = copyDir(out);
+  const w3 = readOut(bad3, "W003.json"); w3.start += 1; write(bad3, "W003.json", w3);
+  assert.throws(() => execFileSync("python3", [shape, bad3], { stdio: "pipe" }), "start not the week's");
+});
+
+test("the publish job's history check: final weeks can't change, weeks only grow, joining weeks stay", async (t) => {
+  try { execFileSync("python3", ["--version"]); } catch { t.skip("no python3 here"); return; }
+  const [, history] = checks();
+  assert.ok(history, "the workflow has the history check");
+  const old = tmp("golf-");
+  await run(base({ now: END + 13 * H, out: old, raceDir: raceDir(), gamesDir: FINAL_GAMES() }));
+  const next = tmp("golf-");
+  await run(base({ now: END + 2 * DAY, prev: old, out: next, raceDir: raceDir({ week: W + 1 }), gamesDir: gamesDir() }));
+  assert.match(execFileSync("python3", [history, next, old], { encoding: "utf8" }), /golf history ok/);
+  const b1 = copyDir(next); const w = readOut(b1, "W003.json"); w.cards[0].pts += 1; write(b1, "W003.json", w);
+  assert.throws(() => execFileSync("python3", [history, b1, old], { stdio: "pipe" }), "final week changed");
+  const b2 = copyDir(next); const i = readOut(b2, "index.json"); i.weeks = []; write(b2, "index.json", i);
+  assert.throws(() => execFileSync("python3", [history, b2, old], { stdio: "pipe" }), "weeks shrank");
+  const b3 = copyDir(next); const i3 = readOut(b3, "index.json"); i3.course.race = 9; write(b3, "index.json", i3);
+  assert.throws(() => execFileSync("python3", [history, b3, old], { stdio: "pipe" }), "joining week changed");
+  assert.match(execFileSync("python3", [history, next, tmp("none-")], { encoding: "utf8" }), /golf history ok/, "first publish");
 });

@@ -30,7 +30,7 @@
 
   // The key in How it works: one row per score.
   function drawKey() {
-    const rows = [["1st place (ties share)", 1], ["Top 5%", 2], ["Top 25%", 3], ["Top 65%", 4], ["Top 90%", 5], ["The rest", 6], ["Didn't play that game", 7]];
+    const rows = [["1st place (ties share)", 1], ["Top 5%", 2], ["Top 25%", 3], ["Top 65%", 4], ["Top 90%", 5], ["The rest, or played but scored nothing", 6], ["Didn't play that game", 7]];
     $("key-rows").replaceChildren(...rows.map(([what, s]) => el("tr", {}, el("td", { text: what }), el("td", { text: G.NAMES[s] }), el("td", { class: "num" }, mark(s)))));
   }
   function mark(s) { return el("span", { class: `gf-mark s${s}`, title: G.NAMES[s], text: String(s) }); }
@@ -138,7 +138,7 @@
         name: short, link: (a) => EXPLORER + a,
         scored: (r) => r.pts > 0,
         summary: (r) => `${G.toParText(r.topar)} · ${r.pts} pts`,
-        me: (r, place) => `${place ? `You: #${place} at` : "Your score (only you see this):"} ${G.toParText(r.toPar)}, ${r.pts} points.`,
+        me: (r, place) => `${place ? `You: #${place} at` : "Your score (only you see this):"} ${G.toParText(r.topar)}, ${r.pts} points.`,
         unranked: "To be ranked, hold at least 1 VHP or stake in Knode Games.",
         free: { show: 6, prize: "Practice weeks have no prizes. Once the vault is live, Block Golf is a staked game." },
       });

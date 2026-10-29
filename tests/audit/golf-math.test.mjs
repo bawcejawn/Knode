@@ -29,30 +29,33 @@ test("stroke table over 100 distinct players", () => {
   assert.deepEqual(h.results[addr(7)], { place: 7, of: 100, strokes: 3 });
 });
 
-test("ties share the middle of their places; a crowd of zeros is par, never birdie", () => {
+test("ties share the middle of their places; wallets that scored nothing don't pad the field and double bogey", () => {
   const scores = [5, 4, 3, 2, 1, 1, ...Array(94).fill(0)];
   const h = G.scoreHole(field(scores));
-  assert.equal(h.results[addr(7)].strokes, 4);      // places 7–100, middle 53.5 → par
-  assert.equal(h.results[addr(5)].strokes, 3);      // 5th and 6th tied: middle 5.5 of 100 is over 5% → birdie
-  assert.equal(h.results[addr(5)].strokes, h.results[addr(6)].strokes);
-  assert.equal(h.results[addr(4)].strokes, 2);      // 4th alone: 4% → eagle
+  assert.equal(h.field, 6, "only the 6 who scored");
+  assert.equal(h.results[addr(7)].strokes, 6, "scored nothing: double bogey");
+  assert.equal(h.results[addr(5)].strokes, h.results[addr(6)].strokes, "tied players alike");
+  assert.equal(h.results[addr(5)].strokes, 6, "places 5–6 of 6");
+  assert.equal(h.results[addr(1)].strokes, 1);
 });
 
 test("places at the band edges: 5.5% is a birdie, exactly 5% an eagle", () => {
-  const h = G.scoreHole(field([9, 8, 7, 6, 5, 5, ...Array(94).fill(0)]));
+  const s100 = Array.from({ length: 100 }, (_, i) => 100 - i); s100[5] = s100[4];   // 5th and 6th tied
+  const h = G.scoreHole(field(s100));
   assert.equal(h.results[addr(5)].strokes, 3);
+  assert.equal(h.results[addr(4)].strokes, 2);
   const h2 = G.scoreHole(field(Array.from({ length: 20 }, (_, i) => 20 - i)));
   assert.equal(h2.results[addr(2)].strokes, 3);     // 2 of 20 = 10%
   const h3 = G.scoreHole(field(Array.from({ length: 40 }, (_, i) => 40 - i)));
   assert.equal(h3.results[addr(2)].strokes, 2);     // 2 of 40 = 5%
 });
 
-test("tied first place: everyone on the top score holes in one, but only if they scored", () => {
-  const h = G.scoreHole(field([3, 3, 1, 0, 0, 0]));
+test("tied first place: everyone on the top score holes in one; a hole where nobody scored is skipped", () => {
+  const h = G.scoreHole(field([3, 3, 2, 1, 1, 0]));
   assert.equal(h.results[addr(1)].strokes, 1);
   assert.equal(h.results[addr(2)].strokes, 1);
-  const z = G.scoreHole(field([0, 0, 0, 0, 0, 0]));
-  for (let i = 1; i <= 6; i++) assert.equal(z.results[addr(i)].strokes, 4, "all zero: par");
+  assert.equal(h.results[addr(6)].strokes, 6);
+  assert.equal(G.scoreHole(field([0, 0, 0, 0, 0, 0])).skipped, true);
 });
 
 test("only ranked wallets make the field; a free wallet is placed as one more player", () => {
@@ -157,4 +160,24 @@ test("the course: a game plays from the week after it joined, in course order, o
 test("stroke names and icons cover 1–7", () => {
   for (let s = 1; s <= 7; s++) { assert.ok(G.NAMES[s]); assert.ok(G.ICON[s]); assert.ok(G.SHORT[s]); }
   assert.equal(G.toParText(0), "E"); assert.equal(G.toParText(3), "+3");
+});
+
+test("practice weeks: everyone is in the field and 3 players make a hole; staked weeks are strict", () => {
+  assert.equal(JSON.stringify(G.rule(3, null)), JSON.stringify({ practice: true, everyone: true, minField: 3 }));
+  assert.equal(JSON.stringify(G.rule(3, 5)), JSON.stringify({ practice: true, everyone: true, minField: 3 }));
+  assert.equal(JSON.stringify(G.rule(5, 5)), JSON.stringify({ practice: false, everyone: false, minField: 5 }));
+  const rows = field([3, 2, 1], false);
+  assert.equal(G.scoreHole(rows, 3, false).skipped, true, "no ranked players");
+  const h = G.scoreHole(rows, 3, true);
+  assert.equal(h.skipped, false);
+  assert.equal(h.field, 3);
+  assert.deepEqual(h.results[addr(1)], { place: 1, of: 3, strokes: 1 });
+});
+
+test("a single played hole is dropped by the mulligan: 0 points, which can't win (the vault needs 1+)", () => {
+  const A = addr(1), B = addr(2);
+  const holes = [hole("a", { [A]: 1, [B]: 3 }), hole("b", { [B]: 3 }), hole("c", { [B]: 3 })];
+  const c = G.card(holes, A);
+  assert.equal(c.pts, 0);
+  assert.equal(c.mulligan, "a");
 });

@@ -47,7 +47,7 @@ test("the page's stroke key matches the shared rules", () => {
   const G = box.window.KGolf;
   assert.equal(JSON.stringify(G.BANDS.map((b) => b[0])), "[5,25,65,90,100]");
   for (const pct of [5, 25, 65, 90]) assert.ok(html.includes(`Top ${pct}%`) || js.includes(`Top ${pct}%`), `${pct}% in the key`);
-  assert.match(html, /fewer than 5 ranked players/);
+  assert.match(html, /fewer than 5 such players/);
   assert.equal(G.MIN_FIELD, 5);
 });
 

@@ -14,14 +14,14 @@ in the KnodeGames project.
 | Rules | `site/golf-math.js` | Place → strokes, the mulligan, points, places. |
 | Recorder | `bot/games/golf.ts` | Every hour: builds every player's scorecard from each game's results and writes `games-data/golf/`. Reads only; holds no key. |
 | Mainnet workflow | `.github/workflows/golf.yml` | Runs the recorder hourly at :57. **Off until `GOLF_ENABLED` = `true`.** |
-| Testnet workflow | `.github/workflows/golf-testnet.yml` | Scores the testnet Block X games as holes, from the `testnet-data` branch. **Off until `TESTNET_GOLF_ENABLED` = `true`.** |
-| Testnet course | `testnet/golf.json` | Which testnet games are holes (the Block X games 2 and 92). |
 | Page | `site/golf.html`, `golf.js`, `golf.css` | Your scorecard, holes you haven't played, the leaderboard. |
 
 ## How a game becomes a hole
 
 1. The game is marked `"status": "live"` in `site/games.json`.
-2. `bot/games/golf.ts` has a reader for it (today: `questions`, `race`, `blockx`, `survivor`, `bracket`).
+2. `bot/games/golf.ts` has a reader for it (today: `questions`, `race`, `blockx`). Survivor, Bracket and the other games
+   add theirs when they launch, with a test (Survivor's should recompute the standings at the week's last season day
+   with `site/survivor-math.js`, not keep a snapshot: audit H4).
 3. It plays from the **Monday after** it went live, so nobody loses strokes on a game that didn't exist all week.
 
 No contract, vault or sponsor change is needed to add a hole. A new game's own build adds its reader and a test.
@@ -50,14 +50,21 @@ The first run puts every game that is already live on the course straight away.
 - Add Block Golf (game id 6) to the vault registry (48-hour notice).
 - The weekly points (`pts` in `games-data/golf/W<week>.json`, 0 to 7 × holes) go to the vault in the operator batch, like the other staked games.
 
-## Testnet trial
+## No testnet run (owner, 2026-10-28)
 
-Block Golf has no testnet contract to upload. Its testnet run scores the testnet Block X games, so it can start once the
-Block X testnet recorder is publishing to the `testnet-data` branch:
+Block Golf has no contract, so there is nothing to upload to a testnet. It was tested on the real files' shapes and on
+the Race's real week; its first mainnet weeks are practice weeks with no prizes, which is its live trial.
 
-1. GitHub → Settings → Variables: `TESTNET_GOLF_ENABLED` = `true`.
-2. Actions → "Block Golf testnet recorder" → Run workflow (choose the `golf` branch until it is merged).
-3. Check `https://raw.githubusercontent.com/bawcejawn/Knode/testnet-data/golf/board.json`.
+## Practice and staked weeks
+
+- Until `GOLF_STAKED_FROM_WEEK` is set (a GitHub variable), every week is practice: every player who scored on a game
+  counts, and 3 make a hole.
+- When the vault is live, set `GOLF_STAKED_FROM_WEEK` to the first staked week (the number in the W file names, e.g.
+  `6` for `W006.json`). From that week a hole's field is the ranked players who scored, and it needs 5.
+- Before staking opens, decide the sybil rule for staked weeks (audit H5): recommended, a hole's field is the Block
+  Golf stakers who played that game.
+- The vault takes only scorecards with at least 1 point (a player who played a single hole has it dropped by the
+  mulligan and scores 0).
 
 ## Running it on your PC (optional)
 

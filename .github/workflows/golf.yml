@@ -5,7 +5,8 @@
 # Two jobs, like the other recorders, so repository code never runs next to a write token:
 #   record   runs the recorder with a read-only token and no secrets, and hands the files on.
 #   publish  runs no repository code: it checks the files' shape and pushes games-data/golf (and nothing else).
-# It shares the "knode-games" concurrency group with the other games' recorders, so two never push games-data at once.
+# It has its own concurrency group (a shared one could drop queued runs); pushes to games-data are retried when another
+# recorder pushed first. A data branch that exists but can't be read stops the run (never a fresh start).
 # It never touches main, holds no key, and does not run on pull requests.
 #
 # Turn it on: Settings → Secrets and variables → Actions → Variables: GOLF_ENABLED = true
@@ -17,7 +18,7 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: knode-games
+  group: knode-golf
   cancel-in-progress: false
 
 permissions:
@@ -44,19 +45,25 @@ jobs:
       - name: Take the games' results and the last run's files
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/prev" "$RUNNER_TEMP/race" "$RUNNER_TEMP/games"
-          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
+          mkdir -p "$RUNNER_TEMP/prev" "$RUNNER_TEMP/race" "$RUNNER_TEMP/games/blockx"
+          url="https://github.com/${GITHUB_REPOSITORY}.git"
+          # A branch that doesn't exist yet is fine; one that exists but can't be read stops the run (audit H1).
+          has_branch() {
+            local rc=0
+            git ls-remote --exit-code --heads "$url" "$1" >/dev/null || rc=$?
+            if [ "$rc" -eq 0 ]; then return 0; fi
+            if [ "$rc" -eq 2 ]; then return 1; fi
+            echo "::error::Couldn't read the $1 branch (git ls-remote exit $rc); nothing recorded this run."; exit 1
+          }
+          if has_branch race-data; then
+            git fetch -q --depth 1 "$url" race-data
             for f in $(git ls-tree --name-only FETCH_HEAD); do
               if [[ "$f" =~ ^(board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/race/$f"; fi
             done
           else echo "No race-data branch yet."; fi
-          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" games-data 2>/dev/null; then
-            for g in blockx survivor bracket; do
-              mkdir -p "$RUNNER_TEMP/games/$g"
-              for f in $(git ls-tree --name-only "FETCH_HEAD:$g" 2>/dev/null); do
-                if [[ "$f" =~ ^(index|board|S[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$g/$f" > "$RUNNER_TEMP/games/$g/$f"; fi
-              done
-            done
+          if has_branch games-data; then
+            git fetch -q --depth 1 "$url" games-data
+            if git cat-file -e "FETCH_HEAD:blockx/board.json" 2>/dev/null; then git show "FETCH_HEAD:blockx/board.json" > "$RUNNER_TEMP/games/blockx/board.json"; fi
             for f in $(git ls-tree --name-only FETCH_HEAD:golf 2>/dev/null); do
               if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:golf/$f" > "$RUNNER_TEMP/prev/$f"; fi
             done
@@ -70,6 +77,8 @@ jobs:
           GOLF_OUT: ${{ runner.temp }}/out/golf
           RACE_DATA: ${{ runner.temp }}/race
           GAMES_DATA: ${{ runner.temp }}/games
+          # The first week Block Golf pays prizes (set when the vault is live). Unset: every week is practice.
+          GOLF_STAKED_FROM_WEEK: ${{ vars.GOLF_STAKED_FROM_WEEK }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: golf-data
@@ -129,18 +138,18 @@ jobs:
           for f in os.listdir(d):
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "index.json":
-                  assert set(j) == {"v", "updated", "weeks", "course", "minField"} and j["v"] == 1, f
+                  assert set(j) == {"v", "updated", "weeks", "course", "stakedFromWeek"} and j["v"] == 1, f
                   assert type(j["weeks"]) is list and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
                   assert type(j["course"]) is dict and len(j["course"]) <= 32 and all(isid(k) and type(v) is int and 0 <= v < 10000 for k, v in j["course"].items()), f
-                  assert type(j["minField"]) is int and 1 <= j["minField"] <= 1000, f
+                  assert j["stakedFromWeek"] is None or (type(j["stakedFromWeek"]) is int and 0 <= j["stakedFromWeek"] < 10000), f
                   continue
               if f == "board.json":
                   assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1, f
                   assert all(rows_ok(j[k]) for k in ("today", "week", "allTime")), f
                   assert j["lastWeek"] is None or (rows_ok(j["lastWeek"]) and type(j["lastWeek"].get("final")) is bool), f
                   continue
-              assert set(j) == {"v", "week", "start", "end", "final", "holes", "cards"} and j["v"] == 1 and f == "W%03d.json" % j["week"], f
-              assert nat(j["start"]) and nat(j["end"]) and j["end"] > j["start"] and type(j["final"]) is bool, f
+              assert set(j) == {"v", "week", "start", "end", "final", "practice", "holes", "cards"} and j["v"] == 1 and f == "W%03d.json" % j["week"], f
+              assert nat(j["start"]) and j["start"] == 1792368000000 + j["week"] * 604800000 and j["end"] == j["start"] + 604800000 and type(j["final"]) is bool and type(j["practice"]) is bool, f
               assert type(j["holes"]) is list and len(j["holes"]) <= 32 and all(hole_ok(h) for h in j["holes"]), f
               ids = {h["id"] for h in j["holes"]}
               assert type(j["cards"]) is list and len(j["cards"]) <= 100000 and all(card_ok(c, ids) for c in j["cards"]), f
@@ -161,6 +170,27 @@ jobs:
               blob=$(git hash-object -w "$f")
               git update-index --add --cacheinfo 100644 "$blob" "golf/$(basename "$f")"
             done
+            # What's already published can't be rewritten: a final week stays exactly as it is, the list of weeks only
+            # grows, and a game's joining week never changes (audit L5).
+            rm -rf "$RUNNER_TEMP/old" && mkdir -p "$RUNNER_TEMP/old"
+            if [ -n "$parent" ]; then
+              for f in $(git ls-tree --name-only "$parent:golf" 2>/dev/null); do
+                if [[ "$f" =~ ^(index|W[0-9]{3})\.json$ ]]; then git show "$parent:golf/$f" > "$RUNNER_TEMP/old/$f"; fi
+              done
+            fi
+            /usr/bin/python3 - "$IN/golf" "$RUNNER_TEMP/old" <<'PY'
+          import json, os, sys
+          new, old = sys.argv[1], sys.argv[2]
+          load = lambda d, f: json.load(open(os.path.join(d, f), encoding="utf-8"))
+          if os.path.exists(os.path.join(old, "index.json")):
+              oi, ni = load(old, "index.json"), load(new, "index.json")
+              assert set(oi["weeks"]) <= set(ni["weeks"]), "the list of weeks can only grow"
+              assert all(ni["course"].get(k) == v for k, v in oi["course"].items()), "a game's joining week can't change"
+          for f in os.listdir(old):
+              if f.startswith("W") and load(old, f).get("final") is True:
+                  assert not os.path.exists(os.path.join(new, f)) or load(new, f) == load(old, f), f + ": a final week can't change"
+          print("golf history ok")
+          PY
             tree=$(git write-tree)
             if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi
             commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "golf: record")
