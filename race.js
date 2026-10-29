@@ -396,7 +396,8 @@
     note: "Staked players share this game's weekly bucket; free players play for the 2 + 1 VHP prize." });
   const lb = window.KBoard ? window.KBoard.create($("race-board"), {
     label: "Race leaderboard",
-    same: (x, y) => x.pts === y.pts && x.correct === y.correct && x.picks === y.picks,   // tied on every measure: a shared place
+    // Free play medals: the recorder's own-board places (ties share; a tie for 1st leaves no 2nd), as the vault pays.
+    freeWinners: (part, free, weekly) => new Map(weekly ? free.filter((r) => r.pts >= 1 && r.boardPlace <= 2).map((r) => [r.a, r.boardPlace]) : []),
     columns: [{ key: "pts", label: "Points" }, { key: "correct", label: "Wins" }, { key: "shows", label: "Shows" }, { key: "picks", label: "Picks", wide: true }],
     scored: (r) => (r.pts ?? r.correct) > 0,
     summary: (r) => `${fmt(r.pts ?? 0)} pts · ${fmt(r.correct)} W ${fmt(r.shows ?? 0)} S`,

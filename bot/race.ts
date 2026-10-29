@@ -288,8 +288,9 @@ export async function run({ p, check, prev, out, vhpOf, raceContract, picksOf, s
 // ── leaderboards ──
 /** correct = wins (picks on the winner), shows = picks on the 2nd or 3rd horse, pts = 3 per win + 1 per show. */
 /** ranked: on the Staked board, i.e. staked in the Race in the vault that week (owner, 2026-10-28; before then it meant
- *  "holds 1 VHP or a question-game stake"). */
-type Row = { a: string; pts: number; correct: number; shows: number; picks: number; ranked: boolean };
+ *  "holds 1 VHP or a question-game stake"). boardPlace: the place on its own board (Staked or Free play), tied wallets
+ *  sharing it (1, 1, 3, …), which the site shows (board.js). */
+type Row = { a: string; pts: number; correct: number; shows: number; picks: number; ranked: boolean; boardPlace?: number };
 /** Sort: points, then more wins, then more picks placed; the address only orders wallets that share a place. Exported. */
 export function rank(rows: Row[]): Row[] {
   return [...rows].sort((x, y) => y.pts - x.pts || y.correct - x.correct || y.picks - x.picks || (x.a < y.a ? -1 : 1));
@@ -339,7 +340,7 @@ async function leaderboards(weeks: Map<number, WeekFile>, now: number, problems:
     const rows: Row[] = [];
     for (const [a, x] of tally(all, from, to))
       rows.push({ a, pts: x.correct * M.POINTS.win + x.shows * M.POINTS.show, correct: x.correct, shows: x.shows, picks: x.picks, ranked: await staked(a, stakeWeek) });
-    return rank(rows);
+    return withPlaces(rank(rows));
   };
   const lastRows = wNow > 0 ? await build(M.weekStart(wNow - 1), M.weekStart(wNow), wNow - 1) : [];
   const board = {
@@ -363,6 +364,16 @@ type VaultFile = { game: number; week: number; final: boolean; rows: VaultRow[];
 
 /** Two rows tie when every ranking measure is equal (rank() sorts by exactly these, so ties sit next to each other). */
 const tied = (x: Row, y: Row) => x.pts === y.pts && x.correct === y.correct && x.picks === y.picks;
+/** Each row's place on its own board (Staked or Free play), ties sharing it: 1, 1, 3, … Rows stay in rank() order. Exported. */
+export function withPlaces(rows: Row[]): Row[] {
+  const last: Record<string, { r: Row; place: number; n: number }> = {};
+  return rows.map((r) => {
+    const k = r.ranked ? "staked" : "free", prev = last[k], n = (prev ? prev.n : 0) + 1;
+    const place = prev && tied(prev.r, r) ? prev.place : n;
+    last[k] = { r, place, n };
+    return { ...r, boardPlace: place };
+  });
+}
 function groupsOf(rows: Row[]): Row[][] {
   const groups: Row[][] = [];
   for (const r of rows) { const g = groups[groups.length - 1]; if (g && tied(g[0], r)) g.push(r); else groups.push([r]); }

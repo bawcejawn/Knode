@@ -15,7 +15,6 @@
  *     name: (addr) => "1Ab…9xT",             // how a wallet is shown
  *     unranked: "To be ranked, …",           // shown to a player who is listed but not ranked
  *     free: { show: 6, prize: "1st and 2nd collect the weekly free-play prize." },
- *     same: (x, y) => x.pts === y.pts,       // optional: rows tied on every measure share a place (1, 1, 3, …)
  *                                            // optional: a second board for wallets without VHP or a stake (rows with
  *                                            // ranked: false). Only its top `show` are listed; everyone else stays
  *                                            // hidden, and a free player sees their own place privately.
@@ -50,9 +49,7 @@
   }
 
   function create(host, opt) {
-    const id = "kb" + ++n, o = Object.assign({ columns: [], name: short, scored: () => true, summary: () => "", me: null, link: null, unranked: "", same: null }, opt || {});
-    // Places with ties shared (1, 1, 3, …) when the game says which rows tie (o.same); otherwise 1, 2, 3, …
-    const placesOf = (list) => { const out = []; list.forEach((r, i) => out.push(i > 0 && o.same && o.same(list[i - 1], r) ? out[i - 1] : i + 1)); return out; };
+    const id = "kb" + ++n, o = Object.assign({ columns: [], name: short, scored: () => true, summary: () => "", me: null, link: null, unranked: "" }, opt || {});
     let data = null, mode = "week", who = "", kind = "main";
     // The two boards have the same names in every game (owner, 2026-10-28): KBoard.LABELS, never set per game.
     const F = o.free ? { show: Number.isInteger(o.free.show) ? o.free.show : 6, prize: typeof o.free.prize === "string" ? o.free.prize : "", main: LABELS.staked, label: LABELS.free } : null;
@@ -86,20 +83,22 @@
       btns[2].hidden = !(data && data.lastWeek);
       if (mode === "last" && btns[2].hidden) { mode = "week"; btns.forEach((x, i) => x.setAttribute("aria-pressed", String(MODES[i][0] === mode))); return render(); }
       if (F && kind === "free") return renderFree(part, rows, weekly);
-      const ranked = rows.filter((r) => r && r.ranked), at = placesOf(ranked);
+      const ranked = rows.filter((r) => r && r.ranked);
       sub.textContent = weekly && part && part.start ? `Week ${part.week + 1}, from ${day(part.start)} (UTC)` : mode === "today" && part && part.day ? `${part.day} (UTC)` : mode === "all" ? "Every week so far" : "";
-      podium.replaceChildren(...(weekly ? ranked.map((r, i) => [r, at[i]]).filter(([r, k]) => k <= 3 && o.scored(r)).slice(0, 6).map(([r, k]) =>
-        el("div", { class: "champ" + (r.a === who ? " me" : "") }, el("b", { text: `${MEDAL[k - 1]} ${ORD[k - 1]}` }), el("span", { class: "mono", text: o.name(r.a) }), el("div", { class: "ago", text: o.summary(r) }))) : []));
+      // Audit BX-41: the row's own-board place (boardPlace, ties share it) when the game publishes one.
+      const placeOf = (r, i) => (Number.isInteger(r.boardPlace) && r.boardPlace > 0 ? r.boardPlace : i + 1);
+      podium.replaceChildren(...(weekly ? ranked.map((r, i) => [r, placeOf(r, i)]).filter(([r, p]) => p <= 3 && o.scored(r)).slice(0, 10).map(([r, p]) =>
+        el("div", { class: "champ" + (r.a === who ? " me" : "") }, el("b", { text: `${MEDAL[p - 1]} ${ORD[p - 1]}` }), el("span", { class: "mono", text: o.name(r.a) }), el("div", { class: "ago", text: o.summary(r) }))) : []));
       body.replaceChildren(...ranked.slice(0, 50).map((r, i) => {
-        const href = o.link ? o.link(r.a) : null, k = at[i];
-        return el("tr", { class: [k <= 3 && weekly && o.scored(r) ? "top" : "", r.a === who ? "me" : ""].join(" ").trim() || null },
-          el("td", { text: k <= 3 && o.scored(r) ? MEDAL[k - 1] : String(k) }),
+        const href = o.link ? o.link(r.a) : null, pl = placeOf(r, i);
+        return el("tr", { class: [pl <= 3 && weekly && o.scored(r) ? "top" : "", r.a === who ? "me" : ""].join(" ").trim() || null },
+          el("td", { text: pl <= 3 && o.scored(r) ? MEDAL[pl - 1] : String(pl) }),
           el("td", { class: "mono" }, href ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: o.name(r.a) }) : el("span", { text: o.name(r.a) })),
           ...o.columns.map((c) => el("td", { class: "num" + (c.wide ? " hide-sm" : ""), text: fmt(r[c.key]) })));
       }));
       if (!ranked.length) body.replaceChildren(el("tr", {}, el("td", { colspan: String(2 + o.columns.length), class: "ago", text: "No ranked players yet." })));
       const row = who && rows.find((r) => r && r.a === who);
-      const place = row && row.ranked ? at[ranked.indexOf(row)] : null;
+      const place = row && row.ranked ? placeOf(row, ranked.indexOf(row)) : null;
       mine.textContent = !who ? "" : !row ? "You have no finished picks here yet." : o.me ? o.me(row, place) : place ? `You: #${place}.` : "";
       if (row && !row.ranked && o.unranked) mine.append(" ", o.unranked);
       if (row && !row.ranked && F) mine.append(" ", `Your place is on the ${F.label} board.`);
@@ -107,18 +106,21 @@
 
     /** Free play: wallets without VHP or a stake. Only the top F.show are listed; the rest stay hidden. */
     function renderFree(part, rows, weekly) {
-      const free = rows.filter((r) => r && !r.ranked && o.scored(r)), at = placesOf(free);
+      const free = rows.filter((r) => r && !r.ranked && o.scored(r));
       sub.textContent = [weekly && F.prize ? F.prize : "", `Top ${F.show} shown; everyone else stays private.`].filter(Boolean).join(" ");
       podium.replaceChildren();
       const shown = free.slice(0, F.show);
-      // The prize places: 1st, and 2nd only when 1st isn't shared (wallets tied for 1st share both prizes).
-      body.replaceChildren(...shown.map((r, i) => el("tr", { class: [weekly && at[i] <= 2 ? "top" : "", r.a === who ? "me" : ""].join(" ").trim() || null },
-        el("td", { text: weekly && at[i] <= 2 ? MEDAL[at[i] - 1] : String(at[i]) }),
+      // o.freeWinners(part, rows, weekly) → Map(address → 1 | 2): who gets a medal (a game's own prize rule and ties).
+      // Without it, the top 2 of a weekly board. Shown places use the row's own-board place (boardPlace) when present.
+      const win = o.freeWinners ? o.freeWinners(part, free, weekly) : null;
+      const medal = (r, i) => (win ? win.get(r.a) || 0 : weekly && i < 2 ? i + 1 : 0);
+      body.replaceChildren(...shown.map((r, i) => el("tr", { class: [medal(r, i) ? "top" : "", r.a === who ? "me" : ""].join(" ").trim() || null },
+        el("td", { text: medal(r, i) ? MEDAL[medal(r, i) - 1] : String(r.boardPlace || i + 1) }),
         el("td", { class: "mono" }, el("span", { text: o.name(r.a) })),
         ...o.columns.map((c) => el("td", { class: "num" + (c.wide ? " hide-sm" : ""), text: fmt(r[c.key]) })))));
       if (!shown.length) body.replaceChildren(el("tr", {}, el("td", { colspan: String(2 + o.columns.length), class: "ago", text: "No free-play scores yet." })));
       const row = who && rows.find((r) => r && r.a === who);
-      const place = row && !row.ranked && free.includes(row) ? at[free.indexOf(row)] : 0;
+      const place = row && !row.ranked ? free.indexOf(row) + 1 : 0;
       mine.textContent = !who ? "" : !row ? "You have no finished picks here yet."
         : row.ranked ? `You play on the ${F.main} board.`
         : place ? `You: #${place} in free play${place > F.show ? " (only you see this)" : ""}.` : "No points yet this period.";

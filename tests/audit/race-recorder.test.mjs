@@ -563,3 +563,20 @@ test("vault: with this repository's v5 contract ABI the stakes can't be read: th
   const board = JSON.parse(fs.readFileSync(path.join(out, "board.json"), "utf8"));
   assert.ok(board.lastWeek.rows.every((r) => r.ranked === false), "the boards show everyone on Free play meanwhile");
 });
+
+test("boards: each row's place on its own board (Staked or Free play), tied wallets sharing it", async () => {
+  const { withPlaces } = await import(path.resolve(APP, "bot/race.ts"));
+  const r = (a, pts, ranked, picks = 3) => ({ a, pts, correct: Math.floor(pts / 3), shows: pts % 3, picks, ranked });
+  const out = withPlaces([r("s1", 9, true), r("f1", 7, false), r("f2", 7, false), r("s2", 6, true), r("s3", 6, true), r("f3", 4, false), r("f4", 4, false, 4)]);
+  assert.deepEqual(out.map((x) => [x.a, x.boardPlace]), [["s1", 1], ["f1", 1], ["f2", 1], ["s2", 2], ["s3", 2], ["f3", 3], ["f4", 4]]);
+  // In the recorder's output too, and the publish check insists on it.
+  const { dir } = await weekTwoDone();
+  const o = await picksRun(U("2026-11-09T05:37Z"), dir, { staked: [W1] });
+  const board = JSON.parse(fs.readFileSync(path.join(o, "board.json"), "utf8"));
+  const places = Object.fromEntries(board.lastWeek.rows.map((x) => [x.a, [x.ranked, x.boardPlace]]));
+  assert.deepEqual(places, { [W1]: [true, 1], [GUEST]: [false, 1], [W2]: [false, 2], [W3]: [false, 2] },
+    "W1 alone on Staked; on Free play GUEST is 1st and W2 and W3 tie for 2nd (1 show each)");
+  assert.ok(shapeOk(o));
+  const bad = tmp(); const b2 = JSON.parse(JSON.stringify(board)); delete b2.lastWeek.rows[0].boardPlace;
+  fs.writeFileSync(path.join(bad, "board.json"), JSON.stringify(b2)); assert.equal(shapeOk(bad), false);
+});
