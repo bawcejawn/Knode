@@ -591,3 +591,39 @@ test("vault: a failure of the whole stake read (not one wallet's) is reported on
   assert.equal(vaultOf(out).final, false);
   assert.equal(lines.filter((l) => l.includes("get_state came back empty")).length, 1);
 });
+
+// ── who earns: only they get a medal (owner, 2026-10-29) ──
+test("earns: the staked bucket's winners by the vault's rule (top 30% by headcount, rounded up, a tied group taken whole)", async () => {
+  const { stakedWinners, withEarns } = await import(path.resolve(APP, "bot/race.ts"));
+  const r = (a, pts, extra = {}) => ({ a, pts, correct: Math.floor(pts / 3), shows: pts % 3, picks: 5, ranked: true, earning: true, ...extra });
+  const ten = Array.from({ length: 10 }, (_, i) => r("s" + i, 30 - i));
+  assert.deepEqual([...stakedWinners(ten)], ["s0", "s1", "s2"], "10 players: 3 win");
+  const tie = [r("a", 9), r("b", 9), r("c", 7), r("d", 7), r("e", 7), r("f", 4), r("g", 3), r("h", 2), r("i", 1), r("j", 1)];
+  assert.deepEqual([...stakedWinners(tie)], ["a", "b", "c", "d", "e"], "need 3: the 7-point group at the line is taken whole");
+  assert.deepEqual([...stakedWinners([r("x", 5), r("y", 4, { earning: false }), r("z", 0)])], ["x"], "withdrew below the minimum, or 0 points: not counted");
+  assert.deepEqual([...stakedWinners([r("x", 5, { ranked: false })])], [], "free players aren't in the bucket");
+  // Both boards together, and nothing earned outside the weekly boards.
+  const mixed = [r("s1", 9), r("f1", 7, { ranked: false }), r("s2", 6), r("f2", 6, { ranked: false }), r("f3", 6, { ranked: false }), r("s3", 3)];
+  const out = Object.fromEntries(withEarns(mixed, new Map()).map((x) => [x.a, x.earns]));
+  assert.deepEqual(out, { s1: 3, f1: 1, s2: 0, f2: 2, f3: 2, s3: 0 }, "staked: 1 of 3 wins; free: f1 1st, f2 and f3 tie for 2nd");
+  assert.ok(withEarns(mixed, null).every((x) => x.earns === 0), "Today and All time: no medals");
+});
+
+test("earns: in the recorder's board, weekly boards only; >10 free tied: the 10 earliest; the publish check holds it", async () => {
+  const a = await hourly(U("2026-11-02T05:37Z"), "");
+  const B = { ts: chain.ts, sig: chain.who.map((x) => P.indexOf(x)), signers: P };
+  const win = M.standings(B, { start: U("2026-11-02T00:00Z"), end: U("2026-11-02T06:00Z") }, race(a, VW).cards)[0].a;
+  const Tw = Array.from({ length: 12 }, (_, i) => "1" + "C".repeat(31) + "123456789ABC"[i]);
+  const b = await picksRun(U("2026-11-02T06:37Z"), a, { custom: Tw.map((t, i) => [t, win, 12 - i]) });
+  const board = JSON.parse(fs.readFileSync(path.join(b, "board.json"), "utf8"));
+  const earns = Object.fromEntries(board.week.rows.map((x) => [x.a, x.earns]));
+  assert.deepEqual(Tw.filter((t) => earns[t] === 1), Tw.slice(2), "the 10 earliest pickers get the 1st-place medal");
+  assert.deepEqual([earns[Tw[0]], earns[Tw[1]]], [0, 0], "the 2 latest get none (a shared 1st leaves no 2nd)");
+  assert.ok(board.today.rows.every((x) => x.earns === 0) && board.allTime.rows.every((x) => x.earns === 0));
+  assert.ok(!("earning" in board.week.rows[0]), "the internal flag isn't published");
+  assert.ok(shapeOk(b));
+  for (const bad of [{ earns: 3 }, { earns: 4 }, { earns: "1" }]) {
+    const d = tmp(), j = JSON.parse(JSON.stringify(board)); Object.assign(j.week.rows[0], bad);
+    fs.writeFileSync(path.join(d, "board.json"), JSON.stringify(j)); assert.equal(shapeOk(d), false, JSON.stringify(bad));
+  }
+});

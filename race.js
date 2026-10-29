@@ -393,8 +393,10 @@
   // ── leaderboard (the recorder's board.json, shown by the shared Knode Games board in board.js) ──
   const lb = window.KBoard ? window.KBoard.create($("race-board"), {
     label: "Race leaderboard",
-    // Free play medals: the recorder's own-board places (ties share; a tie for 1st leaves no 2nd), as the vault pays.
-    freeWinners: (part, free, weekly) => new Map(weekly ? free.filter((r) => r.pts >= 1 && r.boardPlace <= 2).map((r) => [r.a, r.boardPlace]) : []),
+    // Medals only for wallets that earn (owner, 2026-10-29), as the recorder works them out by the vault's rules:
+    // earns 1 / 2 = the free prize's 1st / 2nd (ties, and the 10 earliest when more tie), 3 = a share of the staked bucket.
+    freeWinners: (part, free, weekly) => new Map(weekly ? free.filter((r) => r.earns === 1 || r.earns === 2).map((r) => [r.a, r.earns]) : []),
+    earned: (r, weekly) => weekly && r.earns === 3,
     columns: [{ key: "pts", label: "Points" }, { key: "correct", label: "Wins" }, { key: "shows", label: "Shows" }, { key: "picks", label: "Picks", wide: true }],
     scored: (r) => (r.pts ?? r.correct) > 0,
     summary: (r) => `${fmt(r.pts ?? 0)} pts · ${fmt(r.correct)} W ${fmt(r.shows ?? 0)} S`,
