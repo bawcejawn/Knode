@@ -30,7 +30,10 @@ No contract, vault or sponsor change is needed to add a hole. A new game's own b
 
 Do these after Block X is live and its recorder has published at least once.
 
-1. Merge the `golf` branch (after its audit and fix-check).
+1. After the `picks` (Block X) branch is merged: bring `golf` up to date with it and move Block Golf's pages to the
+   site root, as every game branch does (`claude/site-at-root.md`): `git mv site/golf.html golf.html` (and `golf.js`,
+   `golf.css`, `golf-math.js`), the recorder's import becomes `../../golf-math.js`, tests read `${APP}/<file>`; then
+   run the full test suite and merge.
 2. In `site/games.json`, change Block Golf's line to `"status": "live", "href": "golf.html"`.
 3. In `tools/site-nav.mjs`, add `["Block Golf", "golf.html"]` to the Games menu (and the Play group of the More sheet), then in `C:\kprediction`:
 
