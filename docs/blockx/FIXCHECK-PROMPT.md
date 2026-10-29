@@ -48,9 +48,19 @@ Look hardest at:
    `site/testnet-wallet.js` (the `pick` entry point only).
 9. **BX-23** the exact-shape publish checks in `games.yml` / `games-testnet.yml` (new key `boardPlace`).
 
+10. **BX-3(b), new since the report** (owner approved 2026-10-28; `docs/HANDICAP-VHP.md`): card VHP is now the
+    *effective* VHP (`effective_balance_of`, entry point 0x629f31e6, which counts added VHP only after 20 blocks), the
+    **highest** of random samples over the last 6 hours (`bot/race.ts` `sample`, `windowHigh`;
+    `.github/workflows/race-samples.yml`, every 10 minutes with a secret random wait of 0 to 8 minutes, both nodes),
+    plus a floor from real block production (`productionFloor`: a producer signing more than 3 standard deviations
+    above its card share is raised). Can a producer still look small on a card, by timing, by one lying node, or by
+    the samples file (publish shape check, `race-samples` branch)? Can the floor be pushed the wrong way? These only
+    choose the VHP behind the card; each game's own multiplier rule is unchanged.
+
 Still open by the owner's choice (say if you disagree with leaving them open for a launch **without prizes**):
-BX-2 (sybil prize rule), BX-3(b) (`effective_balance_of` for the card), BX-7 (sponsor watch), BX-13 / BX-30 (domain
-move to knodegames.com on 1 November).
+BX-2 (accepted: the free Mana total bounds the cost; winners watched) and BX-7 (sponsor watch). BX-1 and BX-13 are
+resolved by the move to knodegames.com (done 28 October; guest play with sponsored Mana stays on there). BX-30: the
+site is on its own origin now; GitHub Pages still can't send headers.
 
 ## Part B: full audit of the Mana sponsor v3 (not audited in the first round)
 

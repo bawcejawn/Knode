@@ -47,6 +47,10 @@ jobs:
               if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; fi
             done
           else echo "No race-data branch yet."; fi
+          # The VHP samples (race-samples.yml): each producer's card VHP is the highest of the last 6 hours.
+          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-samples 2>/dev/null && git cat-file -e "FETCH_HEAD:vhp-samples.json" 2>/dev/null; then
+            git show "FETCH_HEAD:vhp-samples.json" > "$RUNNER_TEMP/prev/vhp-samples.json"
+          else echo "No VHP samples yet: the card uses the read at card time."; fi
       - name: Record the race
         run: npm run race
         env:

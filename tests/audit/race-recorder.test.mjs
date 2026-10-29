@@ -302,3 +302,17 @@ test("audit BX-4: the handicap card is taken only when both nodes agree on the p
   const ok = await go(1.001);
   assert.ok(race(ok.out, "2026-11-02T06").cards[0], "0.1% apart (block rewards between the reads): the card is taken");
 });
+
+test("audit BX-3 b: the card uses each producer's highest sampled VHP of the last 6 hours (moving VHP away before a card doesn't pay)", async () => {
+  const at = U("2026-11-02T05:37Z"), prev = tmp();
+  // P[3] (140 VHP) looked like 400 VHP at a sample 2 hours ago, and now reads 140 (it moved VHP away).
+  fs.writeFileSync(path.join(prev, "vhp-samples.json"), JSON.stringify({ v: 1, updated: "2026-11-02T03:37:00.000Z",
+    samples: [{ at: at - 2 * H, height: 5000, vhp: { [P[3]]: String(400 * 1e8) } }, { at: at - 7 * H, height: 4000, vhp: { [P[2]]: String(900 * 1e8) } }] }));
+  const out = await hourly(at, prev);
+  const card = race(out, "2026-11-02T06").cards[0], all = [...card.field, ...card.paddock];
+  assert.equal(all.find((x) => x.a === P[3]).vhp, 400, "the 6-hour high, not the low read now");
+  // P[2]: its 900 sample is older than 6 hours and ignored. (It may rise a little above 200: with P[3] counted at 400,
+  // P[2]'s real share of blocks is above its card share, and rule 3 lifts it to what its production supports.)
+  const v2 = all.find((x) => x.a === P[2]).vhp;
+  assert.ok(v2 >= 200 && v2 < 300, `a sample older than 6 hours is ignored (${v2})`);
+});

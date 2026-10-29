@@ -25,6 +25,7 @@ import { Provider } from "koilib";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
+import { randomInt } from "node:crypto";
 import { Contract } from "koilib";
 import { readVhp, MAINNET_VHP, withRetry, sleep } from "../common.ts";
 await import("../site/race-math.js");
@@ -38,6 +39,54 @@ let OUT = E.RACE_OUT || "race-data";
 const CARD_AHEAD = 60 * 60000;            // a card for the next leg is taken by the last hourly run before it starts
 const LOOKBACK = 3 * M.DAY;               // races older than this that never got final are left as they are
 const isAddr = (a: unknown) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
+
+// ── Handicap VHP that is hard to game (audit BX-3 b; owner 2026-10-28; project doc claude/handicap-anti-gaming.md) ──
+// Only looking SMALL on a card pays (a bigger multiplier), so the card errs the other way:
+//  1. effective VHP (what block production uses: added VHP counts only after 20 blocks), read on both nodes;
+//  2. samples at random moments about every 10 minutes (bot/race.ts --sample, .github/workflows/race-samples.yml);
+//     a producer's card VHP is the HIGHEST of its samples over the last 6 hours and the read at card time;
+//  3. a producer that signed clearly more blocks in the last ~6 hours than its card share allows (beyond 3 standard
+//     deviations of luck) is raised to the share its real production supports.
+// These only decide which VHP feeds the card. Each game keeps its own multiplier rule.
+export const SAMPLE_WINDOW = 6 * 3600000;          // samples count for 6 hours
+export const SAMPLE_KEEP = 8 * 3600000;            // and are kept 8 hours
+export const SAMPLE_MAX = 80;
+export type Sample = { at: number; height: number; vhp: Record<string, string> };
+export type SampleFile = { v: 1; updated: string; samples: Sample[] };
+const SAMPLES = "vhp-samples.json";
+/** The previous run's samples: only well-formed ones (8 hours at most, newest last). */
+export function loadSamples(): Sample[] {
+  const f = readPrev(SAMPLES);
+  if (!f || f.v !== 1 || !Array.isArray(f.samples)) return [];
+  return f.samples.filter((x: any) => x && Number.isFinite(x.at) && Number.isInteger(x.height) && x.vhp && typeof x.vhp === "object"
+    && Object.entries(x.vhp).every(([a, v]) => isAddr(a) && typeof v === "string" && /^\d{1,20}$/.test(v as string))).sort((a: Sample, b: Sample) => a.at - b.at);
+}
+/** Rule 2: each producer's VHP (1e-8 units) = the highest of `now` (read at card time) and its samples taken in
+ *  (t - SAMPLE_WINDOW, t]. Samples after t never count (a card only uses what was known when it was taken). */
+export function windowHigh(now: Record<string, string>, samples: Sample[], t: number): Record<string, bigint> {
+  const out: Record<string, bigint> = {};
+  for (const [a, v] of Object.entries(now)) out[a] = BigInt(v || "0");
+  for (const smp of samples) {
+    if (!(smp.at <= t && smp.at > t - SAMPLE_WINDOW)) continue;
+    for (const a of Object.keys(out)) { const v = smp.vhp[a]; if (v !== undefined && BigInt(v) > out[a]) out[a] = BigInt(v); }
+  }
+  return out;
+}
+/** Rule 3: raise a producer whose real block count is far above its card share. counts: blocks each signed out of
+ *  `total`. Only raises (never lowers) VHP. Returns the new values and who was raised. */
+export function productionFloor(vhp: Record<string, bigint>, counts: Map<string, number>, total: number): { vhp: Record<string, bigint>; raised: string[] } {
+  const T = Object.values(vhp).reduce((x, y) => x + y, 0n), out = { ...vhp }, raised: string[] = [];
+  if (T <= 0n || total <= 0) return { vhp: out, raised };
+  for (const [a, v] of Object.entries(vhp)) {
+    const n = counts.get(a) || 0;
+    const low = (n - 3 * Math.sqrt(n)) / total;                 // the least share its production supports
+    const share = Number(v) / Number(T);
+    if (n < 10 || low <= share || low >= 1) continue;
+    const need = BigInt(Math.ceil(low * Number(T - v) / (1 - low)));
+    if (need > v) { out[a] = need; raised.push(a); }
+  }
+  return { vhp: out, raised };
+}
 
 type Card = { at: number; blocksPerRace: number; c: number; fairness: number[] | null; field: { a: string; vhp: number; k: number; h: number }[]; paddock: { a: string; vhp: number; k: number }[] };
 type Race = { id: string; start: number; end: number; cards: (Card | null)[]; result: any | null };
@@ -158,8 +207,10 @@ async function readPlayer(node: any, who: string, week: number): Promise<PlayerI
 export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract, picksOf, playerOf }: Opts) {
   if (prev !== undefined) PREV = prev;
   if (out !== undefined) OUT = out;
-  const vhpRead = vhpOf || (async (who: string[]) => (await readVhp(p, MAINNET_VHP, who)).values);
-  const vhpCheck = !check ? null : vhpCheckOf || vhpOf || (async (who: string[]) => (await readVhp(check, MAINNET_VHP, who)).values);
+  // Cards: effective VHP (audit BX-3 b). Who may be ranked (holds 1 VHP): the plain balance, as before.
+  const vhpRead = vhpOf || (async (who: string[]) => (await readVhp(p, MAINNET_VHP, who, { effective: true })).values);
+  const vhpCheck = !check ? null : vhpCheckOf || vhpOf || (async (who: string[]) => (await readVhp(check, MAINNET_VHP, who, { effective: true })).values);
+  const rawRead = vhpOf || (async (who: string[]) => (await readVhp(p, MAINNET_VHP, who)).values);
   const picksContract = raceContract === undefined ? defaultRaceContract() : raceContract;
   const picksRead = picksOf || (picksContract ? (node: any, r: number) => readPicks(node, picksContract, r) : null);
   const playerRead = playerOf || readPlayer;
@@ -168,7 +219,7 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
   async function eligible(who: string[]) {
     const todo = who.filter((a) => !eligibleCache.has(a));
     if (todo.length) {
-      const vhp = await vhpRead(todo);
+      const vhp = await rawRead(todo);
       for (const a of todo) {
         let ok = BigInt(vhp[a] || "0") >= 100000000n;
         if (!ok) { try { ok = (await playerRead(p, a, M.weekOf(Date.now()))).stake > 0n; } catch { ok = false; } }
@@ -186,6 +237,7 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
   for (const w of new Set([M.weekOf(now - LOOKBACK), wNow, M.weekOf(now + CARD_AHEAD)])) weeks.set(w, loadWeek(w));
   const raceById = (id: string) => { for (const wf of weeks.values()) { const r = wf.races.find((x) => x.id === id); if (r) return r; } return null; };
   const problems: string[] = [];
+  const samples = loadSamples();
 
   // ── 1. cards ──
   const legStart = (t: number) => Math.floor(t / M.LEG) * M.LEG;
@@ -216,8 +268,15 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
     }
     if (differ) problems.push(`the two nodes disagree on ${differ}'s VHP; the handicap card waits for the next run`);
     else {
-      const vhp: [string, number][] = producers.map((a) => [a, Number(values[a] || "0") / 1e8]);
+      // Blocks each producer signed in the ~6 hours read above (recent.sig: each block's index into recent.signers).
+      const counts = new Map<string, number>(); for (const i of recent.sig) { const a = recent.signers[i]; if (isAddr(a)) counts.set(a, (counts.get(a) || 0) + 1); }
+      const high = windowHigh(Object.fromEntries(producers.map((a) => [a, String(values[a] || "0")])), samples, now);
+      const { vhp: fair, raised } = productionFloor(high, counts, recent.sig.length);
+      for (const a of raised) console.log(`card: ${a} signed more blocks than its VHP allows; raised to ${Number(fair[a]) / 1e8} VHP for the card`);
+      const used = samples.filter((x) => x.at <= now && x.at > now - SAMPLE_WINDOW).length;
+      const vhp: [string, number][] = producers.map((a) => [a, Number(fair[a] || 0n) / 1e8]);
       const card: Card = M.makeCard(vhp, blocksPerRace, now);
+      console.log(`card VHP: effective, highest of ${used} sample(s) in the last 6 hours and the read now`);
       for (const { race, leg } of want) { race.cards[leg] = card; console.log(`card for ${race.id} leg ${leg + 1}: ${card.field.length} horses, c = ${card.c}${vhpCheck ? ", VHP checked on 2 nodes" : ""}`); }
     }
   }
@@ -341,6 +400,42 @@ async function leaderboards(weeks: Map<number, WeekFile>, now: number, player: (
   };
 }
 
+/** --sample: one VHP sample at a random moment (rule 2). Waits a random 0 to `spreadMs` first (a secret chosen here,
+ *  never published ahead), reads the producers of about the last hour of blocks (and those already sampled), their
+ *  effective VHP on both nodes, and writes vhp-samples.json with the last 8 hours of samples. A disagreement between
+ *  the nodes (more than 0.5%) skips the sample. Exported for the tests. */
+export async function sample({ p, check, prev, out, vhpOf, vhpCheckOf, spreadMs = 8 * 60000, wait = sleep }: { p: any; check: any | null; prev?: string; out?: string;
+  vhpOf?: (who: string[]) => Promise<Record<string, string>>; vhpCheckOf?: (who: string[]) => Promise<Record<string, string>>; spreadMs?: number; wait?: (ms: number) => Promise<unknown> }) {
+  if (prev !== undefined) PREV = prev;
+  if (out !== undefined) OUT = out;
+  const delay = spreadMs > 0 ? randomInt(0, spreadMs) : 0;
+  await wait(delay);
+  const old = loadSamples();
+  const head: any = await withRetry("head", () => p.getHeadInfo());
+  const headH = Number(head.head_topology.height), now = Number(head.head_block_time);
+  const recent = await readBlocks(p, head.head_topology.id, Math.max(1, headH - 1199), headH);
+  const last = old[old.length - 1];
+  const who = [...new Set([...recent.signers.filter(isAddr), ...(last ? Object.keys(last.vhp) : [])])];
+  const read = vhpOf || (async (w: string[]) => (await readVhp(p, MAINNET_VHP, w, { effective: true })).values);
+  const readCheck = !check ? null : vhpCheckOf || vhpOf || (async (w: string[]) => (await readVhp(check, MAINNET_VHP, w, { effective: true })).values);
+  const mine = await read(who);
+  let keep = old.filter((x) => x.at > now - SAMPLE_KEEP);
+  const problems: string[] = [];
+  if (readCheck) {
+    const theirs = await readCheck(who);
+    const bad = who.find((a) => { const x = Number(mine[a] || "0"), y = Number(theirs[a] || "0"); return Math.abs(x - y) > 0.005 * Math.max(x, y); });
+    if (bad) problems.push(`the two nodes disagree on ${bad}'s effective VHP; no sample this time`);
+  }
+  if (!problems.length) keep = keep.concat([{ at: now, height: headH, vhp: Object.fromEntries(who.map((a) => [a, String(mine[a] || "0")])) }]).slice(-SAMPLE_MAX);
+  fs.mkdirSync(OUT, { recursive: true });
+  const file: SampleFile = { v: 1, updated: new Date(now).toISOString(), samples: keep };
+  fs.writeFileSync(path.join(OUT, SAMPLES), JSON.stringify(file) + "\n");
+  console.log(problems.length ? "no sample this run" : `sample at block ${headH} (${new Date(now).toISOString()}), ${who.length} producers; ${keep.length} kept`);
+  for (const pr of problems) console.log(`::warning::${pr}`);
+  return { problems, delay };
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  run({ p: new Provider([RPC]), check: RPC_CHECK ? new Provider([RPC_CHECK]) : null }).catch((e) => { console.error(e); process.exit(1); });
+  const nodes = { p: new Provider([RPC]), check: RPC_CHECK ? new Provider([RPC_CHECK]) : null };
+  (process.argv.includes("--sample") ? sample(nodes) : run(nodes)).catch((e) => { console.error(`error: ${String((e && e.message) || e).replace(/[\r\n]+/g, " ").replace(/::/g, ": ").slice(0, 500)}`); process.exit(1); });
 }

@@ -235,7 +235,7 @@ export async function run(o: Opts) {
       try {
         const from = Math.max(1, head.height - CARD_BLOCKS + 1);
         const sg = o.signersOf ? await o.signersOf(o.p, from, head.height) : await readSigners(o.p, headId, from, head.height);
-        const values = o.vhpOf ? await o.vhpOf(sg.signers) : (await readVhp(o.p, VHP, sg.signers)).values;
+        const values = o.vhpOf ? await o.vhpOf(sg.signers) : (await readVhp(o.p, VHP, sg.signers, { effective: true })).values;   // effective VHP (BX-3 b; testnet: one producer)
         const span = sg.last - sg.first, perRace = span > 0 ? (sg.n - 1) * M.RACE / span : 7200;
         const card = M.makeCard(sg.signers.map((a) => [a, Number(values[a] || "0") / 1e8]), perRace, head.time);
         if (card.field.length + card.paddock.length) { cards.push(card); console.log(`card taken: ${card.field.length + card.paddock.length} producers`); }
