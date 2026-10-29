@@ -56,7 +56,8 @@ const isDay = (d: unknown) => typeof d === "string" && !!L.eventOf(d);
 /** A recorded pick: [player, producer, pick time (ms)]. */
 /** [player, start node, pick time, backup node] (the backup only when the pick names one; owner, 2026-10-29). */
 type Pick = [string, string, number] | [string, string, number, string];
-type Hour = { i: number; from: number; to: number; blocks: Record<string, number>; checked: number };
+/** card: the race card (its time) whose VHP the window was checked against; hh: multipliers it lowered (LNF-3). */
+type Hour = { i: number; from: number; to: number; blocks: Record<string, number>; checked: number; card?: number | null; hh?: Record<string, number> };
 type PlayerRow = { a: string; start: string; jumpTo: string | null; out: number; survived: number; rode: boolean; jumped: boolean; points: number; ranked: boolean };
 export type DayFile = {
   v: 1; day: string; start: number; week: number;
@@ -82,6 +83,10 @@ type Opts = {
   /** Vault v6: the wallets with at least 1 VHP staked in this game for a vault week (null = can't tell yet). */
   stakedOf?: (week: number, who: string[]) => Promise<Set<string> | null>;
   trials?: number;
+  /** Fix-check LNF-4: folder of VHP sample files (race-samples snapshots, vhp-samples.json shape); default LASTNODE_SAMPLES. */
+  samplesDir?: string;
+  /** Watch-and-hold (owner, 2026-10-29): weeks the owner released after review (LASTNODE_RELEASE_WEEKS, e.g. "3,7"). */
+  releaseWeeks?: number[];
   /** Fix-check LNF-6: the most time the 48 h form read may take in one run (default 4 minutes). */
   formDeadlineMs?: number;
 };
@@ -108,7 +113,9 @@ function loadDay(dir: string | undefined, day: string): DayFile {
   if (typeof o.void === "string") f.void = o.void.slice(0, 200);
   if (Array.isArray(o.hours)) for (const [k, h] of o.hours.entries()) {
     if (!h || h.i !== k || !Number.isInteger(h.from) || !Number.isInteger(h.to) || typeof h.blocks !== "object" || h.blocks === null) break;
-    f.hours.push({ i: k, from: h.from, to: h.to, blocks: Object.fromEntries(Object.entries(h.blocks).filter(([a, n]) => isAddr(a) && Number.isInteger(n) && (n as number) >= 0)) as any, checked: h.checked === 2 ? 2 : 1 });
+    const hh = h.hh && typeof h.hh === "object" ? Object.fromEntries(Object.entries(h.hh).filter(([a, n]) => isAddr(a) && Number.isInteger(n) && (n as number) >= 1)) : null;
+    f.hours.push({ i: k, from: h.from, to: h.to, blocks: Object.fromEntries(Object.entries(h.blocks).filter(([a, n]) => isAddr(a) && Number.isInteger(n) && (n as number) >= 0)) as any, checked: h.checked === 2 ? 2 : 1,
+      ...(Number.isFinite(h.card) ? { card: Number(h.card) } : {}), ...(hh && Object.keys(hh).length ? { hh } : {}) });
   }
   if (o.picks && typeof o.picks === "object") for (const [k, rows] of Object.entries(o.picks))
     if (k === "0" && Array.isArray(rows)) f.picks[k] = (rows as any[]).filter((x) => Array.isArray(x) && (x.length === 3 || (x.length === 4 && isAddr(x[3]) && x[3] !== x[1])) && isAddr(x[0]) && isAddr(x[1]) && Number.isFinite(x[2]))
@@ -161,6 +168,39 @@ export function sharesByHour(cards: any[], t0: number, hours: number): (Record<s
     const all = [...c.field, ...(Array.isArray(c.paddock) ? c.paddock : [])].filter((x: any) => x && isAddr(x.a) && Number.isFinite(x.vhp) && x.vhp > 0);
     const tot = all.reduce((s: number, x: any) => s + x.vhp, 0);
     out.push(tot > 0 ? Object.fromEntries(all.map((x: any) => [x.a, x.vhp / tot])) : null);
+  }
+  return out;
+}
+
+/** Every VHP sample in a folder of race-samples snapshots (vhp-samples.json shape), once each, oldest first. */
+export function samplesIn(dir: string): { at: number; vhp: Record<string, number> }[] {
+  if (!dir) return [];
+  const by = new Map<number, Record<string, number>>();
+  let files: string[] = [];
+  try { files = fs.readdirSync(dir).filter((f) => /^[\w.-]+\.json$/.test(f)); } catch { return []; }
+  for (const f of files) {
+    const j = readJson(dir, f);
+    if (!j || j.v !== 1 || !Array.isArray(j.samples)) continue;
+    for (const x of j.samples) {
+      if (!x || !Number.isInteger(x.at) || !x.vhp || typeof x.vhp !== "object" || by.has(x.at)) continue;
+      const v: Record<string, number> = {};
+      for (const [a, n] of Object.entries(x.vhp)) if (isAddr(a) && typeof n === "string" && /^\d{1,20}$/.test(n)) v[a] = Number(n) / 1e8;
+      by.set(x.at, v);
+    }
+  }
+  return [...by.entries()].sort((p, q) => p[0] - q[0]).map(([at, vhp]) => ({ at, vhp }));
+}
+/** Each hour's VHP shares from its samples: every producer's average over the hour's samples (absent = 0), ÷ the sum.
+ *  null for an hour with fewer than 6 samples. Exported for the tests. */
+export function sharesFromSamples(all: { at: number; vhp: Record<string, number> }[], t0: number, hours: number): (Record<string, number> | null)[] {
+  const out: (Record<string, number> | null)[] = [];
+  for (let k = 0; k < hours; k++) {
+    const a = t0 + k * 3600000, in1 = all.filter((x) => x.at >= a && x.at < a + 3600000);
+    if (in1.length < 6) { out.push(null); continue; }
+    const sum: Record<string, number> = {};
+    for (const x of in1) for (const [p, v] of Object.entries(x.vhp)) sum[p] = (sum[p] || 0) + v;
+    const tot = Object.values(sum).reduce((s, v) => s + v, 0);
+    out.push(tot > 0 ? Object.fromEntries(Object.entries(sum).map(([p, v]) => [p, v / tot])) : null);
   }
   return out;
 }
@@ -308,6 +348,34 @@ export async function stakedOnBoth(read: (node: any) => Promise<Set<string> | nu
   if (only.length) throw new Error(`the two nodes disagree on who is staked (${only.length} wallet${only.length === 1 ? "" : "s"}, e.g. ${only[0]})`);
   return a;
 }
+/** Watch-and-hold: per field node, across a week's finished events, blocks signed while standing ÷ what its multipliers
+ *  expected (kh, raised where a window lowered its multiplier). Flags a node at least max(5%, 3 standard deviations)
+ *  above expected that won at least 2 events. Exported for the tests. */
+export function watchWeek(events: DayFile[], cut = L.CUT): { a: string; q: number; wins: number; events: number }[] {
+  const by = new Map<string, { got: number; exp: number; wins: number; events: number }>();
+  for (const df of events) {
+    if (df.void || !df.field || !df.done) continue;
+    const outAt = new Map(df.cuts.map((c) => [c.a, c.at]));
+    for (const n of df.field.nodes) {
+      const s = by.get(n.a) ?? { got: 0, exp: 0, wins: 0, events: 0 };
+      const last = outAt.get(n.a) ?? df.hours.length;
+      for (let i = 0; i < last && i < df.hours.length; i++) {
+        const h = df.hours[i], base = L.hInt(n), used = h.hh && Number.isInteger(h.hh[n.a]) ? h.hh[n.a] : base;
+        s.got += Number(h.blocks[n.a]) || 0;
+        s.exp += n.kh * (cut / 3600000) * (base / used);
+      }
+      s.events++; if (df.winner === n.a) s.wins++;
+      by.set(n.a, s);
+    }
+  }
+  const out: { a: string; q: number; wins: number; events: number }[] = [];
+  for (const [a, s] of by) {
+    if (!(s.exp > 0)) continue;
+    const q = s.got / s.exp, sd = 1 / Math.sqrt(s.exp);
+    if (s.wins >= 2 && q >= 1 + Math.max(0.05, 3 * sd)) out.push({ a, q: Math.round(q * 1000) / 1000, wins: s.wins, events: s.events });
+  }
+  return out;
+}
 /** The vault file's scores: the week's board order (points, then rides, then fewer jumps) as whole numbers 1–255, ties
  *  kept. The real points when they already give that order and fit; else each tie group's rank counted from the bottom.
  *  ranked: board rows, best first, each { a, pts, rides, jumps }. Exported for the tests. */
@@ -350,6 +418,9 @@ export async function run(o: Opts) {
   const RACE = o.raceDir ?? E.RACE_DATA ?? "";
   const problems: string[] = [];
   const contract = o.picksContract === undefined ? defaultPicksContract() : o.picksContract;
+  let cardsCache: any[] | null = null, samplesCache: any[] | null = null;
+  const samples = () => (samplesCache ??= samplesIn(o.samplesDir ?? E.LASTNODE_SAMPLES ?? ""));
+  const raceCards = () => (cardsCache ??= cardsIn(RACE, (o.now?.time ?? Date.now()) - 5 * L.DAY, (o.now?.time ?? Date.now()) + L.DAY));
 
   // Now and the irreversible time: both nodes, the earlier of the two.
   let now: { time: number; libTime: number };
@@ -390,11 +461,16 @@ export async function run(o: Opts) {
       if (late) return giveUp("the two nodes disagree about the blocks");
       problems.push(`${ev.day}: form: the two nodes disagree about the blocks; tried again next run`); return "wait";
     }
-    const shares = sharesByHour(cardsIn(RACE, t0, t1).filter((c) => Number(c.at) < ev.opens), t0, L.FORM_HOURS);
+    // Fix-check LNF-4 (owner, 2026-10-29): each hour's VHP shares are the hour's AVERAGE from the 5-minute samples, so
+    // VHP moved back and forth between addresses counts once (the hourly card shows the 6-hour high on both).
+    let shares = sharesFromSamples(samples(), t0, L.FORM_HOURS);
+    // Testnet practice only: until the race-samples branch is running, the hourly race cards stand in (mainnet never
+    // falls back to them: there, no samples means a field without form).
+    if (o.practice && shares.filter(Boolean).length < L.FORM_MIN_HOURS) shares = sharesByHour(cardsIn(RACE, t0, t1).filter((c) => Number(c.at) < ev.opens), t0, L.FORM_HOURS);
     const hours = a.map((blocks, k) => ({ blocks, shares: shares[k] }));
     const used = hours.filter((h) => h.shares && Object.values(h.blocks).some((x) => x > 0)).length;
     const form = L.formOf(hours);
-    return { form, info: form ? { hours: used, from: t0, to: t1 } : { hours: used, note: `race cards for only ${used} of ${L.FORM_HOURS} hours` } };
+    return { form, info: form ? { hours: used, from: t0, to: t1 } : { hours: used, note: `VHP samples for only ${used} of ${L.FORM_HOURS} hours` } };
   }
   const picksRead = o.picksOf ?? (contract ? (node: any, r: number) => readPicks(node, contract, r) : null);
   const pMain = o.pp ?? o.p, pCheck = o.pp ? (o.pcheck ?? null) : o.check;
@@ -466,7 +542,11 @@ export async function run(o: Opts) {
         const inField = new Set(df.field.nodes.map((n: any) => n.a));
         const blocks: Record<string, number> = {};
         for (const [a, n] of Object.entries(w.counts)) if (inField.has(a)) blocks[a] = n;
-        df.hours.push({ i, from: w.from, to: w.to, blocks, checked });
+        // Fix-check LNF-3: the window checked against the latest race card taken by its end (never older than the
+        // field's); a node that gained VHP since the field's card has its multiplier lowered for this window.
+        const rc = raceCards().filter((c) => Number(c.at) <= t1 && Number(c.at) >= Number(df.field.at)).pop() || null;
+        const hh = rc ? L.raceCut(df.field, rc) : {};
+        df.hours.push({ i, from: w.from, to: w.to, blocks, checked, card: rc ? Number(rc.at) : null, ...(Object.keys(hh).length ? { hh } : {}) });
         for (const [k, v] of Object.entries(got)) df.picks[k] = v;
         hoursRead++; touched.add(df.day);
         res = L.cutsFrom(df.field, df.hours);
@@ -532,6 +612,20 @@ export async function run(o: Opts) {
     if (staked) vault = { game: L.GAME_ID, week: lw, final: true, rows: vaultScores(lastWeek.rows.filter((r: any) => staked.has(r.a))), first: [], second: [] };
     else if (!o.stakedOf) console.log(`week ${lw} is final; no vault file yet (the game contract has no per-game stakes before v6)`);
   }
+  // ── watch-and-hold (owner, 2026-10-29; fix-check LNF-8/LNF-9) ──
+  // A node that signed well above what its multiplier expected across last week's races AND won at least 2 of them
+  // holds the week's vault file for the owner's review (vault/HOLD-W<week>.json is published instead). The owner
+  // releases a reviewed week with the repository variable LASTNODE_RELEASE_WEEKS (e.g. "3,7").
+  let hold: any = null;
+  if (vault) {
+    const flags = watchWeek([...days.values()].filter(inWeek(lw)));
+    const released = (o.releaseWeeks ?? String(E.LASTNODE_RELEASE_WEEKS || "").split(",").map((x) => Number(x.trim())).filter(Number.isInteger)).includes(lw);
+    if (flags.length && !released) {
+      hold = { game: L.GAME_ID, week: lw, nodes: flags, why: "signed well above its multiplier across the week's races and won at least 2: held for the owner's review" };
+      problems.push(`week ${lw}'s vault file is HELD for review: ${flags.map((f) => `${f.a} (${f.q}× expected, ${f.wins} wins)`).join("; ")}. Release it with: gh variable set LASTNODE_RELEASE_WEEKS --body "${lw}"`);
+      vault = null;
+    }
+  }
 
   // ── 6. write ──
   fs.mkdirSync(OUT, { recursive: true });
@@ -543,8 +637,9 @@ export async function run(o: Opts) {
   fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(now.time).toISOString(), days: [...known].sort(), contract: contract || null, game: L.GAME_ID, ...(o.practice ? { since } : {}) }) + "\n");
   fs.writeFileSync(path.join(OUT, "board.json"), JSON.stringify(board) + "\n");
   if (vault) { fs.mkdirSync(path.join(OUT, "vault"), { recursive: true }); fs.writeFileSync(path.join(OUT, "vault", `W${vault.week}.json`), JSON.stringify(vault) + "\n"); }
+  if (hold) { fs.mkdirSync(path.join(OUT, "vault"), { recursive: true }); fs.writeFileSync(path.join(OUT, "vault", `HOLD-W${hold.week}.json`), JSON.stringify(hold) + "\n"); }
   for (const pr of problems) console.log(`::warning::${pr}`);
-  return { problems, days, board, vault };
+  return { problems, days, board, vault, hold };
 }
 
 /** Every event of a week from the game's first recorded day on is present (recorded, finished or void); a week the
@@ -571,6 +666,20 @@ export function testnetPicks(file: URL | string = new URL("../../testnet/blockx.
   try { const b = JSON.parse(fs.readFileSync(file, "utf8")); return b && b.network === "koinos-foundation-testnet" && isAddr(b.picks) ? b.picks : null; } catch { return null; }
 }
 /** The race cards for the field, copied from the public race-data branch into dir (only plain week files). */
+/** Testnet: add the published VHP samples to a local cache file (only well-formed samples, 60 hours kept). */
+async function cacheSamples(url: string, dir: string, now: number) {
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "cache.json");
+  const have = new Map<number, any>();
+  for (const x of readJson(dir, "cache.json")?.samples ?? []) if (x && Number.isInteger(x.at)) have.set(x.at, x);
+  try {
+    const r = await fetch(url, { cache: "no-store" } as any);
+    const j: any = r.ok ? await r.json() : null;
+    for (const x of j?.samples ?? []) if (x && Number.isInteger(x.at) && x.at <= now + 600000 && x.vhp && typeof x.vhp === "object") have.set(x.at, { at: x.at, height: Number(x.height) || 0, vhp: x.vhp });
+  } catch { /* none this run */ }
+  const samples = [...have.values()].filter((x) => x.at > now - 60 * 3600000).sort((a, b) => a.at - b.at);
+  fs.writeFileSync(file, JSON.stringify({ v: 1, updated: new Date(now).toISOString(), samples }));
+}
 async function fetchRaceCards(base: string, dir: string, t: number) {
   fs.mkdirSync(dir, { recursive: true });
   const w = M.weekOf(t);
@@ -608,6 +717,10 @@ async function main() {
   const inTestData = (d: string) => { const r = path.relative(path.resolve("testnet-data"), path.resolve(d)); if (!r || r.startsWith("..") || path.isAbsolute(r)) throw new Error(`${d} is not inside testnet-data/`); return d; };
   const raceDir = inTestData(E.TESTNET_RACE_DATA || "testnet-data/race-cards");
   await fetchRaceCards(cfg.mainnet.raceData, raceDir, Date.now());
+  // Fix-check LNF-4 on the testnet: the published file keeps 8 hours of VHP samples, so each run adds them to a local
+  // cache (60 hours kept); form starts once it holds 48 hours.
+  const samplesDir = inTestData(E.TESTNET_SAMPLES || "testnet-data/vhp-samples");
+  await cacheSamples(cfg.mainnet.samples || "https://raw.githubusercontent.com/bawcejawn/Knode/race-samples/vhp-samples.json", samplesDir, Date.now());
   const koin = new Contract({ id: cfg.koin, abi: (await import("koilib")).utils.tokenAbi, provider: tp });
   // Ranked on the testnet: holds at least 1 test KOIN (test wallets have no VHP).
   const rankedOf = async (who: string[]) => {
@@ -616,7 +729,7 @@ async function main() {
     return out;
   };
   const dir = `testnet-data/lastnode-${id}`;
-  return run({ p, check, pp: tp, pcheck: null, game, practice: true, picksContract: picks, rankedOf, raceDir, out: inTestData(E.TESTNET_LASTNODE_OUT || dir), prev: inTestData(E.TESTNET_LASTNODE_PREV || dir) });
+  return run({ p, check, pp: tp, pcheck: null, game, practice: true, picksContract: picks, rankedOf, raceDir, samplesDir, out: inTestData(E.TESTNET_LASTNODE_OUT || dir), prev: inTestData(E.TESTNET_LASTNODE_PREV || dir) });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

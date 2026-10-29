@@ -202,6 +202,32 @@
     /** The event's field from the race card of its cardTime. card: { at, field: [{ a, vhp, k }] } (k = expected blocks
      *  in a 6-hour race). Returns { at, c, fairness, nodes: [{ a, vhp, kh, h }] }, biggest first, or null when fewer
      *  than 2 nodes sign 20 blocks an hour. */
+    /** A race card's total VHP (field and paddock, in the card's order), to 2 decimals: each node's VHP share is
+     *  its VHP ÷ this. */
+    function cardTotal(card) {
+      let t = 0;
+      for (const x of [...(card && Array.isArray(card.field) ? card.field : []), ...(card && Array.isArray(card.paddock) ? card.paddock : [])]) if (x && Number.isFinite(x.vhp) && x.vhp > 0) t += x.vhp;
+      return round(t, 2);
+    }
+    /** Fix-check LNF-3 (owner, 2026-10-29): VHP added after the field's card can only LOWER a node's multiplier during
+     *  the race. For one cut window, card = the latest race card taken by the window's end. A node with more VHP on it
+     *  than on the field's card gets its multiplier cut by the same ratio (in ten-thousandths, as hInt); never raised.
+     *  (Everyone's blocks shift together when the total VHP changes, so the node's own VHP is the fair measure.)
+     *  Returns { address: lowered hInt } (empty when nobody gained). */
+    function raceCut(field, card) {
+      const out = {};
+      if (!field || !Array.isArray(field.nodes) || !card || !Array.isArray(card.field)) return out;
+      const on = new Map();
+      for (const x of [...card.field, ...(Array.isArray(card.paddock) ? card.paddock : [])]) if (x && typeof x.a === "string" && Number.isFinite(x.vhp) && x.vhp > 0 && !on.has(x.a)) on.set(x.a, x.vhp);
+      for (const n of field.nodes) {
+        const v = on.get(n.a);
+        if (!v) continue;
+        if (!(v > n.vhp)) continue;
+        const h = Math.floor(hInt(n) * n.vhp / v + 0.5);
+        if (h >= 1 && h < hInt(n)) out[n.a] = h;
+      }
+      return out;
+    }
     /** The field from a race card. form (optional, from formOf): { address: factor }; a node's expected blocks are its
      *  VHP share × its form (1 if missing). Who is in the field is still decided by VHP alone. formInfo is stored as is. */
     function makeField(card, trials = TRIALS, form = null, formInfo = null) {
@@ -221,7 +247,7 @@
       if (form) order.sort((x, y) => ks[y] - ks[x] || x - y);
       const kTop = ks[order[0]], cal = calibrate(order.map((i) => ks[i]), trials);
       const f = {
-        at: Number(card.at) || 0, c: cal.c, fairness: [round(cal.min, 4), round(cal.max, 4)],
+        at: Number(card.at) || 0, c: cal.c, fairness: [round(cal.min, 4), round(cal.max, 4)], vt: cardTotal(card),
         nodes: rows.map((r, i) => ({ a: r.a, vhp: round(r.vhp, 2), kh: round(r.kh, 2), h: Math.round(handicapOf(ks[i], kTop, cal.c) * H_SCALE) / H_SCALE, ...(form ? { r: r.r } : {}) })),
       };
       if (form) f.form = formInfo || { hours: FORM_HOURS };
@@ -237,7 +263,8 @@
       const cuts = [];
       for (let hr = 0; hr < hours.length && cuts.length < n - 1; hr++) {
         const b = (hours[hr] && hours[hr].blocks) || {};
-        for (let i = 0; i < n; i++) if (!out[i]) { const k = Number(b[nodes[i].a]) || 0; blocks[i] += k; steps[i] += k * hInt(nodes[i]); }
+        const hh = (hours[hr] && hours[hr].hh) || null;          // fix-check LNF-3: lowered multipliers for this window
+        for (let i = 0; i < n; i++) if (!out[i]) { const k = Number(b[nodes[i].a]) || 0; blocks[i] += k; steps[i] += k * (hh && Number.isInteger(hh[nodes[i].a]) && hh[nodes[i].a] < hInt(nodes[i]) && hh[nodes[i].a] >= 1 ? hh[nodes[i].a] : hInt(nodes[i])); }
         let worst = -1;
         for (let i = 0; i < n; i++) {
           if (out[i]) continue;
@@ -286,7 +313,7 @@
     return {
       GAME: g, GAME_ID: g.id, PICKS_GAME, CUT, LEAD, OFFSET, AHEAD, PERIOD, PHASE, LOCK_BEFORE, MAX_FIELD,
       HOUR, DAY, WEEK, GENESIS, MIN_KH, FORM_HOURS, FORM_MIN, FORM_MAX, FORM_MIN_HOURS, formOf, BONUS, SEED, TRIALS, H_SCALE, START_HOUR: PERIOD === DAY ? PHASE / HOUR : null,
-      roundOf, roundTime, lockTime, isOpen, eventOf, nextEvent, pickable, nextEntry, weekOf, weekStart, rng, handicapOf, calibrate, makeField, hInt,
+      roundOf, roundTime, lockTime, isOpen, eventOf, nextEvent, pickable, nextEntry, cardTotal, raceCut, weekOf, weekStart, rng, handicapOf, calibrate, makeField, hInt,
       cutsFrom, playerResult, board, places, forGame, MAINNET_GAME, FAST_GAME, REAL_TEST_GAME,
     };
   }

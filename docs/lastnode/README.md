@@ -19,12 +19,13 @@ A testnet practice copy runs on the owner's PC (`docs/lastnode/TESTNET.md`).
   - h = (kTop / k) × (1 − c / √k) ÷ (1 − c / √kTop), where k is the node's expected blocks per cut window;
   - c is in steps of 0.1 from 0.0 to 2.5. It is chosen so every node has the most equal chance of being last standing, using 20,000 simulated events with a fixed seed;
   - h is kept to 4 decimals, so step totals are exact integers in ten-thousandths.
-- **Form (owner, 2026-10-29):** k = the card's VHP share × the node's form. Form = blocks the node signed in the 48 hours before the card ÷ the blocks its VHP share gave it, hour by hour against that hour's race card, kept between 0.80 and 1.20 (`formOf` in `lastnode-math.js`).
+- **Form (owner, 2026-10-29):** k = the card's VHP share × the node's form. Form = blocks the node signed in the 48 hours before the card ÷ the blocks its VHP share gave it, hour by hour against that hour's **average** VHP from the 5-minute samples (race-samples; fix-check LNF-4, so VHP swapped between addresses counts once), kept between 0.80 and 1.20 (`formOf` in `lastnode-math.js`). No samples for 24+ of the hours: the field is set without form (testnet practice falls back to the hourly race cards).
   - Why: on real blocks (25–29 Oct) nodes signed a steady 78%–108% of their VHP share. With VHP alone, the steadiest over-signer won 35–40% of events and two under-signers never won (`tools/sim/lastnode/form/`). On 123 days of June–October blocks, the form rule gave a fair spread for the daily game (chi² 7.4 on 7 degrees of freedom).
-  - Read on both mainnet nodes (irreversible blocks, must match). If the reads fail or disagree, the field waits; an hour after picks open it is set without form (`field.form.note` says why). Who is in the field is still decided by VHP.
+  - Read on both mainnet nodes (irreversible blocks, must match). If the reads fail, disagree or take over 4 minutes, the field waits; 3 hours after picks open it is set without form (`field.form.note` says why). Who is in the field is still decided by VHP.
   - Gaming: a producer would have to sign fewer blocks for 2 days (losing real block rewards) to look weak, and the boost is capped at 1 ÷ 0.80.
 - **Known limits (fix-check, 29 Oct):** the fast test (20-minute cuts) still leans to small nodes (big third about 0.73× a fair share, small third about 1.21×); form weighs all 48 hours the same, while in race hours the main producers sign up to 1.6% off their average.
-- **No VHP rebase:** handicaps are fixed for the whole event from the field's card; VHP changes after it are not followed.
+- **VHP added after the field's card (owner, 2026-10-29; fix-check LNF-3):** each cut window is checked against the latest race card taken by its end. A node with more VHP on it than on the field's card has its multiplier cut by the same ratio for that window (`raceCut`). Multipliers are only ever lowered, never raised. The recorder stores the card and the lowered values with each window (`card`, `hh`), and the publish job checks them against race-data.
+- **Watch-and-hold (owner, 2026-10-29; fix-check LNF-8/LNF-9):** a small steady edge decides a 9-hour race (in simulation, 5% above the multiplier wins about half the time). When a node signed at least max(5%, 3 standard deviations) above its multipliers across last week's races and won at least 2 of them, the week's vault file is held: `vault/HOLD-W<week>.json` is published instead, and the publish run fails so you get an email. After reviewing, release it with `gh variable set LASTNODE_RELEASE_WEEKS --body "<week>"` (comma-separated for several) inside the Vault's 3 days. Reading form and recent blocks stays part of the game ("hot hand" picks do better than chance).
 - **The cut:** the node with the fewest handicapped steps since the start goes. Ties: fewer raw blocks, then smaller card VHP, then the address that sorts later. Totals never reset during an event; handicaps and c are fixed per event.
 - **Picks (Picks contract, game 13; owner, 2026-10-29):**
   - One pick per event, made before it starts: your node and an optional backup.
@@ -43,7 +44,11 @@ A testnet practice copy runs on the owner's PC (`docs/lastnode/TESTNET.md`).
 - **Scores:** whole numbers 1–255 that keep the board's order and ties. Over 255 different places, the top 254 keep their tie-breaks and the rest share 1.
 - **When it is written:** once the week is final (12 h after it ends), and only within the Vault's 3-day window.
 - **No file at all** while the game contract has no per-game stakes (before v6).
-- **Publishing:** the publish step takes only last week's file, from 12 hours to 3 days after the week ends, with rows that are the final "Last week" board's players in its order. It never replaces a published vault file, and a different copy fails the run so you are told. A file with no rows while the board has scoring players is not published (the week's bucket stays in the game if no file arrives).
+- **Publishing:** the publish step takes only last week's file, from 12 hours to 3 days after the week ends.
+  - Its rows must be exactly what last week's day files give (`vaultScores` for the wallets it lists), and those day files are replayed and can't be rewritten once published (fix-check LNF-1, LNF-2).
+  - It never replaces a published vault file; a different copy, a file that doesn't match, or no file by the end of the 3 days fails the run so you are told.
+  - A file with no rows while the week has scoring players is not published (the week's bucket stays in the game if no file arrives).
+  - The publish job can't read stakes, so it can't tell an omitted wallet from an unstaked one: the Vault's own bot should check that every board player staked in game 13 that week is in the file (hand-off to the Vault chat).
 
 ## Where the code is
 | File | What |

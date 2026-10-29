@@ -61,7 +61,7 @@ test("the real cards fix the bias: the two steady under-signers win again, the s
 });
 
 // ── the recorder ──
-function raceDir() {
+function raceDir(extra = []) {
   // Hourly cards for the 48 hours before the field's card (N1 half the VHP, N2 a quarter, N3 and N4 an eighth each),
   // plus the field's own card.
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "race-f-"));
@@ -74,6 +74,7 @@ function raceDir() {
   };
   for (let t = EV.cardTime - 48 * H; t < EV.cardTime; t += H) put(t, { at: t, field: fieldRows, paddock: [] });
   put(EV.cardTime, { at: EV.cardTime + 60000, field: fieldRows, paddock: [] });
+  for (const c of extra) put(c.at, c);
   for (const [w, races] of Object.entries(byWeek)) fs.writeFileSync(path.join(d, `W${String(w).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: Number(w), races }));
   return d;
 }
@@ -84,7 +85,16 @@ const hoursOf = (bad) => async (node, t0, n) => {
   if (t0 !== EV.cardTime - 48 * H) return Array.from({ length: n }, () => ({}));   // other events in the window: no form
   return Array.from({ length: n }, (_, k) => (bad && node === "check" && k === 7 ? { ...hourOf, [N1]: 499 } : { ...hourOf }));
 };
-const base = (extra) => ({ p: "main", check: "check", game: L0.FAST_GAME, picksContract: null, windowOf: async () => { throw new Error("not irreversible yet"); },
+// Fix-check LNF-4: the form's VHP shares come from the 5-minute samples (12 an hour, as race-samples keeps them).
+function samplesDir(vhpOf = () => ({ [N1]: 4000, [N2]: 2000, [N3]: 1000, [N4]: 1000 }), from = EV.cardTime - 48 * H, to = EV.cardTime) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "samples-")), all = [];
+  for (let t = from; t < to; t += 5 * 60000) all.push({ at: t, height: 1, vhp: Object.fromEntries(Object.entries(vhpOf(t)).map(([a, v]) => [a, String(Math.round(v * 1e8))])) });
+  // Two overlapping snapshots, as the workflow takes them from the branch's history.
+  fs.writeFileSync(path.join(d, "S0.json"), JSON.stringify({ v: 1, updated: "x", samples: all.slice(0, 400) }));
+  fs.writeFileSync(path.join(d, "S1.json"), JSON.stringify({ v: 1, updated: "x", samples: all.slice(380) }));
+  return d;
+}
+const base = (extra) => ({ p: "main", check: "check", game: L0.FAST_GAME, picksContract: null, samplesDir: samplesDir(), windowOf: async () => { throw new Error("not irreversible yet"); },
   picksOf: async () => [], rankedOf: async (w) => new Set(w), trials: 300, ...extra });
 
 test("the recorder sets the field with form from the 48 h before the card, on both nodes, and publishes it", async () => {
@@ -132,4 +142,67 @@ test("fix-check LNF-6: a 48-hour read that never answers is cut off, and the run
   const r = await run(base({ raceDir: dir, out, hoursOf: () => new Promise(() => {}), formDeadlineMs: 300, now: { time: t, libTime: t } }));
   assert.ok(Date.now() - started < 30000, "finished");
   assert.ok(r.problems.some((p) => /took over/.test(p)), r.problems.join("; "));
+});
+
+test("fix-check LNF-4: VHP swapped between two addresses counts once (hourly average), so the form isn't dragged down", async () => {
+  const { sharesFromSamples, samplesIn } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+  // N4 (1000) moves its VHP to a second address B and back every 3 hours; on hourly cards (6-hour highs) both show 1000.
+  const B = A("F");
+  const dir = samplesDir((t) => (Math.floor((t - EV.cardTime) / (3 * H)) % 2 ? { [N1]: 4000, [N2]: 2000, [N3]: 1000, [B]: 1000 } : { [N1]: 4000, [N2]: 2000, [N3]: 1000, [N4]: 1000 }));
+  const sh = sharesFromSamples(samplesIn(dir), EV.cardTime - 48 * H, 48);
+  assert.ok(sh.every((x) => x), "every hour has its samples");
+  // Blocks: each address signs its share while it holds the VHP.
+  const hours = sh.map((s, k) => ({ shares: s, blocks: Math.floor(k / 3) % 2 ? { [N1]: 500, [N2]: 250, [N3]: 125, [B]: 125 } : { [N1]: 500, [N2]: 250, [N3]: 125, [N4]: 125 } }));
+  const f = L0.formOf(hours);
+  assert.ok(Math.abs(f[N4] - 1) < 0.02 && Math.abs(f[B] - 1) < 0.02, `form ${f[N4]} / ${f[B]} (the 6-hour high gave 0.80)`);
+  assert.ok(Math.abs(f[N1] - 1) < 0.02, "the others aren't pushed up");
+  // Hours with under 6 samples don't count.
+  assert.equal(sharesFromSamples(samplesIn(dir).filter((x, i) => i % 3 === 0), EV.cardTime - 48 * H, 48)[0], null);
+});
+
+test("fix-check LNF-3: VHP added after the field's card lowers that node's multiplier (never raises anyone's)", () => {
+  const card = { at: 1, field: [{ a: N1, vhp: 4000, k: 1200 }, { a: N2, vhp: 2000, k: 600 }, { a: N3, vhp: 1000, k: 300 }, { a: N4, vhp: 1000, k: 300 }], paddock: [] };
+  const f = L0.makeField(card, 2000);
+  assert.equal(f.vt, 8000);
+  assert.deepEqual(L0.raceCut(f, card), {}, "nobody gained");
+  const more = { ...card, at: 2, field: card.field.map((x) => (x.a === N3 ? { ...x, vhp: 2000 } : x)) };
+  const cut = L0.raceCut(f, more), n3 = f.nodes.find((n) => n.a === N3);
+  assert.deepEqual(Object.keys(cut), [N3], "only N3 changes, and nobody is raised");
+  assert.equal(cut[N3], Math.floor(L0.hInt(n3) * 1000 / 2000 + 0.5), "halved: its VHP doubled");
+  // In the race: total VHP 8,000 → 9,000, so N3 signs 2 × 8/9 of its card rate and everyone else 8/9.
+  const R = L0.rng(3), T = 3000, ks = Object.fromEntries(f.nodes.map((n) => [n.a, n.kh]));
+  const chance = (useCut) => { let w = 0; for (let t = 0; t < T; t++) { const hs = []; for (let k = 0; k < 3; k++) hs.push({ blocks: Object.fromEntries(f.nodes.map((n) => [n.a, R.poisson(ks[n.a] * (8 / 9) * (n.a === N3 ? 2 : 1))])), ...(useCut ? { hh: cut } : {}) }); if (L0.cutsFrom(f, hs).winner === N3) w++; } return w / T; };
+  const before = chance(false), after = chance(true);
+  assert.ok(before > 0.7, `without the check: ${before}`);
+  assert.ok(after <= 1.5 / 4, `with the check: ${after} (fair 0.25)`);
+});
+
+test("fix-check LNF-3: the recorder checks each window against the latest race card and records what it lowered", async () => {
+  const later = { at: EV.start + 10 * 60000, field: [{ a: N1, vhp: 4000, k: 1200 }, { a: N2, vhp: 2000, k: 600 }, { a: N3, vhp: 1000, k: 300 }, { a: N4, vhp: 2000, k: 600 }], paddock: [] };
+  const dir = raceDir([later]), out = fs.mkdtempSync(path.join(os.tmpdir(), "lns-f4-"));
+  const t1 = EV.opens + 15 * 60000;
+  await run(base({ raceDir: dir, out, hoursOf: hoursOf(false), now: { time: t1, libTime: t1 } }));
+  // Only this event's windows (earlier events in the window would use up the run's hour budget).
+  const win = async (node, a, b) => { if (a < EV.start) throw new Error("not this test's event"); return { from: 1, to: 2, counts: { [N1]: 70, [N2]: 35, [N3]: 15, [N4]: 30 } }; };
+  const t2 = EV.start + 25 * 60000;
+  const r = await run(base({ raceDir: dir, prev: out, out, hoursOf: hoursOf(false), windowOf: win, now: { time: t2, libTime: t2 } }));
+  const d = JSON.parse(fs.readFileSync(path.join(out, "D2026-11-03T08.json"), "utf8"));
+  assert.equal(d.hours.length, 1, `${r.problems.join("; ")} | ${JSON.stringify(d.field && d.field.at)} ${JSON.stringify(d.hours)}`);
+  assert.equal(d.hours[0].card, later.at);
+  const n4 = d.field.nodes.find((n) => n.a === N4);
+  assert.deepEqual(d.hours[0].hh, { [N4]: Math.floor(L0.hInt(n4) * 1000 / 2000 + 0.5) }, "N4 doubled its VHP: its multiplier is halved for this window");
+});
+
+test("watch-and-hold: a node far above its multiplier that won 2+ races holds the week's vault file", async () => {
+  const { watchWeek } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+  const field = { at: 0, c: 0, fairness: null, vt: 8000, nodes: [{ a: N1, vhp: 4000, kh: 200, h: 1 }, { a: N2, vhp: 2000, kh: 100, h: 2 }, { a: N3, vhp: 1000, kh: 50, h: 4 }, { a: N4, vhp: 1000, kh: 50, h: 4 }] };
+  const ev = (rate) => {
+    const hours = Array.from({ length: 3 }, (_, i) => ({ i, from: 0, to: 0, checked: 2, blocks: { [N1]: 200 * (60 / 60), [N2]: 100, [N3]: 50 - 5 * i, [N4]: Math.round(50 * rate) } }));
+    const res = L0.cutsFrom(field, hours);
+    return { field, hours, cuts: res.cuts, winner: res.winner, done: res.done };
+  };
+  const honest = watchWeek([ev(1.0), ev(1.0), ev(1.0)], 3600000);
+  assert.deepEqual(honest, [], "on par: nothing held");
+  const hot = watchWeek([ev(1.15), ev(1.15), ev(1.15), ev(1.15)], 3600000);   // 15% over: above 3 standard deviations for 600 expected blocks
+  assert.equal(hot.length, 1); assert.equal(hot[0].a, N4); assert.ok(hot[0].q >= 1.1 && hot[0].wins >= 2);
 });

@@ -84,7 +84,9 @@
 
   // ── the hours: the recorder's where it has them, else counted here from recent blocks ──
   function liveHours(df, now = nowT()) {
-    const hours = (df.hours || []).map((h) => ({ blocks: h.blocks, recorded: true }));
+    // Fix-check LNF-3: recorded windows carry the multipliers their race card lowered; live ones use the latest card.
+    const hours = (df.hours || []).map((h) => ({ blocks: h.blocks, hh: h.hh, recorded: true }));
+    const liveCut = card && df.field && Number(card.at) >= Number(df.field.at) ? L.raceCut(df.field, card) : null;
     if (!B || !B.ts.length || !df.field) return { hours, partial: null };
     const inField = new Set(df.field.nodes.map((n) => n.a));
     const tip = B.ts[B.ts.length - 1];
@@ -97,12 +99,12 @@
     for (let i = hours.length; i < df.field.nodes.length - 1; i++) {
       const t0 = df.start + i * H, t1 = t0 + H;
       if (t0 < B.ts[0]) return { hours, partial: null };
-      if (tip < t1) return { hours, partial: tip > t0 && now >= t0 ? { i, blocks: count(t0, t1), t0, t1 } : null };
-      hours.push({ blocks: count(t0, t1), recorded: false });
+      if (tip < t1) return { hours, partial: tip > t0 && now >= t0 ? { i, blocks: count(t0, t1), hh: liveCut, t0, t1 } : null };
+      hours.push({ blocks: count(t0, t1), hh: liveCut, recorded: false });
     }
     return { hours, partial: null };
   }
-  function result(df) { return L.cutsFrom(df.field, (df.hours || []).map((h) => ({ blocks: h.blocks }))); }
+  function result(df) { return L.cutsFrom(df.field, (df.hours || []).map((h) => ({ blocks: h.blocks, hh: h.hh }))); }
 
   // ── loading ──
   async function loadDay(day) {
@@ -187,7 +189,7 @@
     const { hours, partial } = liveHours(df, now);
     const res = L.cutsFrom(df.field, hours);
     // Live standings including the window running now (who would go if the cut were now).
-    const live = partial ? L.cutsFrom(df.field, [...hours, { blocks: partial.blocks }]) : res;
+    const live = partial ? L.cutsFrom(df.field, [...hours, { blocks: partial.blocks, hh: partial.hh }]) : res;
     const nextCut = res.done ? null : df.start + (res.cuts.length + 1) * H;
     const n = df.field.nodes.length;
     tag(res.done ? "Finished" : now < ev.start ? "Picks open" : "Live", res.done ? "done" : now < ev.start ? "wait" : "live");

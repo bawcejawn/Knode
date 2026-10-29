@@ -63,7 +63,7 @@ test("audit LN-2: who is staked must agree on both nodes, or no file this run", 
 });
 
 // A whole week of events from the recorder's own files, then the run after the week ends.
-function weekFiles(w, players) {
+function weekFiles(w, players, { events = [1], blocks = { N: 100, M: 10 } } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lns-v-"));
   const days = [];
   for (let t = L.weekStart(w); t < L.weekStart(w + 1); t += L.DAY) {
@@ -71,11 +71,14 @@ function weekFiles(w, players) {
     days.push(ev.day);
     fs.writeFileSync(path.join(dir, `D${ev.day}.json`), JSON.stringify({ v: 1, day: ev.day, start: ev.start, week: w, field: null, void: "test", hours: [], picks: {}, cuts: [], standing: [], winner: null, done: false, players: [] }));
   }
-  // One finished event with the players' results.
-  const ev = L.eventOf(L.weekStart(w) + L.DAY), N = [A("N"), A("M")];
-  const field = { at: 0, c: 0, fairness: null, nodes: [{ a: N[0], vhp: 2, kh: 100, h: 1 }, { a: N[1], vhp: 1, kh: 50, h: 2 }] };
-  const picks = { 0: players.map(([p, n]) => [p, N[n], ev.start - 3600000]) };
-  fs.writeFileSync(path.join(dir, `D${ev.day}.json`), JSON.stringify({ v: 1, day: ev.day, start: ev.start, week: w, field, hours: [{ i: 0, from: 1, to: 2, blocks: { [N[0]]: 100, [N[1]]: 10 }, checked: 2 }], picks, cuts: [], standing: [], winner: null, done: false, players: [] }));
+  // Finished events with the players' results (by default one, on the week's second day).
+  const N = [A("N"), A("M")];
+  for (const k of events) {
+    const ev = L.eventOf(L.weekStart(w) + k * L.DAY);
+    const field = { at: 0, c: 0, fairness: null, nodes: [{ a: N[0], vhp: 2, kh: 100, h: 1 }, { a: N[1], vhp: 1, kh: 50, h: 2 }] };
+    const picks = { 0: players.map(([p, n]) => [p, N[n], ev.start - 3600000]) };
+    fs.writeFileSync(path.join(dir, `D${ev.day}.json`), JSON.stringify({ v: 1, day: ev.day, start: ev.start, week: w, field, hours: [{ i: 0, from: 1, to: 2, blocks: { [N[0]]: blocks.N, [N[1]]: blocks.M }, checked: 2 }], picks, cuts: [], standing: [], winner: null, done: false, players: [] }));
+  }
   fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify({ v: 1, days, contract: null, game: 13 }));
   return dir;
 }
@@ -98,6 +101,24 @@ test("the vault file: written once the week is final, staked players only, no pr
   // After the Vault's 3-day window: no file is written any more.
   const late = await go(weekFiles(w, [[P1, 0]]), L.weekStart(w + 1) + 3 * L.DAY + 60000, stakedOf);
   assert.equal(late.vault, null);
+});
+
+test("watch-and-hold: a node far above its multiplier that won 2+ races holds the week's vault file until released", async () => {
+  // M (50 expected an hour) signs 80 in each of 3 races and wins them all: 1.6 × its multiplier's expectation.
+  const w = 3, now = L.weekStart(w + 1) + 13 * 3600000, stakedOf = async () => new Set([P1]);
+  const dir = weekFiles(w, [[P1, 1]], { events: [1, 2, 3], blocks: { N: 100, M: 80 } });
+  const r = await go(dir, now, stakedOf);
+  assert.equal(r.vault, null); assert.ok(!fs.existsSync(path.join(dir, "vault", `W${w}.json`)));
+  const h = JSON.parse(fs.readFileSync(path.join(dir, "vault", `HOLD-W${w}.json`), "utf8"));
+  assert.equal(h.week, w); assert.deepEqual(h.nodes.map((x) => [x.a, x.wins]), [[A("M"), 3]]); assert.ok(h.nodes[0].q >= 1.5);
+  assert.ok(r.problems.some((p) => /HELD for review/.test(p) && /gh variable set LASTNODE_RELEASE_WEEKS --body "3"/.test(p)));
+  // Released by the owner: the file is written.
+  const r2 = await run({ p: "m", check: null, prev: dir, out: dir, raceDir: "", picksContract: null, windowOf: async () => { throw new Error("no blocks needed"); },
+    picksOf: async () => [], rankedOf: async (x) => new Set(x), stakedOf, releaseWeeks: [w], trials: 200, now: { time: now, libTime: now } });
+  assert.ok(r2.vault); assert.ok(fs.existsSync(path.join(dir, "vault", `W${w}.json`)));
+  // On par: nothing held.
+  const ok = await go(weekFiles(w, [[P1, 0]], { events: [1, 2, 3] }), now, stakedOf);
+  assert.ok(ok.vault); assert.equal(ok.hold, null);
 });
 
 test("no vault file while stakes can't be read (before v6), and never in testnet practice", async () => {
@@ -203,11 +224,13 @@ const idx = { v: 1, updated: "x", days: [], contract: null, game: 13 };
 // an hour. P1 and P2 ride the winner (10 + 5 = 15), P4's node goes at cut 5 (4), P3's at cut 3 (2).
 const NODES = Array.from({ length: 11 }, (_, i) => A("ABCDEFGHJKL"[i]));
 const CUT_ORDER = NODES.slice(1), WINNER = NODES[0];
-function dayFile(day, pickRows, { hours = 10, extra = {} } = {}) {
+function dayFile(day, pickRows, { hours = 10, extra = {}, raceCard = undefined } = {}) {
   const start = Date.parse(`${day}T14:00:00Z`);
-  const field = { at: start - 26 * 3600000, c: 0, fairness: null, nodes: NODES.map((a, i) => ({ a, vhp: 2000 - i * 10, kh: 100, h: 1 })) };
+  const field = { at: start - 26 * 3600000, c: 0, fairness: null, nodes: NODES.map((a, i) => ({ a, vhp: 2000 - i * 10, kh: 100, h: 1 })), ...(raceCard !== undefined ? { vt: 21450 } : {}) };
+  // raceCard: the card every window names (fix-check LNF-3), and the multipliers it lowers.
   const hs = Array.from({ length: hours }, (_, i) => ({ i, from: 1000 + i * 1200, to: 2199 + i * 1200, checked: 2,
-    blocks: Object.fromEntries(NODES.filter((a) => !CUT_ORDER.slice(0, i).includes(a)).map((a) => [a, a === CUT_ORDER[i] ? 0 : 100])) }));
+    blocks: Object.fromEntries(NODES.filter((a) => !CUT_ORDER.slice(0, i).includes(a)).map((a) => [a, a === CUT_ORDER[i] ? 0 : 100])),
+    ...(raceCard !== undefined ? { card: raceCard ? raceCard.at : null, ...(raceCard && Object.keys(L.raceCut(field, raceCard)).length ? { hh: L.raceCut(field, raceCard) } : {}) } : {}) }));
   const res = L.cutsFrom(field, hs);
   const picks = { 0: pickRows.map(([w, s0, b]) => (b ? [w, s0, start - 3600000, b] : [w, s0, start - 3600000])) };
   const players = pickRows.map(([w, s0, b]) => ({ a: w, r: L.playerResult(field, res, { start: s0, backup: b || null }) })).filter((x) => x.r.entered)
@@ -324,4 +347,40 @@ linux("fix-check LNF-12: the Vault's 3 days end with no file while the week had 
   const env = { KG_TEST_NOW: AT(4, 72.5) };
   const r = pub.publish(history(), env);
   assert.notEqual(r.status, 0); assert.match(r.out, /no vault file was published/);
+});
+
+// Fix-check LNF-3: each window's lowered multipliers are checked against the real race card in the publish job.
+function raceFiles(cards) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "lns-race-"));
+  fs.writeFileSync(path.join(d, "W003.json"), JSON.stringify({ v: 1, week: 3, races: [{ id: "x", cards }] }));
+  return d;
+}
+const S10 = Date.parse("2026-11-10T14:00:00Z");
+const grown = { at: S10 - 2 * 3600000, field: NODES.map((a, i) => ({ a, vhp: i === 5 ? 4000 : 2000 - i * 10, k: 600 })), paddock: [] };
+
+linux("fix-check LNF-3: a window's lowered multipliers must be what its race card gives", () => {
+  const dir = raceFiles([grown]);
+  const okDay = dayFile("2026-11-10", PICKS, { raceCard: grown });
+  assert.ok(okDay.hours[0].hh && okDay.hours[0].hh[NODES[5]] < 10000, "the node that doubled its VHP is lowered");
+  const pub = publisher();
+  const r = pub.publish(history(boardOf([okDay]), okDay), { FAKE_RACE: dir });
+  assert.equal(r.status, 0, r.out);
+  // A bad run drops the lowering (or names no card while one exists): refused.
+  const pub2 = publisher();
+  const noCut = { ...okDay, hours: okDay.hours.map(({ hh, ...h }) => h) };
+  const rc = L.cutsFrom(noCut.field, noCut.hours);
+  const r2 = pub2.publish(history(boardOf([{ ...noCut, ...{ cuts: rc.cuts } }]), { ...noCut, cuts: rc.cuts, standing: rc.standing, winner: rc.winner }), { FAKE_RACE: dir });
+  assert.notEqual(r2.status, 0); assert.match(r2.out, /lowered multipliers aren't what its race card gives/);
+  const noCard = dayFile("2026-11-10", PICKS, { raceCard: null });
+  const r3 = publisher().publish(history(boardOf([noCard]), noCard), { FAKE_RACE: dir });
+  assert.notEqual(r3.status, 0); assert.match(r3.out, /skipped the race card check/);
+});
+
+linux("watch-and-hold: a held week is published as HOLD-W<week>.json and the run fails so you're told", () => {
+  const pub = publisher();
+  pub.seed(history());
+  const hold = { game: 13, week: 3, nodes: [{ a: NODES[3], q: 1.6, wins: 3, events: 3 }], why: "held for the owner's review" };
+  const r = pub.publish({ ...history(), "vault/HOLD-W3.json": hold });
+  assert.notEqual(r.status, 0); assert.match(r.out, /HELD for your review/);
+  assert.deepEqual(JSON.parse(pub.show("vault/HOLD-W3.json")), hold); assert.equal(pub.show("vault/W3.json"), null);
 });
