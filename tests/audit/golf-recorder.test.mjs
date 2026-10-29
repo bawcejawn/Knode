@@ -10,7 +10,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 const APP = process.env.APP || ".";
-const { run, sourcesFromGames } = await import(path.resolve(APP, "bot/games/golf.ts"));
+const { run, sourcesFromGames, stakersFrom, minStakeFor, vaultFile } = await import(path.resolve(APP, "bot/games/golf.ts"));
 const M = globalThis.KRaceMath;
 const H = 3600000, DAY = 24 * H;
 
@@ -487,11 +487,50 @@ test("staked weeks count VHP: a hole needs 10 VHP among its scorers, and a big s
   assert.match(holeOf(out2, "blockx").why, /less than 10 VHP/);
 });
 
-test("no vault file for a staked week with nobody to pay (fix-check V5)", async () => {
+test("nobody staked: the vault file has empty rows, and the run says so (handoff 2026-10-29)", async () => {
   const nobody = async () => new Map();
   const out = tmp("golf-");
   const r = await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), golfStakersOf: nobody }));
   assert.equal(readOut(out, "W003.json").final, true);
-  assert.ok(!fs.existsSync(path.join(out, "vault")));
-  assert.match(r.problems.join(" "), /no vault file written/);
+  const v = readOut(path.join(out, "vault"), "W3.json");
+  assert.deepEqual(v, { game: 6, week: 3, final: true, rows: [], first: [], second: [] });
+  assert.match(r.problems.join(" "), /vault file has no rows/);
+  try { execFileSync("python3", ["--version"]); } catch { return; }
+  const [shape] = checks();
+  assert.match(execFileSync("python3", [shape, out], { encoding: "utf8" }), /golf files ok/);
+});
+
+test("who counts as staked in Block Golf: the Vault's week_stake against that week's minimum (handoff 2026-10-29)", () => {
+  const V = 100000000n;
+  const cfg = { min_stake: String(V), min_stake_next: String(2n * V), min_stake_next_week: "5" };
+  assert.equal(minStakeFor(cfg, 4), V);
+  assert.equal(minStakeFor(cfg, 5), 2n * V, "a new minimum applies from its first week");
+  assert.equal(minStakeFor({ min_stake: "0" }, 4), V, "never under 1 VHP");
+  const reads = [
+    { a: P[0], weekStake: String(5n * V) },          // 5 VHP all week
+    { a: P[1], weekStake: String(V + V / 2n) },      // withdrew mid-week down to 1.5 VHP: counted at its lowest, 1 whole VHP
+    { a: P[2], weekStake: "0" },                     // withdrew everything: not staked that week
+    { a: P[3], weekStake: String(V / 2n) },          // under the minimum
+    { a: P[4], weekStake: String(V) },
+  ];
+  const w4 = stakersFrom(reads, cfg, 4);
+  assert.deepEqual([...w4], [[P[0], 5], [P[1], 1], [P[4], 1]]);
+  const w5 = stakersFrom(reads, cfg, 5);
+  assert.deepEqual([...w5], [[P[0], 5]], "from week 5 the minimum is 2 VHP");
+});
+
+test("vault rows: only Block Golf stakers (a player staked in another game is left out), ties keep equal points", async () => {
+  // P6 is ranked on the race board (it holds VHP or stakes elsewhere) but has no Block Golf stake
+  const golfers = async (_n, who) => vhp(who.filter((a) => a !== FREE && a !== P[6]));
+  const out = tmp("golf-");
+  await run(base({ now: END + 13 * H, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), golfStakersOf: golfers }));
+  const v = readOut(path.join(out, "vault"), "W3.json");
+  const wf = readOut(out, "W003.json");
+  assert.ok(wf.cards.some((c) => c.a === P[6]), "P6 still has a scorecard (Free play board)");
+  assert.ok(!v.rows.some((r) => r.player === P[6]), "but isn't in the vault rows");
+  // ties: equal golf points stay equal in the file
+  const t = vaultFile({ week: 3, cards: [
+    { a: P[0], ranked: true, pts: 9 }, { a: P[1], ranked: true, pts: 9 }, { a: P[2], ranked: true, pts: 4 },
+    { a: P[3], ranked: false, pts: 12 }, { a: P[4], ranked: true, pts: 0 }, { a: P[5], ranked: true, pts: 300 } ] });
+  assert.deepEqual(t.rows, [{ player: P[5], points: 255 }, { player: P[0], points: 9 }, { player: P[1], points: 9 }, { player: P[2], points: 4 }]);
 });

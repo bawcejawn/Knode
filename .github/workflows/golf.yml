@@ -145,9 +145,10 @@ jobs:
               assert os.path.exists(w), "vault/" + f + ": its week file must be published with it"
               wk = json.load(open(w, encoding="utf-8"))
               assert wk["final"] is True and wk["practice"] is False, "vault/" + f + ": its week must be final and staked"
-              # The rows must be exactly the week's staked scorecards with 1+ points (fix-check V4), and not empty (V5).
+              # The rows must be exactly the week's staked scorecards with 1+ points (fix-check V4); empty when nobody
+              # staked scored (the Vault rolls that week over).
               want = sorted((c["a"], min(255, c["pts"])) for c in wk["cards"] if c["ranked"] is True and c["pts"] >= 1)
-              assert want and sorted((r["player"], r["points"]) for r in j["rows"]) == want, "vault/" + f + ": rows don't match the week's scorecards"
+              assert sorted((r["player"], r["points"]) for r in j["rows"]) == want, "vault/" + f + ": rows don't match the week's scorecards"
           for f in os.listdir(d):
               if f == "vault": continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))

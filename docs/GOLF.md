@@ -52,8 +52,9 @@ The first run puts every game that is already live on the course straight away.
 
 - Add Block Golf (game id 6) to the vault registry (48-hour notice).
 - For each final staked week the recorder writes the Vault's file `games-data:golf/vault/W<week>.json` (game 6; every
-  player staked in Block Golf that week with 1+ points, 1–255; no free-prize winners). The hourly vault bot posts it.
-  Its source for `game-data/deployment.json` → `vaultGames` is **`games-data:golf`**. A sent file can't be changed by
+  player staked in Block Golf that week, `week_stake` at least that week's Vault minimum, with 1+ points, 1–255; empty
+  rows when nobody staked scored; no free-prize winners). The hourly vault bot posts it. Its line for
+  `game-data/deployment.json` → `vaultGames`: `"6": { "name": "Block Golf", "results": "games-data:golf/vault" }`. A sent file can't be changed by
   the recorder (the publish job refuses it); corrections go through the owner's 24-hour correction window on the Vault.
 
 ## No testnet run (owner, 2026-10-28)

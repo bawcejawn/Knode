@@ -195,17 +195,39 @@ async function readRanked(node: any, vhpContract: string, knodeGame: string | nu
 /** Staked weeks: the whole VHP each player has staked in Block Golf for week w (vault v6 get_game_player: the stake
  *  that counts for that week; under 1 VHP = not staked). A failed read throws; it never quietly drops a player. */
 async function readGolfStakers(node: any, vault: string | null, who: string[], w: number): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
-  if (!who.length) return out;
+  if (!who.length) return new Map();
   if (!vault) throw new Error("no vault contract");
   const c = new Contract({ id: vault, abi: GAME_ABI(), provider: node });
   const f: any = c.functions;
   if (typeof f.get_game_player !== "function") throw new Error("the vault (v6) isn't live: its ABI has no get_game_player");
+  const st: any = await withRetry("vault state", () => f.get_state({}));
+  const config = st?.result?.config;
+  if (!config || typeof config !== "object") throw new Error("no answer reading the vault's config");
+  const reads: { a: string; weekStake: string }[] = [];
   for (const a of who) {
     const r: any = await withRetry(`Block Golf stake of ${a}`, () => f.get_game_player({ player: a, game: GOLF_GAME_ID, week: String(w) }));
     if (!r || typeof r !== "object") throw new Error(`no answer reading the Block Golf stake of ${a}`);
-    const whole = BigInt(r.result?.week_stake || "0") / ONE_VHP;
-    if (whole >= 1n) out.set(a, Number(whole > 1000000000n ? 1000000000n : whole));
+    reads.push({ a, weekStake: String(r.result?.week_stake ?? "0") });
+  }
+  return stakersFrom(reads, config, w);
+}
+
+/** The Vault's minimum stake for week w (its own minStakeFor: a new minimum applies from its first week). */
+export function minStakeFor(config: any, w: number): bigint {
+  const next = BigInt(config?.min_stake_next || "0"), nextWeek = BigInt(config?.min_stake_next_week || "0");
+  const min = next > 0n && BigInt(w) >= nextWeek ? next : BigInt(config?.min_stake || "0");
+  return min > ONE_VHP ? min : ONE_VHP;            // never under 1 VHP (the owner's player rule)
+}
+/** Who is staked in Block Golf for week w, and with how many whole VHP: week_stake (the stake that counts for that
+ *  week, at its lowest; 0 if the whole stake was withdrawn) at least that week's minimum (handoff, 2026-10-29). */
+export function stakersFrom(reads: { a: string; weekStake: string }[], config: any, w: number): Map<string, number> {
+  const min = minStakeFor(config, w), out = new Map<string, number>();
+  for (const { a, weekStake } of reads) {
+    if (!isAddr(a) || !/^\d{1,30}$/.test(weekStake)) continue;
+    const s = BigInt(weekStake);
+    if (s < min) continue;
+    const whole = s / ONE_VHP;
+    out.set(a, Number(whole > 1000000000n ? 1000000000n : whole));
   }
   return out;
 }
@@ -386,9 +408,9 @@ export async function run(o: Opts) {
   for (const [w, wf] of weeks) {
     if (!wf.final || wf.practice || !wf.holes.length) continue;
     const vf = vaultFile(wf);
-    // Nobody to pay (every hole skipped, or no staked scorer): no file, so the Vault rolls the week over in the game;
-    // the owner is told (fix-check V5).
-    if (!vf.rows.length) { problems.push(`week ${w}: no staked Block Golf scorecards; no vault file written`); continue; }
+    // Nobody to pay (no staked scorer): the file says so with empty rows, as the Vault asks (handoff, 2026-10-29), and
+    // the bucket rolls over in Block Golf. The owner is told, in case every hole was skipped.
+    if (!vf.rows.length) problems.push(`week ${w}: no staked Block Golf scorecards; the vault file has no rows`);
     fs.mkdirSync(path.join(OUT, "vault"), { recursive: true });
     fs.writeFileSync(path.join(OUT, "vault", `W${w}.json`), JSON.stringify(vf) + "\n");
   }
