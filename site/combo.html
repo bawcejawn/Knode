@@ -33,77 +33,179 @@
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="board.css">
   <style>
-    .pr { max-width: 1040px; margin: 0 auto; padding: 28px 16px 60px; }
-    .pr h1 { font-family: var(--display); font-size: clamp(28px, 4vw, 40px); margin: 0 0 6px; }
+    /* Combo Card. The board (what you can pick) stays quiet; the slip (your card) is the one loud thing: a navy
+       scoreboard ticket, perforated, with the payout in wide Archivo numerals. Colours are the site's tokens. */
+    .pr { max-width: 1120px; margin: 0 auto; padding: 24px 16px 64px; }
+    .pr h1 { font-family: var(--display); font-weight: 800; font-size: clamp(30px, 4.4vw, 46px); line-height: 1.02; margin: 0 0 8px; letter-spacing: -.01em; }
     .pr h2 { font-family: var(--display); font-size: 20px; margin: 0 0 8px; }
-    .pr .lede { color: var(--muted); margin: 0 0 18px; max-width: 70ch; }
-    .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; box-shadow: var(--shadow); margin-bottom: 16px; }
-    .status { font-size: 14px; color: var(--muted); min-height: 1.3em; margin: 0 0 8px; }
+    .lede { color: var(--muted); margin: 0 0 16px; max-width: 62ch; font-size: 17px; }
+    .soon { border-left: 4px solid var(--tang); background: var(--surface); border-radius: 0 12px 12px 0; padding: 10px 14px; font-size: 14px; margin: 0 0 16px; color: var(--muted); }
+    .soon b { color: var(--ink); }
+    .status { font-size: 14px; color: var(--muted); margin: 0 0 8px; }
+    .status:empty { display: none; }
     .note { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
-    .head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
     .mono { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
-    .tools { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; margin-bottom: 16px; }
-    .tools a { color: var(--violet); }
-    .soon { border: 1px dashed var(--violet); background: var(--violet-soft); border-radius: 12px; padding: 10px 12px; font-size: 14px; margin: 0 0 14px; }
-    /* builder: outcomes on the left, the card on the right (stacked on phones, the card first) */
-    .cb { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-    .cb > .card { margin-bottom: 0; min-width: 0; }
-    .mycard { position: sticky; top: 80px; }
-    .seg { display: flex; gap: 6px; margin: 0 0 10px; flex-wrap: wrap; }
-    .seg button, .chip { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; white-space: nowrap; }
-    .seg button[aria-pressed="true"], .chip[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
-    .chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; padding: 2px 0 8px; margin-bottom: 6px; }
-    .chip { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 12px; border-radius: 12px; flex: none; }
-    .chip small { font-size: 11px; opacity: .75; }
-    .chip.used { border-color: var(--violet); }
-    .chip:disabled { opacity: .45; cursor: not-allowed; }
-    table.odds { width: 100%; border-collapse: collapse; font-size: 14px; }
-    .odds th, .odds td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: middle; }
-    .odds th { font-size: 12px; color: var(--muted); font-weight: 700; }
-    .odds th.num, .odds td.num { text-align: right; }
-    .leg-btn { font: inherit; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 700; min-width: 64px; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); cursor: pointer; }
-    .leg-btn small { display: block; font-size: 11px; font-weight: 400; color: var(--muted); }
-    .leg-btn:hover:not(:disabled) { border-color: var(--violet); }
-    .leg-btn[aria-pressed="true"] { background: var(--violet); border-color: var(--violet); color: #fff; }
-    .leg-btn[aria-pressed="true"] small { color: #fff; opacity: .85; }
-    .leg-btn:disabled { opacity: .4; cursor: not-allowed; }
-    .legs { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-    .legs li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); font-size: 14px; }
-    .legs li .n { font-weight: 800; color: var(--muted); }
-    .legs li .what small { display: block; color: var(--muted); font-size: 12px; }
-    .legs li .x { font-variant-numeric: tabular-nums; font-weight: 800; }
-    .legs li button { font: inherit; font-size: 18px; line-height: 1; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
-    .legs .empty { display: block; text-align: center; color: var(--muted); border-style: dashed; }
-    .tot { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 14px; margin: 0 0 10px; }
-    .tot b { font-variant-numeric: tabular-nums; text-align: right; }
-    .tot .big { font-family: var(--display); font-size: 30px; line-height: 1.1; }
-    .warn { color: var(--rose); font-size: 13px; min-height: 1.2em; margin: 4px 0 8px; }
-    .acts { display: flex; gap: 8px; flex-wrap: wrap; }
-    .acts .btn[disabled] { background: var(--paper); color: var(--muted); border: 1px dashed var(--line); box-shadow: none; opacity: 1; cursor: not-allowed; }
+    .num { font-family: var(--num); font-variant-numeric: tabular-nums; }
+
+    .cb { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 22px; align-items: start; }
+
+    /* ── the board ── */
+    .games { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; margin: 0 0 14px; padding-bottom: 2px; }
+    .games::-webkit-scrollbar { display: none; }
+    .games button { flex: none; font: 700 14px/1 var(--body); padding: 10px 14px; border-radius: 99px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+    .games button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+    .games button:disabled { cursor: default; color: var(--muted); background: transparent; border-style: dashed; }
+    .games button small { font-weight: 400; font-size: 12px; }
+    .group-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 18px 0 8px; }
+    .group-h:first-child { margin-top: 0; }
+    .group-h h2 { margin: 0; }
+    .group-h span { font-size: 13px; color: var(--muted); }
+
+    .ev { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); margin: 0 0 12px; overflow: hidden; }
+    .ev-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    .ev-h b { font-family: var(--display); font-size: 17px; }
+    .ev-h .when { font-size: 13px; color: var(--muted); }
+    .ev-h .lock { font-size: 13px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .ev-h .lock.soon-lock { color: var(--rose); }
+    .ev.has .ev-h { background: color-mix(in srgb, var(--tang) 12%, var(--surface)); }
+    .picked { font-size: 13px; font-weight: 700; color: var(--ink); background: var(--surface); border: 1.5px solid var(--tang); border-radius: 99px; padding: 3px 10px; }
+
+    .px { width: 100%; border-collapse: collapse; }
+    .px th { font-size: 12px; font-weight: 700; color: var(--muted); text-align: right; padding: 8px 6px 4px; }
+    .px th:first-child { text-align: left; padding-left: 14px; }
+    .px td { padding: 5px 6px; border-top: 1px solid var(--line); vertical-align: middle; }
+    .px td:first-child { padding-left: 14px; }
+    .px td:last-child, .px th:last-child { padding-right: 14px; }
+    .px td.p { text-align: right; width: 1%; }
+    .px .who { display: flex; flex-direction: column; min-width: 0; }
+    .px .who a { color: var(--ink); text-decoration: none; font-weight: 700; font-size: 14px; }
+    .px .who a:hover { text-decoration: underline; }
+    .px .who small { font-size: 12px; color: var(--muted); }
+    /* a price: the leg's worth large, its chance small. Picked: the slip's orange. */
+    .price { font: inherit; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 72px; min-height: 46px; padding: 4px 8px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--paper); color: var(--ink); cursor: pointer; transition: transform .1s ease, background-color .12s ease, border-color .12s ease; }
+    .price b { font-family: var(--num); font-weight: 800; font-size: 16px; font-variant-numeric: tabular-nums; font-stretch: 112%; }
+    .price small { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .price:hover:not(:disabled) { border-color: var(--ink); }
+    .price:active:not(:disabled) { transform: scale(.96); }
+    .price[aria-pressed="true"] { background: var(--tang); border-color: var(--tang); color: var(--tang-ink); }
+    .price[aria-pressed="true"] small { color: var(--tang-ink); }
+    .price:disabled { opacity: .38; cursor: not-allowed; }
+    .price:focus-visible, .games button:focus-visible, .more:focus-visible, .bx summary:focus-visible { outline: 3px solid var(--violet); outline-offset: 2px; }
+    .more { display: block; width: 100%; font: 700 13px/1 var(--body); padding: 11px; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--violet); cursor: pointer; }
+
+    .bx { border-top: 1px solid var(--line); }
+    .bx:first-of-type { border-top: 0; }
+    .bx summary { list-style: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 11px 14px; cursor: pointer; }
+    .bx summary::-webkit-details-marker { display: none; }
+    .bx summary b { font-family: var(--num); font-variant-numeric: tabular-nums; font-size: 15px; font-stretch: 105%; }
+    .bx summary .when { font-size: 13px; color: var(--muted); grid-column: 1; }
+    .bx summary .act { grid-row: 1 / span 2; grid-column: 2; font-size: 13px; font-weight: 700; color: var(--violet); }
+    .bx[open] summary .act::after { content: " ▴"; } .bx:not([open]) summary .act::after { content: " ▾"; }
+    .bx.has summary { background: color-mix(in srgb, var(--tang) 12%, var(--surface)); }
+    .bx.has summary .act { color: var(--ink); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; padding: 4px 14px 14px; }
+    .grid .price { flex-direction: row; justify-content: space-between; gap: 8px; min-height: 40px; width: 100%; text-align: left; }
+    .grid .price span { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .grid .price em { font-style: normal; display: flex; flex-direction: column; align-items: flex-end; }
+
+    /* ── the slip ── */
+    .slip { position: sticky; top: 84px; color: var(--navy-ink); }
+    .slip-bar { display: none; }
+    .ticket { background: var(--navy); border-radius: 18px; position: relative; box-shadow: 0 22px 40px -24px rgba(20, 33, 61, .8); }
+    .t-top { padding: 18px 20px 14px; }
+    .t-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+    .t-h h2 { font-family: var(--display); font-size: 22px; margin: 0; color: var(--navy-ink); }
+    .t-h span { font-family: var(--num); font-weight: 800; font-stretch: 112%; color: var(--sun); font-variant-numeric: tabular-nums; }
+    .legs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .legs li { display: grid; grid-template-columns: minmax(0, 1fr) auto 32px; gap: 10px; align-items: center; padding: 9px 10px 9px 12px; border-radius: 12px; background: var(--navy-2); }
+    .legs li.fresh { animation: pop .35s ease-out; }
+    @keyframes pop { from { transform: scale(.96); background: color-mix(in srgb, var(--tang) 45%, var(--navy-2)); } to { transform: none; } }
+    .legs .what { min-width: 0; }
+    .legs .what b { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .legs .what small { display: block; font-size: 12px; color: var(--navy-muted); }
+    .legs .x { font-family: var(--num); font-weight: 800; font-size: 17px; font-stretch: 112%; color: var(--sun); font-variant-numeric: tabular-nums; }
+    .legs li button { font: inherit; font-size: 18px; line-height: 1; width: 30px; height: 30px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, .08); color: var(--navy-muted); cursor: pointer; }
+    .legs li button:hover { background: rgba(255, 255, 255, .16); color: var(--navy-ink); }
+    .legs .empty { display: block; text-align: center; padding: 18px 12px; background: transparent; border: 1.5px dashed rgba(255, 255, 255, .22); color: var(--navy-muted); font-size: 14px; }
+    /* the perforation between the legs and the payout */
+    .perf { position: relative; height: 0; border-top: 2px dashed rgba(255, 255, 255, .2); margin: 0 18px; }
+    .perf::before, .perf::after { content: ""; position: absolute; top: -12px; width: 22px; height: 22px; border-radius: 50%; background: var(--paper); }
+    .perf::before { left: -30px; } .perf::after { right: -30px; }
+    .t-pay { padding: 14px 20px 18px; }
+    .chain { font-family: var(--num); font-stretch: 100%; font-size: 14px; color: var(--navy-muted); font-variant-numeric: tabular-nums; min-height: 1.3em; overflow-wrap: anywhere; }
+    .pays { display: flex; align-items: baseline; gap: 8px; margin: 2px 0 6px; }
+    .pays b { font-family: var(--num); font-weight: 900; font-stretch: 125%; font-size: clamp(40px, 5vw, 52px); line-height: 1; color: var(--sun); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+    .pays span { font-size: 15px; color: var(--navy-muted); }
+    .capbar { height: 6px; border-radius: 99px; background: rgba(255, 255, 255, .1); overflow: hidden; margin: 0 0 4px; }
+    .capbar i { display: block; height: 100%; width: 0; background: var(--sun); border-radius: 99px; transition: width .3s ease; }
+    .capnote { font-size: 12px; color: var(--navy-muted); margin: 0 0 12px; }
+    .facts { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 14px; margin: 0 0 14px; }
+    .facts span { color: var(--navy-muted); }
+    .facts b { text-align: right; font-variant-numeric: tabular-nums; }
+    .ladder { display: flex; gap: 4px; margin: 0 0 6px; }
+    .ladder div { flex: 1; text-align: center; padding: 6px 0 5px; border-radius: 8px; background: rgba(255, 255, 255, .06); font-size: 11px; color: var(--navy-muted); line-height: 1.15; }
+    .ladder div b { display: block; font-family: var(--num); font-weight: 800; font-stretch: 110%; font-size: 13px; color: var(--navy-ink); font-variant-numeric: tabular-nums; }
+    .ladder div.on { background: var(--tang); color: var(--tang-ink); }
+    .ladder div.on b { color: var(--tang-ink); }
+    .ladder div.next { box-shadow: inset 0 0 0 1.5px var(--tang); }
+    .ladder-note { font-size: 12px; color: var(--navy-muted); margin: 0 0 14px; }
+    .toast { font-size: 13px; color: var(--navy); background: var(--sun); border-radius: 10px; padding: 8px 10px; margin: 0 0 12px; }
+    .toast:empty { display: none; }
+    .warn { font-size: 13px; color: #FFD2C4; margin: 0 0 12px; }
     .warn:empty { display: none; }
-    .ghost { font: inherit; font-size: 14px; padding: 8px 14px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
-    .slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0 0 12px; }
-    .slot { border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; font-size: 13px; color: var(--muted); }
-    .slot b { display: block; color: var(--ink); }
-    .share-img { width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); display: block; margin: 0 0 10px; }
-    .explain { font-size: 14px; color: var(--muted); }
+    .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+    .acts .go { flex: 1 1 100%; font: 800 16px/1 var(--body); padding: 15px; border-radius: 99px; border: 0; background: var(--tang); color: var(--tang-ink); cursor: pointer; }
+    .acts .go:disabled { background: rgba(255, 255, 255, .1); color: var(--navy-muted); cursor: not-allowed; }
+    .acts .sm { flex: 1; font: 700 14px/1 var(--body); padding: 11px 10px; border-radius: 99px; border: 1.5px solid rgba(255, 255, 255, .22); background: transparent; color: var(--navy-ink); cursor: pointer; text-align: center; text-decoration: none; }
+    .acts .sm:hover { border-color: var(--navy-ink); }
+    .acts button:focus-visible, .acts a:focus-visible, .legs button:focus-visible, .slip-bar:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
+    .rules { font-size: 12px; color: var(--muted); margin: 12px 4px 0; }
+
+    /* ── below the builder ── */
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; margin: 22px 0 0; }
+    .share-img { width: 100%; max-width: 600px; height: auto; border-radius: 12px; display: block; margin: 0 0 12px; }
+    .share-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+    .explain { font-size: 15px; color: var(--muted); max-width: 70ch; }
     .explain p { margin: 8px 0; }
-    .formula { font-family: ui-monospace, Consolas, monospace; font-size: 14px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; display: inline-block; }
-    table.base { border-collapse: collapse; font-size: 14px; margin: 6px 0; }
-    .base th, .base td { padding: 4px 12px; border-bottom: 1px solid var(--line); text-align: center; font-variant-numeric: tabular-nums; }
-    #build, #share, #board-box, #how { scroll-margin-top: 80px; }
-    @media (max-width: 860px) {
+    .explain b { color: var(--ink); }
+    .formula { font-family: var(--num); font-size: 15px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; display: inline-block; color: var(--ink); }
+    table.base { border-collapse: collapse; font-size: 14px; margin: 6px 0; font-variant-numeric: tabular-nums; }
+    .base th, .base td { padding: 5px 10px; border-bottom: 1px solid var(--line); text-align: center; }
+    #build, #share, #board-box, #how { scroll-margin-top: 84px; }
+
+    @media (prefers-reduced-motion: reduce) { .legs li.fresh { animation: none; } .capbar i, .price { transition: none; } }
+
+    /* ── phones: the slip folds into a bar above the tab bar and opens as a sheet ── */
+    @media (max-width: 900px) {
       .cb { grid-template-columns: minmax(0, 1fr); }
-      .mycard { position: static; order: -1; }
+      .pr { padding-bottom: 150px; }
+      .slip { position: fixed; left: 8px; right: 8px; top: auto; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); z-index: 35; }
+      .slip-bar { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 10px; font: inherit; padding: 12px 16px; border: 0; border-radius: 16px; background: var(--navy); color: var(--navy-ink); cursor: pointer; box-shadow: 0 -6px 30px -10px rgba(20, 33, 61, .6); }
+      .slip-bar .n { font-weight: 800; }
+      .slip-bar .n i { font-style: normal; display: inline-grid; place-items: center; min-width: 26px; height: 26px; border-radius: 99px; background: var(--tang); color: var(--tang-ink); margin-right: 8px; font-family: var(--num); }
+      .slip-bar .v { font-family: var(--num); font-weight: 900; font-stretch: 120%; color: var(--sun); font-size: 20px; }
+      .slip-bar .v small { font-family: var(--body); font-weight: 400; font-size: 12px; color: var(--navy-muted); margin-left: 6px; }
+      .slip:not(.open) .ticket, .slip:not(.open) .rules { display: none; }
+      .slip.open .slip-bar { border-radius: 16px 16px 0 0; box-shadow: none; }
+      .slip.open .ticket { border-radius: 0 0 18px 18px; max-height: calc(100vh - 220px); overflow: auto; overscroll-behavior: contain; }
+      .slip.open .rules { display: none; }
+      .slip.bump .slip-bar { animation: bump .35s ease-out; }
+      @keyframes bump { 30% { transform: translateY(-4px); } }
+      .perf::before, .perf::after { display: none; }
+      .t-h h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      .t-h { justify-content: flex-end; margin-bottom: 8px; }
     }
     @media (max-width: 640px) {
-      .pr { padding-top: 16px; }
+      .pr { padding-top: 14px; }
+      .lede { font-size: 15px; }
+      .price { min-width: 60px; padding: 4px 4px; }
+      .price b { font-size: 15px; }
+      .px .hide-sm { display: none; }
+      .px td, .px th { padding-left: 3px; padding-right: 3px; }
       .card { padding: 14px; border-radius: 18px; }
-      .odds .hide-sm { display: none; }
-      .leg-btn { min-width: 56px; padding: 6px 4px; }
-      .slots { grid-template-columns: 1fr 1fr 1fr; }
       #build, #share, #board-box, #how { scroll-margin-top: 124px; }
     }
+    @media (prefers-reduced-motion: reduce) { .slip.bump .slip-bar { animation: none; } }
   </style>
 </head>
 <body>
@@ -153,67 +255,78 @@
 
   <main class="pr">
     <h1>Combo Card</h1>
-    <p class="lede">Build a card of 2 to 6 legs from the next day's races and Block X targets. If every leg hits, the card pays; the more legs and the harder they are, the more points. One miss and the card scores 0. Points only, never money: a staked game with a weekly leaderboard.</p>
-    <nav class="tools" aria-label="On this page"><a href="#build">Build a card</a><a href="#share">Share</a><a href="#board-box">Leaderboard</a><a href="#how">How it works</a></nav>
-
-    <p class="soon" id="cards-soon">Preview: you can build and share a card now. Cards are sent to the chain once the Combo upgrade of the Knode Games Picks contract is live.</p>
+    <p class="lede">Stack 2 to 6 calls on one card from the next day's races and Block X targets. Every leg has to hit. Harder legs and longer cards pay more points.</p>
+    <p class="soon" id="cards-soon"><b>Preview.</b> Build and share cards now. Sending them opens when the Combo upgrade of the Knode Games Picks contract is live.</p>
     <p class="status" id="status" role="status">Reading the chain…</p>
 
     <div class="cb" id="build">
-      <section class="card">
-        <div class="head"><h2>Pick your legs</h2><span class="note" id="price-note" style="margin:0"></span></div>
-        <div class="seg" role="group" aria-label="Leg type"><button type="button" id="t-race" aria-pressed="true">Races</button><button type="button" id="t-block" aria-pressed="false">Block X</button></div>
-        <div class="chips" id="events" role="group" aria-label="Choose a race or block"></div>
-        <p class="note" id="event-line" style="margin:0 0 8px"></p>
-        <table class="odds"><thead id="odds-head"></thead><tbody id="odds-rows"></tbody></table>
-        <p class="note" id="odds-note"></p>
+      <section aria-label="Pick your legs">
+        <div class="games" role="group" aria-label="Games" id="games"></div>
+        <div id="board"></div>
+        <p class="note" id="price-note"></p>
       </section>
 
-      <section class="card mycard" aria-labelledby="mycard-title">
-        <div class="head"><h2 id="mycard-title">Your card</h2><span class="note" id="slots-left" style="margin:0"></span></div>
-        <div class="slots" id="slots" hidden></div>
-        <ol class="legs" id="legs"></ol>
-        <div class="tot">
-          <span>Pays if every leg hits</span><b class="big" id="pays">–</b>
-          <span>Chance every leg hits</span><b id="chance">–</b>
-          <span>Locks</span><b id="locks">–</b>
+      <aside class="slip" id="slip" aria-label="Your card">
+        <button type="button" class="slip-bar" id="slip-bar" aria-expanded="false" aria-controls="ticket">
+          <span class="n"><i id="bar-n">0</i>Your card</span><span class="v" id="bar-v">–</span>
+        </button>
+        <div class="ticket" id="ticket">
+          <div class="t-top">
+            <div class="t-h"><h2>Your card</h2><span id="t-count">0 legs</span></div>
+            <ol class="legs" id="legs"></ol>
+          </div>
+          <div class="perf" aria-hidden="true"></div>
+          <div class="t-pay">
+            <div class="chain" id="chain" aria-hidden="true"></div>
+            <div class="pays"><b id="pays">–</b><span id="pays-unit">if every leg hits</span></div>
+            <div class="capbar" aria-hidden="true"><i id="capbar"></i></div>
+            <p class="capnote" id="capnote"></p>
+            <div class="facts">
+              <span>Chance every leg hits</span><b id="chance">–</b>
+              <span>Card locks</span><b id="locks">–</b>
+            </div>
+            <div class="ladder" id="ladder" aria-hidden="true"></div>
+            <p class="ladder-note" id="ladder-note"></p>
+            <p class="toast" id="toast" role="status" aria-live="polite"></p>
+            <p class="warn" id="problem" role="alert"></p>
+            <div class="acts">
+              <button class="go" type="button" id="send" disabled>Send card (soon)</button>
+              <button class="sm" type="button" id="quick">🎲 Quick card</button>
+              <button class="sm" type="button" id="clear">Clear</button>
+              <a class="sm" href="#share" id="to-share">Share</a>
+            </div>
+          </div>
         </div>
-        <p class="warn" id="problem" role="alert"></p>
-        <div class="acts">
-          <button class="btn" type="button" id="send" disabled>Send card</button>
-          <button class="ghost" type="button" id="clear">Clear</button>
-          <a class="ghost" href="#share" id="to-share">Share</a>
-        </div>
-        <p class="note">2 to 6 legs. One leg per race or block, and each producer in at most one race leg. The card locks at its first leg's lock: races 25 minutes before the start, Block X 500 blocks (about 25 minutes) before the block. 3 cards a day; each can be changed up to 3 times before it locks.</p>
-      </section>
+        <p class="rules">Up to 3 legs a race (one Win, one Show, one Top half) and one per block. Each producer can be on your card once. Races lock 25 minutes before the start, Block X 500 blocks (about 25 minutes) before the block. 3 cards a day, each changeable up to 3 times before it locks.</p>
+      </aside>
     </div>
 
-    <section class="card" id="share" style="margin-top:16px">
-      <div class="head"><h2>Share your card</h2></div>
+    <section class="card" id="share">
+      <h2>Share your card</h2>
       <img class="share-img" id="share-img" alt="Your Combo Card" width="1200" height="630" hidden>
-      <p class="note" id="share-empty" style="margin-top:0">Add 2 legs to make a share image.</p>
-      <div class="acts">
-        <button class="btn" type="button" id="share-native" hidden>Share…</button>
-        <a class="ghost" id="share-dl" download="combo-card.png" hidden>Download image</a>
-        <button class="ghost" type="button" id="share-copy" disabled>Copy text</button>
+      <p class="note" id="share-empty" style="margin-top:0">Add 2 legs and your card's image shows here.</p>
+      <div class="share-acts">
+        <button class="btn btn-primary" type="button" id="share-native" hidden>Share…</button>
+        <a class="btn btn-ghost" id="share-dl" download="combo-card.png" hidden>Download image</a>
+        <button class="btn btn-ghost" type="button" id="share-copy" disabled>Copy text</button>
       </div>
       <p class="note" id="share-msg" role="status"></p>
     </section>
 
     <section class="card" id="board-box" hidden>
       <div id="combo-board"></div>
-      <p class="note">A week is the sum of your best 10 cards. Ties go to more cards that hit, then the earlier last hit. Staked rules: the top 30% of staked players with at least 1 point share the Combo Card bucket. A week is final 12 hours after it ends, once every leg is final.</p>
+      <p class="note">A week is the sum of your best 10 cards. Ties go to more cards that hit, then the earlier last hit. The top 30% of staked players with at least 1 point share the Combo Card bucket. A week is final 12 hours after it ends, once every leg is final.</p>
     </section>
 
     <section class="card explain" id="how">
       <h2 style="color:var(--ink)">How it works</h2>
-      <p><b>The legs.</b> <b>Win</b>: the horse wins the race. <b>Show</b>: it finishes in the top 3. <b>Top half</b>: it finishes in the top half of the field. <b>Block X</b>: the producer signs that block (every 2,400th block). A horse must sign at least one block to count.</p>
+      <p><b>The legs.</b> <b>Win</b>: the horse wins the race. <b>Show</b>: it finishes in the top 3. <b>Top half</b>: it finishes in the top half of the field. <b>Block X</b>: the producer signs that block (every 2,400th block). A horse must sign at least one block to count. More games add their own legs as they launch.</p>
       <p><b>What a leg is worth.</b> Each leg is priced from its chance, using the Producer Race's latest handicap card when your card is sent:</p>
-      <p><span class="formula">leg ×  =  0.5 ÷ chance, between ×0.25 and ×3</span></p>
-      <p>A leg that hits half the time is worth ×1. An easy leg (a big producer in the top half) is worth less than ×1; a hard one up to ×3. Race chances come from 4,000 simulated races on the card; Block X from each producer's share of VHP.</p>
-      <p><b>The card.</b> Points = the base for its number of legs × every leg's worth, at most 150 points.</p>
-      <table class="base"><thead><tr><th>Legs</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th></tr></thead><tbody><tr><th>Base</th><td>3</td><td>7</td><td>15</td><td>30</td><td>60</td></tr></tbody></table>
-      <p><b>Fair rules.</b> No two legs on the same race or block, and a producer can be in only one race leg per card, since a producer's good day would carry them both. If a race or block is void, that leg is dropped and the card scores on the rest (with at least 2 legs). A card is final when every leg is final; results come from irreversible blocks that match on two independent nodes.</p>
+      <p><span class="formula">leg worth = 0.5 ÷ chance, from ×0.25 to ×3</span></p>
+      <p>A leg that hits half the time is worth ×1. An easy leg, like a big producer finishing in the top half, is worth less than ×1; a hard one up to ×3. Race chances come from 4,000 simulated races on the card; Block X from each producer's share of VHP.</p>
+      <p><b>The card.</b> Points = the base for its number of legs × every leg's worth, up to the card's cap.</p>
+      <table class="base" id="base-table"></table>
+      <p><b>Fair rules.</b> A race takes up to 3 legs, one of each type, on different horses; a block takes one. Each producer can be on your card only once, since one good day would carry all its legs together. If a race or block is void, that leg is dropped and the card scores on the rest (with at least 2 legs). A card is final when every leg is final; results come from irreversible blocks that match on two independent nodes.</p>
       <p><b>The week.</b> Your best 10 cards count. The page and the recorder run the same scoring file, so the points shown are the points paid.</p>
     </section>
   </main>

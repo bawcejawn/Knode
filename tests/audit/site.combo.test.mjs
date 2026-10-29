@@ -26,7 +26,7 @@ const leg = (code, round, producer = TOP) => ({ code, round, producer });
 test("card shape: 2 to 6 legs, known codes, valid producers", () => {
   assert.match(C.cardProblem([leg(C.SHOW, R)], head), /at least 2/);
   assert.match(C.cardProblem([], head), /at least 2/);
-  const seven = Array.from({ length: 7 }, (_, i) => leg(C.BLOCK, B + i));
+  const seven = Array.from({ length: 7 }, (_, i) => leg(C.BLOCK, B + i, CARD.field[i].a));
   assert.match(C.cardProblem(seven, head), /at most 6/);
   assert.equal(C.cardProblem(seven.slice(0, 6), head), null);
   assert.match(C.cardProblem([leg(5, R), leg(C.BLOCK, B)], head), /Unknown/);
@@ -34,14 +34,17 @@ test("card shape: 2 to 6 legs, known codes, valid producers", () => {
   assert.match(C.cardProblem([leg(C.WIN, 0), leg(C.BLOCK, B)], head), /Unknown/);
 });
 
-test("same race is refused for every pair of race leg types; same block refused; different ones fine", () => {
-  for (const a of [C.WIN, C.SHOW, C.HALF]) for (const b of [C.WIN, C.SHOW, C.HALF]) {
-    assert.match(C.cardProblem([leg(a, R, TOP), leg(b, R, LAST)], head), /one leg per race/, `${a}+${b}`);
-  }
+test("per race: up to 3 legs, one of each type, on different horses; same type twice refused; one leg per block", () => {
+  const H3 = CARD.field[3].a, H5 = CARD.field[5].a;
+  assert.equal(C.cardProblem([leg(C.WIN, R, TOP), leg(C.SHOW, R, LAST), leg(C.HALF, R, H5)], head), null, "Win + Show + Top half on one race");
+  for (const a of [C.WIN, C.SHOW, C.HALF]) assert.match(C.cardProblem([leg(a, R, TOP), leg(a, R, LAST)], head), new RegExp(`Only one ${C.NAMES[a]} leg per race`), `${a} twice`);
+  assert.match(C.cardProblem([leg(C.WIN, R, TOP), leg(C.SHOW, R, LAST), leg(C.HALF, R, H5), leg(C.HALF, R, H3)], head), /Only one Top half leg per race/);
   assert.match(C.cardProblem([leg(C.BLOCK, B, TOP), leg(C.BLOCK, B, LAST)], head), /one leg per block/);
-  assert.equal(C.cardProblem([leg(C.WIN, R, TOP), leg(C.SHOW, R + 1, LAST), leg(C.HALF, R + 2, CARD.field[5].a), leg(C.BLOCK, B, TOP)], head), null);
+  assert.equal(C.cardProblem([leg(C.WIN, R, TOP), leg(C.SHOW, R + 1, LAST), leg(C.HALF, R + 2, H5), leg(C.BLOCK, B, H3)], head), null);
   // A race index and a block round with the same number are different things.
-  assert.equal(C.cardProblem([leg(C.SHOW, 12345), leg(C.BLOCK, 12345)], { height: 12345 * X.ROUND - 5000, time: M.raceStart(12345) - 3 * M.HOUR }), null);
+  assert.equal(C.cardProblem([leg(C.SHOW, 12345), leg(C.BLOCK, 12345, LAST)], { height: 12345 * X.ROUND - 5000, time: M.raceStart(12345) - 3 * M.HOUR }), null);
+  assert.notEqual(C.slotKey(leg(C.WIN, 7)), C.slotKey(leg(C.SHOW, 7)));
+  assert.notEqual(C.slotKey(leg(C.SHOW, 7)), C.slotKey(leg(C.BLOCK, 7)));
 });
 
 test("race legs lock 25 minutes before the start and open 24 h ahead (time); Block X legs by height", () => {
@@ -64,14 +67,15 @@ test("race legs lock 25 minutes before the start and open 24 h ahead (time); Blo
   assert.equal(C.cardLockTime(legs, head), Math.min(start - 25 * 60000, X.aboutTime(X.target(B) - 500, H, NOW)));
 });
 
-test("same producer: at most one race leg per card, in any combination; Block X legs are free", () => {
-  for (const a of [C.WIN, C.SHOW, C.HALF]) for (const b of [C.WIN, C.SHOW, C.HALF]) {
-    assert.match(C.cardProblem([leg(a, R, TOP), leg(b, R + 1, TOP)], head), /only one race leg per card/, `${a}+${b}`);
+test("one leg per producer on the whole card: any two leg types, same race or not, Block X included", () => {
+  const all = [[C.WIN, R], [C.SHOW, R], [C.HALF, R], [C.WIN, R + 1], [C.SHOW, R + 1], [C.HALF, R + 1], [C.BLOCK, B], [C.BLOCK, B + 1]];
+  for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+    const pair = [leg(all[i][0], all[i][1], TOP), leg(all[j][0], all[j][1], TOP)];
+    const p = C.cardProblem(pair, head);
+    assert.ok(p && /only one leg per card|Only one/.test(p), `${all[i]} + ${all[j]}: ${p}`);
   }
-  assert.match(C.cardProblem([leg(C.BLOCK, B, TOP), leg(C.SHOW, R, LAST), leg(C.HALF, R + 3, LAST)], head), /only one race leg/);
-  assert.equal(C.cardProblem([leg(C.SHOW, R, TOP), leg(C.BLOCK, B, TOP), leg(C.BLOCK, B + 1, TOP)], head), null, "race + Block X on one producer");
-  assert.equal(C.cardProblem([leg(C.BLOCK, B, TOP), leg(C.BLOCK, B + 1, TOP), leg(C.BLOCK, B + 2, TOP)], head), null);
-  assert.ok(C.isWindow(C.WIN) && C.isWindow(C.SHOW) && C.isWindow(C.HALF) && !C.isWindow(C.BLOCK));
+  assert.match(C.cardProblem([leg(C.SHOW, R, TOP), leg(C.BLOCK, B, LAST), leg(C.BLOCK, B + 1, TOP)], head), /only one leg per card/);
+  assert.equal(C.cardProblem([leg(C.SHOW, R, TOP), leg(C.BLOCK, B, LAST), leg(C.BLOCK, B + 1, CARD.field[2].a)], head), null);
 });
 
 test("slots: 3 per UTC day", () => {
@@ -217,10 +221,10 @@ test("combo page: a builder only until the CARD upgrade: it never sends, never s
   const urls = [...js.matchAll(/"https:\/\/[^"]+"/g)].map((m) => m[0]);
   for (const u of urls) assert.match(u, /koinos\.armana\.io|raw\.githubusercontent\.com\/bawcejawn\/Knode\/(race-data|games-data\/combo)\/|koinosscan\.com|bawcejawn\.github\.io\/Knode\/site\/combo\.html/, u);
 });
-test("combo page: its rules text matches the math (locks, legs, cap, base)", () => {
-  assert.match(page, /races 25 minutes before the start, Block X 500 blocks/);
+test("combo page: its rules text matches the math (locks, per-race and per-producer rules); base and cap come from the math", () => {
+  assert.match(page, /Races lock 25 minutes before the start, Block X 500 blocks/);
   assert.equal(C.RACE_LEAD_MS, 25 * 60000); assert.equal(C.BLOCK_LEAD, 500);
-  assert.match(page, /at most 150 points/); assert.equal(C.CAP, 150);
-  const base = page.match(/<th>Base<\/th>((?:<td>\d+<\/td>)+)/)[1].match(/\d+/g).map(Number);
-  assert.deepEqual(base, [2, 3, 4, 5, 6].map((n) => C.BASE[n]));
+  assert.match(page, /Up to 3 legs a race \(one Win, one Show, one Top half\) and one per block\. Each producer can be on your card once\./);
+  assert.match(js, /\$\("base-table"\)\.replaceChildren/, "the base table is drawn from C.BASE, never typed in");
+  assert.match(js, /C\.MAX_LEGS/);
 });
