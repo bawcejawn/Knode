@@ -220,9 +220,24 @@
             "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2168410893054"
           },
           "seal": "b118ce114facbfcba75cce701570375f283406dabda26bbd640f127ba6539d13"
+        },
+        {
+          "height": 40617720,
+          "readAt": "2026-10-29T09:46:09.157Z",
+          "values": {
+            "14MHW6TF8gw8EuMRLCJc2PQHLzZLKuwGqb": "66180315028920",
+            "1PcrAcNPXqAGHmLATxigqZJpmHBvVHDfPE": "10450088573283",
+            "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh": "11826460971775",
+            "1932QKYoPzaGmwBxTnnYhNqV9LQi2sYLHT": "111730008213",
+            "1F96MSYgSsgY1WJHnTBtjtgPEN9te7xNxp": "538453236968",
+            "122hrgzoXVmmxWxUs8TUrCFGcKG9czYgvf": "30466896732",
+            "15jueaBcMieDCMGw6wAmEK6cNSUVicknG1": "45885283753",
+            "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "2168002576637"
+          },
+          "seal": "c855348bd3de26d13c417e4c838cf5b6205275f89525a5c41b7aea01a01fe4d6"
         }
       ],
-      "vhpSeal": "1b8989a96e6001fedf27aa4486b6648758fc2def0d849e4ee77d5658ec8ac149"
+      "vhpSeal": "3b837db020f1bc3f6cbe4faacf10f8ca132b1c7e77d42f2572344c5727d2f363"
     },
     {
       "id": "W001-D3-2",
@@ -366,7 +381,38 @@
           "seal": "2b44cc60651a871746bebbe849a587540649eabcaaeb5adb90aeee7061b7fd0f"
         }
       ],
-      "vhpSeal": "39dc1193e2cf199176969bb907f167b652ba4855e7a6e23439117d7d478a5a99"
+      "vhpSeal": "39dc1193e2cf199176969bb907f167b652ba4855e7a6e23439117d7d478a5a99",
+      "result": {
+        "void": false,
+        "option": 3,
+        "value": "1,578",
+        "dataHash": "7886520aa5e44dc0db2cc7790493270a2ae4f8098f2c6d6f6a2aa11b2c3ccd06",
+        "resolvedAt": "2026-10-29T09:41:59.100Z",
+        "vhpCheck": {
+          "limit": 0.1,
+          "releaseHeight": 40593224,
+          "decidedHeight": 40617224,
+          "readings": [
+            40608537,
+            40609510,
+            40610676,
+            40611883,
+            40612982,
+            40614242,
+            40615634,
+            40616669
+          ],
+          "readingsInWindow": 8,
+          "values": {
+            "15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ": {
+              "release": "173076207817297",
+              "end": "175580429583940",
+              "change": "+1.45%",
+              "height": 40608537
+            }
+          }
+        }
+      }
     },
     {
       "id": "W001-D3-3",
