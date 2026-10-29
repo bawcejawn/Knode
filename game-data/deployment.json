@@ -55,6 +55,10 @@
       "name": "Fantasy Producers",
       "results": "games-data:fantasy/vault"
     },
+    "6": {
+      "name": "Block Golf",
+      "results": "games-data:golf/vault"
+    },
     "7": {
       "name": "Producer Race",
       "results": "race-data:vault"
