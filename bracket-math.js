@@ -19,6 +19,9 @@
  *   The Σ is the same for both producers, so a matchup comes down to credited blocks per baseline. Moving VHP away
  *   during the day only lowers its real chances; VHP added during the day (its own or sent by anyone) is neutral.
  *   An exact tie goes to the lower seed (the underdog).
+ *   FORFEIT (owner decision 2026-10-28, audit S-5): a seed that starts a round's day with less than half its seeding
+ *   VHP (baseline < FORFEIT_SHARE × seeding VHP) loses that matchup, whatever its index: holding little VHP all day
+ *   would otherwise turn a matchup it expects to lose into a lottery. If both seeds forfeit, the index decides.
  *
  * THE PICK: one number for the whole bracket (one Picks game, kind NUMBER).
  * - The bracket has size − 1 matchups, numbered round by round, top to bottom. Bit n of the number says who wins
@@ -37,6 +40,7 @@
   const MIN_FIELD = 8;
   const MAX_SIZE = 32, NUMBER_MAX = 2 ** (MAX_SIZE - 1) - 1;   // the Picks game's number range: 0 … 2,147,483,647
   const CHAMPION_BONUS = 2;
+  const FORFEIT_SHARE = 0.5;                   // a round's baseline under half the seeding VHP loses the matchup (S-5)
   const V = root.KVhp;                          // the KnodeGames VHP standard (site/vhp-standard.js, loaded first)
   if (!V) throw new Error("bracket-math.js needs vhp-standard.js loaded first");
   const { ACTIVE_BLOCKS, SEED_BLOCKS, Q_SCALE, VHP_CONTRACT, vhpDeltas, vhpBook, averageCard } = V;
@@ -185,8 +189,12 @@
   }
   /** Does `other` beat `better` on a day? Higher index wins; an exact tie (compared without division) goes to `other`,
    *  the lower seed. A producer missing from the day's index counts as 0 blocks. */
-  function otherWins(idx, better, other) {
+  function otherWins(idx, better, other, seedVhp) {
     const A = idx.get(better) || { credited: 0, expected: 0 }, B = idx.get(other) || { credited: 0, expected: 0 };
+    if (seedVhp) {
+      const fa = forfeits(A, seedVhp.get(better)), fb = forfeits(B, seedVhp.get(other));
+      if (fa !== fb) return fa;   // only one forfeits: it loses
+    }
     const ca = A.credited ?? A.blocks ?? 0, cb = B.credited ?? B.blocks ?? 0;
     const sa = ca * B.expected, sb = cb * A.expected;   // index A vs index B, cross-multiplied
     if (A.expected <= 0 && B.expected <= 0) return true;
@@ -196,12 +204,21 @@
     return sb > sa - tol;   // other's index ≥ better's index → other (tie → underdog)
   }
 
-  /** The real results of a week: seeds (addresses), days: [dayIndex Map for each round, or null if not known yet].
+  /** Does a seed forfeit its day? Its baseline (satoshi) is under FORFEIT_SHARE of its seeding VHP (VHP). */
+  function forfeits(x, vhp) {
+    if (!(vhp > 0)) return false;
+    const w = x && Number.isFinite(x.baseline) ? x.baseline : 0;
+    return w < FORFEIT_SHARE * vhp * 1e8;
+  }
+
+  /** The real results of a week: seeds (addresses), days: [dayIndex Map for each round, or null if not known yet],
+   *  seedVhp: each seed's seeding VHP in seed order (the forfeit rule; left out: no forfeits).
    *  Returns { rounds: [[winner seed]] for each round played so far, done: true when every round is known }. */
-  function results(seeds, size, days) {
+  function results(seeds, size, days, seedVhp) {
     const nSeeds = seeds.length, R = roundsOf(size), rounds = [];
+    const sv = Array.isArray(seedVhp) ? new Map(seeds.map((a, i) => [a, Number(seedVhp[i]) || 0])) : null;
     let known = 0; while (known < R && days[known]) known++;
-    const full = play(size, nSeeds, (r, m, a, b) => (r < known ? otherWins(days[r], seeds[a - 1], seeds[b - 1]) : false));
+    const full = play(size, nSeeds, (r, m, a, b) => (r < known ? otherWins(days[r], seeds[a - 1], seeds[b - 1], sv) : false));
     for (let r = 0; r < known; r++) rounds.push(full.rounds[r]);
     return { rounds, done: known === R };
   }
@@ -232,7 +249,7 @@
   function lowerBound(ts, t) { let lo = 0, hi = ts.length; while (lo < hi) { const m = (lo + hi) >> 1; if (ts[m] < t) lo = m + 1; else hi = m; } return lo; }
 
   root.KBracketMath = {
-    GAME_ID, MAX_CHANGES, PICKS_PER_DAY, HOUR, DAY, WEEK, GENESIS, SEED_BEFORE, LOCK_BEFORE, MIN_FIELD, MAX_SIZE, NUMBER_MAX, CHAMPION_BONUS, ROUND_NAMES, ROUND_OFFSET,
+    GAME_ID, MAX_CHANGES, PICKS_PER_DAY, HOUR, DAY, WEEK, GENESIS, SEED_BEFORE, LOCK_BEFORE, MIN_FIELD, MAX_SIZE, NUMBER_MAX, CHAMPION_BONUS, FORFEIT_SHARE, forfeits, ROUND_NAMES, ROUND_OFFSET,
     weekStart, weekOf, seedTime, lockTime, roundDay, picksRound, weekOfPicksRound,
     sizeFor, roundsOf, pointsFor, maxPoints, lineOrder, roundOffset, seeding, firstRound, play, byesOf, decode, encode,
     ACTIVE_BLOCKS, SEED_BLOCKS, Q_SCALE, VHP_CONTRACT, vhpDeltas, vhpBook, exactHours, indexFromHours, indexSoFar, averageCard, dayIndex, otherWins, results, score, rank,

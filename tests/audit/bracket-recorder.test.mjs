@@ -11,7 +11,7 @@ import path from "node:path";
 
 const APP = process.env.APP || ".";
 const rec = await import(path.resolve(APP, "bot/games/bracket.ts"));
-const { scoreWeek, vaultRows } = rec;
+const { scoreWeek, vaultRows, freeWinners } = rec;
 // The Vault's stakes: unless a test says otherwise, every player is staked in the Bracket
 const run = (o) => rec.run({ stakedOf: async (_n, players) => players, ...o });
 const M = globalThis.KRaceMath, B = globalThis.KBracketMath;
@@ -393,7 +393,11 @@ test("vault file: written once the week is final, with only staked players; none
   const wf = readW(d); assert.equal(wf.status, "final"); assert.deepEqual(wf.staked.list, [P(1), P(3)].sort());
   const vf = JSON.parse(fs.readFileSync(path.join(d, "vault", `W${W}.json`), "utf8"));
   assert.deepEqual(Object.keys(vf).sort(), ["final", "first", "game", "rows", "second", "week"]);
-  assert.equal(vf.game, 9); assert.equal(vf.week, W); assert.equal(vf.final, true); assert.deepEqual(vf.first, []); assert.deepEqual(vf.second, []);
+  assert.equal(vf.game, 9); assert.equal(vf.week, W); assert.equal(vf.final, true);
+  const p2 = readW(d).points.find((r) => r[0] === P(2));
+  assert.deepEqual(vf.first, p2 && p2[1] >= 1 ? [P(2)] : [], "the only free player with a point is 1st on the Free play board");
+  assert.deepEqual(vf.second, []);
+  assert.deepEqual(readW(d).staked.held, [P(1), P(3)].sort(), "read again as the week closes");
   assert.ok(vf.rows.every((r) => r.player !== P(2)), "free players never in the rows");
   assert.equal(vf.week, B.weekOf(B.weekStart(W) + 1), "the Vault's week number = the KnodeGames week");
   // the board marks staked rows as ranked (Staked tab) and the rest as free play
@@ -412,6 +416,40 @@ test("vault file: written once the week is final, with only staked players; none
   assert.equal(badV((j) => { j.rows[0].points = 256; }), false, "points over 255");
   assert.equal(badV((j) => { j.rows.push({ ...j.rows[0] }); }), false, "a player twice");
   assert.equal(badV((j) => { j.game = 2; }), false, "another game");
-  assert.equal(badV((j) => { j.first = [P(1)]; }), false, "a staked game has no free prize");
+  assert.equal(badV((j) => { j.first = [j.rows[0].player]; j.second = []; }), false, "a staked row can't also win the free prize");
+  assert.equal(badV((j) => { j.first = Array.from({ length: 11 }, (_, i) => P(20 + i)); j.second = []; }), false, "at most 10 a place");
+  assert.equal(badV((j) => { j.first = [P(20), P(21)]; j.second = [P(22)]; }), false, "a tie for 1st shares all 3 VHP: no 2nd");
+  assert.ok(badV((j) => { j.first = [P(20)]; j.second = [P(21), P(22)]; }), "1st and a tie for 2nd is fine");
   assert.equal(badV((j) => { j.final = false; }), false);
+});
+
+test("free prize winners: ties share, more than 10 tied leaves the place empty, staked or held players never win, nobody qualifying", () => {
+  const W_ = (pts, held = []) => plain(freeWinners(pts, new Set(held)));
+  // [player, points, champion, right winners]
+  assert.deepEqual(W_([[P(1), 9, 0, 5], [P(2), 7, 0, 4], [P(3), 7, 0, 4], [P(4), 3, 0, 2]]), { first: [P(1)], second: [P(2), P(3)].sort() }, "one 1st, two share 2nd");
+  assert.deepEqual(W_([[P(1), 9, 0, 5], [P(2), 9, 0, 5], [P(3), 7, 0, 4]]), { first: [P(1), P(2)].sort(), second: [] }, "tied for 1st: they share all 3 VHP");
+  assert.deepEqual(W_([[P(1), 9, 1, 5], [P(2), 9, 0, 5]]), { first: [P(1)], second: [P(2)] }, "the right champion breaks the tie");
+  const ten = Array.from({ length: 10 }, (_, i) => [P(10 + i), 5, 0, 3]), eleven = Array.from({ length: 11 }, (_, i) => [P(10 + i), 5, 0, 3]);
+  assert.equal(W_(ten).first.length, 10, "10 tied all win");
+  assert.deepEqual(W_([...eleven, [P(40), 2, 0, 1]]), { first: [], second: [] }, "11 tied for 1st: the place goes back to the pool, and nobody below is moved up");
+  assert.deepEqual(W_([[P(1), 9, 0, 5], ...eleven]), { first: [P(1)], second: [] }, "11 tied for 2nd: 2nd goes back to the pool");
+  assert.deepEqual(W_([[P(1), 9, 0, 5], [P(2), 4, 0, 3]], [P(1)]), { first: [P(2)], second: [] }, "a held (staked) player can't win; the next free player is 1st");
+  assert.deepEqual(W_([[P(1), 0, 0, 0], [P(2), 0, 0, 0]]), { first: [], second: [] }, "nobody with a point: nobody qualifies");
+  assert.deepEqual(W_([]), { first: [], second: [] });
+});
+
+test("audit S-5 forfeit: a seed starting its day under half its seeding VHP loses that matchup", () => {
+  const day = (wa, ca, wb, cb) => new Map([["1Fav", { baseline: wa, credited: ca, expected: wa * 1e-8 }], ["1Dog", { baseline: wb, credited: cb, expected: wb * 1e-8 }]]);
+  const sv = new Map([["1Fav", 100], ["1Dog", 50]]);
+  // the underdog holds 10 VHP of its 50 and has a lucky day: it would win on index, but it forfeits
+  assert.equal(B.otherWins(day(100e8, 1, 10e8, 5), "1Fav", "1Dog"), true, "without the rule: a lottery win");
+  assert.equal(B.otherWins(day(100e8, 1, 10e8, 5), "1Fav", "1Dog", sv), false, "with the rule: forfeit");
+  assert.equal(B.otherWins(day(100e8, 1, 25e8, 5), "1Fav", "1Dog", sv), true, "exactly half: no forfeit");
+  assert.equal(B.otherWins(day(40e8, 9, 50e8, 1), "1Fav", "1Dog", sv), true, "the favourite forfeits: the underdog wins");
+  assert.equal(B.otherWins(day(40e8, 9, 10e8, 1), "1Fav", "1Dog", sv), false, "both forfeit: the index decides");
+  // results() takes the seeding VHP in seed order
+  const seeds = Array.from({ length: 8 }, (_, i) => "1S" + i), vhp = seeds.map(() => 100);
+  const d0 = new Map(seeds.map((a, i) => [a, { baseline: i === 7 ? 10e8 : 100e8, credited: i === 7 ? 999 : 1, expected: 1 }]));
+  assert.equal(B.results(seeds, 8, [d0], vhp).rounds[0][0], 1, "seed 8 forfeits round 1 to seed 1");
+  assert.equal(B.results(seeds, 8, [d0]).rounds[0][0], 8, "(without seeding VHP: no forfeits)");
 });

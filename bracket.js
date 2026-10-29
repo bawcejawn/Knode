@@ -188,7 +188,8 @@
         const meta = [`${fmt(p.share * 100, p.share < 0.01 ? 2 : 1)}% VHP`, `~${fmt(p.perDay)} blocks/day`, p.form !== null ? `recent form ${fmt(p.form * 100)}%` : null].filter(Boolean).join(" · ");
         const kids = [el("span", { class: "bk-seed", text: String(seed) }),
           el("span", { class: "bk-name" }, el("b", { text: nameOf(p.a) }), el("small", { text: meta })),
-          ix && ix.expected > 0 ? el("span", { class: "bk-ix", text: `${fmt(ix.index * 100, 1)}%`, title: `${fmt(ix.blocks)} blocks of ${fmt(ix.expected, 1)} expected` }) : null,
+          ix && BM.forfeits(ix, p.vhp) ? el("span", { class: "bk-ix", text: "forfeit", title: `Started the day with ${fmt(ix.baseline / 1e8)} VHP, under half its seeding ${fmt(p.vhp)} VHP: it loses this matchup` })
+            : ix && ix.expected > 0 ? el("span", { class: "bk-ix", text: `${fmt(ix.index * 100, 1)}%`, title: `${fmt(ix.blocks)} blocks of ${fmt(ix.expected, 1)} expected` }) : null,
           myPick === seed && !bye && (open || mine !== null) ? el("span", { class: "bk-mark", text: winner ? (winner === seed ? "✓" : "✗") : "★" }) : null];
         if (open && !bye && seed) return el("button", { type: "button", class: cls, "aria-pressed": String(myPick === seed), onclick: () => choose(round, m, seed) }, ...kids);
         return el("div", { class: cls }, ...kids);
@@ -204,7 +205,7 @@
       $("bk-progress").textContent = `${done} of ${total} picked${filled() ? " · ready" : ""}${mine !== null ? " · you have a bracket on chain" : ""}`;
       $("bk-submit").disabled = !filled() || sending || !picksContract || !who || draftNumber() === mine;
       $("bk-submit").textContent = mine !== null ? "Change my bracket" : "Submit my bracket";
-      $("bk-who").textContent = !picksContract ? "" : who ? `Picking as ${nameOf(who)}${W.kind === "guest" ? " (guest: free play; prizes need a stake)" : ""}.` : "Connect a wallet to submit (Kondor, KOIN Vault or a guest wallet).";
+      $("bk-who").textContent = !picksContract ? "" : who ? `Picking as ${nameOf(who)}${W.kind === "guest" ? " (guest: you play on the Free play board)" : ""}.` : "Connect a wallet to submit (Kondor, KOIN Vault or a guest wallet).";
     }
     $("bk-share").hidden = !(draft && filled());
     renderScore();
@@ -325,7 +326,7 @@
   const lb = window.KBoard ? window.KBoard.create($("bk-board"), {
     label: "Bracket leaderboard", hide: ["today"],
     // Staked: wallets with 1 VHP or more staked in the Bracket that week (the Vault's player rule); Free play: the rest
-    free: { show: 6, prize: "" },
+    free: { show: 6, prize: "Weekly free-play prize: 2 VHP for 1st and 1 VHP for 2nd (ties share; up to 10 a place)." },
     unranked: "To be on the Staked board, stake at least 1 VHP in the Producer Bracket before the week starts.",
     columns: [{ key: "pts", label: "Points" }, { key: "correct", label: "Right" }],
     scored: (r) => r.pts > 0,

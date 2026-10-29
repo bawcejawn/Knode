@@ -174,7 +174,8 @@ jobs:
           def week_ok(j):
               if not set(j) <= {"v", "week", "start", "end", "status", "seeding", "picks", "days", "results", "points", "void", "staked", "vault"}: return False
               st = j.get("staked")
-              if st is not None and (type(st) is not dict or set(st) != {"checked", "list"} or st["checked"] != 2 or type(st["list"]) is not list or len(st["list"]) > 100000 or not all(isa(a) for a in st["list"])): return False
+              if st is not None and (type(st) is not dict or set(st) not in ({"checked", "list"}, {"checked", "list", "held"}) or st["checked"] != 2 or type(st["list"]) is not list or len(st["list"]) > 100000 or not all(isa(a) for a in st["list"])): return False
+              if st is not None and "held" in st and (type(st["held"]) is not list or len(st["held"]) > 100000 or not all(isa(a) for a in st["held"])): return False
               if "vault" in j and j["vault"] != "missed": return False
               if j.get("v") != 4 or not nat(j.get("week")) or not nat(j.get("start")) or not nat(j.get("end")): return False
               if j.get("status") not in ("waiting", "none", "void", "open", "locked", "final"): return False
@@ -200,7 +201,8 @@ jobs:
                   and nat(x["place"]) and nat(x["pts"]) and type(x["champion"]) is bool and nat(x["correct"]) and type(x["ranked"]) is bool for x in rows)
           def view_ok(v):
               return type(v) is dict and set(v) == {"week", "start", "status", "final", "rows"} and nat(v["week"]) and nat(v["start"]) and type(v["status"]) is str and len(v["status"]) <= 10 and type(v["final"]) is bool and rows_ok(v["rows"])
-          # the Vault files (vault/W<week>.json, Vault v6 hand-off): a staked game's final week, points 1-255, no free prize
+          # the Vault files (vault/W<week>.json, Vault v6 hand-off): a final week; staked players' points 1-255; the free
+          # prize's 1st / 2nd (owner 2026-10-28: the Bracket pays both): at most 10 each, never a staked row, never twice
           vd = os.path.join(d, "vault")
           if os.path.isdir(vd):
               for f in os.listdir(vd):
@@ -209,7 +211,10 @@ jobs:
                   assert nat(j["week"]) and j["week"] < 10000 and f == "W%d.json" % j["week"], f
                   assert type(j["rows"]) is list and len(j["rows"]) <= 100000 and all(type(x) is dict and set(x) == {"player", "points"} and isa(x["player"]) and type(x["points"]) is int and 1 <= x["points"] <= 255 for x in j["rows"]), f
                   assert len({x["player"] for x in j["rows"]}) == len(j["rows"]), f
-                  assert j["first"] == [] and j["second"] == [], f
+                  pz = j["first"] + j["second"] if type(j["first"]) is list and type(j["second"]) is list else None
+                  assert pz is not None and len(j["first"]) <= 10 and len(j["second"]) <= 10 and all(isa(a) for a in pz), f
+                  assert len(set(pz)) == len(pz) and not (set(pz) & {x["player"] for x in j["rows"]}), f
+                  assert not j["second"] or len(j["first"]) == 1, f
           for f in os.listdir(d):
               if f == "vault": continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
