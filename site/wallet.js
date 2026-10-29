@@ -248,7 +248,7 @@
   const guestOp = (o, game, race) => !!(o && o.call_contract && ((game && o.call_contract.contract_id === game && Number(o.call_contract.entry_point) === ANSWER)
     || (race && o.call_contract.contract_id === race && Number(o.call_contract.entry_point) === PICK)));
   // Owner switch: guest play is on only when game-data/deployment.json has "sponsor": { ..., "guest": true }. Keep it off
-  // until the site has its own domain: on the shared bawcejawn.github.io origin, other pages there could read a guest key.
+  // the site now has its own domain (knodegames.com), so no other Pages site shares its storage.
   // Pages that set the wallet up without the sponsor (swap, burn, the info pages) still offer guest play: the header
   // reads game-data/deployment.json and passes its sponsor settings here (setGuestConfig), so the switch is the same
   // everywhere. A guest still signs only free play (answers and race picks); anything else is refused with a reason.
