@@ -9,7 +9,7 @@
   if (!C || !M || !X || typeof document === "undefined" || !document.getElementById("legs")) return;
 
   const lib = window.koilib || window.koinos || window;
-  const RPC = "https://api.koinos.io";
+  const RPC = "https://koinos.armana.io";
   const RACE_DATA = "https://raw.githubusercontent.com/bawcejawn/Knode/race-data/";
   const DATA = "https://raw.githubusercontent.com/bawcejawn/Knode/games-data/combo/";
   const EXPLORER = "https://koinosscan.com/address/";

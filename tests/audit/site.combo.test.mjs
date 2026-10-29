@@ -215,7 +215,7 @@ test("combo page: a builder only until the CARD upgrade: it never sends, never s
   }
   // It only reads public data: the RPC head, race-data and games-data/combo.
   const urls = [...js.matchAll(/"https:\/\/[^"]+"/g)].map((m) => m[0]);
-  for (const u of urls) assert.match(u, /api\.koinos\.io|raw\.githubusercontent\.com\/bawcejawn\/Knode\/(race-data|games-data\/combo)\/|koinosscan\.com|bawcejawn\.github\.io\/Knode\/site\/combo\.html/, u);
+  for (const u of urls) assert.match(u, /koinos\.armana\.io|raw\.githubusercontent\.com\/bawcejawn\/Knode\/(race-data|games-data\/combo)\/|koinosscan\.com|bawcejawn\.github\.io\/Knode\/site\/combo\.html/, u);
 });
 test("combo page: its rules text matches the math (locks, legs, cap, base)", () => {
   assert.match(page, /races 25 minutes before the start, Block X 500 blocks/);
