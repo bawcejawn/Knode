@@ -39,16 +39,16 @@ test("same race is refused for every pair of race leg types; same block refused;
     assert.match(C.cardProblem([leg(a, R, TOP), leg(b, R, LAST)], head), /one leg per race/, `${a}+${b}`);
   }
   assert.match(C.cardProblem([leg(C.BLOCK, B, TOP), leg(C.BLOCK, B, LAST)], head), /one leg per block/);
-  assert.equal(C.cardProblem([leg(C.WIN, R), leg(C.SHOW, R + 1), leg(C.HALF, R + 2), leg(C.BLOCK, B)], head), null);
+  assert.equal(C.cardProblem([leg(C.WIN, R, TOP), leg(C.SHOW, R + 1, LAST), leg(C.HALF, R + 2, CARD.field[5].a), leg(C.BLOCK, B, TOP)], head), null);
   // A race index and a block round with the same number are different things.
   assert.equal(C.cardProblem([leg(C.SHOW, 12345), leg(C.BLOCK, 12345)], { height: 12345 * X.ROUND - 5000, time: M.raceStart(12345) - 3 * M.HOUR }), null);
 });
 
-test("race legs lock 5 minutes before the start and open 24 h ahead (time); Block X legs by height", () => {
+test("race legs lock 25 minutes before the start and open 24 h ahead (time); Block X legs by height", () => {
   const start = M.raceStart(R);
   const at = (time, height = H) => ({ time, height });
-  assert.ok(C.legOpen(leg(C.SHOW, R), at(start - 5 * 60000 - 1)));
-  assert.ok(!C.legOpen(leg(C.SHOW, R), at(start - 5 * 60000)), "locked at exactly start − 5 min");
+  assert.ok(C.legOpen(leg(C.SHOW, R), at(start - 25 * 60000 - 1)));
+  assert.ok(!C.legOpen(leg(C.SHOW, R), at(start - 25 * 60000)), "locked at exactly start − 25 min");
   assert.ok(!C.legOpen(leg(C.SHOW, R), at(start + 1)), "started");
   assert.ok(C.legOpen(leg(C.WIN, R), at(start - 24 * M.HOUR)));
   assert.ok(!C.legOpen(leg(C.WIN, R), at(start - 24 * M.HOUR - 1)), "more than 24 h ahead");
@@ -61,7 +61,17 @@ test("race legs lock 5 minutes before the start and open 24 h ahead (time); Bloc
   // The card is refused if any one leg is locked, and its lock is the earliest leg's.
   const legs = [leg(C.SHOW, R), leg(C.BLOCK, B)];
   assert.match(C.cardProblem(legs, at(start - 60000)), /Show leg is locked/);
-  assert.equal(C.cardLockTime(legs, head), Math.min(start - 5 * 60000, X.aboutTime(X.target(B) - 500, H, NOW)));
+  assert.equal(C.cardLockTime(legs, head), Math.min(start - 25 * 60000, X.aboutTime(X.target(B) - 500, H, NOW)));
+});
+
+test("same producer: at most one race leg per card, in any combination; Block X legs are free", () => {
+  for (const a of [C.WIN, C.SHOW, C.HALF]) for (const b of [C.WIN, C.SHOW, C.HALF]) {
+    assert.match(C.cardProblem([leg(a, R, TOP), leg(b, R + 1, TOP)], head), /only one race leg per card/, `${a}+${b}`);
+  }
+  assert.match(C.cardProblem([leg(C.BLOCK, B, TOP), leg(C.SHOW, R, LAST), leg(C.HALF, R + 3, LAST)], head), /only one race leg/);
+  assert.equal(C.cardProblem([leg(C.SHOW, R, TOP), leg(C.BLOCK, B, TOP), leg(C.BLOCK, B + 1, TOP)], head), null, "race + Block X on one producer");
+  assert.equal(C.cardProblem([leg(C.BLOCK, B, TOP), leg(C.BLOCK, B + 1, TOP), leg(C.BLOCK, B + 2, TOP)], head), null);
+  assert.ok(C.isWindow(C.WIN) && C.isWindow(C.SHOW) && C.isWindow(C.HALF) && !C.isWindow(C.BLOCK));
 });
 
 test("slots: 3 per UTC day", () => {

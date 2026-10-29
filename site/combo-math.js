@@ -12,9 +12,12 @@
  *   4 Block X:       producer P signs block T (T a multiple of 2,400; round = T / 2,400).
  *   A race leg needs the horse to have moved (steps > 0). Race legs' round is the race index (KRaceMath.raceIndex).
  *   Win, Show and Top-half are one family: a card holds at most one leg per race and one per Block X target.
+ *   SAME PRODUCER (owner, 2026-10-28): a producer may be in at most one WINDOW leg per card (a race now; later a
+ *   Survivor day, a Last Node day, a bracket match, a golf hole), because those all ride on the same producer's
+ *   block rate and would hit together far more often than their prices say. Block X legs (one block) are free.
  *
  * LOCKS (the Picks contract enforces them): a card can be made or changed only while EVERY leg is open:
- *   - race legs until 5 minutes before the race starts, at most 24 hours ahead;
+ *   - race legs until 25 minutes before the race starts, at most 24 hours ahead (owner, 2026-10-28);
  *   - Block X legs until 500 blocks (~25 min) before the target, at most 28,800 blocks (~24 h) ahead (owner,
  *     2026-10-28: earlier than Block X's own 100-block lock).
  *   3 cards per wallet per UTC day (slots 0, 1, 2: round = UTC day × 3 + slot); each changeable up to 3 times, only
@@ -51,13 +54,15 @@
   const CAP = 150;                         // points per card
   const PREF = 0.5, F_MIN = 0.25, F_MAX = 3;
   const CARDS_PER_DAY = 3, MAX_CHANGES = 3, BEST = 10;
-  const RACE_LEAD_MS = 5 * 60000, RACE_AHEAD_MS = 24 * M.HOUR;
+  const RACE_LEAD_MS = 25 * 60000, RACE_AHEAD_MS = 24 * M.HOUR;
   const BLOCK_LEAD = 500, BLOCK_AHEAD = 28800;
   const DAY = M.DAY;
   const round2 = (x) => Math.round(x * 100) / 100;
   const round4 = (x) => Math.round(x * 1e4) / 1e4;
   const isAddr = (a) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
   const isRace = (code) => FAMILY[code] === "race";
+  /** Window legs: outcomes over a stretch of blocks (one producer at most once per card). Block X is a single block. */
+  const isWindow = (code) => code !== BLOCK;
 
   // ── slots ──
   const slotRound = (day, slot) => day * CARDS_PER_DAY + slot;
@@ -86,13 +91,17 @@
   function cardProblem(legs, head) {
     if (!Array.isArray(legs) || legs.length < MIN_LEGS) return "A card needs at least 2 legs.";
     if (legs.length > MAX_LEGS) return "A card has at most 6 legs.";
-    const seen = new Set();
+    const seen = new Set(), windowed = new Set();
     for (const l of legs) {
       if (!l || !CODES.includes(l.code) || !Number.isSafeInteger(l.round) || l.round < 1) return "Unknown leg.";
       if (!isAddr(l.producer)) return "A leg names an invalid producer.";
       const k = FAMILY[l.code] + ":" + l.round;
       if (seen.has(k)) return isRace(l.code) ? "Only one leg per race." : "Only one leg per block.";
       seen.add(k);
+      if (isWindow(l.code)) {
+        if (windowed.has(l.producer)) return "A producer can be in only one race leg per card.";
+        windowed.add(l.producer);
+      }
       if (!legOpen(l, head)) return `${NAMES[l.code]} leg is locked or not open yet.`;
     }
     return null;
@@ -239,7 +248,7 @@
   root.KCombo = {
     GAME_ID, WIN, SHOW, HALF, BLOCK, CODES, NAMES, FAMILY, MIN_LEGS, MAX_LEGS, BASE, CAP, PREF, F_MIN, F_MAX,
     CARDS_PER_DAY, MAX_CHANGES, BEST, RACE_LEAD_MS, RACE_AHEAD_MS, BLOCK_LEAD, BLOCK_AHEAD,
-    slotRound, dayOfRound, utcDay, lockOf, legOpen, cardLockTime, cardProblem,
+    isWindow, slotRound, dayOfRound, utcDay, lockOf, legOpen, cardLockTime, cardProblem,
     priceCard, raceChances, factorOf, priceLeg, pointsFor, potential, legResult, scoreCard, board, places, shareText,
   };
 })(typeof window !== "undefined" ? window : globalThis);
