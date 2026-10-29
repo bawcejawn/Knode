@@ -43,6 +43,10 @@
     "guest": true
   },
   "vaultGames": {
+    "4": {
+      "name": "Fantasy Producers",
+      "results": "games-data:fantasy/vault"
+    },
     "13": {
       "name": "Last Node Standing",
       "results": "games-data:lastnode/vault"
