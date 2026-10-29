@@ -1,0 +1,27 @@
+name: diag
+on:
+  push:
+    branches: [diag-health]
+permissions:
+  contents: read
+jobs:
+  d:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: dry tick
+        env:
+          GEN_DIR: game-data
+          RPC_CHECK: https://api.koinosblocks.com
+          BOT_DEBUG_STACK: "1"
+        run: |
+          npx tsx diag.ts || true; echo > out.txt
+          grep -nE "✖|✔|failed|error|Error|parse" out.txt | head -60 | while IFS= read -r l; do echo "::warning::$l"; done
+          tail -5 out.txt | while IFS= read -r l; do echo "::notice::$l"; done
