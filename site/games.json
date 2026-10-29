@@ -16,6 +16,8 @@
     { "id": "fantasy", "name": "Fantasy Producers", "kinds": ["staked"], "status": "soon", "href": "",
       "line": "Draft 5 producers under a salary cap, with a captain who scores double." },
     { "id": "golf", "name": "Block Golf", "kinds": ["staked"], "status": "soon", "href": "",
-      "line": "Nine holes a day: guess how many blocks until a producer signs its next one." }
+      "line": "Nine holes a day: guess how many blocks until a producer signs its next one." },
+    { "id": "combo", "name": "Combo Card", "kinds": ["staked"], "status": "soon", "href": "",
+      "line": "Build a card of 2 to 6 calls from the races and Block X. Every leg must hit; harder legs pay more." }
   ]
 }

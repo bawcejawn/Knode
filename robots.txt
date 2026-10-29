@@ -1,4 +1,4 @@
-# Served from the domain root once Knode has its own domain (until then search engines read it at the github.io root).
+# Served from the domain root once Knode Games has its own domain (until then search engines read it at the github.io root).
 User-agent: *
 Allow: /
 Disallow: /site/producer.html

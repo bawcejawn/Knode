@@ -194,3 +194,33 @@ test("share text", () => {
   assert.equal(C.shareText([1, 2, 3, 4], ["hit", "hit", "pending", "miss"], 0), "KnodeGames Combo · 4 legs · ✅✅⏳❌ · 0 pts");
   assert.equal(C.shareText([1, 2], ["hit", "hit"], 2735), "KnodeGames Combo · 2 legs · ✅✅ · 27.35 pts");
 });
+
+// ── the page (site/combo.html + combo.js) ──
+const page = read("combo.html"), js = read("combo.js");
+test("combo page: scripts in order (math before the page), shared board, nav and header like every page", () => {
+  const order = ["board.js", "race-math.js", "blockx-math.js", "combo-math.js", "combo.js"].map((f) => page.indexOf(`<script src="${f}"></script>`));
+  assert.ok(order.every((i) => i > 0) && order.every((i, k) => k === 0 || i > order[k - 1]), "board, race-math, blockx-math, combo-math, combo");
+  assert.ok(page.indexOf('<script src="wallet.js"></script>') < page.indexOf('<script src="combo.js"></script>'));
+  assert.match(page, /<link rel="stylesheet" href="board\.css">/);
+  assert.match(page, /<nav class="tabbar"/);
+});
+test("combo page: a builder only until the CARD upgrade: it never sends, never signs, never builds HTML from data", () => {
+  assert.doesNotMatch(js, /\.send\(|functions\.pick|sendTransaction|signTransaction|onlyOperation/);
+  assert.doesNotMatch(js, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
+  assert.match(js, /\$\("send"\)\.disabled = true/);
+  // Browser storage holds only the draft, and every access is wrapped (it can throw in private windows).
+  for (const m of js.matchAll(/localStorage\.[a-zA-Z]+\(/g)) {
+    const before = js.slice(Math.max(0, m.index - 80), m.index);
+    assert.match(before, /try \{[^}]*$/, "storage access inside try");
+  }
+  // It only reads public data: the RPC head, race-data and games-data/combo.
+  const urls = [...js.matchAll(/"https:\/\/[^"]+"/g)].map((m) => m[0]);
+  for (const u of urls) assert.match(u, /api\.koinos\.io|raw\.githubusercontent\.com\/bawcejawn\/Knode\/(race-data|games-data\/combo)\/|koinosscan\.com|bawcejawn\.github\.io\/Knode\/site\/combo\.html/, u);
+});
+test("combo page: its rules text matches the math (locks, legs, cap, base)", () => {
+  assert.match(page, /races 25 minutes before the start, Block X 500 blocks/);
+  assert.equal(C.RACE_LEAD_MS, 25 * 60000); assert.equal(C.BLOCK_LEAD, 500);
+  assert.match(page, /at most 150 points/); assert.equal(C.CAP, 150);
+  const base = page.match(/<th>Base<\/th>((?:<td>\d+<\/td>)+)/)[1].match(/\d+/g).map(Number);
+  assert.deepEqual(base, [2, 3, 4, 5, 6].map((n) => C.BASE[n]));
+});
