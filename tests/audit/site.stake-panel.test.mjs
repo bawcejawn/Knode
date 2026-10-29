@@ -30,7 +30,7 @@ class Node {
 }
 const buttons = (root, label) => root.all().filter((n) => n.tagName === "button" && n.textContent === label);
 
-function env({ state, game, player = null, weeks = {}, account = ME, kind = "kondor", games = [] } = {}) {
+function env({ state, game, player = null, qplayer = null, weeks = {}, account = ME, kind = "kondor", games = [] } = {}) {
   const sent = [], ops = [], reads = [];
   class Contract {
     constructor({ id }) { this.id = id; const self = this;
@@ -39,6 +39,7 @@ function env({ state, game, player = null, weeks = {}, account = ME, kind = "kon
         reads.push(m);
         if (m === "get_state") return { result: state };
         if (m === "list_games") return { result: { games } };
+        if (m === "get_player") return { result: qplayer || {} };
         if (m === "get_game") { const w = weeks[args.week]; return { result: { game, week: w && w.gw, buckets: w && w.buckets } }; }
         if (m === "get_game_player") { const w = weeks[args.week]; return { result: args.week === String(state.week) ? player || {} : { entry: w && w.e } }; }
         return { result: {} };
@@ -64,7 +65,7 @@ function env({ state, game, player = null, weeks = {}, account = ME, kind = "kon
 const T = env({ state: {} }).K._test;
 const J = (x) => JSON.parse(JSON.stringify(x));   // values made inside the vm, compared as plain data
 
-const LIVE = (o = {}) => ({ config: { min_stake: String(UNIT), min_stake_next: "0", min_stake_next_week: "0", paused: false, v6_rule_week_plus_one: "3", ...o }, week: "5", time: "0" });
+const LIVE = (o = {}) => ({ config: { genesis_time: String(DEP.genesisTime), week_length: "604800000", min_stake: String(UNIT), min_stake_next: "0", min_stake_next_week: "0", paused: false, v6_rule_week_plus_one: "3", ...o }, week: "5", time: "0" });
 const GAME = (o = {}) => ({ id: 7, name: "Producer Race", staked: true, free_prize: true, active: true, from_week: "3", stake: String(250n * UNIT), season_weeks: 0, ...o });
 
 test("ABI: every entry point is the first 4 bytes of sha256(name)", () => {
@@ -204,8 +205,8 @@ test("finished weeks with something to claim get a Claim button that sends claim
     weeks: { 4: { gw, e: { prize_place: 1 } }, 3: { gw, e: { prize_place: 1, claimed: true } } } });
   e.K.mount(e.root, { game: 7 });
   await e.tick();
-  assert.match(e.root.textContent, /Week 4: 2 VHP/);
-  assert.doesNotMatch(e.root.textContent, /Week 3:/);
+  assert.match(e.root.textContent, /Week of 16 Nov: 2 VHP/);   // vault week 4 starts Monday 16 Nov 2026
+  assert.doesNotMatch(e.root.textContent, /Week of 9 Nov/);
   await buttons(e.root, "Claim")[0].on.click();
   await e.tick();
   assert.equal(e.sent.length, 1);
@@ -245,4 +246,53 @@ test("the panel sends only through the wallet, and only vault and token operatio
   assert.match(src, /const id = await W\.send\(label, ops\);/);
   assert.doesNotMatch(src, /signTransaction|sendTransaction|privateKey|wif|innerHTML|outerHTML|insertAdjacentHTML|eval\(|new Function|localStorage|sessionStorage/i);
   assert.match(src, /new k\.lib\.Contract\(\{ id: k\.dep\.contract, abi: VAULT_ABI/, "the vault address comes from game-data/deployment.json");
+});
+
+test("dates, not week numbers: a vault week is the Monday it starts (UTC)", () => {
+  const c = LIVE().config;
+  assert.equal(T.weekDate(c, 0), "Mon 19 Oct");
+  assert.equal(T.weekDate(c, 2), "Mon 2 Nov");
+  assert.equal(T.weekDate(c, 10), "Mon 28 Dec");
+});
+
+test("the status line says when a new stake starts counting, as a date", async () => {
+  const e = env({ state: LIVE(), game: GAME(), player: { player: { stake: String(12n * UNIT), pending: String(5n * UNIT), pending_week: "6" }, week_stake: String(12n * UNIT) } });
+  e.K.mount(e.root, { game: 7 });
+  await e.tick();
+  assert.match(e.root.textContent, /You're a staked player in this game this week, with 12 VHP counted\. 5 VHP more counts from Mon 30 Nov\./);
+  assert.doesNotMatch(e.root.textContent, /week 6/i);
+});
+
+test("last week per 100 VHP: the game's bucket ÷ the stake counted for it, only once that week closed", () => {
+  assert.equal(T.per100({ closed: true, weight_set: true, weight: String(500n * UNIT), bucket: String(2n * UNIT) }), 40000000n);   // 0.4 VHP
+  assert.equal(T.per100({ closed: false, weight_set: true, weight: String(UNIT), bucket: String(UNIT) }), null);
+  assert.equal(T.per100({ closed: true, weight_set: true, weight: "0", bucket: String(UNIT) }), null);
+  assert.equal(T.per100(null), null);
+});
+
+test("Where to stake: every staked game side by side with links to its page; hidden until live", async () => {
+  const games = [GAME({ id: 1, name: "Daily Questions", stake: String(900n * UNIT) }), GAME({ id: 7 }), GAME({ id: 2, name: "Who Signs Block X", stake: "0" }), GAME({ id: 4, name: "Fantasy Producers", staked: false })];
+  const weeks = { 4: { gw: { closed: true, weight_set: true, weight: String(200n * UNIT), bucket: String(1n * UNIT) } } };
+  let e = env({ state: LIVE({ v6_rule_week_plus_one: "0" }), games, weeks });
+  e.K.mountList(e.root, { links: { 1: "index.html#play", 7: "race.html#stake" } });
+  await e.tick();
+  assert.equal(e.root.hidden, true);
+  e = env({ state: LIVE(), games, weeks, player: { player: { stake: String(3n * UNIT), pending: "0" } }, qplayer: { player: { stake: String(10n * UNIT), pending: "0" } } });
+  e.K.mountList(e.root, { links: { 1: "index.html#play", 7: "race.html#stake" } });
+  await e.tick();
+  assert.equal(e.root.hidden, false);
+  const items = e.root.all().filter((n) => n.tagName === "li").map((n) => n.textContent);
+  assert.equal(items.length, 3, "only games that take stakes");
+  assert.match(items[0], /Daily Questions.*Staked 900 VHP.*Yours 10 VHP.*Last week see its page/);
+  assert.match(items[1], /Producer Race.*Staked 250 VHP.*Yours 3 VHP.*Last week 0\.5 VHP per 100/);
+  assert.match(items[2], /Who Signs Block X.*Page coming soon/);
+  const hrefs = e.root.all().filter((n) => n.tagName === "a" && /Stake/.test(n.textContent)).map((n) => n.attrs.href);
+  assert.deepEqual(J(hrefs), ["index.html#play", "race.html#stake"]);
+  assert.match(e.root.textContent, /week of 16 Nov/);
+  assert.equal(e.sent.length, 0, "the list never sends anything");
+  // A game with no closed week yet says so in words.
+  e = env({ state: LIVE(), games: [GAME()] });
+  e.K.mountList(e.root, { links: {} });
+  await e.tick();
+  assert.match(e.root.textContent, /Last week new: no full week yet/);
 });

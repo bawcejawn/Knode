@@ -27,6 +27,7 @@
   const VAULT_ABI = {
     methods: {
       get_state: { entry_point: 0x3d02a349, argument: "kpred.get_state_arguments", return: "kpred.get_state_result", read_only: true },
+      get_player: { entry_point: 0x37ce3085, argument: "kpred.get_player_arguments", return: "kpred.get_player_result", read_only: true },
       get_game: { entry_point: 0x6f8d72cf, argument: "kpred.get_game_arguments", return: "kpred.get_game_result", read_only: true },
       list_games: { entry_point: 0x2efa793, argument: "kpred.list_games_arguments", return: "kpred.list_games_result", read_only: true },
       get_game_player: { entry_point: 0xfeb472b, argument: "kpred.get_game_player_arguments", return: "kpred.get_game_player_result", read_only: true },
@@ -36,14 +37,17 @@
       claim_game: { entry_point: 0x4107e3ab, argument: "kpred.claim_game_arguments", return: "kpred.claim_game_result", read_only: false },
     },
     koilib_types: { nested: { kpred: { nested: {
-      config_object: { fields: { min_stake: u64(9), paused: bool(11), min_stake_next: u64(13), min_stake_next_week: u64(14), v6_rule_week_plus_one: u64(21) } },
+      config_object: { fields: { genesis_time: u64(4), week_length: u64(5), min_stake: u64(9), paused: bool(11), min_stake_next: u64(13), min_stake_next_week: u64(14), v6_rule_week_plus_one: u64(21) } },
       get_state_arguments: { fields: {} },
       get_state_result: { fields: { config: { type: "config_object", id: 1 }, week: u64(4), time: u64(11) } },
+      player_object: { fields: { stake: u64(1), pending: u64(2), pending_week: u64(3) } },
+      get_player_arguments: { fields: { player: addr(1), week: u64(2) } },
+      get_player_result: { fields: { player: { type: "player_object", id: 1 } } },
       game_object: { fields: { id: u32(1), name: { type: "string", id: 2 }, staked: bool(3), free_prize: bool(4), active: bool(5), from_week: u64(6), last_week_plus_one: u64(7), stake: u64(10), week_stake: u64(11), week: u64(12), season_weeks: u32(15) } },
       gweek_object: { fields: {
-        closed: bool(1), prize: u64(3), voided: bool(7), finalized: bool(8), rolled_over: bool(9), cutoff: u32(12),
+        closed: bool(1), bucket: u64(2), prize: u64(3), voided: bool(7), finalized: bool(8), rolled_over: bool(9), cutoff: u32(12),
         pot_a: u64(14), pot_b: u64(15), bw_hi: u64(17), bw_lo: u64(18), aw_hi: u64(19), aw_lo: u64(20),
-        first_n: u32(26), second_n: u32(27), prize_first: u64(28), prize_second: u64(29),
+        first_n: u32(26), second_n: u32(27), prize_first: u64(28), prize_second: u64(29), weight: u64(31), weight_set: bool(32),
       } },
       bucket_object: { fields: { stake: u64(1), players: u32(2), sum_w: u64(3), capped: u64(4) } },
       get_game_arguments: { fields: { game: u32(1), week: u64(2) } },
@@ -99,6 +103,18 @@
   function minStakeFor(config, w) {
     const next = big(config && config.min_stake_next);
     return next > 0n && big(w) >= big(config.min_stake_next_week) ? next : big(config && config.min_stake);
+  }
+  /** The Monday a vault week starts, as players read it: "Mon 2 Nov" (UTC). */
+  function weekDate(config, w) {
+    const len = big(config && config.week_length) || 604800000n;
+    const ms = Number(big(config && config.genesis_time) + big(w) * len);
+    return new Date(ms).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).replace(",", "");
+  }
+  /** Last week's rewards per 100 VHP staked in a game: its bucket ÷ the stake counted for it (null = not known). */
+  function per100(gw) {
+    if (!gw || !gw.closed || !gw.weight_set) return null;
+    const w = big(gw.weight);
+    return w > 0n ? (big(gw.bucket) * 100n * UNIT) / w : null;
   }
   const live = (state) => !!(state && state.config && big(state.config.v6_rule_week_plus_one) > 0n);
   /** What claim_game would pay for a week now (0n = nothing), the same rule as the vault's claimableG / rewardOfG. */
@@ -287,7 +303,7 @@
       const p = P.me && P.me.player;
       const mine = p ? big(p.stake) + big(p.pending) : 0n;
       const counted = P.me ? big(P.me.week_stake) : 0n;
-      const pendingNote = p && big(p.pending) > 0n && big(p.pending_week) > week ? ` (${exact(p.pending)} VHP counts from week ${p.pending_week})` : "";
+      const pendingNote = p && big(p.pending) > 0n && big(p.pending_week) > week ? ` ${exact(p.pending)} VHP more counts from ${weekDate(cfg, p.pending_week)}.` : "";
       const staked = counted >= min && min > 0n;
       const canStake = g.active && !cfg.paused;
       const rows = [
@@ -296,7 +312,7 @@
           el("div", {}, el("span", { class: "muted" }, "Game total"), el("b", {}, `${amount(g.stake)} VHP`)),
           el("div", {}, el("span", { class: "muted" }, "Minimum this week"), el("b", {}, `${exact(min)} VHP`))),
         who ? el("p", { class: "kstake-status" }, staked
-          ? `You're a staked player in this game this week (${amount(counted)} VHP counted).${pendingNote}`
+          ? `You're a staked player in this game this week, with ${amount(counted)} VHP counted.${pendingNote}`
           : `You're a free player in this game this week.${pendingNote}`) : null,
         el("p", { class: "muted kstake-explain" }, explain(g, min)),
         !g.active ? el("p", { class: "warn" }, "This game has stopped taking stakes. You can withdraw any time.") : null,
@@ -307,7 +323,7 @@
           who && mine > 0n ? el("button", { class: "btn btn-ghost", type: "button", disabled: P.busy, onclick: () => dialog("withdraw") }, "Withdraw") : null,
           who && mine > 0n && canStake && P.games.length ? el("button", { class: "btn btn-ghost", type: "button", disabled: P.busy, onclick: () => dialog("move") }, "Move") : null),
         P.claims.length ? el("ul", { class: "kstake-claims" }, ...P.claims.map((c) => el("li", {},
-          el("span", {}, `Week ${c.week}: ${amount(c.reward)} VHP`),
+          el("span", {}, `Week of ${weekDate(cfg, c.week).replace(/^\w+ /, "")}: ${amount(c.reward)} VHP`),
           el("button", { class: "btn btn-tang btn-small", type: "button", disabled: P.busy, onclick: () => act(`claim ${exact(c.reward)} VHP for week ${c.week}`, "claim", { week: c.week }) }, "Claim")))) : null,
         P.note ? el("p", { class: "muted kstake-note", role: "status" }, P.note) : null,
       ];
@@ -320,5 +336,55 @@
     return { refresh };
   }
 
-  window.KStake = { mount, _test: { VAULT_ABI, TOKEN_ABI, toUnits, minStakeFor, live, claimable, explain, buildOps, exact } };
+  /** "Where to stake": every game that takes stakes, side by side — staked in it, your stake, and last week's rewards
+   *  per 100 VHP staked — each with a link to its page's panel. `links` maps a vault game id to that page (the hub's
+   *  games.json "vault" ids). Hidden until the vault is live, like the panel. */
+  function mountList(root, opts = {}) {
+    if (!root) return null;
+    root.hidden = true;
+    root.classList.add("kstake");
+    const links = opts.links || {};
+    async function refresh() {
+      try {
+        await setup();
+        const state = await read("get_state", {});
+        if (!live(state)) { root.hidden = true; return; }
+        const week = big(state.week), cfg = state.config;
+        const games = ((await read("list_games", {})).games || []).filter((g) => g.staked && (g.active || big(g.stake) > 0n));
+        if (!games.length) { root.hidden = true; return; }
+        const who = window.KWallet && window.KWallet.address;
+        const rows = [];
+        for (const g of games) {
+          const id = Number(g.id);
+          let last = null, mine = null;
+          if (id !== Q_GAME && week > 0n) last = per100((await read("get_game", { game: id, week: (week - 1n).toString() })).week);
+          if (who) {
+            const r = id === Q_GAME ? await read("get_player", { player: who, week: week.toString() }) : await read("get_game_player", { player: who, game: id, week: week.toString() });
+            mine = r.player ? big(r.player.stake) + big(r.player.pending) : 0n;
+          }
+          rows.push({ id, name: g.name || `Game ${id}`, stake: big(g.stake), last, mine, active: !!g.active, href: links[id] || "" });
+        }
+        root.replaceChildren(
+          el("h3", {}, "Where to stake"),
+          el("p", { class: "muted kstake-explain" }, `Stake VHP in any game, as many as you like (at least ${exact(minStakeFor(cfg, week))} VHP in a game to play it as a staked player). Each game's stakers share that game's part of the weekly rewards. You can withdraw any time, or move stake between games.`),
+          el("ul", { class: "kstake-list" }, ...rows.map((r) => el("li", {},
+            el("div", { class: "kstake-list-head" },
+              el("b", {}, r.name),
+              r.href ? el("a", { class: "btn btn-ghost btn-small", href: r.href }, r.active ? "Stake →" : "Withdraw →") : el("span", { class: "muted" }, "Page coming soon")),
+            el("div", { class: "kstake-list-stats" },
+              el("span", {}, el("small", { class: "muted" }, "Staked "), `${amount(r.stake)} VHP`),
+              who ? el("span", {}, el("small", { class: "muted" }, "Yours "), `${amount(r.mine)} VHP`) : null,
+              el("span", {}, el("small", { class: "muted" }, "Last week "), r.last != null ? `${amount(r.last)} VHP per 100` : r.id === Q_GAME ? "see its page" : "new: no full week yet"))))),
+          el("p", { class: "muted fine-print" }, `"Last week" is the game's rewards for the week of ${weekDate(cfg, week - 1n).replace(/^\w+ /, "")} divided by the VHP staked in it: the top 30% of its staked players share them, so winners get more and others nothing. Past weeks don't promise future rewards. Daily Questions pays the staked players who answered: its page shows this week's pot.`));
+        root.hidden = false;
+      } catch {
+        if (!root.children || !root.children.length) root.hidden = true;
+      }
+    }
+    if (window.KWallet && window.KWallet.subscribe) window.KWallet.subscribe(() => refresh());
+    refresh();
+    return { refresh };
+  }
+
+  window.KStake = { mount, mountList, _test: { VAULT_ABI, TOKEN_ABI, toUnits, minStakeFor, live, claimable, explain, buildOps, exact, weekDate, per100 } };
 })();
