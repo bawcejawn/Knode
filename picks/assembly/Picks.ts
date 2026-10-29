@@ -165,8 +165,9 @@ export class Picks {
     if (had) {
       System.require(!(sameChoice(old!, args.producers, args.number) && sameLegs(old!.legs, args.legs)), SAME);
       System.require(old!.changes < game.max_changes, NO_CHANGES);
-      // A card can be changed only while every leg of the card it replaces is still open.
-      if (card) for (let i = 0; i < old!.legs.length; i++) System.require(legOpenAt(game, old!.legs[i], height, now) == 0, LEG_LOCKED);
+      // A card can be changed only while no leg of the card it replaces has locked (review CR-1: a stored leg that is
+      // "not open yet" after tighten_game shortened its window has not locked, so it doesn't block the change).
+      if (card) for (let i = 0; i < old!.legs.length; i++) System.require(legOpenAt(game, old!.legs[i], height, now) != 1, LEG_LOCKED);
     }
 
     const day = now / DAY_MS;

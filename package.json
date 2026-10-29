@@ -19,7 +19,8 @@
     "sponsor": "tsx bot/sponsor.ts",
     "race": "tsx bot/race.ts",
     "racepicks": "tsx bot/race-picks.ts",
-    "blockx": "tsx bot/games/blockx.ts"
+    "blockx": "tsx bot/games/blockx.ts",
+    "combo": "tsx bot/games/combo.ts"
   },
   "dependencies": {
     "koilib": "9.4.1"

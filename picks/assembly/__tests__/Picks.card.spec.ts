@@ -268,7 +268,6 @@ describe("owner changes to a card game", () => {
     legs0(); add(WIN, RACE, A1); add(SHOW, RACE, A2); add(HALF, RACE, A3); add(BLOCK, BR, A4); refusedCard(P1, SLOT0, CARD_SIZE);
     g = combo(); g.max_legs = 3; g.leg_types[3].enabled = false; tightenTo(g);
     good(); refusedCard(P1, SLOT0, LEG_UNKNOWN);
-    // a card stored before its leg type was switched off can still be replaced while its legs are open
     g = combo(); g.max_legs = 3; g.leg_types[3].enabled = false; g.leg_types[0].lead = RACE_LEAD + 60000; g.leg_types[0].ahead = DAY_MS - 60000; tightenTo(g);
     // looser is refused: raise max_legs, switch back on, lock later, open earlier, add a leg type
     g = combo(); g.max_legs = 4; g.leg_types[3].enabled = false; g.leg_types[0].lead = RACE_LEAD + 60000; g.leg_types[0].ahead = DAY_MS - 60000; refusedTighten(g, NOT_TIGHTER);
@@ -293,5 +292,52 @@ describe("owner changes to a card game", () => {
     g = combo(); g.max_legs = 10; g.leg_types.push(legType(5, LOCK_TIME, DAY_MS, 300000, DAY_MS)); g.leg_types[0].round_offset = 60000; refusedAnnounce(g, SHAPE_FIXED);
     g = combo(); g.max_legs = 10; g.leg_types.push(legType(6, LOCK_TIME, DAY_MS, 300000, DAY_MS)); refusedAnnounce(g, SHAPE_FIXED);
     g = combo(); g.max_legs = 10; refusedAnnounce(g, SHAPE_FIXED);
+  });
+});
+
+describe("review follow-ups (CR-1, CR-2)", () => {
+  it("a card holding a leg of a type switched off later can still be changed while its legs are open, and not after one locks", () => {
+    start();
+    legs0(); add(SHOW, RACE, A1); add(BLOCK, BR, A2); send(P1, SLOT0);
+    const g = combo(); g.leg_types[3].enabled = false; tightenTo(g);
+    // replace it with a card without Block X legs: allowed (the stored Block X leg is still open)
+    legs0(); add(SHOW, RACE, A1); add(HALF, RACE + 1, A2); send(P1, SLOT0);
+    expect(cardOf(P1, SLOT0)!.legs.length).toBe(2);
+    // a second wallet's card with a Block X leg, stored before the switch-off, can't be changed once that leg locks
+    start(); legs0(); add(SHOW, RACE + 1, A1); add(BLOCK, BR, A2); send(P2, SLOT0);
+    at(BTARGET - 500, T0);
+    legs0(); add(SHOW, RACE + 1, A3); add(HALF, RACE + 2, A4); refusedCard(P2, SLOT0, LEG_LOCKED);
+  });
+  it("after tighten_game shortens a leg type's opening window, a stored leg that isn't open yet doesn't block a change (CR-1)", () => {
+    start();
+    legs0(); add(WIN, RACE + 4, A1); add(BLOCK, BR, A2);
+    at(H0, START + 4 * RACE_MS - DAY_MS); send(P1, SLOT0);                    // the Win leg exactly 24 h ahead
+    const g = combo(); g.leg_types[0].ahead = 12 * 3600000; tightenTo(g);    // Win legs now open 12 h ahead
+    legs0(); add(SHOW, RACE + 1, A1); add(BLOCK, BR, A2); send(P1, SLOT0);    // the change goes through
+    expect(cardOf(P1, SLOT0)!.legs[0].code).toBe(SHOW);
+  });
+  it("tighten_game raising a leg type's lead locks new cards and changes earlier", () => {
+    start();
+    legs0(); add(WIN, RACE, A1); add(BLOCK, BR, A2);
+    at(H0, START - RACE_LEAD - 60000); send(P1, SLOT0);
+    const g = combo(); g.leg_types[0].lead = RACE_LEAD + 120000; tightenTo(g);
+    legs0(); add(WIN, RACE, A3); add(BLOCK, BR, A2); refusedCard(P1, SLOT0, LEG_LOCKED);
+    refusedCard(P2, SLOT0, LEG_LOCKED);
+  });
+  it("announce can't change an existing leg type's code or clock, or reorder the leg types", () => {
+    start();
+    let g = combo(); g.leg_types[0].code = 9; refusedAnnounce(g, SHAPE_FIXED);
+    g = combo(); g.leg_types[3].lock_mode = LOCK_TIME; g.leg_types[3].round_size = RACE_MS; g.leg_types[3].lead = RACE_LEAD; g.leg_types[3].ahead = DAY_MS; refusedAnnounce(g, SHAPE_FIXED);
+    g = combo(); const t0 = g.leg_types[0]; g.leg_types[0] = g.leg_types[1]; g.leg_types[1] = t0; refusedAnnounce(g, SHAPE_FIXED);
+    g = combo(); g.leg_types.push(legType(WIN, LOCK_TIME, RACE_MS, RACE_LEAD, DAY_MS)); refusedAnnounce(g, "PICKS: leg codes must be distinct");
+  });
+  it("a game of another kind can't be tightened into carrying leg types or max_legs", () => {
+    start();
+    const bx = new picks.game_config(2, "Who Signs Block X", 1, 1, 0, 0, LOCK_HEIGHT, 2400, 0, 100, 28900, 30, 5, true, new Array<picks.leg_type>(), 0);
+    register2(bx);
+    let g = new picks.game_config(2, "Who Signs Block X", 1, 1, 0, 0, LOCK_HEIGHT, 2400, 0, 100, 28900, 30, 5, true, comboTypes(), 0);
+    refusedTighten(g, "PICKS: only a card game has leg types");
+    g = new picks.game_config(2, "Who Signs Block X", 1, 1, 0, 0, LOCK_HEIGHT, 2400, 0, 100, 28900, 30, 5, true, new Array<picks.leg_type>(), 6);
+    refusedTighten(g, "PICKS: only a card game has leg types");
   });
 });

@@ -1,0 +1,164 @@
+# Combo Card recorder: every hour, records the Combo Card's cards and results (bot/games/combo.ts) into the combo/
+# folder of the games-data branch. It reads the chain (two nodes must agree), the race recorder's files (race-data)
+# and the Block X recorder's files (games-data/blockx).
+#
+# Same two-job pattern as games.yml, so repository code never runs next to a write token:
+#   record   runs the recorder with a read-only token and no secrets, and hands the files on.
+#   publish  runs no repository code: it checks the files' exact shape and pushes only combo/ to games-data.
+# It shares games.yml's concurrency group, so the two never push to games-data at the same time. It never touches
+# main, holds no key, and does not run on pull requests.
+#
+# Turn it on: Settings → Secrets and variables → Actions → Variables: COMBO_ENABLED = true
+name: Combo Card recorder
+
+on:
+  schedule:
+    - cron: "52 * * * *"     # every hour at minute 52, after the race (:37) and Block X (:47) recorders
+  workflow_dispatch: {}
+
+concurrency:
+  group: knode-games
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    if: ${{ vars.COMBO_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      # The last run's files, the Block X results and the race cards and results (public branches; no token).
+      # Only plain JSON files with the expected names are taken.
+      - name: Take the last run's files, Block X results and race files
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/prev/combo" "$RUNNER_TEMP/blockx" "$RUNNER_TEMP/race"
+          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" games-data 2>/dev/null; then
+            for f in $(git ls-tree --name-only FETCH_HEAD:combo 2>/dev/null); do
+              if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:combo/$f" > "$RUNNER_TEMP/prev/combo/$f"; fi
+            done
+            for f in $(git ls-tree --name-only FETCH_HEAD:blockx 2>/dev/null); do
+              if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git show "FETCH_HEAD:blockx/$f" > "$RUNNER_TEMP/blockx/$f"; fi
+            done
+          else echo "No games-data branch yet."; fi
+          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
+            for f in $(git ls-tree --name-only FETCH_HEAD); do
+              if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/race/$f"; fi
+            done
+          else echo "No race-data branch yet: cards wait for race cards."; fi
+      - name: Record the Combo Card
+        run: npm run combo
+        env:
+          RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
+          RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
+          COMBO_PREV: ${{ runner.temp }}/prev/combo
+          COMBO_OUT: ${{ runner.temp }}/games-data/combo
+          RACE_DATA: ${{ runner.temp }}/race
+          BLOCKX_DATA: ${{ runner.temp }}/blockx
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: combo-data
+          path: ${{ runner.temp }}/games-data/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  publish:
+    needs: record
+    if: ${{ vars.COMBO_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write         # push the games-data branch (never main)
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: combo-data
+          path: ${{ runner.temp }}/incoming
+      - name: Push games-data/combo (and nothing else)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IN: ${{ runner.temp }}/incoming
+        run: |
+          set -euo pipefail
+          if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/combo" ! -path "$IN/combo/vault" \) -o \( -type f ! -regex "$IN/combo/\(index\|board\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/combo/vault/W[0-9]+\.json" \) \) -print)
+          if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
+          big=$(find "$IN" -type f -size +2048k -print)
+          if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
+          # The content must be the recorder's own shape, not only parse as JSON.
+          /usr/bin/python3 - "$IN/combo" <<'PY'
+          import json, os, re, sys
+          d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          nat = lambda x: type(x) is int and 0 <= x < 10**16
+          RESULTS = ("pending", "hit", "miss", "void")
+          def leg_ok(l):
+              return type(l) is list and len(l) == 5 and l[0] in (1, 2, 3, 4) and nat(l[1]) and addr.fullmatch(str(l[2])) and nat(l[3]) and l[3] <= 300 and l[4] in RESULTS
+          def card_ok(c, rnd):
+              if type(c) is not dict or set(c) != {"player", "round", "time", "changes", "priceAt", "legs", "state", "outcome", "pts", "settled"}: return False
+              return (addr.fullmatch(str(c["player"])) and c["round"] == rnd and nat(c["time"]) and nat(c["changes"]) and (c["priceAt"] is None or nat(c["priceAt"]))
+                  and type(c["legs"]) is list and 2 <= len(c["legs"]) <= 10 and all(leg_ok(l) for l in c["legs"]) and c["state"] in ("pending", "final")
+                  and c["outcome"] in (None, "hit", "miss", "void") and nat(c["pts"]) and nat(c["settled"]))
+          def slot_ok(s):
+              return (type(s) is dict and set(s) == {"round", "fixed", "cards"} and nat(s["round"]) and type(s["fixed"]) is bool
+                  and type(s["cards"]) is list and len(s["cards"]) <= 100000 and all(card_ok(c, s["round"]) for c in s["cards"]))
+          ROW = {"a", "place", "pts", "hits", "cards", "best", "days", "lastHit", "staked", "ranked"}
+          def rows_ok(b):
+              if type(b) is not dict or type(b.get("rows")) is not list or len(b["rows"]) > 100000: return False
+              return all(type(x) is dict and set(x) == ROW and addr.fullmatch(str(x["a"])) and all(nat(x[k]) for k in ("place", "pts", "hits", "cards", "best", "days", "lastHit"))
+                  and x["staked"] in (None, True, False) and type(x["ranked"]) is bool for x in b["rows"])
+          for f in os.listdir(d):
+              p = os.path.join(d, f)
+              if os.path.isdir(p):
+                  for v in os.listdir(p):
+                      j = json.load(open(os.path.join(p, v), encoding="utf-8"))
+                      assert set(j) == {"game", "week", "final", "rows", "first", "second"} and j["game"] == 8 and nat(j["week"]) and v == "W%d.json" % j["week"], v
+                      assert j["final"] is True and j["first"] == [] and j["second"] == [] and type(j["rows"]) is list and len(j["rows"]) <= 100000, v
+                      assert all(type(r) is dict and set(r) == {"player", "points"} and addr.fullmatch(str(r["player"])) and type(r["points"]) is int and 1 <= r["points"] <= 255 for r in j["rows"]), v
+                  continue
+              j = json.load(open(p, encoding="utf-8"))
+              if f == "board.json":
+                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1, f
+                  assert all(rows_ok(j[k]) for k in ("today", "week", "allTime")), f
+                  lw = j["lastWeek"]
+                  assert lw is None or (rows_ok(lw) and type(lw.get("final")) is bool and set(lw) == {"week", "start", "final", "rows"}), f
+                  continue
+              if f == "index.json":
+                  assert set(j) == {"v", "updated", "weeks", "contract"} and j["v"] == 1 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
+                  assert j["contract"] is None or addr.fullmatch(str(j["contract"])), f
+                  continue
+              assert set(j) == {"v", "week", "start", "end", "slots"} and j["v"] == 1 and f == "W%03d.json" % j["week"], f
+              assert type(j["slots"]) is list and len(j["slots"]) <= 21 and all(slot_ok(s) for s in j["slots"]), f
+          print("combo files ok")
+          PY
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git init -q work && cd work
+          export GIT_AUTHOR_NAME=kpred-bot GIT_AUTHOR_EMAIL=kpred-bot@users.noreply.github.com GIT_COMMITTER_NAME=kpred-bot GIT_COMMITTER_EMAIL=kpred-bot@users.noreply.github.com
+          # Three tries: if another job pushed games-data in between, start again from its new tip (only combo/ changes).
+          for try in 1 2 3; do
+            parent=""
+            if git fetch -q --depth 1 "$remote" games-data 2>/dev/null; then parent=$(git rev-parse FETCH_HEAD); git read-tree FETCH_HEAD; else git read-tree --empty; fi
+            while IFS= read -r -d '' f; do
+              rel="${f#"$IN"/}"
+              blob=$(git hash-object -w "$f")
+              git update-index --add --cacheinfo 100644 "$blob" "$rel"
+            done < <(find "$IN/combo" -type f -name '*.json' -print0)
+            tree=$(git write-tree)
+            if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi
+            commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "games: record combo")
+            if git push -q "$remote" "$commit:refs/heads/games-data"; then echo "Combo files published."; exit 0; fi
+            echo "Push refused (games-data moved); trying again."; sleep 5
+          done
+          echo "::error::Could not publish after 3 tries."; exit 1

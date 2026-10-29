@@ -98,9 +98,10 @@
   }
 
   /** Why a card can't be made now (null if it can). legs: [{ code, round, producer }]. Same order as the contract. */
-  function cardProblem(legs, head) {
+  function cardProblem(legs, head, max = MAX_LEGS) {
+    const most = Math.min(HARD_MAX_LEGS, Math.max(MIN_LEGS, max | 0));   // the game's max_legs on chain (6 at launch)
     if (!Array.isArray(legs) || legs.length < MIN_LEGS) return "A card needs at least 2 legs.";
-    if (legs.length > MAX_LEGS) return "A card has at most 6 legs.";
+    if (legs.length > most) return `A card has at most ${most} legs.`;
     const seen = new Set(), producers = new Set();
     for (const l of legs) {
       if (!l || !CODES.includes(l.code) || !Number.isSafeInteger(l.round) || l.round < 1) return "Unknown leg.";
@@ -258,10 +259,12 @@
     return scores.map((v) => rank.get(v));
   }
   /** Combo Card's file for the Vault: staked game, so rows only (no free prizes). boardRows: C.board() rows for the
-   *  week, each with { player, pts (hundredths), staked (bool) }. Only staked players with points above 0 are listed
-   *  (owner's player rule: at least 1 VHP staked in the Combo Card at the week's start). */
+   *  week, each with { player, pts (hundredths), staked (true, false, or null when the Vault can't be read yet) }.
+   *  Listed: players with at least 1 full point for the week (owner, 2026-10-28) who aren't known to be unstaked; the
+   *  Vault itself checks each row's stake in the Combo Card (at least 1 VHP that week) and drops any that isn't. */
+  const MIN_WEEK_PTS = 100;   // 1 point, in hundredths
   function vaultFile(week, final, boardRows) {
-    const ok = (boardRows || []).filter((r) => r && r.staked === true && r.pts > 0 && isAddr(r.player));
+    const ok = (boardRows || []).filter((r) => r && r.staked !== false && Number.isSafeInteger(r.pts) && r.pts >= MIN_WEEK_PTS && isAddr(r.player));
     const pts = toVaultPoints(ok.map((r) => r.pts));
     return { game: GAME_ID, week, final: final === true, rows: ok.map((r, i) => ({ player: r.player, points: pts[i] })), first: [], second: [] };
   }
@@ -278,6 +281,6 @@
     CARDS_PER_DAY, MAX_CHANGES, BEST, RACE_LEAD_MS, RACE_AHEAD_MS, BLOCK_LEAD, BLOCK_AHEAD,
     isWindow, slotKey, slotRound, dayOfRound, utcDay, lockOf, legOpen, cardLockTime, cardProblem,
     priceCard, raceChances, factorOf, priceLeg, pointsFor, potential, legResult, scoreCard, board, places, shareText,
-    vaultWeek, toVaultPoints, vaultFile,
+    vaultWeek, toVaultPoints, vaultFile, MIN_WEEK_PTS,
   };
 })(typeof window !== "undefined" ? window : globalThis);

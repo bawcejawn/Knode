@@ -48,6 +48,14 @@
   let racesOpened = false;          // the first open race starts unfolded, once
   let board = null;
   const me = () => (W && W.address) || null;
+  // Sending (live once the Picks contract with CARD games is published and game 8 is a card game on chain).
+  const ROOT = new URL("../", location.href);
+  let picksC = null, cardsLive = false, liveMax = 0, usage = null;
+  let slots = [null, null, null];   // today's cards on chain, by slot
+  let editing = null;               // the slot being changed, or null for a new card
+  let stake = null;                 // staked in the Combo Card this week: true, false, or null (can't tell yet)
+  let sending = false;
+  const maxLegs = () => Math.min(C.HARD_MAX_LEGS, liveMax || C.MAX_LEGS);
   const legId = (l) => `${l.code}:${l.round}:${l.producer}`;
 
   // ── the draft survives a reload on this device (a convenience only) ──
@@ -55,7 +63,7 @@
   function loadDraft() {
     try {
       const v = JSON.parse(localStorage.getItem(DRAFT_KEY) || "[]");
-      if (Array.isArray(v)) legs = v.filter((l) => l && C.CODES.includes(l.code) && Number.isSafeInteger(l.round) && isAddr(l.producer)).slice(0, C.MAX_LEGS);
+      if (Array.isArray(v)) legs = v.filter((l) => l && C.CODES.includes(l.code) && Number.isSafeInteger(l.round) && isAddr(l.producer)).slice(0, C.HARD_MAX_LEGS);
     } catch { legs = []; }
   }
 
@@ -95,7 +103,7 @@
    *  block) replaces the leg there. */
   function addProblem(l) {
     const rest = legs.filter((x) => C.slotKey(x) !== C.slotKey(l));
-    if (rest.length >= C.MAX_LEGS) return `Your card is full (${C.MAX_LEGS} legs).`;
+    if (rest.length >= maxLegs()) return `Your card is full (${maxLegs()} legs).`;
     if (rest.some((x) => x.producer === l.producer)) return "This producer is already on your card.";
     if (head && !C.legOpen(l, head)) return "Locked.";
     return null;
@@ -241,7 +249,7 @@
   function bump() { const s = $("slip"); s.classList.remove("bump"); void s.offsetWidth; s.classList.add("bump"); }
   function renderSlip() {
     const { sorted, pot, chance } = cardStats(), n = legs.length;
-    $("t-count").textContent = `${n} of ${C.MAX_LEGS} legs`;
+    $("t-count").textContent = `${n} of ${maxLegs()} legs`;
     $("legs").replaceChildren(...sorted.map((l, i) => el("li", { class: legId(l) === lastAdded ? "fresh" : null },
       el("span", { class: "what" }, el("b", { text: legTitle(l) }), el("small", { text: legWhen(l) })),
       el("span", { class: "x", text: pot.prices[i] ? xf(pot.prices[i].factor) : "–" }),
@@ -257,18 +265,143 @@
     const lock = n && head ? C.cardLockTime(legs, head) : null;
     $("locks").textContent = lock ? `${clock(lock)}, in ${dur(lock - Date.now())}` : "–";
     const rungs = [];
-    for (let k = C.MIN_LEGS; k <= C.MAX_LEGS; k++) rungs.push(el("div", { class: k === n ? "on" : k === n + 1 ? "next" : null }, el("b", { text: String(C.BASE[k]) }), `${k} legs`));
+    for (let k = C.MIN_LEGS; k <= maxLegs(); k++) rungs.push(el("div", { class: k === n ? "on" : k === n + 1 ? "next" : null }, el("b", { text: String(C.BASE[k]) }), `${k} legs`));
     $("ladder").replaceChildren(...rungs);
-    $("ladder-note").textContent = n >= C.MAX_LEGS ? "Your card is full." : n >= C.MIN_LEGS ? `Base points by legs. One more leg takes the base from ${C.BASE[n]} to ${C.BASE[n + 1]}.` : "Base points by legs: each leg roughly doubles it.";
+    $("ladder-note").textContent = n >= maxLegs() ? "Your card is full." : n >= C.MIN_LEGS ? `Base points by legs. One more leg takes the base from ${C.BASE[n]} to ${C.BASE[n + 1]}.` : "Base points by legs: each leg roughly doubles it.";
     $("toast").textContent = toast;
-    const problem = n >= C.MIN_LEGS && head ? C.cardProblem(legs, head) : null;
+    const problem = n >= C.MIN_LEGS && head ? C.cardProblem(legs, head, maxLegs()) : null;
     $("problem").textContent = problem || (pot.unpriced && n ? "A leg can't be priced on the current card; remove it." : "");
-    $("send").disabled = true;
-    $("send").title = "Cards open when the Combo upgrade of the Picks contract is live.";
+    renderSend(ready && !problem && !pot.unpriced);
     $("bar-n").textContent = String(n);
     $("bar-v").replaceChildren(ready ? `${pts(pot.pts)}` : "–", el("small", { text: ready ? "pts" : n ? "add a leg" : "tap a price" }));
   }
   $("slip-bar").onclick = () => { const s = $("slip"), open = !s.classList.contains("open"); s.classList.toggle("open", open); $("slip-bar").setAttribute("aria-expanded", String(open)); };
+
+  // ── sending a card ──
+  async function fetchJsonAt(u) { const r = await fetch(u, { cache: "no-cache" }); if (!r.ok) throw new Error(String(r.status)); return r.json(); }
+  /** Live only when picks-data/deployment.json names the Picks contract and game 8 on it is an enabled card game. */
+  async function setupCards() {
+    let pdep = null, dep = null;
+    try { pdep = await fetchJsonAt(new URL("picks-data/deployment.json", ROOT)); } catch { return; }
+    if (!pdep || !isAddr(pdep.contract) || !provider) return;
+    try { dep = await fetchJsonAt(new URL("game-data/deployment.json", ROOT)); } catch { /* the wallet keeps its defaults */ }
+    try {
+      const abi = await fetchJsonAt(new URL("picks/abi/picks.koilib.json", ROOT));
+      if (!abi.methods || !abi.methods.pick || !JSON.stringify(abi).includes("leg_types")) return;   // a Picks contract without cards
+      picksC = new lib.Contract({ id: pdep.contract, abi, provider });
+      const g = (await picksC.functions.get_game({ game: C.GAME_ID })).result;
+      const game = g && g.game;
+      if (!game || Number(game.kind) !== 4 || !game.enabled) return;
+      liveMax = Number(game.max_legs) || C.MAX_LEGS;
+      cardsLive = true;
+    } catch { return; }
+    if (W) W.init({ provider, chainId: dep && dep.chainId, payer: dep && dep.payer, sponsor: dep && dep.sponsor, game: dep && dep.contract, onChange: () => loadMine() });
+    $("cards-soon").hidden = true;
+    await loadMine();
+  }
+  /** Today's 3 cards, today's usage, and the stake in the Combo Card (from the Vault, once it can tell). */
+  async function loadMine() {
+    slots = [null, null, null]; usage = null; stake = null;
+    const who = me();
+    if (cardsLive && who && head) {
+      const day = C.utcDay(head.time);
+      try {
+        const got = await Promise.all([0, 1, 2].map((k) => picksC.functions.get_pick({ game: C.GAME_ID, round: String(C.slotRound(day, k)), player: who }).then((x) => (x.result && x.result.pick) || null)));
+        slots = got.map((p) => (p && Array.isArray(p.legs) && p.legs.length ? p : null));
+        usage = (await picksC.functions.get_usage({ game: C.GAME_ID, player: who })).result || null;
+      } catch { /* shown as unknown */ }
+      stake = await readStake(who);
+    }
+    if (editing !== null && !slots[editing]) editing = null;
+    renderSlip();
+  }
+  async function readStake(who) {
+    try {
+      const dep = await fetchJsonAt(new URL("game-data/deployment.json", ROOT));
+      const abi = await fetchJsonAt(new URL("game/abi/kpred.koilib.json", ROOT));
+      if (!isAddr(dep.contract) || !abi.methods || !abi.methods.get_game_player) return null;   // the Vault isn't v6 yet
+      const v = new lib.Contract({ id: dep.contract, abi, provider });
+      const r = (await v.functions.get_game_player({ player: who, game: C.GAME_ID, week: String(M.weekOf(head.time)) })).result || {};
+      return BigInt(r.week_stake || "0") >= 100000000n || BigInt(r.active_stake || "0") >= 100000000n;
+    } catch { return null; }
+  }
+  /** Which slot a send goes to: the card being changed, else today's first free slot (null if all 3 are used). */
+  const targetSlot = () => (editing !== null ? editing : slots.findIndex((p) => !p) >= 0 ? slots.findIndex((p) => !p) : null);
+  function renderSlots() {
+    const box = $("slots");
+    box.hidden = !cardsLive || !me();
+    if (box.hidden) return;
+    box.replaceChildren(...slots.map((p, k) => el("button", { type: "button", class: `slot${editing === k ? " on" : ""}`, "data-k": `slot:${k}`, disabled: !p ? true : null,
+      "aria-pressed": String(editing === k), onclick: () => editCard(k) },
+      el("b", { text: `Card ${k + 1}` }), el("span", { text: p ? `${p.legs.length} legs · ${editing === k ? "editing" : "edit"}` : "free" }))));
+  }
+  function editCard(k) {
+    const p = slots[k];
+    if (!p) return;
+    if (editing === k) { editing = null; toast = "Back to a new card."; render(); return; }
+    editing = k;
+    legs = p.legs.map((l) => ({ code: Number(l.code), round: Number(l.round), producer: String(l.producer) }));
+    toast = `Editing card ${k + 1}. Change its legs, then send to replace it (up to ${3 - Number(p.changes || 0)} more change${3 - Number(p.changes || 0) === 1 ? "" : "s"}).`;
+    saveDraft(); render();
+  }
+  function renderSend(okCard) {
+    const b = $("send"), who = me(), slot = targetSlot();
+    renderSlots();
+    let why = null;
+    if (!cardsLive) why = "Cards open when the Combo upgrade of the Picks contract is live.";
+    else if (!who) why = "Connect a wallet to send a card.";
+    else if (W && W.kind === "guest") why = "The Combo Card is a staked game: connect Kondor or KOIN Vault.";
+    else if (stake === false) why = "Stake at least 1 VHP in the Combo Card to play.";
+    else if (slot === null) why = "You've used today's 3 cards. Pick one above to change it.";
+    else if (usage && Number(usage.picks_today) >= Number(usage.max_picks_per_day)) why = "Today's cards and changes are used up. More after 00:00 UTC.";
+    else if (!okCard) why = null;
+    b.textContent = !cardsLive ? "Send card (soon)" : sending ? "Sending…" : editing !== null ? `Send changes to card ${editing + 1}` : slot !== null ? `Send card ${slot + 1} of 3` : "Send card";
+    b.disabled = !cardsLive || sending || !!why || !okCard;
+    b.title = why || "";
+    if (cardsLive && why && legs.length >= C.MIN_LEGS && !toast) $("problem").textContent = why;
+  }
+  const CONTRACT_SAYS = [
+    [/leg of this card is locked|round is locked/i, "A leg locked before your card landed. Remove it and send again."],
+    [/not open yet/i, "A leg isn't open yet: legs open at most a day ahead."],
+    [/only once/i, "A producer can be on your card only once."],
+    [/one leg per leg type/i, "One Win, one Show and one Top half per race, and one leg per block."],
+    [/own UTC day/i, "A card can only be sent or changed on its own UTC day."],
+    [/2 to max_legs/i, "That card has too many or too few legs."],
+    [/used up/i, "Today's cards and changes are used up. More after 00:00 UTC."],
+    [/can't be changed again/i, "That card has been changed 3 times already."],
+    [/already your pick/i, "That's already your card."],
+    [/switched-off leg type|unknown/i, "One of these leg types is switched off for now."],
+    [/reject|denied|cancel/i, "Cancelled in your wallet. Nothing was sent."],
+  ];
+  async function sendCard() {
+    const who = me(), slot = targetSlot();
+    if (!cardsLive || !who || sending || slot === null || legs.length < C.MIN_LEGS) return;
+    try { await readHead(); } catch { /* the last head */ }
+    const problem = C.cardProblem(legs, head, maxLegs());
+    if (problem) { toast = problem; render(); return; }
+    // Legs whose lock is under 2 minutes away may land after it: ask for a fresh card instead of a failed send.
+    if (C.cardLockTime(legs, head) - Date.now() < 120000) { toast = "Your card locks in under 2 minutes; remove the leg that's about to lock."; render(); return; }
+    const round = C.slotRound(C.utcDay(head.time), slot), { sorted, pot } = cardStats();
+    sending = true; toast = W.kind === "guest" ? "Sending your card…" : `Confirm in ${W.label ? W.label() : "your wallet"}…`; render();
+    try {
+      const { operation } = await picksC.functions.pick({ player: who, game: C.GAME_ID, round: String(round), producers: [], number: "0",
+        legs: sorted.map((l) => ({ code: l.code, round: String(l.round), producer: l.producer })) }, { onlyOperation: true });
+      await W.send(`Combo card ${slot + 1}: ${sorted.length} legs, ${pts(pot.pts)} pts if every leg hits`, [operation]);
+      toast = "Sent. Checking the chain…"; render();
+      let seen = false;
+      for (let t = 0; t < 10 && !seen; t++) {
+        try { const x = (await picksC.functions.get_pick({ game: C.GAME_ID, round: String(round), player: who })).result; seen = !!(x && x.pick && Array.isArray(x.pick.legs) && x.pick.legs.length === sorted.length && sorted.every((l, i) => Number(x.pick.legs[i].code) === l.code && Number(x.pick.legs[i].round) === l.round && x.pick.legs[i].producer === l.producer)); } catch { /* again */ }
+        if (!seen) await new Promise((res) => setTimeout(res, 3000));
+      }
+      toast = seen ? `Card ${slot + 1} is locked in on the chain. It locks for good at ${clock(C.cardLockTime(legs, head))}; until then you can change it.` : "Sent. It isn't showing on the chain yet; this updates by itself.";
+      if (seen) { editing = null; legs = []; saveDraft(); }
+    } catch (e) {
+      const m = String((e && e.message) || e);
+      const hit = CONTRACT_SAYS.find(([re]) => re.test(m));
+      toast = hit ? hit[1] : `Not sent: ${m.slice(0, 200)}`;
+    } finally { sending = false; await loadMine(); render(); }
+  }
+  $("send").onclick = sendCard;
 
   // ── render all, keeping keyboard focus on the same control ──
   let shareKey = "";
@@ -348,7 +481,7 @@
 
   // ── how it works: the base table from the math ──
   (() => {
-    const ns = []; for (let k = C.MIN_LEGS; k <= C.MAX_LEGS; k++) ns.push(k);
+    const ns = []; for (let k = C.MIN_LEGS; k <= C.MAX_LEGS; k++) ns.push(k);   // drawn at load: the launch maximum
     $("base-table").replaceChildren(
       el("tr", {}, el("th", { text: "Legs" }), ...ns.map((k) => el("td", { text: String(k) }))),
       el("tr", {}, el("th", { text: "Base" }), ...ns.map((k) => el("td", { text: String(C.BASE[k]) }))));
@@ -367,12 +500,13 @@
   async function loadBoard() {
     try { const b = await fetchJson(DATA + "board.json"); if (b && b.v === 1 && lb) { board = b; $("board-box").hidden = false; lb.setMe(me() || ""); lb.set(board); } } catch { /* not running yet */ }
   }
-  if (W && W.subscribe) W.subscribe(() => { if (lb && board) { lb.setMe(me() || ""); lb.set(board); } });
+  if (W && W.subscribe) W.subscribe(() => { if (lb && board) { lb.setMe(me() || ""); lb.set(board); } loadMine(); });
 
   // ── start ──
   (async () => {
     loadDraft();
     try { await readHead(); say(""); } catch { say("Couldn't reach the Koinos network. Trying again in a moment…"); }
+    await setupCards().catch(() => {});
     await loadRaces();
     dropLocked(); render();
     loadBoard();
@@ -383,5 +517,6 @@
     }, 20000);
     setInterval(() => { if (!document.hidden) loadRaces().then(render); }, 300000);
     setInterval(() => { if (!document.hidden) loadBoard(); }, 600000);
+    setInterval(() => { if (!document.hidden && cardsLive) loadMine(); }, 60000);
   })();
 })();

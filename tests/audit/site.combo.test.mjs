@@ -197,14 +197,14 @@ test("leaderboard: best 10 cards, ties by hits then the earlier last hit", () =>
   assert.equal(b[3].player, "D"); assert.equal(b[3].pts, 0);
 });
 
-test("vault file: staked players with points, mapped onto 1..255 keeping order and ties; no free prizes", () => {
+test("vault file: players with at least 1 full point who aren't known to be unstaked (the Vault checks stakes), mapped onto 1..255 keeping order and ties; no free prizes", () => {
   const W = C.vaultWeek(Date.parse("2026-11-03T10:00:00Z"));
   assert.equal(W, 2); assert.equal(C.vaultWeek(Date.parse("2026-10-19T00:00:00Z")), 0); assert.equal(C.vaultWeek(Date.parse("2026-10-25T23:59:59Z")), 0);
   const P = (i) => "1" + String(i).padStart(33, "A").replace(/0/g, "B");
   const rows = [
     { player: P(1), pts: 4374000, staked: true }, { player: P(2), pts: 2700, staked: true }, { player: P(3), pts: 2700, staked: true },
-    { player: P(4), pts: 1, staked: true }, { player: P(5), pts: 9999999, staked: false }, { player: P(6), pts: 0, staked: true },
-    { player: "not an address", pts: 500, staked: true },
+    { player: P(4), pts: 100, staked: null }, { player: P(5), pts: 9999999, staked: false }, { player: P(6), pts: 0, staked: true },
+    { player: P(7), pts: 99, staked: true }, { player: "not an address", pts: 500, staked: true },
   ];
   const f = plain(C.vaultFile(W, true, rows));
   assert.deepEqual(f, { game: 8, week: 2, final: true, first: [], second: [],
@@ -212,6 +212,7 @@ test("vault file: staked players with points, mapped onto 1..255 keeping order a
   // nobody qualifies: an empty file is still written for the week
   assert.deepEqual(plain(C.vaultFile(W, true, [{ player: P(1), pts: 0, staked: true }])).rows, []);
   assert.equal(C.vaultFile(W, "yes", []).final, false, "final only when exactly true");
+  assert.equal(C.MIN_WEEK_PTS, 100, "at least 1 full point for the week (owner, 2026-10-28); 0.99 is out");
   // more than 255 distinct scores: the top 254 keep their order, the rest share 1
   const many = Array.from({ length: 300 }, (_, i) => 1000 + i);
   const m = C.toVaultPoints(many);
@@ -235,19 +236,30 @@ test("combo page: scripts in order (math before the page), shared board, nav and
   assert.match(page, /<link rel="stylesheet" href="board\.css">/);
   assert.match(page, /<nav class="tabbar"/);
 });
-test("combo page: a builder only until the CARD upgrade: it never sends, never signs, never builds HTML from data", () => {
-  assert.doesNotMatch(js, /\.send\(|functions\.pick|sendTransaction|signTransaction|onlyOperation/);
+test("combo page: sends only a Combo card through the Picks contract's pick, only once game 8 is a live card game", () => {
+  // The only transaction: picks.pick for game 8, with no producers and no number, sent through the shared wallet.
+  assert.equal((js.match(/functions\.pick\(/g) || []).length, 1);
+  assert.match(js, /picksC\.functions\.pick\(\{ player: who, game: C\.GAME_ID, round: String\(round\), producers: \[\], number: "0",/);
+  assert.equal((js.match(/W\.send\(/g) || []).length, 1);
+  assert.doesNotMatch(js, /sendTransaction|signTransaction|transfer|approve|burn/);
   assert.doesNotMatch(js, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
-  assert.match(js, /\$\("send"\)\.disabled = true/);
+  // Live only when picks-data/deployment.json names the contract and game 8 on chain is an enabled kind-4 game.
+  assert.match(js, /Number\(game\.kind\) !== 4 \|\| !game\.enabled\) return;/);
+  assert.match(js, /b\.disabled = !cardsLive \|\| sending \|\| !!why \|\| !okCard;/);
+  // Stake-only: guests and wallets the Vault says aren't staked are refused before anything is signed.
+  assert.match(js, /W\.kind === "guest"\) why = "The Combo Card is a staked game/);
+  assert.match(js, /stake === false\) why = "Stake at least 1 VHP in the Combo Card to play\."/);
   // Browser storage holds only the draft, and every access is wrapped (it can throw in private windows).
   for (const m of js.matchAll(/localStorage\.[a-zA-Z]+\(/g)) {
     const before = js.slice(Math.max(0, m.index - 80), m.index);
     assert.match(before, /try \{[^}]*$/, "storage access inside try");
   }
-  // It only reads public data: the RPC head, race-data and games-data/combo.
+  // Network reads: the RPC, race-data, games-data/combo, and this site's own deployment and ABI files.
   const urls = [...js.matchAll(/"https:\/\/[^"]+"/g)].map((m) => m[0]);
   for (const u of urls) assert.match(u, /koinos\.armana\.io|raw\.githubusercontent\.com\/bawcejawn\/Knode\/(race-data|games-data\/combo)\/|koinosscan\.com|bawcejawn\.github\.io\/Knode\/site\/combo\.html/, u);
+  for (const f of js.matchAll(/new URL\("([^"]+)", ROOT\)/g)) assert.match(f[1], /^(picks-data\/deployment|game-data\/deployment|picks\/abi\/picks\.koilib|game\/abi\/kpred\.koilib)\.json$/, f[1]);
 });
+
 test("combo page: its rules text matches the math (locks, per-race and per-producer rules); base and cap come from the math", () => {
   assert.match(page, /Races lock 25 minutes before the start, Block X 500 blocks/);
   assert.equal(C.RACE_LEAD_MS, 25 * 60000); assert.equal(C.BLOCK_LEAD, 500);
