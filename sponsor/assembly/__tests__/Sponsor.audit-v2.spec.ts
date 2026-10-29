@@ -131,6 +131,13 @@ function pays(): bool {
   return new Sponsor().authorize(new authority.authorize_arguments(authority.authorization_type.transaction_application)).value;
 }
 
+/** v3 (owner, 2026-10-28): a wallet that isn't a real player is paid from the free pool for ANY covered call. */
+function paidFromFree(): void {
+  expect(pays()).toBe(true);
+  expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day > 0).toBe(true);
+  MockVM.rollbackTransaction();
+}
+
 /** A normal sponsored stake by USER: approve the game for VHP, then deposit. */
 function userStake(tx: i32, rc: u64): void {
   TX = tx;
@@ -291,13 +298,12 @@ describe("AUDIT: v2 keeps the v1 rules", () => {
     expect(pays()).toBe(true);
   });
 
-  it("free picks mixed with any non-free op need a real player; 10 picks + nothing else is free play but within the per-tx cap", () => {
+  it("free picks mixed with any non-free op need a real player; 10 picks + nothing else is free play but within the per-tx cap [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     raceConfig(3 * MANA);
     emptyWallet();
     TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
     OPS = [call(RACE, RACE_PICK, Protobuf.encode(new sponsor.race_pick_args(USER), sponsor.race_pick_args.encode)), approve(VHP, USER, GAME)];
-    expect(() => { pays(); }).toThrow();
-    errorIs(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     emptyWallet();
     const ops: protocol.operation[] = [];
     for (let i = 0; i < 10; i++) ops.push(call(RACE, RACE_PICK, Protobuf.encode(new sponsor.race_pick_args(USER), sponsor.race_pick_args.encode)));

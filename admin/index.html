@@ -37,6 +37,10 @@
   .out .cmd { font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--muted); word-break: break-all; }
   pre { margin: 0; padding: 14px; background: var(--code); color: var(--codeink); font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; min-height: 360px; max-height: 75vh; overflow: auto; }
   .status-ok { color: var(--ok); } .status-bad { color: var(--bad); } .status-run { color: var(--warn); }
+  .tag.test { border-color: var(--warn); color: var(--warn); }
+  .tag.sends { border-color: var(--bad); color: var(--bad); }
+  .search { width: 100%; margin: 0 0 10px; }
+  .intro { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
 </style>
 </head>
 <body>
@@ -48,6 +52,8 @@
 <main>
   <section>
     <nav id="tabs" aria-label="Sections"></nav>
+    <input id="search" class="search" type="search" placeholder="Search every action (e.g. sponsor, pause, limits)" autocomplete="off" spellcheck="false" aria-label="Search actions">
+    <p class="intro" id="intro"></p>
     <div id="cards"></div>
   </section>
   <section class="out" aria-live="polite">
@@ -83,7 +89,7 @@
 
   function card(a) {
     const inputs = (a.params || []).map((p) => {
-      const input = p.choices ? el("select", { name: p.name }, ...p.choices.map((c) => el("option", { value: c }, c))) : el("input", { name: p.name, placeholder: p.hint, autocomplete: "off", spellcheck: "false" });
+      const input = p.choices ? el("select", { name: p.name }, ...p.choices.map((c) => el("option", { value: c }, c))) : el("input", { name: p.name, placeholder: p.hint, autocomplete: "off", spellcheck: "false", value: p.value ?? null });
       return el("label", {}, p.label, input);
     });
     const values = () => Object.fromEntries(inputs.map((l) => { const i = l.querySelector("input,select"); return [i.name, i.value.trim()]; }));
@@ -108,7 +114,7 @@
     preview.addEventListener("click", () => go(false));
     if (sendBtn) sendBtn.addEventListener("click", () => go(true));
     return el("div", { class: "card" },
-      el("h3", {}, a.label, a.sends ? el("span", { class: "tag" }, "sends") : el("span", { class: "tag" }, "read-only")),
+      el("h3", {}, a.label, a.sends ? el("span", { class: "tag sends" }, "sends") : el("span", { class: "tag" }, "read-only"), a.testnet ? el("span", { class: "tag test" }, "testnet") : ""),
       el("p", {}, a.help),
       el("div", { class: "row" }, ...inputs, preview, ...(sendBtn ? [sendBtn] : [])));
   }
@@ -117,12 +123,30 @@
     if (!KEY) return banner("Open the link printed in the terminal window (it carries this session's key).", true);
     let actions;
     try { actions = await api("/api/actions"); } catch (e) { return banner(String(e.message || e), true); }
-    const groups = [...new Set(actions.map((a) => a.group))];
+    // Sections in the order an owner usually needs them; anything new lands at the end.
+    const ORDER = ["Checks", "Mana sponsor", "Block X", "Testnet trial", "Game", "Game upgrade", "Desk", "Desk upgrade"];
+    const INTRO = {
+      "Checks": "Read-only checks. Nothing here can change anything.",
+      "Mana sponsor": "The wallet that pays players' Mana: switch it on or off, set its limits, see today's use and the 80% alerts. Off is always allowed, at once.",
+      "Block X": "The Picks contract behind Who Signs Block X: status, upload, and the game's announce / apply / pause (48 hours' notice to switch a game on).",
+      "Testnet trial": "The sponsor v3 trial on the Koinos Foundation testnet, in order (1 to 5). Test KOIN only; keys from .env.testnet. Runbook: docs/blockx/SPONSOR-TESTNET.md.",
+      "Game": "The question game and the seed. Owner-signed.",
+    };
+    const groups = [...new Set(actions.map((a) => a.group))].sort((x, y) => ((ORDER.indexOf(x) + 1 || 99) - (ORDER.indexOf(y) + 1 || 99)));
     const pick = (g) => {
+      $("#search").value = "";
       for (const b of $("#tabs").children) b.setAttribute("aria-pressed", String(b.dataset.g === g));
+      $("#intro").textContent = INTRO[g] || "";
       $("#cards").replaceChildren(...actions.filter((a) => a.group === g).map(card));
     };
     for (const g of groups) { const b = el("button", { type: "button", "aria-pressed": "false" }, g); b.dataset.g = g; b.addEventListener("click", () => pick(g)); $("#tabs").append(b); }
+    $("#search").addEventListener("input", () => {
+      const q = $("#search").value.trim().toLowerCase();
+      if (!q) return pick(groups[0]);
+      for (const b of $("#tabs").children) b.setAttribute("aria-pressed", "false");
+      $("#intro").textContent = "Search results:";
+      $("#cards").replaceChildren(...actions.filter((a) => (a.label + " " + a.help + " " + a.group).toLowerCase().includes(q)).map(card));
+    });
     pick(groups[0]);
   })();
 })();

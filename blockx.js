@@ -59,7 +59,7 @@
     if (id === MAINNET_CHAIN_ID || (NET.chainId && id !== NET.chainId)) throw new Error("The node isn't the testnet in this page's settings.");
     NET.chainId = NET.chainId || id;
     W = window.KTestWallet || null;
-    if (W) W.init({ provider, chainId: NET.chainId, picks: NET.picks });
+    if (W) W.init({ provider, chainId: NET.chainId, picks: NET.picks, sponsor: isAddr(cfg.sponsor) ? cfg.sponsor : null });   // sponsor v3 trial
     // The page's fixed wording, for this game's own settings (the fast game has a target every 300 blocks).
     const mins = Math.round(G.ROUND * X.BLOCK_MS / 60000), about = mins >= 90 ? `about every ${Math.round(mins / 60)} hours` : `about every ${mins} minutes`;
     const words = { every: `Every ${G.ROUND.toLocaleString("en-US")} blocks (${about})`, round: G.ROUND.toLocaleString("en-US"), about, perday: String(G.PICKS_PER_DAY), changes: String(G.MAX_CHANGES) };
@@ -308,6 +308,11 @@
     }
     let who;
     try { who = W.quick(); } catch (e) { pickModal("bad", "Couldn't make a wallet", [String((e && e.message) || e), "Try Kondor instead."], [el("button", { class: "btn", type: "button", onclick: () => { closeModal(); W.connect(); } }, "Use Kondor"), okBtn("OK")]); return; }
+    // The sponsor v3 trial: a new Test wallet needs no test KOIN, the test sponsor pays (docs/blockx/SPONSOR-TESTNET.md).
+    if (W.sponsor) {
+      pickModal("ok", "You're in", ["Your Test wallet is ready. It has no test KOIN on purpose: the test Mana sponsor pays for your picks."], [el("button", { class: "btn", type: "button", onclick: () => { closeModal(); goPick(); } }, "Pick now")]);
+      return;
+    }
     if (!isLocal) { fundHelp(who); return; }
     pickModal("busy", "Adding test KOIN…", ["Your wallet is ready. The test server is sending it 5 test KOIN (enough for about 100 picks)."]);
     try {
@@ -472,6 +477,9 @@
   let vault = null;
   async function setupStake() {
     if (TESTNET) return;
+    // The site's shared stake panel (stake-panel.js, Hub chat): Stake / Withdraw / Move / Claim for game 2. It stays
+    // hidden until the vault (v6) is live and Block X has a stake bucket.
+    if (window.KStake && typeof window.KStake.mount === "function" && $("blockx-stake")) window.KStake.mount($("blockx-stake"), { game: G.GAME_ID });
     try {
       const dep = await fetchJson(new URL("game-data/deployment.json", ROOT));
       if (!dep || !isAddr(dep.contract)) return;
@@ -480,7 +488,6 @@
       const st = await c.functions.get_state({});
       if (!(Number(st?.result?.config?.v6_rule_week_plus_one || 0) > 0)) return;   // the vault isn't live yet
       vault = c;
-      if (window.KStake && typeof window.KStake.mount === "function") { $("stake-panel").hidden = false; window.KStake.mount($("stake-panel"), { game: G.GAME_ID, name: "Who Signs Block X" }); }
       readStake();
     } catch { /* no vault: the boards still work */ }
   }

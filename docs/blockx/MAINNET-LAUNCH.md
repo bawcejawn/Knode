@@ -46,7 +46,7 @@ certutil -hashfile sponsor\build\release\contract.wasm SHA256
 The two hashes must be:
 
 - Picks `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594`
-- Sponsor v3 `3cdab1a75f066f0c65b09597ad8f35cf1b6e02fc2a37327bbf479db9a03b71a3`
+- Sponsor v3 `8d515d153ad7df0c7044c8b8cf3154d5fc333e56c9691b499ebd86fb23113dd7`
 
 (or the new ones Claude gives you after the fix-check). If either differs, stop. Then copy the builds into your
 working folder (the one with `.env`):
@@ -73,7 +73,7 @@ npm run sponsor -- status
 npm run sponsor -- upload
 ```
 
-The dry run must name the v3 build `3cdab1a7…`. Then:
+The dry run must name the v3 build `8d515d15…`. Then:
 
 ```powershell
 npm run sponsor -- upload --send

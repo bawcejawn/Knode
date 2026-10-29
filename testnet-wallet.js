@@ -24,7 +24,10 @@
   // transaction settles, so a big limit would block the next pick (5 test KOIN then allows ~15 picks in a few minutes).
   const MANA_CAP = 30000000n;
   const lib = root.koilib || root.koinos || root;
-  const W = { address: null, kind: null, provider: null, chainId: null, picks: null, listeners: new Set() };
+  const W = { address: null, kind: null, provider: null, chainId: null, picks: null, sponsor: null, listeners: new Set() };
+  // The sponsor v3 trial (docs/blockx/SPONSOR-TESTNET.md): with a testnet sponsor named in testnet/blockx.json, picks
+  // ask it to pay first (a wallet with no test KOIN can play), and fall back to the wallet's own test Mana.
+  const SPONSORED_LIMIT = 30000000n;   // 0.3 Mana per sponsored transaction (the sponsor's per-transaction cap is 1)
 
   const store = {
     get(k) { try { return root.localStorage.getItem(k); } catch { return null; } },
@@ -55,9 +58,10 @@
   function close() { if (sheet) sheet.hidden = true; }
 
   /** Must be called first: the testnet node and the chain id the page's settings name. */
-  function init({ provider, chainId, picks }) {
+  function init({ provider, chainId, picks, sponsor }) {
     if (!chainId || chainId === MAINNET_CHAIN_ID) throw new Error("The testnet wallet only works with a testnet chain id.");
     W.provider = provider; W.chainId = chainId; W.picks = picks || null;
+    W.sponsor = typeof sponsor === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(sponsor) ? sponsor : null;
     // Come back as the wallet used last time on this device (the test key stays in this browser).
     const kind = store.get(KIND);
     if (kind === "test" && hexKey()) { W.kind = "test"; W.address = signerFromHex(hexKey()).getAddress(); }
@@ -112,16 +116,28 @@
     if (!Array.isArray(ops) || !ops.length || ops.length > 10) throw new Error("Nothing to send.");
     for (const o of ops) if (!isPick(o)) throw new Error("The testnet wallet signs only picks on the testnet Picks contract. Nothing was sent.");
     await checkChain();
+    if (W.sponsor) {
+      try { return await sendWith(ops, { payer: W.sponsor, payee: W.address, limit: SPONSORED_LIMIT }); }
+      catch (e) {
+        const m = String((e && e.message) || e);
+        // Only a refusal by the sponsor or the network falls back; a wallet change or a cancel never does.
+        if (!/SPONSOR|insufficient|\brc\b|rc_limit|resource|mana/i.test(m) || /Nothing was sent/.test(m)) throw e;
+        W.lastSponsorRefusal = m.slice(0, 200);
+      }
+    }
     const mana = BigInt(await W.provider.getAccountRc(W.address));
-    if (mana < 6000000n) throw new Error("This wallet has no test Mana yet. Get test KOIN from the faucet bot (see “Get test KOIN”), then try again.");
+    if (mana < 6000000n) throw new Error(W.sponsor ? `The test sponsor didn't pay this one (${W.lastSponsorRefusal || "refused"}), and this wallet has no test Mana of its own.` : "This wallet has no test Mana yet. Get test KOIN from the faucet bot (see “Get test KOIN”), then try again.");
     const limit = mana * 9n / 10n < MANA_CAP ? mana * 9n / 10n : MANA_CAP;
+    return sendWith(ops, { payer: W.address, payee: null, limit });
+  }
+  async function sendWith(ops, { payer, payee, limit }) {
     const signer = W.kind === "test" ? signerFromHex(hexKey()) : root.kondor.getSigner(W.address);
     try { signer.provider = W.provider; } catch { /* Kondor's signer */ }
-    const tx = new lib.Transaction({ signer, provider: W.provider, options: { payer: W.address, rcLimit: limit.toString(), chainId: W.chainId } });
+    const tx = new lib.Transaction({ signer, provider: W.provider, options: { payer, ...(payee ? { payee } : {}), rcLimit: limit.toString(), chainId: W.chainId } });
     for (const op of ops) await tx.pushOperation(op);
     const signed = await tx.sign();
     if (!signed || !signed.header || signed.header.chain_id !== W.chainId) throw new Error("The signed transaction is not for this testnet. Nothing was sent.");
-    if (signed.header.payer !== W.address) throw new Error("The wallet changed who pays the Mana. Nothing was sent.");
+    if (signed.header.payer !== payer || (payee && signed.header.payee !== payee)) throw new Error("The wallet changed who pays the Mana. Nothing was sent.");
     // The wallet (Kondor) must not have raised the Mana limit or changed what is signed (review 2026-10-28, #7).
     if (BigInt(signed.header.rc_limit || "0") > limit) throw new Error("The wallet raised the Mana limit. Nothing was sent.");
     const sent = signed.operations || [];
@@ -136,6 +152,8 @@
 
   root.KTestWallet = {
     get address() { return W.address; }, get kind() { return W.kind; },
+    /** The testnet sponsor this page asks to pay first (the v3 trial), or null. */
+    get sponsor() { return W.sponsor; },
     label: () => (W.kind === "test" ? "your Test wallet" : W.kind === "kondor" ? "Kondor" : "your wallet"),
     init, connect, disconnect, forget, send,
     /** "Play free": make (or reuse) the Test wallet in this browser at once, without the wallet choice. */

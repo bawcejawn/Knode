@@ -33,7 +33,7 @@ import { Signer, Provider, Contract, Transaction } from "koilib";
 import { KoinosChain, showKoin, toSat } from "./chain.ts";
 import { tokenAbi } from "./token-abi.ts";
 import { contractMetadata } from "./chaincheck.ts";
-import { units, isMainnet, pinDeployment, PINNED_MAINNET } from "./bot.ts";
+import { units, isMainnet, pinDeployment, PINNED_MAINNET, TESTNET } from "./bot.ts";
 import { readLimits as readLimitsFile, summarize, merge, chainRows, siteMap, actionNames, checkRows, toMana, key, transitionRows, siteFits, siteMisfits, LIMITS_FILE as MAINNET_LIMITS_FILE, MARGIN, type Sample } from "./mana-limits.ts";
 
 const E = process.env;
@@ -77,7 +77,7 @@ export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "50", perPlayerWeek: "30
 export const SPONSOR_SHA256 = "fa4659e65c6156da3dde34238e0545a489a8b7f00cdf51df9bf79517a0019f33";
 /** v3 release candidate (allowlist, free claims, 5,000 ceiling, per-action Mana limits): NOT yet audited, so it may go
  *  only on the testnet. After the audit and fix-check it replaces SPONSOR_SHA256. */
-export const SPONSOR_V3_CANDIDATE = "3cdab1a75f066f0c65b09597ad8f35cf1b6e02fc2a37327bbf479db9a03b71a3";
+export const SPONSOR_V3_CANDIDATE = "8d515d153ad7df0c7044c8b8cf3154d5fc333e56c9691b499ebd86fb23113dd7";
 /** The builds this network may receive. Audit SP-13: v2 stays allowed as the documented rollback target. */
 export const allowedBuilds = (mainnet: boolean) => (mainnet ? [SPONSOR_SHA256] : [SPONSOR_SHA256, SPONSOR_V3_CANDIDATE]);
 /** v3 code on chain (the per-action and allowlist fields mean nothing to v2). */
@@ -94,7 +94,15 @@ const loadAbi = () => {
 
 /** The game and the Desk, from their deployment files (pinned to the real mainnet contracts), and the Producer Race
  *  picks contract once it is uploaded (race-data/deployment.json; optional). */
+/** --testnet (the sponsor v3 trial): the Koinos Foundation testnet's settings (testnet/sponsor.json), never the
+ *  mainnet deployment files. Keys from .env.testnet. */
+export const TESTNET_SPONSOR = "testnet/sponsor.json";
 function knode() {
+  if (TESTNET) {
+    const t = readJson(TESTNET_SPONSOR);
+    if (!t?.rpc || !t?.picks) throw new Error(`${TESTNET_SPONSOR} is missing or incomplete.`);
+    return { game: { contract: t.game, vhp: t.vhp, koin: t.koin }, desk: { contract: t.desk }, rpc: E.TESTNET_RPC || t.rpc, race: undefined, picks: t.picks as string, picksCards: false, testnetChainId: t.chainId as string };
+  }
   const game = readJson(GAME_DEP), desk = readJson(DESK_DEP), race = readJson(RACE_DEP);
   if (!game?.contract || !desk?.contract) throw new Error(`${GAME_DEP} and ${DESK_DEP} are needed.`);
   const rpc = E.RPC ?? game.rpc ?? "https://koinos.armana.io";
@@ -131,7 +139,7 @@ async function status() {
   if (!address) { log("No sponsor yet: create a new wallet, put its key in .env as SPONSOR_WIF, then: npm run sponsor -- upload"); return; }
   const provider = new Provider([rpc]);
   log(`Mana sponsor ${address} on ${rpc}${onMainnet(rpc) ? " (mainnet)" : ""}`);
-  const koin = new Contract({ id: PINNED_MAINNET.koin, abi: tokenAbi as any, provider });
+  const koin = new Contract({ id: TESTNET ? (game as any).koin : PINNED_MAINNET.koin, abi: tokenAbi as any, provider });
   const bal = ((await (koin.functions as any).balance_of({ owner: address })).result?.value) ?? "0";
   log(`  KOIN           ${showKoin(bal)}  (Mana now ${mana(await provider.getAccountRc(address))}; it refills over about 5 days)`);
   const m = await contractMetadata(provider, address);
@@ -196,7 +204,8 @@ async function upload(send: boolean) {
   const abi = loadAbi();
   const m = await contractMetadata(provider, A);
   const have = BigInt(await provider.getAccountRc(A));
-  const need = toSat(Math.ceil(wasm.length / 1024 * 1.2 + 10));
+  // (The testnet upload of the 32 KB Picks contract used 2.8 Mana; the testnet faucet gives little, so ask less there.)
+  const need = toSat(Math.ceil(wasm.length / 1024 * (mainnet ? 1.2 : 0.35) + (mainnet ? 10 : 5)));
   log(`Sponsor wallet     ${A}${mainnet ? "   ⚠ MAINNET" : ""}`);
   log(`Code               ${WASM}, ${(wasm.length / 1024).toFixed(1)} KB, sha256 ${sha256hex(wasm)}`);
   log(`Switches           pays for transactions ON; settings and uploads stay with this wallet's key`);
@@ -220,6 +229,8 @@ async function upload(send: boolean) {
   if (after.upload) bad.push("upload override is ON (must be off)");
   if (bad.length) throw new Error(`Uploaded, but the sponsor wallet is not as expected: ${bad.join("; ")}. Do not switch it on; check npm run sponsor -- status.`);
   writeJson(STATE, { network: mainnet ? "mainnet" : "testnet", rpc, address: A, wasmSha256: sha256hex(wasm), uploadTx: tx.transaction?.id, uploadedAt: new Date().toISOString() });
+  // The trial: the testnet page asks this sponsor to pay (testnet/blockx.json "sponsor"; commit it).
+  if (!mainnet && TESTNET) { const f = "testnet/blockx.json", c = readJson(f); if (c) { c.sponsor = A; writeJson(f, c); log(`Wrote "sponsor": "${A}" into ${f}: the testnet page asks it to pay for picks.`); } }
   log(`✔ uploaded (Mana used ${showKoin(receipt?.rc_used)}). On chain: ${after.hash}; pays for transactions: ${after.tx}`);
   log(`Saved ${STATE} (public; commit it). Next: npm run sponsor -- config --send, then enable --send.`);
 }
@@ -525,11 +536,32 @@ export function setPayer(choice: "sponsor" | "self", rcLimitMana = "1", files: {
   return block;
 }
 
+/** keys --testnet: a new sponsor wallet for the testnet trial, written to .env.testnet (never printed). */
+function keys() {
+  if (!TESTNET) throw new Error("keys is for the testnet trial only (add --testnet). The mainnet sponsor wallet already exists.");
+  const file = path.resolve(".env.testnet");
+  let text = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+  const have = text.match(/^SPONSOR_WIF=(.*)$/m);
+  if (have) { log(`SPONSOR_WIF already exists in .env.testnet: ${Signer.fromWif(have[1].trim()).getAddress()}`); return; }
+  const wif = Signer.fromSeed(crypto.randomBytes(32).toString("hex")).getPrivateKey("wif");
+  text = (text.trim() ? text.replace(/\s*$/, "\n") : "") + `SPONSOR_WIF=${wif}\n`;
+  fs.writeFileSync(file, text, { mode: 0o600 });
+  try { fs.chmodSync(file, 0o600); } catch {}
+  log(`Added SPONSOR_WIF (new) to .env.testnet. The testnet sponsor wallet is:\n  ${Signer.fromWif(wif).getAddress()}\nGet it test KOIN from the faucet bot (@KoinosTestnetFaucetBot, /faucet <address>), a few times: its KOIN is its Mana.`);
+}
+
 async function main() {
-  const [cmd = "status", ...a] = process.argv.slice(2);
+  const [cmd = "status", ...a] = process.argv.slice(2).filter((x) => x !== "--testnet");
+  if (cmd === "keys") return keys();
   const send = a.includes("--send");
   // Audit SP-12: mainnet or not by the node's chain id; the testnet keeps its own files.
-  try { MAINNET = (await new Provider([knode().rpc]).getChainId()) === MAINNET_CHAIN_ID; } catch { MAINNET = null; }
+  try {
+    const id = await new Provider([knode().rpc]).getChainId();
+    MAINNET = id === MAINNET_CHAIN_ID;
+    const k: any = knode();
+    if (TESTNET && (MAINNET || (k.testnetChainId && id !== k.testnetChainId))) throw new Error(`--testnet, but the node ${k.rpc} is not the Koinos Foundation testnet. Nothing was done.`);
+    if (!TESTNET && !MAINNET) throw new Error(`The node ${k.rpc} is not Koinos mainnet. For the testnet trial add --testnet.`);
+  } catch (e) { if (/Nothing was done|not Koinos mainnet/.test(String((e as Error).message))) throw e; MAINNET = null; }
   if (MAINNET === false) {
     STATE = path.join("sponsor-data", "testnet", "deployment.json");
     LIMITS_FILE = path.join("sponsor-data", "testnet", "mana-limits.json");

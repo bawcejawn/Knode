@@ -194,6 +194,13 @@ claim's Mana with the answers' 1 Mana limit, not `rcLimitOther`.
   real-players-only actions (answers and picks stay free play).
 - **The free pool is released by the hour** (audit SP-3): 1/24 of `max_mana_free_day` at 00:00 UTC and 1/24 more each
   hour (all of it from 23:00), so a burst of empty wallets can only use what has been released so far today.
+- **The vault (game v6) calls are covered** (owner, 2026-10-28: "ensure all game calls are covered"): `deposit_to`,
+  `withdraw_from`, `move_stake` and `claim_game` for the payee's own wallet (argument 1, in the vault's exact shape),
+  and `finalize_game_week`. The game id in argument 2 is the game whose stake makes the payee a real player. A payee's
+  own `claim_game` is free play, so a free player (a guest too) can collect a free-game prize.
+- **Free Mana on any covered call** (owner, 2026-10-28: "the wallet can use their available free mana as they wish"):
+  a wallet that isn't a real player is no longer refused for staking, swapping or approving; it spends the free pool
+  (released by the hour) within its own caps. Real players spend the rest of the day's total.
 - **Repeated fields** (audit SP-16): `arg_types` marks a repeated field with 0x10; any other field may appear once.
   The Picks row is `0x0301011301` (producers repeated), `game_arg` 2.
 - **640 argument bytes** (was 400) so Combo cards up to 10 legs fit. Combo cards (field 6, legs) are a settings change
@@ -208,8 +215,8 @@ claim's Mana with the answers' 1 Mana limit, not `rcLimitOther`.
   action, and never sets a limit after a run-out at the per-transaction cap; other actions ask 1 Mana (the cap); exact
   Mana values; the network is decided by chain id and the testnet keeps its own files; v2 stays allowed as a rollback.
 
-Release candidate sha256 (v3 with the above): `3cdab1a75f066f0c65b09597ad8f35cf1b6e02fc2a37327bbf479db9a03b71a3`
-(34,374 bytes; 162 contract tests). Superseded: `21bec825…` (33,210 bytes). Not yet fix-checked: the upload tool
+Release candidate sha256 (v3 with the above): `8d515d153ad7df0c7044c8b8cf3154d5fc333e56c9691b499ebd86fb23113dd7`
+(34,558 bytes; 167 contract tests). Superseded: `21bec825…` (33,210 bytes). Not yet fix-checked: the upload tool
 allows it on the testnet only. Rollback: v2 `fa4659e6…` stays an allowed build.
 
 ## Build

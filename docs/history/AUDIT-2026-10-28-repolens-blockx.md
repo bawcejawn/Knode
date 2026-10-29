@@ -75,7 +75,7 @@ the old address get a move-and-erase page; only a STAKE in the game makes a stak
 is released by the hour with an 80% alert; Picks launches with no per-action Mana limit. Also folded in: Block X takes
 stakes (Vault chat, 2026-10-28) and the Combo Card's sponsor needs (Build 8).
 
-Picks is unchanged (`700c296a…`, testnet `39cc5e00…`). **Sponsor v3 changed: `3cdab1a7…` (34,374 bytes, 162 tests).**
+Picks is unchanged (`700c296a…`, testnet `39cc5e00…`). **Sponsor v3 changed: `8d515d15…` (34,558 bytes, 167 tests).**
 
 ## Block X (Part A), new findings
 
@@ -125,3 +125,15 @@ Picks is unchanged (`700c296a…`, testnet `39cc5e00…`). **Sponsor v3 changed:
 | SP-19 | Payer wrote new rows only | **Fixed**: the lower of old and new |
 | SP-20 | Rounded values | **Fixed**: exact |
 | SP-21 | S3-2 tool-side only | Kept in `npm run check` and the runbook |
+
+## Also in round 3 (owner, 2026-10-28; Vault chat hand-off)
+
+- Sponsor v3 covers the vault (game v6) player calls (`deposit_to`, `withdraw_from`, `move_stake`, `claim_game`, for
+  the payee's own wallet in the vault's exact argument shape) and `finalize_game_week`; the call's game id counts for
+  the stake check; a payee's own `claim_game` is free play.
+- Owner decision: a wallet that isn't a real player may spend the free pool on any covered call (no more
+  `NOT_A_PLAYER` refusals), within its caps and the hourly release.
+- Block X page mounts the shared stake panel (`stake-panel.js`, Hub chat) for game 2.
+- Sponsor v3 trial on the testnet: `npm run sponsor -- <command> --testnet` (testnet/sponsor.json, .env.testnet), the
+  testnet page asks the test sponsor first; the local admin page (`npm run admin`) has Mana sponsor, Block X and
+  Testnet trial sections. Runbook: `docs/blockx/SPONSOR-TESTNET.md`.

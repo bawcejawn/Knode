@@ -82,6 +82,13 @@ function pays(): bool {
   MockVM.setCallContractResults(padReads(READS));
   return new Sponsor().authorize(new authority.authorize_arguments(authority.authorization_type.transaction_application)).value;
 }
+
+/** v3 (owner, 2026-10-28): a wallet that isn't a real player is paid from the free pool for ANY covered call. */
+function paidFromFree(): void {
+  expect(pays()).toBe(true);
+  expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day > 0).toBe(true);
+  MockVM.rollbackTransaction();
+}
 function doPays(): void { pays(); }
 function refused(message: string): void {
   expect(() => { doPays(); }).toThrow();
@@ -137,14 +144,14 @@ describe("v3 allowlist: Picks contract picks are free play for the payee's own w
     OPS = [call(PICKS, 0x94871b42, pickArgs(USER))];                 // apply_game
     refused("SPONSOR: only Knode calls are sponsored");
   });
-  it("a pick mixed with a real-players-only action is no longer free play", () => {
+  it("a pick mixed with a real-players-only action is no longer free play [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     start();
     emptyWallet();
     OPS = [call(PICKS, PICK, pickArgs(USER)), call(STAKED, STAKED_ENTRY, Protobuf.encode(new picks.get_usage_arguments(0, null), picks.get_usage_arguments.encode))];
     // STAKED takes (player, varint); build its args by hand: player first.
     const a = new Uint8Array(27 + 2); a[0] = 0x0a; a[1] = 25; a.set(USER, 2); a[27] = 0x10; a[28] = 7;
     OPS[1] = call(STAKED, STAKED_ENTRY, a);
-    refused(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     holder();
     expect(pays()).toBe(true);
   });
@@ -289,7 +296,7 @@ function claimArgs(player: Uint8Array, week: u64): Uint8Array {
 }
 
 describe("v3: a free player collects their own free-game prize; L-3: a stake counts from min_vhp up", () => {
-  it("an empty wallet's own claim is free play; a claim for someone else or with odd arguments is not", () => {
+  it("an empty wallet's own claim is free play; a claim for someone else or with odd arguments is not [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     start();
     emptyWallet();
     OPS = [call(GAME, GAME_CLAIM, claimArgs(USER, 3))];
@@ -297,24 +304,24 @@ describe("v3: a free player collects their own free-game prize; L-3: a stake cou
     MockVM.commitTransaction();
     emptyWallet();
     OPS = [call(GAME, GAME_CLAIM, claimArgs(OTHER, 3))];
-    refused(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     emptyWallet();
     const odd = claimArgs(USER, 3); const padded = new Uint8Array(odd.length + 2); padded.set(odd, 0); padded[odd.length] = 0x18; padded[odd.length + 1] = 1;
     OPS = [call(GAME, GAME_CLAIM, padded)];
-    refused(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     // answers are still free play next to a free claim
     emptyWallet();
     OPS = [call(GAME, GAME_ANSWER, NONE), call(GAME, GAME_CLAIM, claimArgs(USER, 3))];
     expect(pays()).toBe(true);
   });
-  it("a stake below min_vhp is not a real player; at min_vhp it is", () => {
+  it("a stake below min_vhp is not a real player; at min_vhp it is [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     start();
     OPS = [call(STAKED, STAKED_ENTRY, claimArgs(USER, 1))];
     READS = [gamePlayer(MANA / 2, 0)];
-    refused(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     // v3 (audit SP-2): a pending stake doesn't count, so half active + half pending is not a real player either.
     READS = [gamePlayer(MANA / 2, MANA / 2)];
-    refused(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     READS = [gamePlayer(MANA, 0)];
     expect(pays()).toBe(true);
   });
@@ -415,12 +422,12 @@ function gameWeekStake(v: u64): system_calls.exit_arguments {
 function claimish(): Uint8Array { const a = new Uint8Array(27 + 2); a[0] = 0x0a; a[1] = 25; a.set(USER, 2); a[27] = 0x10; a[28] = 7; return a; }
 
 describe("v3 SP-2: only a stake makes a real player (holding VHP, or a pending stake, does not)", () => {
-  it("1 VHP in the wallet (passed from wallet to wallet) is not a stake: refused for real-players-only actions", () => {
+  it("1 VHP in the wallet (passed from wallet to wallet) is not a stake: refused for real-players-only actions [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     start();
     READS = [gamePlayer(0, 0)];                  // holds VHP, staked nowhere: v3 never even asks the VHP token
     OPS = [call(STAKED, STAKED_ENTRY, claimish())];
-    expect(() => { doPays(); }).toThrow();
-    expect(MockVM.getErrorMessage()).toBe(NOT_A_PLAYER);
+    expect(pays()).toBe(true);                   // paid, but from the free pool: not a real player
+    expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day).toBe(MANA);
     const asked = MockVM.getCallContractArguments();
     for (let i = 0; i < asked.length; i++) expect(Arrays.equal(asked[i].contract_id!, VHP)).toBe(false);
     MockVM.rollbackTransaction();
@@ -500,5 +507,63 @@ describe("v3 SP-16 and Combo Card: repeated fields only where marked; up to 640 
     badConfig("SPONSOR: arg_types must be 1 to 16 bytes, field 1 the player (3)");
     CFG = v3Config(); CFG.allowed = [new sponsor.allowed_call(PICKS, PICK, true, bytes([3, 0x10]), 0)];
     badConfig("SPONSOR: arg_types bytes must be 0, 1, 2, 3 or 6, plus 0x10 for a repeated field (not the player)");
+  });
+});
+
+// ── v3: the Knode vault (game v6) calls, covered for the payee's own wallet (owner, 2026-10-28) ──
+const DEPOSIT_TO: u32 = 0x7bb5c436, WITHDRAW_FROM: u32 = 0x5b0aaef8, MOVE_STAKE: u32 = 0x7c268e69, CLAIM_GAME: u32 = 0x4107e3ab, FINALIZE_GAME_WEEK: u32 = 0xec300c11;
+/** player (field 1), then varints: fields 2.. (game, amount, ...). */
+function vaultArgs(player: Uint8Array, nums: u64[]): Uint8Array {
+  const a: u8[] = [0x0a, 25]; for (let i = 0; i < 25; i++) a.push(player[i]);
+  for (let i = 0; i < nums.length; i++) { a.push(<u8>(((i + 2) << 3) | 0)); let v = nums[i]; do { let b = <u8>(v & 0x7f); v >>= 7; if (v) b |= 0x80; a.push(b); } while (v); }
+  return bytes(a);
+}
+describe("v3: vault calls (deposit_to, withdraw_from, move_stake, claim_game, finalize_game_week)", () => {
+  it("each player call is paid for the payee's own wallet, and refused for another wallet in field 1", () => {
+    const calls: u32[] = [DEPOSIT_TO, WITHDRAW_FROM, MOVE_STAKE, CLAIM_GAME];
+    for (let i = 0; i < calls.length; i++) {
+      const n: u64[] = calls[i] == DEPOSIT_TO || calls[i] == MOVE_STAKE ? [2, 3 * MANA, 0] : [2, 4];
+      start(); holder();
+      OPS = [call(GAME, calls[i], vaultArgs(USER, n))];
+      expect(pays()).toBe(true);
+      MockVM.rollbackTransaction();
+      start(); holder();
+      OPS = [call(GAME, calls[i], vaultArgs(OTHER, n))];
+      refused("SPONSOR: a vault call must be the payee's own, with arguments in the vault's shape");
+    }
+  });
+  it("a non-canonical shape (a field twice, an unknown field) is refused", () => {
+    start(); holder();
+    const twice = vaultArgs(USER, [2, 4]); const t: u8[] = []; for (let i = 0; i < twice.length; i++) t.push(twice[i]); t.push(0x10); t.push(5);
+    OPS = [call(GAME, CLAIM_GAME, bytes(t))];
+    refused("SPONSOR: a vault call must be the payee's own, with arguments in the vault's shape");
+    OPS = [call(GAME, WITHDRAW_FROM, vaultArgs(USER, [2, 4, 9]))];   // field 4 isn't in withdraw_from
+    refused("SPONSOR: a vault call must be the payee's own, with arguments in the vault's shape");
+  });
+  it("a guest's own claim_game is paid from the free pool; a wallet staked in THAT game is a real player", () => {
+    start(); emptyWallet();
+    OPS = [call(GAME, CLAIM_GAME, vaultArgs(USER, [2, 4]))];
+    paidFromFree();
+    start();
+    READS = [gamePlayer(0, 0), gameWeekStake(5 * MANA)];             // staked in game 2 this week
+    OPS = [call(GAME, WITHDRAW_FROM, vaultArgs(USER, [2, MANA]))];
+    expect(pays()).toBe(true);
+    expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day).toBe(0);
+    const asked = MockVM.getCallContractArguments();
+    const g = Protobuf.decode<sponsor.game_get_game_player_args>(asked[asked.length - 1].args!, sponsor.game_get_game_player_args.decode);
+    expect(g.game).toBe(2);
+  });
+  it("finalize_game_week (no player) is covered; a non-player pays from the free pool", () => {
+    start(); emptyWallet();
+    const a: u8[] = [0x08, 2, 0x10, 4];
+    OPS = [call(GAME, FINALIZE_GAME_WEEK, bytes(a))];
+    paidFromFree();
+  });
+  it("owner decision: a wallet that isn't a real player may spend the free pool on any covered call, within the pool", () => {
+    start();
+    CFG = v3Config(); CFG.max_mana_free_day = 0; setConfig(); MockVM.commitTransaction();
+    emptyWallet();
+    OPS = [call(STAKED, STAKED_ENTRY, claimish())];
+    refused(FREE_USED_UP);
   });
 });
