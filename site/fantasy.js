@@ -73,11 +73,13 @@
       if (W && W.init) W.init({ onChange: () => refreshMine() });
       // Words for the fast clock.
       const mins = Math.round(F.DAY_MS / 60000);
-      const sb = F.clock.sheetBefore, words = { day: `test day`, sheet: sb >= 3600000 ? `${Math.round(sb / 3600000)} hours before the test week` : `${Math.round(sb / 60000)} minutes before the test week`, half: `${Math.round(F.DAY_MS / 120000)} minutes` };
+      const sb = F.clock.sheetBefore, words = { day: `test day`, sheet: sb >= 3600000 ? `${Math.round(sb / 3600000)} hours before the test week` : `${Math.round(sb / 60000)} minutes before the test week`, half: `${Math.round(F.DAY_MS / 120000)} minutes`,
+        days: "test days", daytimes: `On this testnet a day is ${mins} minutes long and starts on the hour.` };
       for (const e of document.querySelectorAll("[data-fx]")) { const w = words[e.getAttribute("data-fx")]; if (w) e.textContent = w; }
       $("how-text").prepend(el("p", {}, el("b", { text: "Testnet practice. " }), `1 test day = ${mins} minutes, so a test week is ${Math.round(7 * mins / 60)} hours. Picks go to a testnet copy of the Picks contract (play money). Teams are scored on real Koinos mainnet producers' blocks, read only, exactly as in the live game.`));
       return;
     }
+    for (const e of document.querySelectorAll('[data-fx="swing"]')) e.remove();   // practice-only wording
     let dep = null;
     try { dep = await fetchJson(new URL("picks-data/deployment.json", ROOT)); } catch { /* not live yet */ }
     NET = { rpc: ["https://koinos.armana.io", "https://api.koinos.io"], data: "https://raw.githubusercontent.com/bawcejawn/Knode/games-data/fantasy/",
@@ -209,7 +211,7 @@
     box.replaceChildren(el("span", { class: "lbl", text: "Plan:" }), ...(mine.open || []).map((d) => el("button", { type: "button", "aria-pressed": String(d === mine.sd),
       title: d === mine.td ? "the next day you can change" : "plan ahead: you can still change it until its own lock",
       onclick: () => { selDay = d === mine.td ? null : d; draftFor = null; refreshMine(); } },
-      el("span", { class: "d", text: dayLabel(d) }), el("span", { class: "s", text: mine.planned && mine.planned.has(d) ? "saved" : d === mine.td ? "next" : "open" }),
+      el("span", { class: "d", text: dayLabel(d) }), el("span", { class: "s", text: mine.planned && mine.planned.has(d) ? "team set" : d === mine.td ? "next up" : "not set" }),
       mine.planned && mine.planned.has(d) ? el("i", { class: "fx-dotsaved", "aria-label": "saved" }) : null)));
   }
 
@@ -249,7 +251,8 @@
     const s = sheetOf(mine.tw), now = Date.now(), lock = mine.sd != null ? F.lockOfDay(mine.sd) : null;
     renderPlan();
     $("fx-for").replaceChildren(`Team for ${when(F.dayStart(mine.sd))}`, el("span", { class: "fx-for-s", text: `Week ${mine.tw + 1}${TESTNET ? " (test)" : ""}${mine.sd !== mine.td ? " · planning ahead" : ""}` }));
-    $("fx-lock").replaceChildren(lock ? el("span", { text: "Locks in" }) : "", lock ? el("b", { text: dur(lock - now) }) : "");
+    $("fx-lock").replaceChildren(lock ? el("span", { text: "Locks in" }) : "", lock ? el("b", { text: dur(lock - now) }) : "", lock ? el("span", { text: `at ${hm(lock)}, plays from ${hm(F.dayStart(mine.sd))}` }) : "");
+    renderRule(s);
     const price = priceMap(s);
     $("fx-slots").replaceChildren(...Array.from({ length: FR.TEAM }, (_, i) => {
       const a = draft[i];
@@ -258,7 +261,7 @@
       const slot = el("div", { class: `fx-slot p${i} filled` + (i === 0 ? " cap" : "") },
         el("span", { class: "fx-kitwrap" }, kit(a), i === 0 ? el("span", { class: "fx-band", title: "Captain: scores double", text: "C" }) : null),
         el("span", { class: "who", text: nameOf(a) }),
-        el("span", { class: "meta" }, el("b", { text: price.has(a) ? String(price.get(a)) : "–" }), ` · form ${fmt(s && (s.pool.find((p) => p.a === a) || {}).form, 1)}`),
+        el("span", { class: "meta" }, el("b", { text: price.has(a) ? String(price.get(a)) : "–" }), ` cost · avg ${fmt(s && (s.pool.find((p) => p.a === a) || {}).form, 0)}`),
         el("span", { class: "acts" },
           i === 0 ? el("span", { class: "fx-capt", text: "Captain ×2" }) : el("button", { type: "button", "aria-pressed": "false", "aria-label": `Make ${nameOf(a)} captain`, onclick: () => captain(a) }, "Make C"),
           el("button", { type: "button", class: "x", "aria-label": `Remove ${nameOf(a)}`, onclick: () => remove(a) }, "✕")));
@@ -282,6 +285,25 @@
       : mine.monday && mine.inForce && !mine.carriedFits ? [el("b", { text: "Last week's team doesn't fit this week's prices." }), " Save a new team, or you score nothing until you do."]
       : mine.inForce ? [mine.monday ? "No new team saved: last week's team carries on." : "No new team saved: today's carries on."] : me() ? ["You have no team yet."] : []));
   }
+  const hm = (t) => new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  /** The one-change rule, counted for the team on the sheet. */
+  function renderRule(s) {
+    const r = $("fx-rule");
+    if (!r) return;
+    r.className = "fx-rule";
+    if (!s || !me()) { r.hidden = true; return; }
+    r.hidden = false;
+    const dayW = TESTNET ? "test day" : "day";
+    if (mine.monday || !mine.inForce) {
+      r.replaceChildren(el("b", { text: mine.monday ? "New week: free changes." : "First team: free changes." }), ` Pick any five that fit the budget. After this, it's one change a ${dayW}.`);
+      return;
+    }
+    const n = draft.length === FR.TEAM ? F.changes(mine.inForce, draft) : Math.min(2, FR.TEAM - draft.filter((a) => mine.inForce.includes(a)).length);
+    const pips = el("span", { class: "fx-pips", "aria-hidden": "true" }, el("i", { class: n >= 1 ? "on" : "" }));
+    if (n > 1) r.classList.add("bad");
+    r.replaceChildren(pips, el("b", { text: n === 0 ? "1 change left" : n === 1 ? "Change used" : `${n} changes: 1 too many` }),
+      ` for this ${dayW}. A change is swapping one producer, or moving the C.`);
+  }
   function pickFromList() {
     const q = $("fx-q"), box = $("pool-box");
     if (box) box.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
@@ -300,26 +322,33 @@
     if (!s) { tbody.replaceChildren(); $("pool-sub").textContent = ""; $("pool-note").textContent = sheetWait(); return; }
     const y = lastFinalDay(), lv = liveRec(), vhp = new Map();
     for (const rec of [y, lv]) if (rec && rec.producers) for (const [a, x] of Object.entries(rec.producers)) vhp.set(a, Math.max(vhp.get(a) || 0, x[1]));
-    const rows = s.pool.map((p) => ({ ...p, y: ixOf(y, p.a), t: ixOf(lv, p.a), size: vhp.get(p.a) || 0 }));
+    const due = new Map(); if (y && y.producers) for (const [a, x] of Object.entries(y.producers)) due.set(a, x[1]);
+    const rows = s.pool.map((p) => ({ ...p, y: ixOf(y, p.a), t: ixOf(lv, p.a), size: due.get(p.a) ?? vhp.get(p.a) ?? 0, lt: lv && lv.producers && lv.producers[p.a] }));
     const key = { price: (r) => -r.price, value: (r) => -((r.form ?? 0) / r.price), form: (r) => -(r.form ?? -1), today: (r) => -(r.t ?? -1), vhp: (r) => -r.size }[sortBy];
     rows.sort((a, b) => key(a) - key(b) || (a.a < b.a ? -1 : 1));
     const q = ($("fx-q") && $("fx-q").value.trim().toLowerCase()) || "";
     const shown = q ? rows.filter((r) => r.a.toLowerCase().includes(q) || nameOf(r.a).toLowerCase().includes(q)) : rows;
     const full = draft.length >= FR.TEAM, price = priceMap(s), spent = draft.reduce((t, a) => t + (price.get(a) || 0), 0);
     const ixCell = (v) => { const c = el("span", { class: "fx-form" + (v == null ? "" : v >= 103 ? " hi" : v < 90 ? " lo" : ""), text: v == null ? "–" : fmt(v, 1) }); return c; };
-    const meter = (v) => { const m = el("span", { class: "fx-meter" + (v == null ? "" : v >= 103 ? " hi" : v < 90 ? " lo" : "") }, el("i"), el("b", { text: v == null ? "–" : fmt(v, 1) })); m.firstChild.style.setProperty("--p", `${v == null ? 0 : Math.max(4, Math.min(100, (v / 130) * 100))}%`); return m; };
+    const meter = (v) => { const m = el("span", { class: "fx-meter" + (v == null ? "" : v >= 103 ? " hi" : v < 90 ? " lo" : "") }, el("i"), el("b", { text: v == null ? "–" : fmt(v, 0) })); m.firstChild.style.setProperty("--p", `${v == null ? 0 : Math.max(4, Math.min(100, (v / 130) * 100))}%`); return m; };
+    const pts = (v) => el("span", { class: "fx-form" + (v == null ? "" : v >= 103 ? " hi" : v < 90 ? " lo" : ""), text: v == null ? "–" : fmt(Math.min(130, v), 0) });
+    const todayCell = (r) => { if (!r.lt) return pts(null); const [sg, ex] = r.lt; return el("span", { class: "fx-today" }, pts(r.t), el("small", { text: `${sg} of ${ex < 10 ? fmt(ex, 1) : fmt(ex, 0)} blocks` })); };
+    const steady = (n) => n >= 150 ? ["Very steady", "s3"] : n >= 40 ? ["Steady", "s2"] : n >= 10 ? ["Swingy", "s1"] : ["Very swingy", "s0"];
     tbody.replaceChildren(...shown.map((r) => {
       const on = draft.includes(r.a), fits = spent + r.price <= s.budget;
       const btn = on ? el("button", { type: "button", class: "rm", "aria-label": `Remove ${nameOf(r.a)}`, onclick: () => remove(r.a) }, "Remove")
         : el("button", { type: "button", class: fits ? null : "over", "aria-label": `Add ${nameOf(r.a)}`, onclick: () => add(r.a), disabled: full || s !== sheetOf(mine.tw) ? "" : null,
             title: full ? "Your team has 5: remove one first" : fits ? null : "Over the budget with your other picks" }, full || fits ? "Add" : "Add (over)");
-      return el("tr", { class: on ? "on" : null }, el("td", {}, nameCell(r.a)), el("td", { class: "fx-td-form" }, meter(r.form)), el("td", { class: "num hide-sm" }, ixCell(r.y)),
-        el("td", { class: "num hide-sm" }, ixCell(r.t)), el("td", { class: "num" }, el("span", { class: "fx-price", text: String(r.price) })), el("td", { class: "num" }, btn));
+      const [sw, sc] = steady(r.size);
+      return el("tr", { class: on ? "on" : null },
+        el("td", {}, el("span", { class: "fx-prod" }, nameCell(r.a), el("span", { class: `fx-steady ${sc}`, title: `Due about ${fmt(r.size, r.size < 10 ? 1 : 0)} blocks a ${TESTNET ? "test day" : "day"}` }, el("i"), `${sw} · due ~${fmt(r.size, r.size < 10 ? 1 : 0)} a ${TESTNET ? "test day" : "day"}`))),
+        el("td", { class: "num" }, el("span", { class: "fx-price", text: String(r.price) })), el("td", { class: "fx-td-form" }, meter(r.form)),
+        el("td", { class: "num hide-sm" }, pts(r.y)), el("td", { class: "num hide-sm" }, todayCell(r)), el("td", { class: "num" }, btn));
     }));
     if (!shown.length) tbody.replaceChildren(el("tr", {}, el("td", { colspan: "6", class: "fx-none", text: `No producer matches "${q}".` })));
-    $("pool-sub").textContent = `${s.pool.length} producers, median form ${fmt(s.median, 1)}${s.late ? ", made late" : ""}. ${full ? "Your team is full." : `${Math.max(0, s.budget - spent)} left to spend.`}`;
+    $("pool-sub").textContent = `${s.pool.length} producers to choose from. ${full ? "Your team is full: remove one to add another." : `You have ${Math.max(0, s.budget - spent)} left to spend.`}`;
     const wf = files.weeks.get(s.week);
-    $("pool-note").replaceChildren(`Form = blocks signed ÷ expected over the 7 ${TESTNET ? "test days" : "days"} before the list (100 = its fair share). Today = so far, provisional. `,
+    $("pool-note").replaceChildren(`Prices are fixed for the week. `,
       wf && wf.sha256 ? el("span", { class: "mono", title: "sha256 of this price list", text: `Fingerprint ${wf.sha256.slice(0, 16)}…` }) : "",
       s.week !== mine.tw ? ` This is week ${s.week + 1}'s list; week ${mine.tw + 1}'s comes out ${when(F.sheetTime(mine.tw))}.` : "");
   }
@@ -513,7 +542,7 @@
     const lock = F.lockOfDay(td);
     $("fx-kick").textContent = clock(lock - now);
     $("fx-kick-l").textContent = "Next lineup lock";
-    $("fx-kick-s").textContent = `for ${when(F.dayStart(td))}`;
+    $("fx-kick-s").textContent = `at ${hm(lock)}. The ${TESTNET ? "test day" : "day"} starts ${hm(F.dayStart(td))}.`;
     $("fx-weekline").textContent = `Fantasy Producers · ${started ? `Week ${wNow + 1}` : `Week 1 starts ${when(F.weekStart(0))}`}${TESTNET ? " · testnet" : ""}`;
     const s = sheetOf(mine.tw), v = verdict(), nx = $("fx-next");
     let step, act = null;
@@ -525,7 +554,7 @@
     else if (v.ok) { step = "Your lineup is ready. Save it before the lock."; act = ["Go to save", () => $("fx-save").scrollIntoView({ block: "center" })]; }
     else if (v.bad) step = v.text;
     else if (mine.saved) step = `You're set for ${when(F.dayStart(mine.sd))}. Plan a later day or challenge a rival.`;
-    else step = mine.inForce ? "Your team carries on. Make your one change for the day, or leave it." : v.text;
+    else step = mine.inForce ? `Your team plays on. You may make 1 change for the next ${TESTNET ? "test day" : "day"} (swap a producer or move the C), or leave it.` : v.text;
     nx.replaceChildren(el("span", { class: "fx-next-l", text: "Your move" }), el("span", { class: "fx-next-t", text: step }), act ? el("button", { type: "button", onclick: act[1] }, act[0]) : "");
   }
   const clock = (ms) => { const t = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), x = t % 60; return h >= 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : `${h}:${String(m).padStart(2, "0")}:${String(x).padStart(2, "0")}`; };
@@ -535,6 +564,17 @@
     renderSheet(); renderPool(); renderWeek(); renderLeague(); renderRival();
   }
 
+  /** The quick guide for newcomers (hidden once dismissed) and the numbers legend (remembers being closed). */
+  const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* fine */ } } };
+  function setupGuide() {
+    const g = $("fx-guide"), lg = $("fx-legend");
+    if (g) {
+      g.hidden = store.get("fx-guide") === "hidden";
+      $("fx-guide-x").addEventListener("click", () => { g.hidden = true; store.set("fx-guide", "hidden"); });
+      $("fx-guide-show").addEventListener("click", () => { g.hidden = false; store.set("fx-guide", ""); g.scrollIntoView({ block: "start" }); });
+    }
+    if (lg) { if (store.get("fx-legend") === "closed") lg.open = false; lg.addEventListener("toggle", () => store.set("fx-legend", lg.open ? "" : "closed")); }
+  }
   /** The section tabs: the one in view is marked. */
   function setupNav() {
     const links = [...document.querySelectorAll(".fx-nav a")];
@@ -556,6 +596,7 @@
     $("fx-reset").addEventListener("click", () => { draft = [...(mine.saved || mine.inForce || [])]; render(); });
     $("fx-rival-send").addEventListener("click", sendRival);
     if ($("fx-q")) $("fx-q").addEventListener("input", renderPool);
+    setupGuide();
     setupNav();
     for (const b of document.querySelectorAll("[data-sort]")) b.addEventListener("click", () => { sortBy = b.dataset.sort; for (const x of document.querySelectorAll("[data-sort]")) x.setAttribute("aria-pressed", String(x === b)); renderPool(); });
     for (const b of document.querySelectorAll("[data-week]")) b.addEventListener("click", () => { leagueWeek = b.dataset.week; for (const x of document.querySelectorAll("[data-week]")) x.setAttribute("aria-pressed", String(x === b)); renderLeague(); });

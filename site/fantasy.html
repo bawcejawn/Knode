@@ -93,11 +93,21 @@
       <a href="#week-box">My week</a>
       <a href="#rival-box">Rival</a>
       <a href="#league-box">League</a>
-      <a href="#how">Rules</a>
+      <a href="#help">Help</a>
     </nav>
 
     <p class="status" id="status" role="status">Loading…</p>
     <p class="fx-remind" id="fx-remind" role="status" hidden></p>
+
+    <section class="fx-steps" id="fx-guide" aria-labelledby="steps-h">
+      <div class="fx-steps-top"><h2 id="steps-h">New here? It takes a minute</h2><button type="button" class="fx-ghost-d" id="fx-guide-x">Got it, hide this</button></div>
+      <ol>
+        <li><b>Draft five producers</b><span>Tap <i>Add</i> on any five in the players list. Together they must cost 100 or less.</span></li>
+        <li><b>Name a captain</b><span>Tap <i>Make C</i>. Your captain's points count double.</span></li>
+        <li><b>Save before the lock</b><span>Teams lock 5 minutes before each <span data-fx="day">day</span> starts. Your team keeps playing until you change it.</span></li>
+        <li><b>Make one change a <span data-fx="day">day</span></b><span>Swap one producer, or move the C. Most points by the end of the week wins.</span></li>
+      </ol>
+    </section>
 
     <div class="fx-grid">
       <section class="fx-sheet" id="sheet" aria-label="Your team">
@@ -106,6 +116,7 @@
           <span class="fx-lock" id="fx-lock"></span>
         </div>
         <div class="fx-plan" id="fx-plan" role="group" aria-label="Which day to set" hidden></div>
+        <p class="fx-rule" id="fx-rule"></p>
         <div class="fx-pitch">
           <div class="fx-lines" aria-hidden="true"><i class="box"></i><i class="arc"></i><i class="half"></i><i class="circle"></i></div>
           <div class="fx-slots" id="fx-slots"></div>
@@ -123,7 +134,7 @@
 
       <aside class="fx-side">
         <section class="fx-card fx-match-card" id="rival-box" aria-labelledby="rival-h">
-          <div class="fx-head"><h2 id="rival-h">Weekly Rival</h2><p>Bragging rights, no prize money</p></div>
+          <div class="fx-head"><h2 id="rival-h">Weekly Rival</h2><p>One rival a week, just for bragging rights</p></div>
           <div id="fx-match"></div>
           <div class="fx-rec" id="fx-rec"></div>
           <h3 id="ch-title">Challenge someone for next week</h3>
@@ -148,17 +159,27 @@
       <div class="fx-tools">
         <label class="fx-search"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg><input id="fx-q" type="search" placeholder="Find a producer" aria-label="Find a producer" autocomplete="off" spellcheck="false"></label>
         <div class="fx-filter" role="group" aria-label="Sort the players">
-          <span class="fx-filter-l">Sort</span>
-          <button type="button" data-sort="price" aria-pressed="true">Price</button>
-          <button type="button" data-sort="value" aria-pressed="false">Value</button>
-          <button type="button" data-sort="form" aria-pressed="false">Form</button>
+          <span class="fx-filter-l">Sort by</span>
+          <button type="button" data-sort="price" aria-pressed="true">Cost</button>
+          <button type="button" data-sort="form" aria-pressed="false">Avg points</button>
+          <button type="button" data-sort="value" aria-pressed="false">Best value</button>
+          <button type="button" data-sort="vhp" aria-pressed="false">Steadiest</button>
           <button type="button" data-sort="today" aria-pressed="false">Today</button>
-          <button type="button" data-sort="vhp" aria-pressed="false">Size</button>
         </div>
       </div>
+      <details class="fx-legend" id="fx-legend" open>
+        <summary>What these numbers mean</summary>
+        <dl>
+          <div><dt>Cost</dt><dd>What the producer takes from your budget of 100. Set before the week starts and fixed all week.</dd></div>
+          <div><dt>Avg points</dt><dd>Its average <span data-fx="day">day</span> over the 7 <span data-fx="days">days</span> before the prices were made. <b>100 means it signed every block it was due.</b> Cost follows it: about 20 for a typical producer, up to 40, down to 8.</dd></div>
+          <div><dt>Yesterday, Today</dt><dd>Its points for those <span data-fx="days">days</span> (at most 130 a <span data-fx="day">day</span>). Today is still counting, so it moves.</dd></div>
+          <div><dt>Steady or swingy</dt><dd>How many blocks it's due a <span data-fx="day">day</span>, shown under its name. A big producer is due hundreds, so it stays near 100 unless it misses blocks. A small one is due only a few, so one block more or less swings it a lot: 3 blocks when due 2 is 150, and 0 is 0.</dd></div>
+        </dl>
+        <p class="fx-tip"><b>Picking tip:</b> above 100 is mostly luck and tends not to last. Below 90 usually means the node missed blocks. Cheap, steady producers near 100 are often the best value.</p>
+      </details>
       <div class="fx-scroll">
         <table class="fx-t fx-pool" id="fx-pool">
-          <thead><tr><th>Producer</th><th class="fx-th-form">Form</th><th class="num hide-sm">Yesterday</th><th class="num hide-sm">Today</th><th class="num">Price</th><th><span class="sr">Add or remove</span></th></tr></thead>
+          <thead><tr><th>Producer</th><th class="num">Cost</th><th class="fx-th-form">Avg points</th><th class="num hide-sm">Yesterday</th><th class="num hide-sm">Today</th><th><span class="sr">Add or remove</span></th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -185,14 +206,18 @@
       </section>
     </div>
 
-    <section class="fx-steps" aria-labelledby="steps-h">
-      <h2 id="steps-h">How to play</h2>
-      <ol>
-        <li><b>Draft five producers</b><span>Any five from the price list, costing 100 or less. Prices follow each node's recent form.</span></li>
-        <li><b>Name a captain</b><span>Your captain scores double. Move the armband any day, as your one change.</span></li>
-        <li><b>Save before the lock</b><span>Teams lock 5 minutes before each <span data-fx="day">day</span>. Plan days ahead whenever you like.</span></li>
-        <li><b>Score every <span data-fx="day">day</span></b><span>100 points for a producer that signs exactly its fair share of blocks, up to 130.</span></li>
-      </ol>
+    <section class="fx-help" id="help" aria-labelledby="help-h">
+      <div class="fx-head"><h2 id="help-h">Questions</h2><button type="button" class="fx-link" id="fx-guide-show">Show the quick guide again</button></div>
+      <div class="fx-faq">
+        <details><summary>How often can I change my team, or my captain?</summary><p>Once a <span data-fx="day">day</span>. Your one change is either swapping one producer for another, or moving the C to a different producer. So you can move your captain every <span data-fx="day">day</span>, as long as that's your only change that <span data-fx="day">day</span>. The team sheet shows how many changes you have left.</p></details>
+        <details><summary>What happens if I don't save anything?</summary><p>Your last saved team keeps playing, every <span data-fx="day">day</span>, until you change it. You never have to log in daily.</p></details>
+        <details><summary>When does my team lock?</summary><p>5 minutes before each <span data-fx="day">day</span> starts. The countdown at the top shows the next lock. <span data-fx="daytimes">Live game days are UTC days: they start at 5:00pm Pacific (4:00pm in winter).</span></p></details>
+        <details><summary>Can I set my team for later days now?</summary><p>Yes. Use the day buttons on the team sheet to plan any day up to a week ahead. You can still change a planned day until its own lock.</p></details>
+        <details><summary>What's a new week?</summary><p>Each week starts on Monday with new prices, so Monday's team can be any five that fit the budget, with no limit on changes. Prices come out two <span data-fx="days">days</span> before.</p></details>
+        <details><summary>How many players can I challenge?</summary><p>One rival a week. You can change who until the week's first lock. Any number of players can challenge you. A match counts when you both had a team all 7 <span data-fx="days">days</span> (and, in the live game, both hold a Knode Games stake). Whoever scores more that week wins.</p></details>
+        <details><summary>Why does a producer show 150, or 0?</summary><p>Points compare the blocks it signed with the blocks it was due. A small producer is due only a few blocks, so luck moves it a lot: 3 signed when 2 were due is 150, and none is 0. Your team scores at most 130 from any producer in a <span data-fx="day">day</span>. <span data-fx="swing">On this practice testnet a day is only an hour, so swings are much bigger than in the live game.</span></p></details>
+        <details><summary>How do I win?</summary><p>Your week's points are the total of your five producers' <span data-fx="day">day</span> scores, with the captain counted twice. Fantasy is a staked game: the top 30% of Fantasy stakers each week share Fantasy's part of the vault's weekly reward.</p></details>
+      </div>
     </section>
 
     <details class="fx-how" id="how">

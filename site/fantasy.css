@@ -253,7 +253,6 @@ table.fx-t { width: 100%; border-collapse: collapse; font-size: 14px; }
 .fx-league td:nth-child(3) { font-family: var(--wide); font-weight: 800; }
 
 /* ── how to play ── */
-.fx-steps { margin-top: 26px; }
 .fx-steps ol { list-style: none; counter-reset: s; padding: 0; margin: 12px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .fx-steps li { counter-increment: s; padding: 16px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); }
 .fx-steps li::before { content: counter(s); display: block; font-family: var(--wide); font-weight: 900; font-stretch: 125%; font-size: 34px; line-height: 1; color: var(--violet); margin-bottom: 8px; }
@@ -285,3 +284,46 @@ table.fx-t { width: 100%; border-collapse: collapse; font-size: 14px; }
 @keyframes fx-spin { to { transform: rotate(360deg); } }
 @keyframes fx-pop { from { transform: scale(.96); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .fx-spin { animation: none; } .fx-bar i, .fx-save { transition: none; } .fx-box { animation: none; } }
+
+/* ── help for newcomers ── */
+.fx-steps { margin-top: 16px; padding: 18px; border-radius: 22px; background: var(--violet-soft); border: 1px solid color-mix(in srgb, var(--violet) 30%, transparent); }
+.fx-steps[hidden], .fx-rule[hidden] { display: none; }
+.fx-steps-top { display: flex; justify-content: space-between; align-items: center; gap: 8px 14px; flex-wrap: wrap; }
+.fx-steps ol { margin-top: 14px; }
+.fx-steps li { border: 0; }
+.fx-steps li i { font-style: normal; font-weight: 800; color: var(--ink); }
+.fx-ghost-d { font-size: 13.5px; font-weight: 700; padding: 8px 14px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.fx-link { border: 0; background: none; padding: 4px 0; color: var(--violet); font-weight: 700; font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
+
+/* the one-change counter on the team sheet */
+.fx-rule { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0 0; padding: 9px 12px; border-radius: 12px; background: rgba(255, 255, 255, .06); font-size: 13.5px; color: var(--navy-muted); }
+.fx-rule b { color: var(--navy-ink); }
+.fx-rule.bad { background: rgba(240, 139, 116, .16); } .fx-rule.bad b { color: #FFB4A3; }
+.fx-pips { display: inline-flex; gap: 4px; }
+.fx-pips i { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--gold); }
+.fx-pips i.on { background: var(--gold); }
+
+/* the players list, explained */
+.fx-legend { margin: 6px 0 12px; border-radius: 14px; background: var(--paper); padding: 2px 14px; }
+.fx-legend summary { cursor: pointer; font-weight: 800; font-size: 14.5px; padding: 10px 0; }
+.fx-legend dl { margin: 0 0 4px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 22px; }
+.fx-legend dt { font-weight: 800; font-size: 14px; }
+.fx-legend dd { margin: 2px 0 0; font-size: 13.5px; color: var(--muted); }
+.fx-legend dd b { color: var(--ink); }
+.fx-tip { margin: 12px 0 12px; font-size: 13.5px; padding: 8px 12px; border-radius: 10px; background: var(--sun-soft); }
+@media (max-width: 640px) { .fx-legend dl { grid-template-columns: 1fr; } }
+.fx-prod { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fx-steady { display: inline-flex; align-items: center; gap: 6px; margin-left: 38px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.fx-steady i { display: inline-block; width: 18px; height: 6px; border-radius: 99px; background: linear-gradient(90deg, currentColor var(--w, 50%), var(--line) var(--w, 50%)); }
+.fx-steady.s3 { --w: 100%; } .fx-steady.s2 { --w: 70%; } .fx-steady.s1 { --w: 40%; } .fx-steady.s0 { --w: 15%; color: var(--rose); }
+.fx-today { display: inline-flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
+.fx-today small { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+@media (max-width: 640px) { .fx-steady { margin-left: 35px; font-size: 11px; } }
+
+/* questions */
+.fx-help { margin-top: 26px; }
+.fx-faq { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; align-items: start; }
+.fx-faq details { border-radius: 14px; background: var(--surface); border: 1px solid var(--line); padding: 0 16px; }
+.fx-faq summary { cursor: pointer; font-weight: 800; font-size: 15px; padding: 13px 0; }
+.fx-faq p { margin: 0 0 14px; font-size: 14.5px; color: var(--muted); }
+@media (max-width: 760px) { .fx-faq { grid-template-columns: 1fr; } }
