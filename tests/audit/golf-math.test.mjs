@@ -201,3 +201,10 @@ test("staked weeks count VHP: your own stake never moves you; splitting it into 
   assert.equal(G.MIN_FIELD_VHP, 10);
   assert.equal(G.scoreHole(others.slice(0, 9), 5, false, 10).skipped, true, "9 VHP");
 });
+
+test("staked weeks need 5 stakers AND 10 VHP: one big wallet alone can't make a hole (fix-check N1)", () => {
+  assert.equal(G.scoreHole([{ a: addr(1), score: 5, scored: true, ranked: 10 }], 5, false, 10).skipped, true);
+  assert.equal(G.scoreHole([{ a: addr(1), score: 5, scored: true, ranked: 9 }, { a: addr(2), score: 4, scored: true, ranked: 1 }], 5, false, 10).skipped, true);
+  assert.equal(G.scoreHole(Array.from({ length: 5 }, (_, i) => ({ a: addr(i + 1), score: 5 - i, scored: true, ranked: 2 })), 5, false, 10).skipped, false);
+  assert.equal(G.scoreHole(Array.from({ length: 5 }, (_, i) => ({ a: addr(i + 1), score: 5 - i, scored: true, ranked: 1 })), 5, false, 10).skipped, true, "5 VHP");
+});

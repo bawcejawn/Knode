@@ -23,7 +23,8 @@
  *   10-VHP wallet. A place is a position in VHP: "top 25%" means a quarter of the field's Block Golf stake is at or
  *   ahead of you. Your own stake never moves you: you are placed as one unit among everyone else's stake (fix-check
  *   V1), so a 50-VHP player and a 1-VHP player with the same result get the same strokes. A hole needs at least
- *   MIN_FIELD_VHP of Block Golf stake among its scorers, a fixed number nobody can move after the fact (fix-check V2).
+ *   MIN_FIELD stakers AND MIN_FIELD_VHP of Block Golf stake among its scorers, fixed numbers nobody can move after
+ *   the fact (fix-check V2, N1).
  * - Players on the same score share the middle of their places, so tied players are treated alike.
  * - A hole whose field is too small is skipped for everyone. A hole whose results aren't final in time is skipped for
  *   everyone too, never guessed.
@@ -85,8 +86,10 @@
     if (everyone) for (const r of all) r.w = 1;
     const field = all.filter((r) => r.w > 0 && r.scored);
     const n = field.length, units = field.reduce((t, r) => t + r.w, 0);
-    if (minWeight > 0 ? units < minWeight : n < minField) {
-      const why = minWeight > 0 ? `less than ${minWeight} VHP of Block Golf stake among the players who scored` : `fewer than ${minField} ${everyone ? "" : "ranked "}players scored`;
+    // Staked weeks need both: MIN_FIELD stakers AND MIN_FIELD_VHP among them (fix-check N1: one 10-VHP wallet alone
+    // can't make a hole).
+    if (n < minField || (minWeight > 0 && units < minWeight)) {
+      const why = minWeight > 0 ? `fewer than ${minField} Block Golf stakers or less than ${minWeight} VHP of Block Golf stake among the players who scored` : `fewer than ${minField} ${everyone ? "" : "ranked "}players scored`;
       return { skipped: true, why, field: n, weight: units, results: {} };
     }
     const results = {};
