@@ -10,9 +10,10 @@
  *  2. Picks. Once the block at the lock (Sunday 23:55 UTC) is irreversible: every pick for the week's round from the
  *     Picks contract (game 9), on both nodes; they must agree. The chain refused picks after the lock.
  *  3. Hours. Every UTC hour of each round's day, once irreversible: its first and last height, how many blocks it had,
- *     how many each bracket producer signed (on both nodes; they must agree), and each bracket producer's VHP share
- *     on that hour's race card. An hour whose card isn't in race-data yet is stored without a share and filled in
- *     later. A seed's share never counts below its seeding share (audit F-1, F-2), so every day can be scored.
+ *     how many each seed signed, and how many each seed was expected to sign, from its exact VHP just before every
+ *     block (owner decision 2026-10-28, option A). The VHP is rebuilt from the chain itself: each producer's balance is
+ *     read once at the head (pinned to one block), and every VHP event in the blocks between (the per-block burn,
+ *     transfers, mints from burning KOIN) is walked back. Done on both nodes; the hours must come out identical.
  *  4. Results and points: each round's day index (bracket-math.indexFromHours), the winners, every pick's points.
  *     The week is final 12 hours after the last round's day (the correction window); then nothing changes.
  *  5. Leaderboards (board.json): Next week (its seeding), This week, Last week and All time (final weeks only). Every
@@ -30,7 +31,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { Serializer, utils } from "koilib";
 import { withRetry } from "../../common.ts";
+import { tokenAbi } from "../token-abi.ts";
 await import("../../site/race-math.js");
 await import("../../site/bracket-math.js");
 const M: any = (globalThis as any).KRaceMath;
@@ -47,14 +50,14 @@ const MAX_BOARD_ROWS = 1000;               // per leaderboard view (the page sho
 const isAddr = (a: unknown): a is string => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
 
 export type RawPick = { player: string; number: number; time: number };
-type Hour = { from: number; to: number; n: number; by: Record<string, number>; share: Record<string, number> | null; tot: number | null; checked: number };
-type Seeding = { at: number; cardAt: number; size: number; seeds: string[]; vhp: number[]; totalVhp: number; proven: (number | null)[]; out: string[]; hash: string };
+type Hour = { from: number; to: number; n: number; by: Record<string, number>; exp: Record<string, number>; checked: number };
+type Seeding = { at: number; cardAt: number; size: number; seeds: string[]; vhp: number[]; totalVhp: number; out: string[]; hash: string };
 /** A recorded pick: [player, number, pick time (ms), valid bracket 1/0]. */
 type Pick = [string, number, number, number];
 /** Points: [player, points, correct champion 1/0, correct winners]. */
 type Points = [string, number, number, number];
 export type WeekFile = {
-  v: 1; week: number; start: number; end: number;
+  v: 2; week: number; start: number; end: number;
   status: "waiting" | "none" | "void" | "open" | "locked" | "final";
   seeding: Seeding | null; picks: { checked: number; rows: Pick[] } | null;
   days: (Hour | null)[][];                 // [round][hour 0–23]
@@ -62,12 +65,15 @@ export type WeekFile = {
   points: Points[]; void?: string;
 };
 type Head = { height: number; time: number; lib: number; libTime: number };
-type BlockRange = { ts: number[]; sig: number[]; signers: string[] };
+/** Blocks from..to: heights, times, signers, block ids, and the VHP changes their receipts hold. */
+export type Chain = { hs: number[]; ts: number[]; sig: number[]; signers: string[]; ids: string[]; deltas: { h: number; a: string; d: number }[] };
 export type Node = {
   head(): Promise<{ height: number; time: number; lib: number; libTime: number; id: string }>;
   blockTime(h: number): Promise<number>;
-  blocks(from: number, to: number): Promise<BlockRange>;
-  blockId?(h: number): Promise<string>;
+  blockId(h: number): Promise<string>;
+  chain(from: number, to: number): Promise<Chain>;
+  /** A VHP balance (satoshi) pinned to one block: the head did not move while it was read. */
+  balance(a: string): Promise<{ v: number; h: number; id: string }>;
 };
 type Opts = {
   p: any; check: any | null; prev?: string; out?: string; raceDir?: string;
@@ -85,18 +91,19 @@ function readJson(dir: string | undefined, name: string): any {
   try { if (fs.lstatSync(f).isSymbolicLink()) return null; return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; }
 }
 const wName = (w: number) => `W${String(w).padStart(3, "0")}.json`;
+const FILE_V = 2;   // v2 (2026-10-28): hours carry exact expected blocks; v1 files (card shares) are not read
 const emptyDays = (size: number) => Array.from({ length: size ? B.roundsOf(size) : 0 }, () => new Array<Hour | null>(24).fill(null));
 function freshWeek(w: number): WeekFile {
-  return { v: 1, week: w, start: B.weekStart(w), end: B.weekStart(w + 1), status: "waiting", seeding: null, picks: null, days: [], results: null, points: [] };
+  return { v: FILE_V as 2, week: w, start: B.weekStart(w), end: B.weekStart(w + 1), status: "waiting", seeding: null, picks: null, days: [], results: null, points: [] };
 }
 const hourOk = (h: any) => h && Number.isInteger(h.from) && Number.isInteger(h.to) && h.to >= h.from - 1 && Number.isInteger(h.n) && h.n >= 0
-  && h.by && typeof h.by === "object" && (h.share === null || typeof h.share === "object") && (h.tot === null || (Number.isFinite(h.tot) && h.tot > 0)) && (h.checked === 1 || h.checked === 2);
+  && h.by && typeof h.by === "object" && h.exp && typeof h.exp === "object" && Object.values(h.exp).every((x: any) => Number.isFinite(x) && x >= 0) && (h.checked === 1 || h.checked === 2);
 function loadWeek(dir: string | undefined, w: number): WeekFile {
   const f = freshWeek(w), old = readJson(dir, wName(w));
-  if (!old || old.v !== 1 || old.week !== w) return f;
+  if (!old || old.v !== FILE_V || old.week !== w) return f;
   const s = old.seeding;
   if (s && Number.isInteger(s.size) && [0, 8, 16, 32].includes(s.size) && Array.isArray(s.seeds) && s.seeds.every(isAddr) && s.seeds.length <= s.size
-      && Array.isArray(s.proven) && s.proven.length === s.seeds.length && typeof s.hash === "string" && s.hash === seedHash(w, s)) f.seeding = s;
+      && typeof s.hash === "string" && s.hash === seedHash(w, s)) f.seeding = s;
   if (old.status === "void") { f.status = "void"; f.void = typeof old.void === "string" ? old.void.slice(0, 200) : "void"; }
   else if (old.status === "none" && f.seeding && f.seeding.size === 0) { f.status = "none"; f.void = typeof old.void === "string" ? old.void.slice(0, 200) : "no bracket this week"; }
   if (f.seeding && old.picks && Array.isArray(old.picks.rows)) f.picks = { checked: old.picks.checked === 2 ? 2 : 1, rows: old.picks.rows.filter((x: any) => Array.isArray(x) && isAddr(x[0]) && Number.isSafeInteger(x[1]) && x[1] >= 0).map((x: any) => [x[0], x[1], Number(x[2]) || 0, x[3] ? 1 : 0] as Pick) };
@@ -107,7 +114,7 @@ function loadWeek(dir: string | undefined, w: number): WeekFile {
   return f;
 }
 function seedHash(w: number, s: Omit<Seeding, "hash">) {
-  return crypto.createHash("sha256").update(JSON.stringify({ week: w, at: s.at, cardAt: s.cardAt, size: s.size, seeds: s.seeds, vhp: s.vhp, totalVhp: s.totalVhp, proven: s.proven, out: s.out })).digest("hex");
+  return crypto.createHash("sha256").update(JSON.stringify({ week: w, at: s.at, cardAt: s.cardAt, size: s.size, seeds: s.seeds, vhp: s.vhp, totalVhp: s.totalVhp, out: s.out })).digest("hex");
 }
 function defaultPicksContract(): string | null {
   try { const d = JSON.parse(fs.readFileSync(new URL("../../picks-data/deployment.json", import.meta.url), "utf8")); return isAddr(d.contract) ? d.contract : null; } catch { return null; }
@@ -124,49 +131,67 @@ function cardAt(raceDir: string | undefined, t: number): any | null {
   return c && Array.isArray(c.field) && c.field.length ? c : null;
 }
 
-/** The race recorder's final results, counted on two nodes, of the races inside [from, to). */
-function raceResults(raceDir: string | undefined, from: number, to: number): any[] {
-  const out: any[] = [];
-  for (let w = M.weekOf(from); w <= M.weekOf(to - 1); w++) {
-    const wf = readJson(raceDir, wName(w));
-    if (!wf || !Array.isArray(wf.races)) continue;
-    for (const r of wf.races) {
-      const res = r && r.result;
-      if (r.start >= from && r.end <= to && res && res.final === true && res.checked === 2 && !res.missed && Number.isFinite(res.blocks) && res.blocks > 0 && Array.isArray(res.standings)) out.push(res);
-    }
+// ── chain reads ──
+const ser = new Serializer((utils.tokenAbi as any).koilib_types);
+async function vhpEvents(it: any) {
+  const rc = it.receipt || {}, out: any[] = [], h = Number(it.block_height);
+  const all = [...(rc.events || []), ...(rc.transaction_receipts || []).flatMap((t: any) => t.events || [])];
+  for (const x of all) {
+    if (x.source !== B.VHP_CONTRACT) continue;
+    const n = String(x.name || ""), kind = /transfer_event$/.test(n) ? "transfer_event" : /mint_event$/.test(n) ? "mint_event" : /burn_event$/.test(n) ? "burn_event" : "";
+    if (!kind) continue;   // approve and other events don't move balances
+    const d: any = await ser.deserialize(x.data, `token.${kind}`);   // a VHP event that can't be read stops the run
+    out.push({ h, src: x.source, name: n, from: d.from, to: d.to, value: String(d.value ?? "0") });
   }
   return out;
 }
-
-// ── chain reads ──
 function chainNode(p: any): Node {
   let headId = "";
+  const vhp = new Contract({ id: B.VHP_CONTRACT, abi: tokenAbi as any, provider: p });
   const blockAt = async (h: number) => {
     const res: any = await withRetry(`block ${h}`, () => p.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(h), num_blocks: 1, return_block: true, return_receipt: false }));
     const it = res?.block_items?.[0];
     if (!it || Number(it.block_height) !== h) throw new Error(`block ${h} not returned`);
     return it;
   };
+  const headNow = async () => { const h: any = await withRetry("head", () => p.getHeadInfo()); return { id: String(h.head_topology.id), height: Number(h.head_topology.height), raw: h }; };
   return {
     async head() {
-      const h: any = await withRetry("head", () => p.getHeadInfo());
-      headId = h.head_topology.id;
-      const lib = Number(h.last_irreversible_block);
-      return { id: headId, height: Number(h.head_topology.height), time: Number(h.head_block_time), lib, libTime: Number((await blockAt(lib)).block.header.timestamp) };
+      const h = await headNow(); headId = h.id;
+      const lib = Number(h.raw.last_irreversible_block);
+      return { id: headId, height: h.height, time: Number(h.raw.head_block_time), lib, libTime: Number((await blockAt(lib)).block.header.timestamp) };
     },
     async blockTime(h) { return Number((await blockAt(h)).block.header.timestamp); },
     async blockId(h) { return String((await blockAt(h)).block_id); },
-    async blocks(from, to) {
-      const ts: number[] = [], who: string[] = [];
+    async chain(from, to) {
+      const hNow = await headNow(); headId = hNow.id;   // blocks up to the head as it is now
+      const out: Chain = { hs: [], ts: [], sig: [], signers: [], ids: [], deltas: [] };
+      const idx = new Map<string, number>(), events: any[] = [];
       let k = from;
       while (k <= to) {
-        const res: any = await withRetry(`blocks at ${k}`, () => p.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(k), num_blocks: Math.min(200, to - k + 1), return_block: true, return_receipt: false }));
+        const res: any = await withRetry(`blocks at ${k}`, () => p.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(k), num_blocks: Math.min(50, to - k + 1), return_block: true, return_receipt: true }));
         const items = res?.block_items ?? [];
         if (!items.length) throw new Error(`no blocks returned at ${k}`);
-        for (const it of items) { if (Number(it.block_height) !== k || k > to) throw new Error(`blocks out of order at ${k}`); ts.push(Number(it.block.header.timestamp)); who.push(String(it.block.header.signer)); k++; }
+        for (const it of items) {
+          if (Number(it.block_height) !== k || k > to) throw new Error(`blocks out of order at ${k}`);
+          const a = String(it.block.header.signer); let i = idx.get(a); if (i === undefined) { i = out.signers.length; out.signers.push(a); idx.set(a, i); }
+          out.hs.push(k); out.ts.push(Number(it.block.header.timestamp)); out.sig.push(i); out.ids.push(String(it.block_id));
+          events.push(...(await vhpEvents(it)));
+          k++;
+        }
       }
-      const signers = [...new Set(who)];
-      return { ts, sig: who.map((a) => signers.indexOf(a)), signers };
+      out.deltas = B.vhpDeltas(events);
+      return out;
+    },
+    async balance(a) {
+      for (let t = 0; t < 6; t++) {
+        const h1 = await headNow();
+        const r: any = await withRetry(`VHP of ${a}`, () => (vhp.functions as any).balance_of({ owner: a }));
+        if (!r || typeof r !== "object" || !("result" in r)) throw new Error(`no answer reading the VHP of ${a}`);
+        const h2 = await headNow();
+        if (h1.id === h2.id) return { v: Number(r.result?.value ?? "0"), h: h1.height, id: h1.id };
+      }
+      throw new Error(`the head kept moving while reading the VHP of ${a}`);
     },
   };
 }
@@ -181,11 +206,24 @@ async function heightAt(n: Node, head: Head, t: number): Promise<number> {
   while (lo < hi) { const m = Math.floor((lo + hi) / 2); if ((await n.blockTime(m)) < t) lo = m + 1; else hi = m; }
   return lo;
 }
-async function readHour(n: Node, head: Head, start: number, card: any, seeds: string[]) {
-  const from = await heightAt(n, head, start), next = await heightAt(n, head, start + HOUR), to = next - 1;
-  const blocks = to >= from ? await n.blocks(from, to) : { ts: [], sig: [], signers: [] };
-  const h = B.hourOf(blocks, start, card, seeds);
-  return { from, to, n: h.n, by: h.by as Record<string, number>, share: h.share as Record<string, number> | null, tot: h.tot as number | null };
+/** Hour records for the given hour starts (all irreversible), on one node, from exact VHP. */
+export async function readHours(n: Node, head: Head, starts: number[], seeds: string[]) {
+  const first = Math.min(...starts), last = Math.max(...starts);
+  const fromH = Math.max(1, (await heightAt(n, head, first)) - B.ACTIVE_BLOCKS), toH = (await heightAt(n, head, last + HOUR)) - 1;
+  const c = await n.chain(fromH, toH);
+  // Anchors: every producer that signed in the range, and every seed, read once at the head (pinned to a block).
+  const who = [...new Set([...c.signers, ...seeds])];
+  const anchors: Record<string, { h: number; v: number }> = {}, at = new Map<number, string>();
+  for (const a of who) { const b = await n.balance(a); anchors[a] = { h: b.h, v: b.v }; at.set(b.h, b.id); }
+  const top = Math.max(...[...at.keys()]);
+  const tail = top > toH ? await n.chain(toH + 1, top) : { hs: [], ids: [], deltas: [] } as any;
+  // The blocks walked back are the very ones the balances were read on (no fork in between).
+  const idOf = new Map<number, string>(); c.hs.forEach((h, i) => idOf.set(h, c.ids[i])); tail.hs.forEach((h: number, i: number) => idOf.set(h, tail.ids[i]));
+  for (const [h, id] of at) if (h > toH && idOf.get(h) !== id) throw new Error(`block ${h} changed while reading (a fork); tried again next run`);
+  if (top < toH) throw new Error(`a balance was read below block ${toH}; tried again next run`);
+  const book = B.vhpBook(anchors, [...c.deltas, ...tail.deltas]);
+  for (const a of who) { const v = book.before(a, fromH); if (v === null || v < -0.5) throw new Error(`the VHP rebuild for ${a} went below zero (a missed event)`); }
+  return B.exactHours(c, starts, seeds, book) as Omit<Hour, "checked">[];
 }
 const PICKS_ABI = () => JSON.parse(fs.readFileSync(new URL("../../picks/abi/picks.koilib.json", import.meta.url), "utf8"));
 async function readPicks(node: any, contract: string, round: number): Promise<RawPick[]> {
@@ -225,8 +263,7 @@ export function gameProblem(g: any): string | null {
 export function scoreWeek(wf: WeekFile) {
   if (!wf.seeding || !wf.seeding.size || !wf.picks) return { results: null, points: [] as Points[] };
   const { size, seeds } = wf.seeding;
-  const floor = B.floorOf(wf.seeding);
-  const days = wf.days.map((d) => (d.every(Boolean) ? B.indexFromHours(d, floor) : null));
+  const days = wf.days.map((d) => (d.every(Boolean) ? B.indexFromHours(d) : null));
   const res = B.results(seeds, size, days);
   // During a round's day: the winners so far are not known, so only finished rounds score.
   const points: Points[] = wf.picks.rows.map(([player, number]) => {
@@ -250,7 +287,7 @@ export async function run(o: Opts) {
   // The clock for every decision: the irreversible block's time, the same on both nodes (audit F-4).
   if (nodeC) {
     const t2 = await nodeC.blockTime(head.lib);
-    const sameId = nodeP.blockId && nodeC.blockId ? (await nodeP.blockId(head.lib)) === (await nodeC.blockId(head.lib)) : true;
+    const sameId = (await nodeP.blockId(head.lib)) === (await nodeC.blockId(head.lib));
     if (t2 !== head.libTime || !sameId) { const pr = `the two nodes disagree about block ${head.lib}'s time; nothing written this run`; console.log(`::warning::${pr}`); return { problems: [pr], weeks: new Map(), board: null }; }
   }
   const now = head.libTime;
@@ -283,8 +320,7 @@ export async function run(o: Opts) {
       const s = B.seeding(card);
       const vhpOf = new Map<string, number>(card.field.map((r: any) => [r.a, Number(r.vhp)]));
       const totalVhp = [...card.field, ...(card.paddock || [])].reduce((t: number, r: any) => t + (Number.isFinite(r?.vhp) && r.vhp > 0 ? r.vhp : 0), 0);
-      const proven = B.provenOf(raceResults(RACE, at - B.FLOOR_DAYS * DAY, at), s.seeds, totalVhp) as (number | null)[];
-      const base = { at, cardAt: Number(card.at) || 0, size: s.size, seeds: [...s.seeds], vhp: s.seeds.map((a: string) => vhpOf.get(a) ?? 0), totalVhp, proven, out: [...s.out] };
+      const base = { at, cardAt: Number(card.at) || 0, size: s.size, seeds: [...s.seeds], vhp: s.seeds.map((a: string) => vhpOf.get(a) ?? 0), totalVhp, out: [...s.out] };
       wf.seeding = { ...base, hash: seedHash(w, base) };
       wf.days = emptyDays(s.size);
       if (!s.size) { wf.status = "none"; wf.void = `only ${s.seeds.length + s.out.length} producers in the field (8 needed); no bracket this week`; continue; }
@@ -329,29 +365,27 @@ export async function run(o: Opts) {
       }
     }
     wf.status = "locked";
-    // ── 3. hours ──
-    for (let r = 0; r < wf.days.length; r++) {
-      const day = B.roundDay(w, r);
-      for (let h = 0; h < 24; h++) {
-        const start = day + h * HOUR, rec = wf.days[r][h];
-        if (rec) {   // fill in a share that was missing when the hour was recorded
-          if (!rec.share) { const c = cardAt(RACE, start); if (c) { const x = B.hourOf({ ts: [], sig: [], signers: [] }, start, c, seeds); rec.share = x.share; rec.tot = x.tot; } }
-          continue;
+    // ── 3. hours: every irreversible hour of the round days not recorded yet, in one batch per run ──
+    const todo: [number, number, number][] = [];   // [round, hour, start]
+    for (let r = 0; r < wf.days.length; r++) for (let h = 0; h < 24; h++) {
+      const start = B.roundDay(w, r) + h * HOUR;
+      if (!wf.days[r][h] && start + HOUR <= head.libTime && todo.length < hoursLeft) todo.push([r, h, start]);
+    }
+    if (todo.length) {
+      hoursLeft -= todo.length;
+      try {
+        const starts = todo.map((x) => x[2]);
+        const a = await readHours(nodeP, head, starts, seeds);
+        let checked = 1;
+        if (nodeC) {
+          const b = await readHours(nodeC, head, starts, seeds);
+          const bad = a.findIndex((x, i) => JSON.stringify(x) !== JSON.stringify(b[i]));
+          if (bad >= 0) throw new Error(`the two nodes disagree about round ${todo[bad][0] + 1} hour ${todo[bad][1]}; not recorded this run`);
+          checked = 2;
         }
-        if (start + HOUR > head.libTime || hoursLeft <= 0) continue;
-        hoursLeft--;
-        try {
-          const card = cardAt(RACE, start);
-          const a = await readHour(nodeP, head, start, card, seeds);
-          let checked = 1;
-          if (nodeC) {
-            const b = await readHour(nodeC, head, start, card, seeds);
-            if (a.from !== b.from || a.to !== b.to || a.n !== b.n || JSON.stringify(a.by) !== JSON.stringify(b.by)) { problems.push(`week ${w} round ${r + 1} hour ${h}: the two nodes disagree; not recorded this run`); continue; }
-            checked = 2;
-          }
-          wf.days[r][h] = { ...a, checked };
-        } catch (e) { problems.push(`week ${w} round ${r + 1} hour ${h}: ${(e as Error).message} (tried again next run)`); }
-      }
+        todo.forEach(([r, h], i) => { wf.days[r][h] = { ...a[i], checked }; });
+        console.log(`week ${w}: ${todo.length} hour(s) recorded`);
+      } catch (e) { problems.push(`week ${w}: hours: ${(e as Error).message} (tried again next run)`); }
     }
     if (wf.status === "void") continue;
     // ── 4. results and points ──

@@ -9,15 +9,14 @@
  *   Monday–Wednesday); under 8 → no bracket that week.
  * - Round r is played on the week's UTC day r (0 = Monday). A matchup is won by the higher day index:
  *     index = blocks signed that day ÷ blocks expected that day,
- *     expected = Σ over the day's 24 hours of (blocks in that hour × the producer's VHP share on that hour's race card).
- *   That is the plain handicap (c = 0) with the hourly cards, so VHP added mid-week doesn't help.
- * - The floor (bracket audit F-1, F-2, R-1, R-2): a card is one VHP reading at a known time, so a producer could move
- *   its VHP away for each reading and look smaller than it is. So each seed has a floor, a VHP amount it can't look
- *   smaller than: 90% of what its blocks prove, i.e. 0.9 × its share of all blocks in the race recorder's results over
- *   the 7 days before the seeding (counted on two nodes) × the seeding card's total VHP. Without such results, the
- *   floor is its seeding VHP. In each hour its VHP counts as at least the floor, as a share of that hour's card total,
- *   so VHP added by anyone mid-week stays neutral. A seed that truly gives up VHP after Saturday is still expected to
- *   sign at its floor. An exact tie goes to the lower seed (the underdog).
+ *     expected = Σ over every block of the day of (the producer's VHP ÷ the VHP of every active producer), both taken
+ *                just before that block, exactly, from the chain's own VHP events (owner decision 2026-10-28, option A).
+ *   "Active" = signed at least one of the 7,200 blocks (about 6 hours) before. Koinos picks each block's signer in
+ *   proportion to VHP, so a producer that signs its share scores about 1 whatever its size (the plain handicap, c = 0).
+ *   VHP is read block by block, not at set times, so moving VHP away or adding it changes what a producer is expected
+ *   to sign exactly as much as it changes its real chances: there is nothing to gain either way. Each block burns about
+ *   4 VHP of its signer's (the block reward is paid in KOIN), which the rebuild follows too.
+ *   An exact tie goes to the lower seed (the underdog).
  *
  * THE PICK: one number for the whole bracket (one Picks game, kind NUMBER).
  * - The bracket has size − 1 matchups, numbered round by round, top to bottom. Bit n of the number says who wins
@@ -36,8 +35,8 @@
   const MIN_FIELD = 8;
   const MAX_SIZE = 32, NUMBER_MAX = 2 ** (MAX_SIZE - 1) - 1;   // the Picks game's number range: 0 … 2,147,483,647
   const CHAMPION_BONUS = 2;
-  const FLOOR_PART = 0.9;                      // the floor: 90% of what a seed's blocks prove
-  const FLOOR_DAYS = 7, FLOOR_MIN_RACES = 20;  // over the 7 days (28 races) before the seeding; at least 20 recorded
+  const ACTIVE_BLOCKS = 7200;                   // a producer is active if it signed one of the 7,200 blocks before
+  const VHP_CONTRACT = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq";   // mainnet VHP (the race recorder reads the same)
   const GAME_ID = 9;                           // the Bracket's game id in the Picks contract (Block X is 2)
   const MAX_CHANGES = 20, PICKS_PER_DAY = 20;  // the Picks game's limits
   const ROUND_NAMES = { 32: ["Round of 32", "Round of 16", "Quarterfinals", "Semifinals", "Final"],
@@ -132,84 +131,98 @@
     return number;
   }
 
-  // ── the day index ──
-  /** A producer's VHP share on a race card: its VHP ÷ the card's total VHP (field and paddock). Map address → share. */
-  function sharesOf(card) {
-    const rows = card ? [...(card.field || []), ...(card.paddock || [])].filter((r) => r && typeof r.a === "string" && Number.isFinite(r.vhp) && r.vhp > 0) : [];
-    const tot = rows.reduce((s, r) => s + r.vhp, 0), m = new Map();
-    for (const r of rows) m.set(r.a, (m.get(r.a) || 0) + r.vhp / tot);
-    return m;
-  }
-  /** One UTC hour as the recorder stores it: { n: all blocks in the hour, by: { address: blocks signed }, share:
-   *  { address: VHP share on that hour's card } or null when the hour has no card }. `only` limits by/share to the
-   *  bracket's producers (the rest don't matter to any matchup). */
-  function hourOf(B, from, card, only) {
-    const keep = only ? new Set(only) : null, by = {};
-    if (keep) for (const a of keep) by[a] = 0;
-    let n = 0, i = lowerBound(B.ts, from);
-    for (; i < B.ts.length && B.ts[i] < from + HOUR; i++) { n++; const a = B.signers[B.sig[i]]; if (!keep || keep.has(a)) by[a] = (by[a] || 0) + 1; }
-    let share = null, tot = null;
-    if (card) {
-      share = {}; for (const [a, v] of sharesOf(card)) if (!keep || keep.has(a)) share[a] = v; if (keep) for (const a of keep) if (!(a in share)) share[a] = 0;
-      tot = [...(card.field || []), ...(card.paddock || [])].reduce((t, r) => t + (r && Number.isFinite(r.vhp) && r.vhp > 0 ? r.vhp : 0), 0);
+  // ── exact VHP, block by block ──
+  /** VHP changes from decoded token events of the VHP contract: [{ h (height of the block holding the event), a,
+   *  d (satoshi, + in / − out) }]. events: [{ h, src, name, from, to, value }]; others are ignored. */
+  function vhpDeltas(events, contract = VHP_CONTRACT) {
+    const out = [];
+    for (const e of Array.isArray(events) ? events : []) {
+      if (!e || e.src !== contract || !Number.isInteger(e.h)) continue;
+      const v = Number(e.value); if (!Number.isFinite(v) || v < 0) continue;
+      const n = String(e.name || "");
+      if (/transfer_event$/.test(n)) { if (typeof e.from === "string") out.push({ h: e.h, a: e.from, d: -v }); if (typeof e.to === "string") out.push({ h: e.h, a: e.to, d: v }); }
+      else if (/mint_event$/.test(n)) { if (typeof e.to === "string") out.push({ h: e.h, a: e.to, d: v }); }
+      else if (/burn_event$/.test(n)) { if (typeof e.from === "string") out.push({ h: e.h, a: e.from, d: -v }); }
     }
-    return { n, by, share, tot };
+    return out;
   }
-  /** What a seed's blocks prove, from race results [{ blocks, standings: [{ a, blocks }] }] over the 7 days before the
-   *  seeding: FLOOR_PART × (its blocks ÷ all blocks) × totalVhp, rounded to 2 decimals; null with fewer than
-   *  FLOOR_MIN_RACES results or when it signed none of them. */
-  function provenOf(results, seeds, totalVhp) {
-    const rs = (Array.isArray(results) ? results : []).filter((r) => r && Number.isFinite(r.blocks) && r.blocks > 0 && Array.isArray(r.standings));
-    if (rs.length < FLOOR_MIN_RACES || !(totalVhp > 0)) return seeds.map(() => null);
-    const all = rs.reduce((t, r) => t + r.blocks, 0), by = new Map();
-    for (const r of rs) for (const x of r.standings) if (x && typeof x.a === "string" && Number.isFinite(x.blocks) && x.blocks > 0) by.set(x.a, (by.get(x.a) || 0) + x.blocks);
-    return seeds.map((a) => (by.get(a) ? Math.round(FLOOR_PART * (by.get(a) / all) * totalVhp * 100) / 100 : null));
+  /** A VHP book: anchors { address: { h, v } } (v = satoshi balance AFTER block h, read on the chain) and the deltas of
+   *  every block between the anchor and any height asked about. book.before(a, h) = satoshi balance just before block
+   *  h (after block h − 1), or null for an address without an anchor. */
+  function vhpBook(anchors, deltas) {
+    const per = new Map();
+    for (const x of deltas) { if (!anchors[x.a]) continue; let l = per.get(x.a); if (!l) per.set(x.a, (l = [])); l.push(x); }
+    const idx = new Map();
+    for (const [a, l] of per) {
+      l.sort((p, q) => p.h - q.h);
+      const hs = l.map((x) => x.h), cum = new Float64Array(l.length + 1);
+      for (let i = 0; i < l.length; i++) cum[i + 1] = cum[i] + l[i].d;
+      idx.set(a, { hs, cum });
+    }
+    const upTo = (a, x) => { const t = idx.get(a); if (!t) return 0; let lo = 0, hi = t.hs.length; while (lo < hi) { const m = (lo + hi) >> 1; if (t.hs[m] <= x) lo = m + 1; else hi = m; } return t.cum[lo]; };
+    return {
+      before(a, h) {
+        const an = anchors[a]; if (!an) return null;
+        return an.v + upTo(a, h - 1) - upTo(a, an.h);   // after block h − 1 = anchor ± the blocks in between
+      },
+    };
   }
-  /** Each seed's floor: { amt: { address: VHP amount }, total: the seeding card's total VHP }. The amount is what its
-   *  blocks prove (seeding.proven), else its seeding VHP. */
-  function floorOf(sd) {
-    const amt = {};
-    if (!sd || !Array.isArray(sd.seeds) || !(sd.totalVhp > 0)) return { amt, total: 0 };
-    sd.seeds.forEach((a, i) => {
-      const p = Array.isArray(sd.proven) ? Number(sd.proven[i]) : NaN, v = Number(sd.vhp && sd.vhp[i]);
-      const x = Array.isArray(sd.proven) && sd.proven[i] !== null && Number.isFinite(p) && p > 0 ? p : v;
-      if (typeof a === "string" && Number.isFinite(x) && x > 0) amt[a] = x;
-    });
-    return { amt, total: sd.totalVhp };
+  /** Hour records from blocks. B: { hs: [heights], ts: [ms], sig: [index], signers: [address] }, contiguous and starting
+   *  at least ACTIVE_BLOCKS before the first hour (fewer: the active set is what is there). starts: hour starts (ms).
+   *  Returns one { from, to, n, by: { seed: blocks }, exp: { seed: expected blocks } } per start (to < from when the
+   *  hour had no block), or throws if a needed balance is missing. */
+  function exactHours(B, starts, seeds, book) {
+    const out = [], keep = new Set(seeds);
+    const lb = (t) => lowerBound(B.ts, t);
+    for (const start of starts) {
+      const i0 = lb(start), i1 = lb(start + HOUR);
+      const by = {}, exp = {};
+      for (const a of seeds) { by[a] = 0; exp[a] = 0; }
+      const last = new Map();
+      for (let i = Math.max(0, i0 - ACTIVE_BLOCKS); i < i0; i++) last.set(B.signers[B.sig[i]], i);
+      for (let i = i0; i < i1; i++) {
+        let tot = 0; const vs = [];
+        for (const [a, j] of last) {
+          if (j < i - ACTIVE_BLOCKS) { last.delete(a); continue; }
+          const v = book.before(a, B.hs[i]);
+          if (v === null) throw new Error(`no VHP balance for ${a} at block ${B.hs[i]}`);
+          if (v > 0) { tot += v; vs.push([a, v]); }
+        }
+        if (tot > 0) for (const [a, v] of vs) if (keep.has(a)) exp[a] += v / tot;
+        for (const a of seeds) if (!last.has(a)) {   // a seed that wasn't active: still expected in proportion (it holds VHP)
+          const v = book.before(a, B.hs[i]);
+          if (v !== null && v > 0 && tot > 0) exp[a] += v / (tot + v);
+        }
+        const s = B.signers[B.sig[i]];
+        if (keep.has(s)) by[s]++;
+        last.set(s, i);
+      }
+      for (const a of seeds) exp[a] = Math.round(exp[a] * 1e6) / 1e6;
+      out.push({ from: i1 > i0 ? B.hs[i0] : (i0 < B.hs.length ? B.hs[i0] : B.hs[B.hs.length - 1] + 1), to: i1 > i0 ? B.hs[i1 - 1] : (i0 < B.hs.length ? B.hs[i0] - 1 : B.hs[B.hs.length - 1]), n: i1 - i0, by, exp });
+    }
+    return out;
   }
-  /** Day index from recorded hours (24 entries; null = an hour not recorded yet, counted as no blocks). An hour without
-   *  a card uses the nearest earlier hour's card of the day, else the nearest later.
-   *  floor (floorOf): a seed's VHP counts as at least its floor amount, as a share of the hour's card total (or of
-   *  the seeding total when the day has no card). With a floor every day can be scored; without one, a day with no
-   *  card returns null. Returns Map address → { blocks, expected, index }. */
-  function indexFromHours(hours, floor) {
-    if (!Array.isArray(hours) || hours.length !== 24) return null;
-    const fl = floor && floor.amt && Object.keys(floor.amt).length ? floor : null;
-    const cardOf = (h) => (h && h.share && typeof h.share === "object" ? h : null);
-    const has = hours.map(cardOf);
-    if (!has.some(Boolean) && !(fl && fl.total > 0)) return null;
-    const near = has.map((_, h) => { for (let i = h; i >= 0; i--) if (has[i]) return has[i]; for (let i = h + 1; i < 24; i++) if (has[i]) return has[i]; return null; });
+  /** Day index from the 24 recorded hours: Map address → { blocks, expected, index }; null unless every hour is in. */
+  function indexFromHours(hours) {
+    if (!Array.isArray(hours) || hours.length !== 24 || !hours.every((h) => h && h.exp && typeof h.exp === "object")) return null;
     const out = new Map(), get = (a) => { let r = out.get(a); if (!r) out.set(a, (r = { blocks: 0, expected: 0, index: 0 })); return r; };
     const ok = (x) => Number.isFinite(x) && x >= 0;
-    for (let h = 0; h < 24; h++) {
-      const hr = hours[h]; if (!hr) continue;
-      const n = Number(hr.n) || 0, c = near[h], shares = new Map();
-      if (c) for (const [a, s] of Object.entries(c.share)) if (ok(s)) shares.set(a, s);
-      if (fl) {
-        const tot = c && Number(c.tot) > 0 ? Number(c.tot) : fl.total;
-        if (tot > 0) for (const [a, v] of Object.entries(fl.amt)) if (ok(v)) shares.set(a, Math.max(v / tot, shares.get(a) || 0));
-      }
-      for (const [a, s] of shares) get(a).expected += n * s;
+    for (const hr of hours) {
+      for (const [a, e] of Object.entries(hr.exp)) if (ok(e)) get(a).expected += e;
       for (const [a, b] of Object.entries(hr.by || {})) if (ok(b)) get(a).blocks += b;
     }
     for (const r of out.values()) r.index = r.expected > 0 ? r.blocks / r.expected : 0;
     return out;
   }
-  /** Day index of each producer straight from blocks. B: blocks { ts: [...ascending ms], sig: [index], signers:
-   *  [address] }; hourCards: 24 race cards, one per UTC hour (null where missing). Same rules as indexFromHours. */
-  function dayIndex(B, dayStart, hourCards, floor) {
-    if (!Array.isArray(hourCards) || hourCards.length !== 24) return null;
-    return indexFromHours(hourCards.map((c, h) => hourOf(B, dayStart + h * HOUR, c, null)), floor);
+  /** The index so far in a day still being played (hours recorded up to now; for the page's live view). */
+  function indexSoFar(hours) {
+    const got = (Array.isArray(hours) ? hours : []).filter((h) => h && h.exp);
+    if (!got.length) return null;
+    return indexFromHours([...got, ...new Array(24 - got.length).fill({ n: 0, by: {}, exp: {} })].slice(0, 24));
+  }
+  /** Day index straight from blocks and a book (tests and the replay): the 24 hours from dayStart. */
+  function dayIndex(B, dayStart, seeds, book) {
+    return indexFromHours(exactHours(B, Array.from({ length: 24 }, (_, h) => dayStart + h * HOUR), seeds, book));
   }
   /** Does `other` beat `better` on a day? Higher index wins; an exact tie (compared without division) goes to `other`,
    *  the lower seed. A producer missing from the day's index counts as 0 blocks. */
@@ -262,6 +275,6 @@
     GAME_ID, MAX_CHANGES, PICKS_PER_DAY, HOUR, DAY, WEEK, GENESIS, SEED_BEFORE, LOCK_BEFORE, MIN_FIELD, MAX_SIZE, NUMBER_MAX, CHAMPION_BONUS, ROUND_NAMES, ROUND_OFFSET,
     weekStart, weekOf, seedTime, lockTime, roundDay, picksRound, weekOfPicksRound,
     sizeFor, roundsOf, pointsFor, maxPoints, lineOrder, roundOffset, seeding, firstRound, play, byesOf, decode, encode,
-    FLOOR_PART, FLOOR_DAYS, FLOOR_MIN_RACES, sharesOf, provenOf, floorOf, hourOf, indexFromHours, dayIndex, otherWins, results, score, rank,
+    ACTIVE_BLOCKS, VHP_CONTRACT, vhpDeltas, vhpBook, exactHours, indexFromHours, indexSoFar, dayIndex, otherWins, results, score, rank,
   };
 })(typeof window !== "undefined" ? window : globalThis);

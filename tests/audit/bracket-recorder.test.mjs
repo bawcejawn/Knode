@@ -1,7 +1,8 @@
 // Producer Bracket recorder (bot/games/bracket.ts): seeding once from the Saturday 12:00 card (never changed later,
 // void without a card, none under 8 producers), picks only after the lock and only when both nodes agree, hours only
-// once irreversible and matching on both nodes, missing card shares filled in later, results equal to the shared math
-// run on the same blocks, final after the correction window and frozen afterwards, and the leaderboards. Offline.
+// once irreversible and identical on both nodes, expected blocks from exact VHP rebuilt from the chain's VHP events
+// (balances read at the head and walked back), results equal to the shared math run on the same blocks, final after the
+// correction window and frozen afterwards, and the leaderboards. Offline: fake nodes with a made-up VHP history.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -25,21 +26,43 @@ const hAt = (t) => H0 + Math.ceil((t - T0) / 3000);
 function fieldOf(n) { return Array.from({ length: n }, (_, i) => ({ a: addr(i), vhp: 1000 * (n - i) })); }
 function signerFn(field, offline = new Set()) {
   const live = field.filter((r) => !offline.has(r.a)), tot = live.reduce((s, r) => s + r.vhp, 0);
-  return (h) => { let x = ((Math.imul(h, 2654435761) >>> 0) / 4294967296) * tot; for (const r of live) { x -= r.vhp; if (x < 0) return r.a; } return live[live.length - 1].a; };
+  const f = (h) => { let x = ((Math.imul(h, 2654435761) >>> 0) / 4294967296) * tot; for (const r of live) { x -= r.vhp; if (x < 0) return r.a; } return live[live.length - 1].a; };
+  f.field = field;
+  return f;
 }
-function nodeOf(signer, tamper = null) {
-  return (name) => ({
-    async head() { throw new Error("head is given"); },
-    async blockTime(h) { return T(h); },
-    async blocks(from, to) {
-      const ts = [], who = [];
-      for (let h = from; h <= to; h++) { ts.push(T(h)); who.push(name === "check" && tamper && tamper(h) ? addr(99) : signer(h)); }
-      const signers = [...new Set(who)];
-      return { ts, sig: who.map((a) => signers.indexOf(a)), signers };
-    },
-  });
+// The fake chain's VHP: each producer starts with 1,000 × its card VHP (so 4 VHP burned a block stays small), every
+// block burns 4 VHP of its signer's, and moves [{ h, a, d (VHP) }] add or take VHP in block h.
+const BURN = 4e8, START = (r) => r.vhp * 1000 * 1e8;
+let TOP = H0;                                   // the fake head (set by headAt)
+function nodeOf(signer, tamper = null, { moves = [], forkAt = null } = {}) {
+  const start = new Map(signer.field.map((r) => [r.a, START(r)]));
+  const signed = new Map(); let upTo = H0 - 1;   // blocks signed by each producer from H0 (cached)
+  const count = (a, top) => { for (let h = upTo + 1; h <= top; h++) { const s = signer(h); signed.set(s, (signed.get(s) || [])); signed.get(s).push(h); } upTo = Math.max(upTo, top); const l = signed.get(a) || []; let lo = 0, hi = l.length; while (lo < hi) { const m = (lo + hi) >> 1; if (l[m] <= top) lo = m + 1; else hi = m; } return lo; };
+  return (name) => {
+    const who = (h) => (name === "check" && tamper && tamper(h) ? addr(99) : signer(h));
+    const id = (h) => (forkAt !== null && name === forkAt.node && h >= forkAt.h ? "fork" : "id") + h;
+    return {
+      async head() { throw new Error("head is given"); },
+      async blockTime(h) { return T(h); },
+      async blockId(h) { return id(h); },
+      async chain(from, to) {
+        const out = { hs: [], ts: [], sig: [], signers: [], ids: [], deltas: [] }, ix = new Map();
+        for (let h = from; h <= to; h++) {
+          const a = who(h); let i = ix.get(a); if (i === undefined) { i = out.signers.length; out.signers.push(a); ix.set(a, i); }
+          out.hs.push(h); out.ts.push(T(h)); out.sig.push(i); out.ids.push(id(h));
+          for (const mv of moves) if (mv.h === h) out.deltas.push({ h, a: mv.a, d: mv.d * 1e8 });
+          if (h >= H0) out.deltas.push({ h, a, d: -BURN });
+        }
+        return out;
+      },
+      async balance(a) {
+        const v = (start.get(a) || 0) - BURN * count(a, TOP) + moves.filter((m) => m.a === a && m.h <= TOP).reduce((t, m) => t + m.d * 1e8, 0);
+        return { v, h: TOP, id: "id" + TOP };
+      },
+    };
+  };
 }
-const headAt = (t) => ({ height: hAt(t) + 20, time: t + 60000, lib: hAt(t), libTime: T(hAt(t)) });
+const headAt = (t) => { const h = { height: hAt(t) + 20, time: t + 60000, lib: hAt(t), libTime: T(hAt(t)) }; TOP = h.height; return h; };
 function raceDir(field, { skip = () => false, results = null } = {}) {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "race-"));
   const card = (at) => ({ at, c: 0, blocksPerRace: 7200, fairness: null, field: field.map((r) => ({ ...r, k: 7200 * r.vhp / field.reduce((s, x) => s + x.vhp, 0), h: 1 })), paddock: [] });
@@ -119,14 +142,13 @@ test("picks: only after the lock is irreversible, only when both nodes agree; ba
 test("a whole week: hours irreversible only, results equal the shared math on the same blocks, final after 12 hours, then frozen", async () => {
   const field = fieldOf(17), offline = new Set([field[0].a]);   // seed 1 is offline all week: it loses round 1
   const signer = signerFn(field, offline), race = raceDir(field), dir = tmp();
-  // perfect bracket computed straight from the blocks with bracket-math
-  const seeds = field.slice(0, 16).map((r) => r.a);
-  const days = [0, 1, 2, 3].map((r) => {
-    const d = B.roundDay(W, r), from = hAt(d), to = hAt(d + DAY) - 1, ts = [], who = [];
-    for (let h = from; h <= to; h++) { ts.push(T(h)); who.push(signer(h)); }
-    const signers = [...new Set(who)], card = { field };
-    return B.dayIndex({ ts, sig: who.map((a) => signers.indexOf(a)), signers }, d, Array(24).fill(card));
-  });
+  // perfect bracket computed straight from the fake chain with bracket-math (balances read at the end, walked back)
+  const seeds = field.slice(0, 16).map((r) => r.a), fake = nodeOf(signer)("main");
+  headAt(B.roundDay(W, 4) + H);
+  const ch = await fake.chain(hAt(B.roundDay(W, 0)) - B.ACTIVE_BLOCKS, TOP);
+  const anchors = {}; for (const r of field) anchors[r.a] = await fake.balance(r.a);
+  const book = B.vhpBook(anchors, ch.deltas);
+  const days = [0, 1, 2, 3].map((r) => B.dayIndex(ch, B.roundDay(W, r), seeds, book));
   const truth = B.results(seeds, 16, days);
   const perfect = B.encode(truth.rounds, 16, 16);
   const rows = [{ player: P(1), number: perfect, time: 1 }, { player: P(2), number: 0, time: 2 }];
@@ -137,7 +159,9 @@ test("a whole week: hours irreversible only, results equal the shared math on th
   await runUntil(B.roundDay(W, 1) + 10.5 * H, o, dir);
   let wf = readW(dir);
   assert.ok(wf.days[0].every(Boolean)); assert.equal(wf.days[1].filter(Boolean).length, 10); assert.ok(wf.days[2].every((x) => x === null));
-  assert.ok(wf.days[0].every((x) => x.checked === 2 && x.share));
+  assert.ok(wf.days[0].every((x) => x.checked === 2 && x.exp && Object.keys(x.exp).length === 16));
+  assert.equal(B.indexFromHours(wf.days[0]).get(field[0].a).blocks, 0, "seed 1 signed nothing");
+  assert.ok(B.indexFromHours(wf.days[0]).get(field[0].a).expected > 100, "…but was expected to, by its VHP");
   assert.equal(wf.results.rounds.length, 1); assert.deepEqual(wf.results.rounds[0], truth.rounds[0]);
   assert.ok(!wf.results.rounds[0].includes(1), "offline seed 1 is out");
   assert.equal(wf.points.find((p) => p[0] === P(1))[1], 8, "8 right in round 1 so far");
@@ -164,22 +188,27 @@ test("a whole week: hours irreversible only, results equal the shared math on th
   assert.equal(r.board.allTime.rows[0].pts, 34);
 });
 
-test("hours: the two nodes must agree; a missing card share is filled in once the card arrives", async () => {
+test("hours: the two nodes must agree; a fork while reading is caught; VHP moved mid-day is followed exactly", async () => {
   const field = fieldOf(17), signer = signerFn(field), dir = tmp();
-  const noCardMonday = (t) => t >= B.roundDay(W, 0) && t < B.roundDay(W, 0) + 6 * H;   // the whole first race
-  const o = { raceDir: raceDir(field, { skip: noCardMonday }), picksContract: "1P", nodeOf: nodeOf(signer), picksOf: picksOf([]) };
+  const mover = field[5].a, h5 = hAt(B.roundDay(W, 0) + 5 * H);
+  // the mover parks almost all its VHP elsewhere from 05:00 to 05:10 on Monday, then takes it back
+  const moves = [{ h: h5, a: mover, d: -0.99 * field[5].vhp * 1000 }, { h: h5 + 200, a: mover, d: 0.99 * field[5].vhp * 1000 }];
+  const o = { raceDir: raceDir(field), picksContract: "1P", nodeOf: nodeOf(signer, null, { moves }), picksOf: picksOf([]) };
   await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + H), ...o }));
   await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.lockTime(W) + 60000), ...o }));
   const badH = hAt(B.roundDay(W, 0) + 5 * H + 1000);
-  const r = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.roundDay(W, 0) + 8 * H), ...o, nodeOf: nodeOf(signer, (h) => h === badH) }));
-  assert.ok(r.problems.some((p) => p.includes("hour 5") && p.includes("disagree")));
-  let wf = readW(dir);
-  assert.equal(wf.days[0][5], null); assert.ok(wf.days[0][4]);
-  assert.equal(wf.days[0][0].share, null, "no card yet for 00:00");
-  // the card for those hours turns up later
-  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.roundDay(W, 0) + 9 * H), ...o, raceDir: raceDir(field) }));
-  wf = readW(dir);
-  assert.ok(wf.days[0][0].share && wf.days[0][5], "filled in, and hour 5 recorded once the nodes agree");
+  const r = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.roundDay(W, 0) + 8 * H), ...o, nodeOf: nodeOf(signer, (h) => h === badH, { moves }) }));
+  assert.ok(r.problems.some((p) => p.includes("disagree")));
+  assert.ok(readW(dir).days[0].every((x) => x === null), "nothing recorded while the nodes disagree");
+  // a fork between the hour and the head while reading (the block a balance was read at changed): nothing recorded
+  const r2 = await quiet(() => run({ p: "main", check: null, prev: dir, out: dir, head: headAt(B.roundDay(W, 0) + 8 * H), ...o, nodeOf: nodeOf(signer, null, { moves, forkAt: { node: "main", h: hAt(B.roundDay(W, 0) + 8 * H) } }) }));
+  assert.ok(r2.problems.some((p) => p.includes("fork")));
+  // agreeing nodes: recorded, and hour 5's expected for the mover shows the 10 minutes it held 1% of its VHP
+  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.roundDay(W, 0) + 8 * H), ...o }));
+  const wf = readW(dir);
+  assert.equal(wf.days[0].filter(Boolean).length, 8, "00:00–07:59 are irreversible by 08:00");
+  const e4 = wf.days[0][4].exp[mover], e5 = wf.days[0][5].exp[mover];
+  assert.ok(e5 < e4 * 0.9 && e5 > e4 * 0.75, `hour 5 expected ${e5} vs hour 4 ${e4}: 10 of 60 minutes at 1%`);
 });
 
 test("files: only the expected names, sizes and fields", async () => {
@@ -291,39 +320,6 @@ test("F-6 / F-7: each recorder step can fail alone; leaderboards are capped at 1
   const r = await runUntil(B.roundDay(W, 0) + 25 * H, o, dir, 2);
   assert.equal(r.board.week.rows.length, 1000); assert.equal(readW(dir).points.length, 1500, "every score stays in the week file");
   assert.ok(shapeOk(dir));
-});
-
-test("R-1 at the recorder: the floor comes from the race results of the 7 days before the seeding, and a seed off the cards all day loses", async () => {
-  const field = fieldOf(17), gamer = field[3].a;
-  // race results: everyone signed exactly its VHP share of 7,200 blocks a race
-  const tot = field.reduce((t, r) => t + r.vhp, 0);
-  const results = () => ({ final: true, checked: 2, blocks: 7200, standings: field.map((r) => ({ a: r.a, steps: 1, blocks: Math.round(7200 * r.vhp / tot) })) });
-  // the gamer shows only 1,000 VHP on every card from the seeding on (its VHP sits elsewhere at each reading)
-  const shown = field.map((r) => (r.a === gamer ? { ...r, vhp: 1000 } : r));
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), "race-"));
-  for (const w of [W - 1, W, W + 1]) {
-    const races = [];
-    for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) {
-      const f = t + M.RACE <= B.seedTime(W) ? field : shown, ft = f.reduce((x, r) => x + r.vhp, 0);
-      const card = (at) => ({ at, c: 0, blocksPerRace: 7200, fairness: null, field: f.map((r) => ({ ...r, k: 7200 * r.vhp / ft, h: 1 })), paddock: [] });
-      races.push({ id: M.raceId(M.raceIndex(t)), start: t, end: t + M.RACE, cards: Array.from({ length: 6 }, (_, l) => card(t + l * H)), result: t + M.RACE <= B.seedTime(W) ? results() : null });
-    }
-    fs.writeFileSync(path.join(d, `W${String(w).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), races }));
-  }
-  const signer = signerFn(field), dir = tmp();
-  const o = { raceDir: d, picksContract: addr(60), nodeOf: nodeOf(signer), picksOf: picksOf([]) };
-  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + H), ...o }));
-  let wf = readW(dir);
-  const i = wf.seeding.seeds.indexOf(gamer);
-  assert.ok(i >= 0 && wf.seeding.proven[i] > 0, "its blocks prove more than it shows");
-  assert.ok(wf.seeding.proven[i] > 10 * wf.seeding.vhp[i], "about 14× what the card shows, less the 10% margin");
-  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.lockTime(W) + 60000), ...o }));
-  await runUntil(B.roundDay(W, 0) + 25 * H, o, dir);
-  wf = readW(dir);
-  const idx = B.indexFromHours(wf.days[0], B.floorOf(wf.seeding));
-  assert.ok(idx.get(gamer).index < 1.2, `gamer index ${idx.get(gamer).index}`);
-  const noFloor = B.indexFromHours(wf.days[0]);
-  assert.ok(noFloor.get(gamer).index > 10, "it would have won every matchup");
 });
 
 test("R-4: the two nodes must agree about the Picks game", async () => {

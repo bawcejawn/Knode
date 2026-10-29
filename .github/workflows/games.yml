@@ -167,20 +167,18 @@ jobs:
           isa = lambda x: type(x) is str and addr.fullmatch(x) is not None
           def hour_ok(h):
               if h is None: return True
-              if type(h) is not dict or set(h) != {"from", "to", "n", "by", "share", "tot", "checked"}: return False
-              if not (h["tot"] is None or (num(h["tot"]) and h["tot"] > 0)): return False
+              if type(h) is not dict or set(h) != {"from", "to", "n", "by", "exp", "checked"}: return False
               if not (nat(h["from"]) and nat(h["to"]) and nat(h["n"]) and h["n"] <= 100000 and h["checked"] in (1, 2)): return False
               if type(h["by"]) is not dict or len(h["by"]) > 32 or not all(isa(a) and nat(v) and v <= h["n"] for a, v in h["by"].items()): return False
-              return h["share"] is None or (type(h["share"]) is dict and len(h["share"]) <= 32 and all(isa(a) and num(v) and 0 <= v <= 1 for a, v in h["share"].items()))
+              return type(h["exp"]) is dict and len(h["exp"]) <= 32 and all(isa(a) and num(v) and 0 <= v <= h["n"] + 1 for a, v in h["exp"].items())
           def week_ok(j):
               if not set(j) <= {"v", "week", "start", "end", "status", "seeding", "picks", "days", "results", "points", "void"}: return False
-              if j.get("v") != 1 or not nat(j.get("week")) or not nat(j.get("start")) or not nat(j.get("end")): return False
+              if j.get("v") != 2 or not nat(j.get("week")) or not nat(j.get("start")) or not nat(j.get("end")): return False
               if j.get("status") not in ("waiting", "none", "void", "open", "locked", "final"): return False
               if "void" in j and (type(j["void"]) is not str or len(j["void"]) > 200): return False
               s = j.get("seeding")
               if s is not None:
-                  if type(s) is not dict or set(s) != {"at", "cardAt", "size", "seeds", "vhp", "totalVhp", "proven", "out", "hash"} or s["size"] not in (0, 8, 16, 32) or not num(s["totalVhp"]): return False
-                  if type(s["proven"]) is not list or len(s["proven"]) != len(s["seeds"]) or not all(p is None or (num(p) and p > 0) for p in s["proven"]): return False
+                  if type(s) is not dict or set(s) != {"at", "cardAt", "size", "seeds", "vhp", "totalVhp", "out", "hash"} or s["size"] not in (0, 8, 16, 32) or not num(s["totalVhp"]): return False
                   if not (nat(s["at"]) and num(s["cardAt"]) and type(s["seeds"]) is list and len(s["seeds"]) <= s["size"] and all(isa(a) for a in s["seeds"])): return False
                   if not (type(s["vhp"]) is list and len(s["vhp"]) == len(s["seeds"]) and all(num(v) for v in s["vhp"]) and type(s["out"]) is list and len(s["out"]) <= 1000 and all(isa(a) for a in s["out"])): return False
                   if type(s["hash"]) is not str or not re.fullmatch(r"[0-9a-f]{64}", s["hash"]): return False

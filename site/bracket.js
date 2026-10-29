@@ -89,7 +89,8 @@
   }
   function dayIdx(r) {
     const w = wf(); if (!w || !w.days[r]) return null;
-    return { idx: BM.indexFromHours(w.days[r].map((h) => h || null), BM.floorOf(w.seeding)), done: w.days[r].every(Boolean), hours: w.days[r].filter(Boolean).length };
+    const day = w.days[r], done = day.every(Boolean);
+    return { idx: done ? BM.indexFromHours(day) : BM.indexSoFar(day.filter(Boolean)), done, hours: day.filter(Boolean).length };
   }
 
   // ── the bracket being filled in ──

@@ -132,44 +132,93 @@ test("invalid numbers score nothing: too big for the bracket, bits on a bye, not
   assert.throws(() => M.encode([[1]], 16, 16), /winner must be/);
 });
 
-// ── the day index ──
-const DAY0 = U("2026-11-02T00:00:00Z");
-function blocksOf(list) { // list: [[hour, address, count], ...] spread evenly inside each hour
-  const ts = [], who = [];
-  for (const [h, a, n] of list) for (let i = 0; i < n; i++) { ts.push(DAY0 + h * H + Math.floor((i + 0.5) * H / n)); who.push(a); }
-  const order = ts.map((_, i) => i).sort((x, y) => ts[x] - ts[y]), signers = [...new Set(who)];
-  return { ts: order.map((i) => ts[i]), sig: order.map((i) => signers.indexOf(who[i])), signers };
+// ── the day index: exact VHP, block by block (option A, owner decision 2026-10-28) ──
+const DAY0 = U("2026-11-02T00:00:00Z"), E8 = 1e8;
+/** A made-up chain. vhp: { address: VHP }, each block's signer drawn by VHP (seeded), every block burns 4 VHP of its
+ *  signer's; moves: [{ at: block index, a, d (VHP) }] applied in that block; offline(a, i) → true to skip a producer.
+ *  Starts ACTIVE_BLOCKS blocks before DAY0 + startHour, 3 s a block. Returns { B, deltas, anchors (after the last block) }. */
+function fakeChain(vhp, { hours = 24, seed = 7, moves = [], offline = () => false, h0 = 50_000_000, startHour = 0, luck = null } = {}) {
+  const rnd = R.rng(seed), names = Object.keys(vhp), bal = new Map(names.map((a) => [a, vhp[a] * E8]));
+  const pre = M.ACTIVE_BLOCKS, n = pre + hours * 1200, t0 = DAY0 + startHour * H - pre * 3000;
+  const hs = [], ts = [], sig = [], deltas = [];
+  for (let i = 0; i < n; i++) {
+    const h = h0 + i;
+    for (const mv of moves) if (mv.at === i) { bal.set(mv.a, bal.get(mv.a) + mv.d * E8); deltas.push({ h, a: mv.a, d: mv.d * E8 }); }
+    const live = names.filter((a) => !offline(a, i) && bal.get(a) > 0), tot = live.reduce((t, a) => t + bal.get(a), 0);
+    let x = (luck ? luck(i) : rnd.next()) * tot, s = live[live.length - 1];
+    for (const a of live) { x -= bal.get(a); if (x < 0) { s = a; break; } }
+    hs.push(h); ts.push(t0 + i * 3000); sig.push(names.indexOf(s));
+    bal.set(s, bal.get(s) - 4 * E8); deltas.push({ h, a: s, d: -4 * E8 });
+  }
+  const anchors = Object.fromEntries(names.map((a) => [a, { h: h0 + n - 1, v: bal.get(a) }]));
+  return { B: { hs, ts, sig, signers: names }, deltas, anchors, n, h0 };
 }
-test("day index = blocks ÷ expected from each hour's card (plain handicap); VHP added mid-day doesn't help", () => {
-  const A = "1A", Bp = "1B";
-  // A has 75% of VHP, B 25%. 100 blocks an hour, signed in exactly those shares → both index 1.
-  const card = { field: [{ a: A, vhp: 3 }, { a: Bp, vhp: 1 }] };
-  const blocks = []; for (let h = 0; h < 24; h++) blocks.push([h, A, 75], [h, Bp, 25]);
-  let idx = M.dayIndex(blocksOf(blocks), DAY0, Array(24).fill(card));
-  assert.ok(Math.abs(idx.get(A).index - 1) < 1e-9 && Math.abs(idx.get(Bp).index - 1) < 1e-9);
-  assert.equal(idx.get(A).blocks, 1800); assert.equal(idx.get(Bp).expected, 600);
-  // From hour 12 B burns KOIN and reaches 50% of VHP, so it signs more. With hourly cards its expected rises too.
-  const card2 = { field: [{ a: A, vhp: 3 }, { a: Bp, vhp: 3 }] };
-  const b2 = []; for (let h = 0; h < 24; h++) b2.push(h < 12 ? [h, A, 75] : [h, A, 50], h < 12 ? [h, Bp, 25] : [h, Bp, 50]);
-  const cards = Array.from({ length: 24 }, (_, h) => (h < 12 ? card : card2));
-  idx = M.dayIndex(blocksOf(b2), DAY0, cards);
-  assert.ok(Math.abs(idx.get(Bp).index - 1) < 1e-9, "B gains nothing from its extra VHP");
-  // with one fixed card for the whole day, B would have won by burning: the reason for hourly cards
-  const fixed = M.dayIndex(blocksOf(b2), DAY0, Array(24).fill(card));
-  assert.ok(fixed.get(Bp).index > 1.4 && fixed.get(A).index < 0.9);
-  // missing hours use the nearest earlier card of the day, else the nearest later one; no card at all → null
-  const gaps = Array(24).fill(null); gaps[5] = card;
-  idx = M.dayIndex(blocksOf(blocks), DAY0, gaps); assert.ok(Math.abs(idx.get(Bp).index - 1) < 1e-9);
-  assert.equal(M.dayIndex(blocksOf(blocks), DAY0, Array(24).fill(null)), null);
-  assert.equal(M.dayIndex(blocksOf(blocks), DAY0, Array(23).fill(card)), null);
-  // blocks outside the day don't count
-  idx = M.dayIndex(blocksOf([[-1, A, 50], [24, A, 50], [3, Bp, 4]]), DAY0, Array(24).fill(card));
-  assert.equal(idx.get(A).blocks, 0); assert.equal(idx.get(Bp).blocks, 4);
-  // paddock VHP counts in the share total; a producer off a card has share 0 for that hour
-  idx = M.dayIndex(blocksOf([[0, A, 10]]), DAY0, Array(24).fill({ field: [{ a: A, vhp: 1 }], paddock: [{ a: "1P", vhp: 1 }] }));
-  assert.equal(idx.get(A).expected, 5); assert.equal(idx.get("1P").expected, 5);
+test("VHP events become balance changes: transfers both ways, mints in, burns out; others ignored", () => {
+  const V = M.VHP_CONTRACT;
+  const d = plain(M.vhpDeltas([
+    { h: 5, src: V, name: "token.transfer_event", from: "1A", to: "1B", value: "300" },
+    { h: 6, src: V, name: "token.mint_event", to: "1A", value: "50" },
+    { h: 7, src: V, name: "token.burn_event", from: "1B", value: "20" },
+    { h: 8, src: V, name: "token.approve_event", from: "1B", value: "999" },
+    { h: 9, src: "1Other", name: "token.mint_event", to: "1A", value: "77" },
+    { h: 10, src: V, name: "token.mint_event", to: "1A", value: "-1" },
+  ]));
+  assert.deepEqual(d, [{ h: 5, a: "1A", d: -300 }, { h: 5, a: "1B", d: 300 }, { h: 6, a: "1A", d: 50 }, { h: 7, a: "1B", d: -20 }]);
 });
-
+test("the VHP book: a balance read at one block, walked back and forward exactly", () => {
+  const book = M.vhpBook({ "1A": { h: 100, v: 1000 } }, [{ h: 90, a: "1A", d: -4 }, { h: 100, a: "1A", d: -4 }, { h: 101, a: "1A", d: 50 }, { h: 95, a: "1Z", d: 7 }]);
+  assert.equal(book.before("1A", 101), 1000, "before block 101 = after block 100 = the reading");
+  assert.equal(book.before("1A", 100), 1004, "block 100's burn walked back");
+  assert.equal(book.before("1A", 91), 1004); assert.equal(book.before("1A", 90), 1008);
+  assert.equal(book.before("1A", 102), 1050, "forward past the reading");
+  assert.equal(book.before("1Z", 100), null, "no reading, no balance");
+});
+test("expected blocks follow exact VHP: a producer signing its share scores ≈1 whatever its size; the burns are followed", () => {
+  const vhp = { "1Big": 2_000_000, "1Mid": 600_000, "1Sml": 20_000, "1Tiny": 5_000, "1Rest": 2_400_000 };
+  const { B, deltas, anchors } = fakeChain(vhp, { seed: 11 });
+  const book = M.vhpBook(anchors, deltas);
+  const idx = M.dayIndex(B, DAY0, Object.keys(vhp), book);
+  const totalExp = [...idx.values()].reduce((t, r) => t + r.expected, 0);
+  assert.ok(Math.abs(totalExp - 24 * 1200) < 1e-3, `expected adds up to the blocks of the day (${totalExp})`);
+  for (const a of ["1Big", "1Mid"]) assert.ok(Math.abs(idx.get(a).index - 1) < 0.05, `${a} ${idx.get(a).index}`);
+  assert.ok(Math.abs(idx.get("1Sml").index - 1) < 0.25, `small ${idx.get("1Sml").index}`);
+  // hour records are contiguous and count every block once
+  const hrs = M.exactHours(B, Array.from({ length: 24 }, (_, h) => DAY0 + h * H), Object.keys(vhp), book);
+  for (let h = 1; h < 24; h++) assert.equal(hrs[h].from, hrs[h - 1].to + 1);
+  assert.equal(hrs.reduce((t, x) => t + x.n, 0), 24 * 1200);
+  assert.equal(M.indexFromHours(hrs.slice(0, 23)), null, "not every hour in: no result");
+  assert.ok(M.indexSoFar(hrs.slice(0, 6)).get("1Big").expected > 0, "the live view works with part of the day");
+});
+test("moving VHP away and back (or adding it) gains nothing: expected follows the VHP block by block", () => {
+  const vhp = { "1Fav": 100_000, "1Dog": 20_000, "1Rest": 880_000 };
+  // the dog parks 19,800 of its VHP in another wallet for one block at the top of every hour, then takes it back
+  const moves = [];
+  for (let h = 0; h < 24; h++) { const i = M.ACTIVE_BLOCKS + h * 1200; moves.push({ at: i, a: "1Dog", d: -19_800 }, { at: i + 1, a: "1Dog", d: 19_800 }); }
+  const { B, deltas, anchors } = fakeChain(vhp, { seed: 3, moves });
+  const idx = M.dayIndex(B, DAY0, ["1Fav", "1Dog"], M.vhpBook(anchors, deltas));
+  assert.ok(Math.abs(idx.get("1Dog").index - 1) < 0.2, `dog ${idx.get("1Dog").index}`);
+  // its expected blocks are within 0.1% of never having moved anything (2 blocks of 1,200 an hour)
+  const still = fakeChain(vhp, { seed: 3 }), idx2 = M.dayIndex(still.B, DAY0, ["1Dog"], M.vhpBook(still.anchors, still.deltas));
+  assert.ok(Math.abs(idx.get("1Dog").expected / idx2.get("1Dog").expected - 1) < 0.002);
+  // VHP added mid-day (burning KOIN) raises expected exactly as much as chances: index stays ≈1
+  const up = fakeChain(vhp, { seed: 5, moves: [{ at: M.ACTIVE_BLOCKS + 6 * 1200, a: "1Dog", d: 200_000 }] });
+  const iu = M.dayIndex(up.B, DAY0, ["1Fav", "1Dog"], M.vhpBook(up.anchors, up.deltas));
+  assert.ok(Math.abs(iu.get("1Dog").index - 1) < 0.1, `after adding VHP ${iu.get("1Dog").index}`);
+});
+test("a seed that goes offline is still expected to sign by its VHP, and loses", () => {
+  const vhp = { "1Fav": 100_000, "1Dog": 20_000, "1Rest": 880_000 };
+  // offline all day except the last 2 hours (it drops out of the active set, but keeps its VHP)
+  const off = fakeChain(vhp, { seed: 9, offline: (a, i) => a === "1Dog" && i < M.ACTIVE_BLOCKS + 22 * 1200 });
+  const idx = M.dayIndex(off.B, DAY0, ["1Fav", "1Dog"], M.vhpBook(off.anchors, off.deltas));
+  assert.ok(idx.get("1Dog").expected > 0.015 * 24 * 1200, "expected all day, not only while active");
+  assert.ok(idx.get("1Dog").index < 0.2, `dog ${idx.get("1Dog").index}`);
+  assert.equal(M.otherWins(idx, "1Fav", "1Dog"), false);
+});
+test("a balance missing for an active producer stops the hour (never guessed)", () => {
+  const { B, deltas, anchors } = fakeChain({ "1A": 1000, "1B": 1000 }, { hours: 1 });
+  delete anchors["1B"];
+  assert.throws(() => M.exactHours(B, [DAY0], ["1A"], M.vhpBook(anchors, deltas)), /no VHP balance for 1B/);
+});
 test("a matchup: higher index advances, an exact tie goes to the lower seed", () => {
   const idx = new Map([["1A", { blocks: 50, expected: 100 }], ["1B", { blocks: 5, expected: 10 }], ["1C", { blocks: 6, expected: 10 }], ["1Z", { blocks: 0, expected: 0 }]]);
   assert.equal(M.otherWins(idx, "1A", "1B"), true, "0.5 v 0.5: underdog");
@@ -237,19 +286,19 @@ test("ranking: points, then a correct champion, then more correct winners; ties 
 });
 
 // ── fairness end to end ──
-test("plain handicap through dayIndex: 1 v 16 on today's card stays near 50/50 (Poisson days)", () => {
-  // today's card shape (2026-10-27): seed 1 ~5,126 blocks a day, seed 16 ~51
-  const vhp = { "1S1": 2182618, "1S16": 21609, "1REST": 4880000 * 2 };
-  const card = { field: Object.entries(vhp).map(([a, v]) => ({ a, vhp: v })) };
-  const tot = Object.values(vhp).reduce((a, b) => a + b, 0), perHour = 1200, rnd = R.rng(20261027);
-  let underdog = 0; const N = 1500;
-  for (let t = 0; t < N; t++) {
-    const k1 = rnd.poisson(perHour * 24 * vhp["1S1"] / tot), k16 = rnd.poisson(perHour * 24 * vhp["1S16"] / tot);
-    const idx = new Map([["1S1", { blocks: k1, expected: perHour * 24 * vhp["1S1"] / tot }], ["1S16", { blocks: k16, expected: perHour * 24 * vhp["1S16"] / tot }]]);
-    if (M.otherWins(idx, "1S1", "1S16")) underdog++;
+test("exact VHP on a made-up chain shaped like today's field: 1 v 16 and 8 v 9 stay near 50/50", () => {
+  // the 17 producers on the 2026-10-27 card (VHP), every one online and signing by VHP
+  const vhps = [2182618, 1746945, 1428829, 1315361, 1152329, 861923, 724413, 671091, 637361, 609793, 200376, 120391, 106403, 99216, 62457, 21609, 20969];
+  const vhp = Object.fromEntries(vhps.map((v, i) => [`1S${i + 1}`, v]));
+  let w116 = 0, w89 = 0; const N = 60;
+  for (let d = 0; d < N; d++) {
+    const c = fakeChain(vhp, { seed: 1000 + d });
+    const idx = M.dayIndex(c.B, DAY0, ["1S1", "1S16", "1S8", "1S9"], M.vhpBook(c.anchors, c.deltas));
+    if (M.otherWins(idx, "1S1", "1S16")) w116++;
+    if (M.otherWins(idx, "1S8", "1S9")) w89++;
   }
-  const p = underdog / N;
-  assert.ok(p > 0.44 && p < 0.56, `seed 16 wins ${(100 * p).toFixed(1)}%`);
+  assert.ok(w116 / N > 0.3 && w116 / N < 0.7, `seed 16 beat seed 1 on ${w116} of ${N} days`);
+  assert.ok(w89 / N > 0.3 && w89 / N < 0.7, `seed 9 beat seed 8 on ${w89} of ${N} days`);
 });
 
 // ── page rules ──
@@ -290,56 +339,11 @@ test("the page says what the contract and recorder do (sizes, lock, scoring, tie
   assert.doesNotMatch(page + js, /\bodds\b|\bwager|\bbet\b|\bpays\s+\d/i);
 });
 
-// ── audit 2026-10-27 F-1 / F-2 and fix-check R-1 / R-2: the floor ──
-const fav = "1Fav", dog = "1Dog";
-// true VHP: fav 100,000 and dog 20,000 of 1,000,000; 1,200 blocks an hour, both sign their share exactly
-const hoursOf = (dogCardVhp, dogBlocks = 24, extra = () => 0) => Array.from({ length: 24 }, (_, h) => {
-  const tot = 980000 + dogCardVhp(h) + extra(h);
-  return { n: 1200, by: { [fav]: 120, [dog]: dogBlocks }, share: { [fav]: 100000 / tot, [dog]: dogCardVhp(h) / tot }, tot };
-});
-test("R-1: a producer that fakes every reading (seeding too) can't look smaller than its blocks prove", () => {
-  // its race results over the week before: it signed its real 2% of blocks
-  const results = Array.from({ length: 28 }, () => ({ blocks: 7200, standings: [{ a: fav, blocks: 720 }, { a: dog, blocks: 144 }] }));
-  const proven = M.provenOf(results, [fav, dog], 980200);   // the seeding card showed dog with only 200 VHP
-  assert.ok(Math.abs(proven[1] - 0.9 * 0.02 * 980200) < 0.01);
-  const floor = M.floorOf({ seeds: [fav, dog], vhp: [100000, 200], totalVhp: 980200, proven });
-  const gamed = M.indexFromHours(hoursOf(() => 200), floor);
-  assert.ok(gamed.get(dog).index <= 1 / 0.9 + 1e-6, `dog index ${gamed.get(dog).index}`);
-  assert.equal(M.otherWins(M.indexFromHours(hoursOf(() => 200, 12), floor), fav, dog), false, "signing half its share loses");
-  // without the floor the same trick wins (what the audit showed)
-  assert.ok(M.indexFromHours(hoursOf(() => 200, 12)).get(dog).index > 20);
-  // an honest seed's floor never binds: its blocks prove less than its VHP (no producer signs more than its share for long)
-  const honest = M.indexFromHours(hoursOf(() => 20000), M.floorOf({ seeds: [fav, dog], vhp: [100000, 20000], totalVhp: 1000000, proven }));
-  assert.ok(Math.abs(honest.get(dog).index - 1) < 1e-9 && Math.abs(honest.get(fav).index - 1) < 1e-9);
-  // fewer than 20 recorded races, or never signed: no proof, the floor is the seeding VHP
-  assert.deepEqual(plain(M.provenOf(results.slice(0, 19), [fav, dog], 1e6)), [null, null]);
-  assert.deepEqual(plain(M.provenOf(results, ["1Nobody"], 1e6)), [null]);
-});
-test("R-2: VHP added mid-week (by anyone) stays neutral: the floor is an amount, not a share", () => {
-  const floor = M.floorOf({ seeds: [fav, dog], vhp: [100000, 20000], totalVhp: 1000000, proven: [null, null] });
-  // 110,000 VHP joins the network at hour 6 (someone else's node); everyone keeps signing their new fair share
-  const hours = hoursOf(() => 20000, 24, (h) => (h >= 6 ? 110000 : 0)).map((x, h) => (h >= 6 ? { ...x, by: { [fav]: 1200 * 100000 / x.tot, [dog]: 1200 * 20000 / x.tot } } : x));
-  const idx = M.indexFromHours(hours, floor);
-  assert.ok(Math.abs(idx.get(fav).index - 1) < 1e-9 && Math.abs(idx.get(dog).index - 1) < 1e-9);
-});
-test("F-1: a seed missing from an hour's card is expected to sign its floor, not nothing", () => {
-  const floor = M.floorOf({ seeds: [fav, dog], vhp: [100000, 20000], totalVhp: 1000000, proven: [null, null] });
-  const hours = Array.from({ length: 24 }, (_, h) => ({ n: 1200, by: { [fav]: 120, [dog]: h >= 22 ? 24 : 0 }, share: h === 23 ? { [fav]: 0.1, [dog]: 0.02 } : { [fav]: 0.1 }, tot: 1000000 }));
-  const idx = M.indexFromHours(hours, floor);
-  assert.ok(idx.get(dog).index < 0.1, `dog index ${idx.get(dog).index}`);
-  assert.equal(M.otherWins(idx, fav, dog), false);
-  assert.ok(M.indexFromHours(hours).get(dog).index > 1.5, "without the floor it would have won");
-  const none = M.indexFromHours(hours.map((h) => ({ ...h, share: null, tot: null })), floor);
-  assert.ok(none && Math.abs(none.get(fav).index - 1) < 1e-9, "a day with no card is scored on the floor");
-  assert.equal(M.indexFromHours(hours.map((h) => ({ ...h, share: null }))), null, "no floor, no card: can't score");
-});
-test("R-3: a seed that really gives up VHP after Saturday is still expected at its floor (owner's rule, stated on the page)", () => {
-  const floor = M.floorOf({ seeds: [fav, dog], vhp: [100000, 20000], totalVhp: 1000000, proven: [null, null] });
-  const idx = M.indexFromHours(hoursOf(() => 10000, 12), floor);   // halved its VHP, signs its new share
-  assert.ok(Math.abs(idx.get(dog).index - 0.5) < 0.02);
-  assert.match(page, /A producer that really gives up VHP after Saturday is still expected to sign at its floor/);
-});
-test("the page and the recorder both score with the floor", () => {
-  assert.match(js, /BM\.indexFromHours\(w\.days\[r\]\.map\(\(h\) => h \|\| null\), BM\.floorOf\(w\.seeding\)\)/);
-  assert.match(fs.readFileSync(`${APP}/bot/games/bracket.ts`, "utf8"), /const floor = B\.floorOf\(wf\.seeding\);\n\s+const days = wf\.days\.map\(\(d\) => \(d\.every\(Boolean\) \? B\.indexFromHours\(d, floor\) : null\)\);/);
+// ── the page and the recorder score the same way ──
+test("the page and the recorder both use the recorded exact hours (no card shares, no floor)", () => {
+  assert.match(js, /BM\.indexFromHours\(day\) : BM\.indexSoFar\(day\.filter\(Boolean\)\)/);
+  const rec = fs.readFileSync(`${APP}/bot/games/bracket.ts`, "utf8");
+  assert.match(rec, /const days = wf\.days\.map\(\(d\) => \(d\.every\(Boolean\) \? B\.indexFromHours\(d\) : null\)\);/);
+  assert.doesNotMatch(rec + read("bracket-math.js") + js, /floorOf|provenOf|sharesOf|hourOf\(/);
+  assert.match(page, /Nothing to gain by moving VHP/);
 });
