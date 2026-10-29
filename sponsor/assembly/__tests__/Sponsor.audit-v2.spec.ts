@@ -28,7 +28,7 @@ const ATTACKER = Base58.decode("16ixK5DgvcojcZLvxyYWhHFcRXfhfrHbpL");
 const MANA: u64 = 100000000;
 const DAY_MS: u64 = 86400000;
 // 2023-11-14 22:13 UTC, a Tuesday.
-const T0: u64 = 1700000000000;
+const T0: u64 = 1700003600000;   // 23:13 UTC: the free pool is fully released at hour 23 (v3, SP-3)
 // 2023-11-19 23:00 UTC (Sunday) and 2023-11-20 00:00 UTC (the next Monday).
 const SUNDAY_LATE: u64 = 1700434800000;
 const NEXT_MONDAY: u64 = 1700438400000;
@@ -112,8 +112,8 @@ export function failedRead(): system_calls.exit_arguments {
 }
 /** By default the payee holds 10 VHP. Tests change READS before calling pays() / wouldPay(). */
 let READS: system_calls.exit_arguments[] = [];
-function holder(): void { READS = [vhpBalance(10 * MANA)]; }
-function queueReads(): void { MockVM.setCallContractResults(READS); }
+function holder(): void { READS = [gamePlayer(10 * MANA, 0)]; }
+function queueReads(): void { MockVM.setCallContractResults(padReads(READS)); }
 
 function wouldPay(account: Uint8Array, rc: u64): sponsor.would_pay_result {
   queueReads();
@@ -129,6 +129,13 @@ function pays(): bool {
   apply();
   queueReads();
   return new Sponsor().authorize(new authority.authorize_arguments(authority.authorization_type.transaction_application)).value;
+}
+
+/** v3 (owner, 2026-10-28): a wallet that isn't a real player is paid from the free pool for ANY covered call. */
+function paidFromFree(): void {
+  expect(pays()).toBe(true);
+  expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day > 0).toBe(true);
+  MockVM.rollbackTransaction();
 }
 
 /** A normal sponsored stake by USER: approve the game for VHP, then deposit. */
@@ -197,10 +204,19 @@ function freeConfig(free: u64): void {
   MockVM.commitTransaction();
 }
 
-function emptyWallet(): void { READS = [vhpBalance(0), gamePlayer(0, 0)]; }
+function emptyWallet(): void { READS = [gamePlayer(0, 0)]; }
 
 // ═══════════════════════ AUDIT 2026-10-27: Sponsor v2 race picks ═══════════════════════
 import { race } from "./race_proto";
+
+/** Extra reads for the vault game check (v3, SP-2: race picks and game_arg rows ask get_game_player too): a failed
+ *  read with no answer, which counts as "no stake in that game". */
+function padReads(r: system_calls.exit_arguments[]): system_calls.exit_arguments[] {
+  const out: system_calls.exit_arguments[] = [];
+  for (let i = 0; i < r.length; i++) out.push(r[i]);
+  for (let i = 0; i < 4; i++) out.push(new system_calls.exit_arguments(0, new chain.result()));
+  return out;
+}
 
 const RACE = Base58.decode("15CM9Qr4GKREDgqnyXJ8tckPj2biERTM1T");
 const HORSE = Base58.decode("15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ");
@@ -282,13 +298,12 @@ describe("AUDIT: v2 keeps the v1 rules", () => {
     expect(pays()).toBe(true);
   });
 
-  it("free picks mixed with any non-free op need a real player; 10 picks + nothing else is free play but within the per-tx cap", () => {
+  it("free picks mixed with any non-free op need a real player; 10 picks + nothing else is free play but within the per-tx cap [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     raceConfig(3 * MANA);
     emptyWallet();
     TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
     OPS = [call(RACE, RACE_PICK, Protobuf.encode(new sponsor.race_pick_args(USER), sponsor.race_pick_args.encode)), approve(VHP, USER, GAME)];
-    expect(() => { pays(); }).toThrow();
-    errorIs(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     emptyWallet();
     const ops: protocol.operation[] = [];
     for (let i = 0; i < 10; i++) ops.push(call(RACE, RACE_PICK, Protobuf.encode(new sponsor.race_pick_args(USER), sponsor.race_pick_args.encode)));

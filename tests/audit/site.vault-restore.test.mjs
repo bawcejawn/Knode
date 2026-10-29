@@ -7,7 +7,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const src = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
+const src = fs.readFileSync(`${APP}/wallet.js`, "utf8");
 const SECRET = "S3CR3T-vault-session-secret-0123456789abcdef";
 const VAULT = "https://koinvault.app";
 const OP = [{ call_contract: { contract_id: "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", entry_point: 0x12345678, args: "CgA=" } }];

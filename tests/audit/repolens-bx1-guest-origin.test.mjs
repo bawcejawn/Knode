@@ -12,11 +12,11 @@ const read = (f) => fs.readFileSync(`${APP}/${f}`, "utf8");
 // BXW-1 (High): guest keys live in plaintext IndexedDB/localStorage on the shared bawcejawn.github.io origin while guest
 // play is switched on. Either the site moves to its own origin (canonical no longer *.github.io / a CNAME exists), or
 // guest play stays off there, or wallet.js itself refuses guest play on a shared *.github.io host.
-test("BXW-1: no guest wallet on a shared *.github.io origin", { todo: "owner decision: a custom domain (tracker k01), or guest play off on github.io" }, () => {
+test("BXW-1: no guest wallet on a shared *.github.io origin", () => {
   const dep = JSON.parse(read("game-data/deployment.json"));
-  const canonical = (read("site/blockx.html").match(/<link rel="canonical" href="([^"]+)"/) || [])[1] || "";
+  const canonical = (read("blockx.html").match(/<link rel="canonical" href="([^"]+)"/) || [])[1] || "";
   const shared = /^https:\/\/[^/]+\.github\.io\//.test(canonical) && !fs.existsSync(`${APP}/CNAME`);
-  const wallet = read("site/wallet.js");
+  const wallet = read("wallet.js");
   const codeRefuses = /github\.io/.test(wallet) && /guestOn|guestReady/.test(wallet) && /hostname[^;]*github\.io/.test(wallet);
   assert.ok(!(shared && dep.sponsor && dep.sponsor.guest === true) || codeRefuses,
     "guest play is on while the site shares the bawcejawn.github.io origin with other projects");
@@ -25,7 +25,7 @@ test("BXW-1: no guest wallet on a shared *.github.io origin", { todo: "owner dec
 // BXW-2 (Low, defence in depth): the mainnet Kondor path should pin the chain id in the transaction and re-check the
 // signed header (chain id, Mana limit, operations) like testnet-wallet.js and checkGuestTx already do.
 test("BXW-2: Kondor path pins chain id and re-checks the signed transaction", () => {
-  const w = read("site/wallet.js");
+  const w = read("wallet.js");
   const body = w.slice(w.indexOf("async function sendKondorWith"), w.indexOf("// ── Mana sponsor"));
   assert.match(body, /chainId:\s*W\.chainId/, "options carry chainId: W.chainId (not re-read from the node by koilib)");
   assert.match(body, /chain_id\s*!==\s*W\.chainId/, "signed header chain_id is compared to W.chainId");

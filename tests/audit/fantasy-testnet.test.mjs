@@ -18,7 +18,7 @@ process.env.FANTASY_TEST_RPC = test1.url;
 const kit = await import(path.resolve(APP, "bot/fantasy-test.ts"));
 kit.quiet(() => {});
 const R = globalThis.KRaceMath, FR = globalThis.KFantasyMath;
-const html = fs.readFileSync(path.resolve(APP, "site/fantasy.html"), "utf8");
+const html = fs.readFileSync(path.resolve(APP, "fantasy.html"), "utf8");
 
 test("practice page: the TESTNET bar, the test settings and test wallet instead of the real wallet", () => {
   const p = kit.testPage(html);

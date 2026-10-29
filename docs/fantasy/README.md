@@ -4,7 +4,7 @@ Draft five Koinos block producers under a salary cap, pick a captain, and score 
 their share of blocks. A weekly league (staked: the Fantasy share of the vault's weekly reward) and a Weekly Rival.
 Plan and owner decisions: `claude/builds/05-fantasy-plan.md` in the KnodeGames project.
 
-## The rules (site/fantasy-math.js)
+## The rules (fantasy-math.js)
 - **Team:** 5 different producers from the week's price list, cost at most 100. The first one is the captain (×2).
 - **Points:** each day, a producer scores 100 × blocks signed ÷ blocks expected (its VHP share on the Producer Race's
   hourly card), at most 130. Week = the sum of 7 days.
@@ -32,9 +32,9 @@ Plan and owner decisions: `claude/builds/05-fantasy-plan.md` in the KnodeGames p
 ## The parts
 | File | What |
 |---|---|
-| `site/fantasy-math.js` | the rules and scoring; the page and the recorder both run it |
+| `fantasy-math.js` | the rules and scoring; the page and the recorder both run it |
 | `bot/games/fantasy.ts` | the recorder: read only, two nodes must agree, publishes `games-data/fantasy/` |
-| `site/fantasy.html`, `fantasy.js`, `fantasy.css` | the game page (noindex, not in the menus until launch) |
+| `fantasy.html`, `fantasy.js`, `fantasy.css` | the game page (noindex, not in the menus until launch) |
 | `.github/workflows/games.yml` | runs the recorder hourly once `FANTASY_ENABLED` is `true`; checks the files' shape |
 | `bot/fantasy-test.ts`, `tools/fantasy-testnet/` | the testnet practice kit (`docs/fantasy/TESTNET.md`) and its offline rehearsal |
 

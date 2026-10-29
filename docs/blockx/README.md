@@ -2,7 +2,7 @@
 
 **A free prediction game on Koinos.** Every 2,400th block (about every 2 hours) is a *target*. Before it is made, you
 pick the block producer you think will sign it. Get it right and you score points. The less likely your producer was
-to sign, the more points, up to ×3. The weekly Free play leaderboard's top 2 win 2 VHP and 1 VHP (paid by the Knode
+to sign, the more points, up to ×3. The week's top 2 players win 2 VHP and 1 VHP (paid by the Knode
 Games vault once it is live).
 
 It is the first game on the **Picks** contract, a small contract that **holds no tokens and has no way to move any**.
@@ -16,7 +16,7 @@ It only keeps everyone's picks and makes the chain enforce the rules.
 | Wallet | your Knode wallet (Kondor, guest) | a Test wallet kept in that browser, or Kondor switched to the testnet |
 | Mana | paid by the Knode Mana sponsor | your test wallet pays its own (free test KOIN) |
 | Results | `games-data` branch | `testnet-data` branch (or your own computer, see [TESTNET.md](TESTNET.md)) |
-| Prizes | Free play top 2, from when the vault (v6) is live | listed for testing, never paid |
+| Prizes | the week's top 2 (everyone is a free player in Block X), from when the vault (v6) is live | listed for testing, never paid |
 
 ## How to play
 
@@ -59,10 +59,23 @@ Two boards, as in every Knode Games game:
 - **Staked:** wallets holding at least 1 VHP or with a Knode stake.
 - **Free play:** everyone else, guest wallets included.
 
-**Prizes:** the top 2 of the Free play board each week win 2 VHP and 1 VHP. To win, a wallet needs at least one point
+Your place on the page is your place on your own board (Staked or Free play). Medals on the Free play board follow
+the prize rule below (picks on 3 days, ties share), and last week's come from the recorder's frozen prize list
+(audit BX-14). The "×N if right" next to a producer is from the current card; the card taken at or before the lock
+decides the score.
+
+**Prizes:** the week's top 2 players win 2 VHP and 1 VHP. Player rule (owner, 2026-10-28, every game): only VHP
+staked *in a game* makes a staked player there; nobody can stake in Block X, so every player is a free player and may
+win, on either board. The Vault (v6) pays them: the recorder publishes `blockx/vault/W<week>.json` on `games-data`
+once the week is final (1st and 2nd, ties included, at most 10 per place). To win, a wallet needs at least one point
 and picks on **3 different days** that week (so one visit can't win). Ties share the prizes of the places they cover.
 A week becomes final 12 hours after it ends. Prizes are listed only from the week the Knode Games vault (v6) goes live.
 Nothing is owed for earlier weeks.
+
+**Sponsored games (audit BX-27).** Sponsor v3 pays the Mana for `pick` on the Picks contract for any game on it. A new
+game the owner adds with `announce_game` is sponsored too, within the same caps (50 Mana per wallet per day, 2,000 for
+all free play, 5,000 in total, and the per-action Mana limit). That is intended; a future sponsor version could list
+game ids if a game ever needs its own budget.
 
 ## Why your funds are safe
 
@@ -70,7 +83,14 @@ Nothing is owed for earlier weeks.
 - It is uploaded with all three authority overrides **on**, and its `authorize` always refuses `contract_call` (moving
   anything out of its account) and `transaction_application` (paying Mana). The key it was uploaded with has no power
   left afterwards.
-- New code needs the owner's signature, the announced sha256 and a 48-hour wait.
+- New code needs the owner's signature, the announced sha256 and a 48-hour wait. Be clear about what that means
+  (audit BX-8): the wait gives everyone 48 hours to see the change coming, but **the hash alone doesn't show what new
+  code would do**. An upgrade that keeps the overrides on could, in principle, add a way to move tokens (the account
+  holds none) or rewrite stored picks. So before any `schedule_upgrade`, the new source and a reproducible build are
+  published, the upgrade event is watched, and rounds already scored are frozen in the published week files.
+- Only the player can pick for their wallet (audit BX-28): the contract checks the caller is the player or the
+  player's own wallet contract (a smart wallet). A smart wallet's `authorize` is told only that its owner is calling
+  Picks, not which producer was picked.
 - Picking never asks you to send tokens. On mainnet the Knode Mana sponsor pays the Mana. On the testnet, your own
   test wallet pays a little test Mana.
 

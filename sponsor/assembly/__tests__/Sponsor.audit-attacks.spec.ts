@@ -1,9 +1,18 @@
 // Audit Bot attack tests for the Knode Mana sponsor. Each asserts the SAFE behaviour.
 // Copy into sponsor/assembly/__tests__/ next to fixtures.ts to run.
 import { Arrays, Base58, MockVM, Protobuf, authority, chain, protocol, system_calls } from "@koinos/sdk-as";
-import { Sponsor, APPROVE_ENTRY, GAME_ANSWER, GAME_DEPOSIT_VHP, CAP_LIMIT, NOT_A_PLAYER } from "../Sponsor";
+import { Sponsor, APPROVE_ENTRY, GAME_ANSWER, GAME_DEPOSIT_VHP, CAP_LIMIT, NOT_A_PLAYER, FREE_USED_UP } from "../Sponsor";
 import { sponsor } from "../proto/sponsor";
 import { F } from "./fixtures";
+
+/** Extra reads for the vault game check (v3, SP-2: race picks and game_arg rows ask get_game_player too): a failed
+ *  read with no answer, which counts as "no stake in that game". */
+function padReads(r: system_calls.exit_arguments[]): system_calls.exit_arguments[] {
+  const out: system_calls.exit_arguments[] = [];
+  for (let i = 0; i < r.length; i++) out.push(r[i]);
+  for (let i = 0; i < 4; i++) out.push(new system_calls.exit_arguments(0, new chain.result()));
+  return out;
+}
 
 const SELF = Base58.decode(F.SELF);
 const USER = Base58.decode(F.USER);
@@ -14,7 +23,7 @@ const VHP = Base58.decode("12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq");
 const KOIN = Base58.decode("19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK");
 const MANA: u64 = 100000000;
 const DAY_MS: u64 = 86400000;
-const T0: u64 = 1700000000000;
+const T0: u64 = 1700003600000;   // 23:13 UTC: the free pool is fully released at hour 23 (v3, SP-3)
 const NONE = new Uint8Array(0);
 
 let OPS: protocol.operation[] = [];
@@ -48,11 +57,18 @@ function gamePlayer(stake: u64, pending: u64): system_calls.exit_arguments {
   return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.game_get_player_result(new sponsor.game_player(stake, pending)), sponsor.game_get_player_result.encode)));
 }
 let READS: system_calls.exit_arguments[] = [];
-function queueReads(): void { MockVM.setCallContractResults(READS.length ? READS : [vhpBalance(10 * MANA)]); }
+function queueReads(): void { MockVM.setCallContractResults(padReads(READS.length ? READS : [gamePlayer(10 * MANA, 0)])); }
 function pays(): bool {
   apply();
   queueReads();
   return new Sponsor().authorize(new authority.authorize_arguments(authority.authorization_type.transaction_application)).value;
+}
+
+/** v3 (owner, 2026-10-28): a wallet that isn't a real player is paid from the free pool for ANY covered call. */
+function paidFromFree(): void {
+  expect(pays()).toBe(true);
+  expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day > 0).toBe(true);
+  MockVM.rollbackTransaction();
 }
 function setTime(ms: u64): void { MockVM.setHeadInfo(new chain.head_info(null, ms, 0)); }
 function configure(perTx: u64, day: u64, week: u64, all: u64): void {
@@ -166,14 +182,14 @@ describe("AB operations: odd shapes", () => {
 describe("AB-001 budget exhaustion by fresh wallets (fixed: only real players are sponsored, except answers within the free sub-cap)", () => {
   beforeEach(() => { start(); configure(1 * MANA, 5 * MANA, 20 * MANA, 100 * MANA); });
 
-  it("a wallet with no stake, no VHP and no history is not sponsored", () => {
+  it("a wallet with no stake, no VHP and no history is not sponsored [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     // OTHER has never deposited, holds nothing (the mock has no balances) and is not a Knode player.
     // Twenty such wallets x 5 Mana use up everyone's 100 Mana for the day at no cost to their creator.
     asOther(MANA);
     OPS = [call(VHP, APPROVE_ENTRY, Protobuf.encode(new sponsor.approve_args(OTHER, GAME, 1), sponsor.approve_args.encode))];
-    READS = [vhpBalance(0), gamePlayer(0, 0)];
+    READS = [gamePlayer(0, 0)];
     expect(() => { pays(); }).toThrow();
-    expect(MockVM.getErrorMessage()).toBe(NOT_A_PLAYER);
+    expect(MockVM.getErrorMessage()).toBe(FREE_USED_UP);   // v3: a non-player spends the free pool, 0 here
     MockVM.rollbackTransaction();
   });
 
@@ -186,7 +202,7 @@ describe("AB-001 budget exhaustion by fresh wallets (fixed: only real players ar
     for (let i = 0; i < 20; i++) {
       if (i % 2 == 0) asUser(MANA); else asOther(MANA);
       TXN = 1 + (i % 3);
-      READS = [vhpBalance(0), gamePlayer(0, 0)];
+      READS = [gamePlayer(0, 0)];
       if (i < 10) { expect(pays()).toBe(true); MockVM.commitTransaction(); paid += MANA; }
       else { expect(() => { pays(); }).toThrow(); MockVM.rollbackTransaction(); }
     }

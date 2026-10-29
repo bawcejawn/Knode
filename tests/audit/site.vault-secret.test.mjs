@@ -15,7 +15,7 @@ import vm from "node:vm";
 
 const APP = process.env.APP || ".";
 const SECRET = "s3cr3t-session-secret-value";
-const src = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
+const src = fs.readFileSync(`${APP}/wallet.js`, "utf8");
 
 function storage(init = {}) {
   const m = new Map(Object.entries(init));

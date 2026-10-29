@@ -10,7 +10,7 @@
 // on every other page they link to "index.html#view".
 import fs from "node:fs";
 
-const ROOT = new URL("../site/", import.meta.url).pathname;
+const ROOT = new URL("../", import.meta.url).pathname;
 
 const I = {
   games: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect>',

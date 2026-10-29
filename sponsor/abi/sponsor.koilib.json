@@ -195,6 +195,10 @@
                 "options": {
                   "(koinos.btype)": "HEX"
                 }
+              },
+              "game_arg": {
+                "type": "uint32",
+                "id": 5
               }
             }
           },
@@ -387,6 +391,39 @@
               "week": {
                 "type": "uint64",
                 "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "game_get_game_player_args": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "game": {
+                "type": "uint32",
+                "id": 2
+              },
+              "week": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "game_get_game_player_result": {
+            "fields": {
+              "week_stake": {
+                "type": "uint64",
+                "id": 4,
                 "options": {
                   "jstype": "JS_STRING"
                 }

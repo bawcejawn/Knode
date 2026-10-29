@@ -7,7 +7,7 @@ import vm from "node:vm";
 import { utils } from "koilib";
 
 const APP = process.env.APP || ".";
-const wallet = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
+const wallet = fs.readFileSync(`${APP}/wallet.js`, "utf8");
 const PLAYER = "1JEG83vHFKLwt3dnDqjuX9s5Zc56U4bQet", GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", DESK = "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR";
 const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK", POB = "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv";
 const SPONSOR = "1AZsVFFrvKFhhxLq2jKHUUesdm2zbCcbXW";
@@ -53,7 +53,7 @@ test("the sponsor pays a game action when it is on and would_pay says yes", asyn
   assert.equal(w.log.asked.length, 1);
   assert.equal(w.log.asked[0].contract_id, SPONSOR);
   assert.equal(w.log.asked[0].entry_point, 0xda1fd8f5);
-  assert.deepEqual(w.log.built[0], { payer: SPONSOR, payee: PLAYER, rcLimit: "300000000" });
+  assert.deepEqual(w.log.built[0], { payer: SPONSOR, payee: PLAYER, rcLimit: "100000000" });   // audit SP-17: other actions ask the 1-Mana cap
   assert.deepEqual(w.log.sent, [SPONSOR]);
 });
 

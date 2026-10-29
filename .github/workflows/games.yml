@@ -51,15 +51,16 @@ jobs:
           if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then echo "::error::Couldn't reach the games-data branch (git exit $rc). Not recording from empty files."; exit 1; fi
           if [ "$rc" -eq 0 ]; then
             git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" games-data
-            for f in $(git ls-tree --name-only FETCH_HEAD:blockx 2>/dev/null); do
-              if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:blockx/$f" > "$RUNNER_TEMP/prev/blockx/$f"; fi
+            # (audit BX-34: names read line by line, never word-split; only expected names are taken)
+            git ls-tree --name-only FETCH_HEAD:blockx 2>/dev/null | while IFS= read -r f; do
+              if [[ "$f" =~ ^(index|board|W[0-9]{3}|P[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:blockx/$f" > "$RUNNER_TEMP/prev/blockx/$f"; fi
             done
-            for f in $(git ls-tree --name-only FETCH_HEAD:fantasy 2>/dev/null); do
+            git ls-tree --name-only FETCH_HEAD:fantasy 2>/dev/null | while IFS= read -r f; do
               if [[ "$f" =~ ^(index|board|days|rivals|alltime|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:fantasy/$f" > "$RUNNER_TEMP/prev/fantasy/$f"; fi
             done
           else echo "No games-data branch yet."; fi
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
-            for f in $(git ls-tree --name-only FETCH_HEAD); do
+            git ls-tree --name-only FETCH_HEAD | while IFS= read -r f; do
               if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/race/$f"; fi
             done
           else echo "No race-data branch yet: targets wait for cards."; fi
@@ -109,47 +110,86 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/fantasy" ! -path "$IN/fantasy/vault" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/fantasy/\(index\|board\|days\|rivals\|alltime\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/fantasy/vault/W[0-9]+\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/blockx/vault" ! -path "$IN/fantasy" ! -path "$IN/fantasy/vault" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\|P[0-9][0-9][0-9]\)\.json" ! -regex "$IN/blockx/vault/W[0-9][0-9]*\.json" ! -regex "$IN/fantasy/\(index\|board\|days\|rivals\|alltime\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/fantasy/vault/W[0-9][0-9]*\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           big=$(find "$IN" -type f ! -path "$IN/fantasy/*" -size +2048k -print; find "$IN/fantasy" -type f -size +8192k -print 2>/dev/null || true)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
           # The content must be the recorder's own shape, not only parse as JSON.
-          /usr/bin/python3 - "$IN/blockx" <<'PY'
+          /usr/bin/python3 - "$IN/blockx" 2 <<'PY'
           import json, os, re, sys
-          d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          d = sys.argv[1]; gid = int(sys.argv[2]); addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          iso = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{3})?Z"); ymd = re.compile(r"\d{4}-\d\d-\d\d")
           num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
           nat = lambda x: type(x) is int and 0 <= x < 10**16
+          WEEK = 7 * 86400000
           def target_ok(t):
               if type(t) is not dict or not set(t) <= {"round", "height", "final", "checked", "signer", "time", "lockTime", "card", "void", "picks"}: return False
-              if not (nat(t.get("round")) and t.get("height") == t["round"] * 2400 and t.get("final") is True and t.get("checked") in (1, 2)): return False
+              if not ({"round", "height", "final", "checked", "signer", "time", "lockTime", "card", "picks"} <= set(t)): return False
+              if not (nat(t.get("round")) and nat(t.get("height")) and t["height"] >= t["round"] and t.get("final") is True and t.get("checked") in (0, 1, 2)): return False
               if not (t.get("signer") is None or addr.fullmatch(str(t["signer"]))) or not nat(t.get("time")) or not nat(t.get("lockTime")): return False
               c = t.get("card")
-              if c is not None and (type(c) is not dict or set(c) != {"at", "top", "signerVhp"} or not num(c["at"]) or not num(c["top"]) or not (c["signerVhp"] is None or num(c["signerVhp"]))): return False
+              if c is not None and (type(c) is not dict or set(c) not in ({"at", "top", "signerVhp"}, {"at", "top", "signerVhp", "afterAt"}) or not num(c["at"]) or not num(c["top"]) or not (c["signerVhp"] is None or num(c["signerVhp"])) or ("afterAt" in c and not (num(c["afterAt"]) and c["afterAt"] > c["at"]))): return False
               if "void" in t and (type(t["void"]) is not str or len(t["void"]) > 200): return False
               pk = t.get("picks")
               return type(pk) is list and len(pk) <= 100000 and all(type(x) is list and len(x) == 5 and addr.fullmatch(str(x[0])) and addr.fullmatch(str(x[1]))
                   and nat(x[2]) and type(x[3]) is int and 0 <= x[3] <= 300 and x[4] in (0, 1) for x in pk)
-          def rows_ok(b, extra=()):
-              if type(b) is not dict or type(b.get("rows")) is not list or len(b["rows"]) > 100000: return False
-              return all(type(x) is dict and set(x) == {"a", "place", "pts", "correct", "picks", "days", "lastCorrect", "ranked"} and addr.fullmatch(str(x["a"]))
-                  and all(nat(x[k]) for k in ("place", "pts", "correct", "picks", "days", "lastCorrect")) and type(x["ranked"]) is bool for x in b["rows"])
+          def rows_ok(rows):
+              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "place", "boardPlace", "pts", "correct", "picks", "days", "lastCorrect", "ranked"} and addr.fullmatch(str(x["a"]))
+                  and all(nat(x[k]) for k in ("place", "boardPlace", "pts", "correct", "picks", "days", "lastCorrect")) and type(x["ranked"]) is bool for x in rows)
+          def prizes_ok(p):
+              return type(p) is list and len(p) <= 50 and all(type(x) is dict and set(x) == {"player", "place", "vhp"} and addr.fullmatch(str(x["player"])) and nat(x["place"]) and num(x["vhp"]) and 0 < x["vhp"] <= 2 for x in p)
+          def card_ok(c):
+              if type(c) is not dict or set(c) != {"at", "blocksPerRace", "c", "fairness", "field", "paddock"} or not num(c["at"]) or not num(c["blocksPerRace"]) or not num(c["c"]): return False
+              if not (c["fairness"] is None or (type(c["fairness"]) is list and len(c["fairness"]) == 2 and all(num(v) for v in c["fairness"]))): return False
+              if type(c["field"]) is not list or type(c["paddock"]) is not list or len(c["field"]) + len(c["paddock"]) > 500: return False
+              return all(type(r) is dict and set(r) == {"a", "vhp", "k", "h"} and addr.fullmatch(str(r["a"])) and all(num(r[k]) for k in ("vhp", "k", "h")) for r in c["field"]) and \
+                  all(type(r) is dict and set(r) == {"a", "vhp", "k"} and addr.fullmatch(str(r["a"])) and all(num(r[k]) for k in ("vhp", "k")) for r in c["paddock"])
+          def vault_ok(j, f):
+              # The Vault (v6) results file: staked players' points (1-255) in rows, the free board's 1st and 2nd (at
+              # most 10 per place); every wallet once.
+              if type(j) is not dict or set(j) != {"game", "week", "final", "rows", "first", "second"} or j["game"] != gid or j["final"] is not True: return False
+              if not nat(j["week"]) or f != "W%d.json" % j["week"]: return False
+              rows = j["rows"]
+              if type(rows) is not list or len(rows) > 100000 or not all(type(x) is dict and set(x) == {"player", "points"} and type(x["player"]) is str and addr.fullmatch(x["player"])
+                  and type(x["points"]) is int and 1 <= x["points"] <= 255 for x in rows): return False
+              w = j["first"] + j["second"] if type(j["first"]) is list and type(j["second"]) is list else None
+              if w is None or len(j["first"]) > 10 or len(j["second"]) > 10 or not all(type(a) is str and addr.fullmatch(a) for a in w): return False
+              allw = w + [x["player"] for x in rows]
+              return len(set(allw)) == len(allw)
+          if os.path.isdir(os.path.join(d, "vault")):
+              for f in os.listdir(os.path.join(d, "vault")):
+                  assert vault_ok(json.load(open(os.path.join(d, "vault", f), encoding="utf-8")), f), "vault/" + f
           for f in os.listdir(d):
+              if f == "vault": continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "board.json":
-                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1, f
-                  assert all(rows_ok(j[k]) for k in ("today", "week", "allTime")), f
+                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1 and iso.fullmatch(str(j["updated"])), f
+                  assert type(j["today"]) is dict and set(j["today"]) == {"day", "rows"} and ymd.fullmatch(str(j["today"]["day"])) and rows_ok(j["today"]["rows"]), f
+                  assert type(j["week"]) is dict and set(j["week"]) == {"week", "start", "rows"} and nat(j["week"]["week"]) and nat(j["week"]["start"]) and rows_ok(j["week"]["rows"]), f
+                  assert type(j["allTime"]) is dict and set(j["allTime"]) == {"rows"} and rows_ok(j["allTime"]["rows"]), f
                   lw = j["lastWeek"]
-                  assert lw is None or (rows_ok(lw) and type(lw.get("final")) is bool and type(lw.get("prizes")) is list and len(lw["prizes"]) <= 50
-                      and all(type(p) is dict and set(p) == {"player", "place", "vhp"} and addr.fullmatch(str(p["player"])) and nat(p["place"]) and num(p["vhp"]) and 0 < p["vhp"] <= 2 for p in lw["prizes"])), f
+                  assert lw is None or (type(lw) is dict and set(lw) in ({"week", "start", "final", "rows", "prizes"}, {"week", "start", "final", "rows", "prizes", "frozenAt"})
+                      and nat(lw["week"]) and nat(lw["start"]) and type(lw["final"]) is bool and rows_ok(lw["rows"]) and prizes_ok(lw["prizes"])
+                      and ("frozenAt" not in lw or iso.fullmatch(str(lw["frozenAt"])))), f
+                  continue
+              if f == "cards.json":
+                  assert set(j) == {"v", "updated", "startHeight", "cards"} and j["v"] == 1 and iso.fullmatch(str(j["updated"])) and nat(j["startHeight"]), f
+                  assert type(j["cards"]) is list and len(j["cards"]) <= 500 and all(card_ok(c) for c in j["cards"]), f
                   continue
               if f == "index.json":
-                  assert set(j) == {"v", "updated", "weeks", "contract", "game", "prizesFromWeek"} and j["v"] == 1 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
-                  assert j["game"] == 2 and (j["prizesFromWeek"] is None or nat(j["prizesFromWeek"])), f
+                  assert set(j) == {"v", "updated", "weeks", "contract", "game", "prizesFromWeek"} and j["v"] == 1 and iso.fullmatch(str(j["updated"])), f
+                  assert type(j["weeks"]) is list and len(j["weeks"]) <= 10000 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
+                  assert j["game"] == gid and (j["prizesFromWeek"] is None or nat(j["prizesFromWeek"])), f
                   assert j["contract"] is None or addr.fullmatch(str(j["contract"])), f
                   continue
-              assert set(j) == {"v", "week", "start", "end", "game", "targets"} and j["v"] == 1 and j["game"] == 2 and f == "W%03d.json" % j["week"], f
-              assert type(j["targets"]) is list and len(j["targets"]) <= 100 and all(target_ok(t) for t in j["targets"]), f
-          print("games files ok")
+              if f.startswith("P"):
+                  assert set(j) == {"v", "week", "game", "at", "prizes"} and j["v"] == 1 and j["game"] == gid and f == "P%03d.json" % j["week"], f
+                  assert iso.fullmatch(str(j["at"])) and prizes_ok(j["prizes"]), f
+                  continue
+              assert set(j) == {"v", "week", "start", "end", "game", "targets"} and j["v"] == 1 and j["game"] == gid and f == "W%03d.json" % j["week"], f
+              assert nat(j["start"]) and nat(j["end"]) and j["end"] - j["start"] == WEEK, f
+              assert type(j["targets"]) is list and len(j["targets"]) <= 1000 and all(target_ok(t) for t in j["targets"]), f
+          print("games files ok:", d)
           PY
           # Fantasy: what was published before must not change behind the players' backs (audit FX-2): a price list once
           # published, a final week, the counted rival weeks and records.
@@ -160,10 +200,10 @@ jobs:
           if [ "$prc" -eq 0 ]; then
             git init -q "$RUNNER_TEMP/pgit" && git -C "$RUNNER_TEMP/pgit" fetch -q --depth 1 "$remote" games-data
             mkdir -p "$RUNNER_TEMP/parent/fantasy/vault"
-            for f in $(git -C "$RUNNER_TEMP/pgit" ls-tree --name-only FETCH_HEAD:fantasy/vault 2>/dev/null); do
+            git -C "$RUNNER_TEMP/pgit" ls-tree --name-only FETCH_HEAD:fantasy/vault 2>/dev/null | while IFS= read -r f; do
               if [[ "$f" =~ ^W[0-9]+\.json$ ]]; then git -C "$RUNNER_TEMP/pgit" show "FETCH_HEAD:fantasy/vault/$f" > "$RUNNER_TEMP/parent/fantasy/vault/$f"; fi
             done
-            for f in $(git -C "$RUNNER_TEMP/pgit" ls-tree --name-only FETCH_HEAD:fantasy 2>/dev/null); do
+            git -C "$RUNNER_TEMP/pgit" ls-tree --name-only FETCH_HEAD:fantasy 2>/dev/null | while IFS= read -r f; do
               if [[ "$f" =~ ^(index|rivals|alltime|W[0-9]{3})\.json$ ]]; then git -C "$RUNNER_TEMP/pgit" show "FETCH_HEAD:fantasy/$f" > "$RUNNER_TEMP/parent/fantasy/$f"; fi
             done
           fi
@@ -257,19 +297,14 @@ jobs:
             parent=$(git rev-parse FETCH_HEAD)
             git read-tree FETCH_HEAD
           else git read-tree --empty; fi
-          for g in blockx fantasy; do
-            [ -d "$IN/$g" ] || continue
-            for f in "$IN"/$g/*.json; do
-              blob=$(git hash-object -w "$f")
-              git update-index --add --cacheinfo 100644 "$blob" "$g/$(basename "$f")"
-            done
-            if [ -d "$IN/$g/vault" ]; then
-              for f in "$IN"/$g/vault/*.json; do
-                [ -e "$f" ] || continue
-                blob=$(git hash-object -w "$f")
-                git update-index --add --cacheinfo 100644 "$blob" "$g/vault/$(basename "$f")"
-              done
-            fi
+          shopt -s nullglob
+          for f in "$IN"/blockx/*.json "$IN"/blockx/vault/*.json "$IN"/fantasy/*.json "$IN"/fantasy/vault/*.json; do
+            name="${f#"$IN"/}"
+            # Audit BX-5: a final week's prize file (P###.json), and the Vault's results file (vault/W<week>.json), are
+            # written once and never replaced.
+            if [[ "$name" =~ (/P[0-9]{3}|/vault/W[0-9]+)\.json$ ]] && git cat-file -e ":$name" 2>/dev/null; then echo "Keeping the published $name as it is."; continue; fi
+            blob=$(git hash-object -w "$f")
+            git update-index --add --cacheinfo 100644 "$blob" "$name"
           done
           tree=$(git write-tree)
           if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi

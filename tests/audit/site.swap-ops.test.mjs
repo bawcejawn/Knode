@@ -11,7 +11,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const src = fs.readFileSync(`${APP}/site/swap.js`, "utf8");
+const src = fs.readFileSync(`${APP}/swap.js`, "utf8");
 const DEP = JSON.parse(fs.readFileSync(`${APP}/desk-data/deployment.json`, "utf8"));
 const UNIT = 100000000n;
 

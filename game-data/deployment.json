@@ -1,6 +1,6 @@
 {
   "network": "mainnet",
-  "rpc": "https://api.koinos.io",
+  "rpc": "https://koinos.armana.io",
   "contract": "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr",
   "owner": "1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717",
   "operator": "1HsM33pF8DbXPr8Vsd4vD7hQgvZ1SHY3Vv",
@@ -39,7 +39,7 @@
       "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK"
     ],
     "rcLimit": "100000000",
-    "rcLimitOther": "300000000",
+    "rcLimitOther": "100000000",
     "guest": true
   }
 }

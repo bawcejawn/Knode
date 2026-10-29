@@ -33,8 +33,8 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Signer, Provider, Contract } from "koilib";
 import { tokenAbi } from "./token-abi.ts";
-await import("../site/race-math.js");
-await import("../site/fantasy-math.js");
+await import("../race-math.js");
+await import("../fantasy-math.js");
 const M: any = (globalThis as any).KRaceMath;
 const FR: any = (globalThis as any).KFantasyMath;
 
@@ -497,6 +497,7 @@ export function testPage(html: string): string {
   swap('<script src="guest.js"></script>', "");
   swap('<script src="wallet.js"></script>', '<script src="/testnet/fantasy-net.js"></script>\n  <script src="/testnet/test-wallet.js"></script>');
   swap('<script src="header-wallet.js"></script>', "");
+  swap('<script src="stake-panel.js"></script>', "");   // the vault isn't on the practice testnet
   html = html.replace(/\s*<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/kondor-js[^"]*"[^>]*><\/script>/, "");   // not used on the practice page
   return html;
 }
@@ -565,7 +566,7 @@ export async function startSite(opts: { port?: number } = {}) {
       }
       if (req.method !== "GET" && req.method !== "HEAD") { res.writeHead(405); res.end(); return; }
       if (u === "/" || u === "/site/" || u === "/site/fantasy.html") { res.writeHead(302, { location: "/site/fantasy-testnet.html" }); res.end(); return; }
-      if (u === "/site/fantasy-testnet.html") { res.writeHead(200, { "content-type": types[".html"], "cache-control": "no-store" }); res.end(testPage(fs.readFileSync(path.join(ROOT, "site", "fantasy.html"), "utf8"))); return; }
+      if (u === "/site/fantasy-testnet.html") { res.writeHead(200, { "content-type": types[".html"], "cache-control": "no-store" }); res.end(testPage(fs.readFileSync(path.join(ROOT, "fantasy.html"), "utf8"))); return; }
       if (u === "/testnet/fantasy-net.js") { res.writeHead(200, { "content-type": types[".js"], "cache-control": "no-store" }); res.end(netScript(readConfig(), keys)); return; }
       if (u === "/testnet/session") {
         if (req.headers["sec-fetch-site"] && req.headers["sec-fetch-site"] !== "same-origin") { json(res, 403, {}); return; }
@@ -576,8 +577,10 @@ export async function startSite(opts: { port?: number } = {}) {
       if (m) { sendFile(res, path.join(DATA(), `${m[1]}.json`)); return; }
       if (u === "/picks/abi/picks.koilib.json") { sendFile(res, path.join(ROOT, "picks", "abi", "picks.koilib.json")); return; }
       // The site's own scripts, styles and images only; the only page here is the TESTNET one.
-      const sm = /^\/site\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.(?:js|css|json|svg|png|webmanifest))$/.exec(u);
-      if (sm) { sendFile(res, path.join(ROOT, "site", ...sm[1].split("/"))); return; }
+      // The site's pages live at the repository root (claude/site-at-root.md). Only top-level scripts, styles and
+      // images, and media/: never a subfolder like bot/ or testnet-data/, and no JSON (package.json, settings).
+      const sm = /^\/site\/((?:media\/)?[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.(?:js|css|svg|png|webmanifest))$/.exec(u);
+      if (sm) { sendFile(res, path.join(ROOT, ...sm[1].split("/"))); return; }
       res.writeHead(404); res.end("not found");
     } catch (e) { json(res, 500, { error: String((e as Error).message).slice(0, 200) }); }
   });

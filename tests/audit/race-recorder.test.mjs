@@ -286,3 +286,61 @@ test("workflow: the recorder holds no secret and no write token; only the publis
 });
 
 test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+
+test("audit BX-4 / BX-37: VHP is combined producer by producer: one that differs counts at the higher read, never above the top both agree on; the card is still made", async () => {
+  const at = U("2026-11-02T05:37Z"), log = console.log;
+  const off = (f, who = P[1]) => async (w) => Object.fromEntries(w.map((a) => [a, String(Math.round((VHP[P.indexOf(a)] || 0) * 1e8 * (a === who ? f : 1)))]));
+  const go = async (f, who) => {
+    const out = tmp(); let r; console.log = () => {};
+    try { r = await run({ p: node(at), check: node(at), prev: "", out, vhpOf, vhpCheckOf: off(f, who), raceContract: null }); } finally { console.log = log; }
+    return { r, out };
+  };
+  const one = await go(1.5);
+  const card = race(one.out, "2026-11-02T06").cards[0], all = [...card.field, ...card.paddock];
+  assert.ok(card, "one producer's disagreement no longer holds the card for everyone");
+  assert.equal(all.find((x) => x.a === P[1]).vhp, 375, "P[1] counts at the higher read (250 x 1.5)");
+  assert.ok(one.r.problems.some((x) => /disagree on .*VHP/.test(x)));
+  const top = await go(10, P[0]);                         // one node says the top producer has 10x: capped
+  const all2 = [...race(top.out, "2026-11-02T06").cards[0].field, ...race(top.out, "2026-11-02T06").cards[0].paddock];
+  assert.ok(all2.find((x) => x.a === P[0]).vhp <= 400, "never above the largest VHP both nodes agree on");
+});
+
+test("audit BX-36: the 6 hours of blocks behind the card must match on both nodes; a node that drops a signer gets no card made", async () => {
+  const at = U("2026-11-02T05:37Z"), log = console.log, out = tmp();
+  const liar = node(at); const call = liar.call.bind(liar);
+  liar.call = async (m, a) => { const r = await call(m, a); for (const it of r.block_items) if (it.block.header.signer === P[2]) it.block.header.signer = P[0]; return r; };
+  let r; console.log = () => {};
+  try { r = await run({ p: liar, check: node(at), prev: "", out, vhpOf, raceContract: null }); } finally { console.log = log; }
+  assert.ok(r.problems.some((x) => /disagree about the last 6 hours of blocks/.test(x)));
+  assert.ok(!fs.existsSync(path.join(out, "W002.json")) || !race(out, "2026-11-02T06").cards[0], "no card");
+});
+
+test("audit BX-3 b: the card uses each producer's highest sampled VHP of the last 6 hours (moving VHP away before a card doesn't pay)", async () => {
+  const at = U("2026-11-02T05:37Z"), prev = tmp();
+  // P[3] (140 VHP) looked like 400 VHP at a sample 2 hours ago, and now reads 140 (it moved VHP away).
+  fs.writeFileSync(path.join(prev, "vhp-samples.json"), JSON.stringify({ v: 1, updated: "2026-11-02T03:37:00.000Z",
+    samples: [{ at: at - 2 * H, height: 5000, vhp: { [P[3]]: String(400 * 1e8) } }, { at: at - 7 * H, height: 4000, vhp: { [P[2]]: String(900 * 1e8) } }] }));
+  const out = await hourly(at, prev);
+  const card = race(out, "2026-11-02T06").cards[0], all = [...card.field, ...card.paddock];
+  assert.equal(card.samples, 1, "the card says how many samples it used (fewer than 12: Block X won't score with it)");
+  assert.equal(all.find((x) => x.a === P[3]).vhp, 400, "the 6-hour high, not the low read now");
+  // P[2]: its 900 sample is older than 6 hours and ignored. (It may rise a little above 200: with P[3] counted at 400,
+  // P[2]'s real share of blocks is above its card share, and rule 3 lifts it to what its production supports.)
+  const v2 = all.find((x) => x.a === P[2]).vhp;
+  assert.ok(v2 >= 200 && v2 < 600, `a sample older than 6 hours is ignored, not its 900 (${v2})`);
+});
+
+test("audit BX-44: race cards have exact shapes, and a published card can never change", async () => {
+  const a = await hourly(U("2026-11-02T05:37Z"), "");
+  const run2 = (dir, pub) => { try { execFileSync("python3", ["-c", checkPy, dir, pub], { stdio: "pipe" }); return true; } catch { return false; } };
+  assert.ok(run2(a, a), "the same files again: fine");
+  const w = week(a), changed = tmp(), w2 = JSON.parse(JSON.stringify(w));
+  const r = w2.races.find((x) => x.cards.some(Boolean)); const i = r.cards.findIndex(Boolean);
+  r.cards[i] = { ...r.cards[i], c: r.cards[i].c + 1 };
+  fs.writeFileSync(path.join(changed, "W002.json"), JSON.stringify(w2));
+  assert.equal(run2(changed, a), false, "a published card would change");
+  const extra = tmp(), w3 = JSON.parse(JSON.stringify(w)); const r3 = w3.races.find((x) => x.cards.some(Boolean));
+  r3.cards[r3.cards.findIndex(Boolean)].field[0].evil = 1;
+  fs.writeFileSync(path.join(extra, "W002.json"), JSON.stringify(w3));
+  assert.equal(shapeOk(extra), false, "an extra key in a card row");
+});

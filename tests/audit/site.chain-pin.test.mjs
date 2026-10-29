@@ -7,7 +7,7 @@ import fs from "node:fs";
 const MAINNET = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";
 
 test("wallet.js pins mainnet's chain id unless a page passes another one", () => {
-  const w = fs.readFileSync("site/wallet.js", "utf8");
+  const w = fs.readFileSync("wallet.js", "utf8");
   assert.ok(w.includes(`const MAINNET_CHAIN_ID = "${MAINNET}"`));
   assert.match(w, /W\.chainId = chainId \|\| MAINNET_CHAIN_ID/);
   assert.match(w, /if \(W\.chainId\) \{\s*const id = await W\.provider\.getChainId\(\)\.catch\(\(\) => null\);\s*if \(id !== W\.chainId\) throw/);

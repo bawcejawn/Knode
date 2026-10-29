@@ -1,5 +1,5 @@
 /**
- * Fantasy Producers recorder (read-only on the chain, holds no key). The rules and the scoring are site/fantasy-math.js,
+ * Fantasy Producers recorder (read-only on the chain, holds no key). The rules and the scoring are fantasy-math.js,
  * the same file the website runs.
  *   mainnet  .github/workflows/games.yml (when Fantasy is registered): real clock, Picks games 4 (team) and 5 (rival)
  *   testnet  bot/fantasy-test.ts: picks on the testnet Picks contract, a fast clock (1 test day = 1 hour), and the
@@ -32,8 +32,8 @@ import * as crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { withRetry, sleep } from "../../common.ts";
 import { readBlocks, blockTime, heightAt } from "../race.ts";
-await import("../../site/race-math.js");
-await import("../../site/fantasy-math.js");
+await import("../../race-math.js");
+await import("../../fantasy-math.js");
 const M: any = (globalThis as any).KRaceMath;
 const FREAL: any = (globalThis as any).KFantasyMath;
 

@@ -4,7 +4,8 @@ const fs = require("fs");
 const path = require("path");
 
 const fail = [];
-const src = fs.readFileSync(path.join(__dirname, "../assembly/Picks.ts"), "utf8");
+// Audit BX-29: the testnet build runs these checks on its own source and .wat too (PICKS_SRC, PICKS_WAT).
+const src = fs.readFileSync(process.env.PICKS_SRC || path.join(__dirname, "../assembly/Picks.ts"), "utf8");
 // Strip comments so the rule text in them doesn't count.
 const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
@@ -23,7 +24,7 @@ else {
 }
 // 2b. Audit P-4: the compiled code too. Every chain action goes through one import (invoke_system_call) with a
 // system call id; id 601 is `call` (calling another contract: transfers, approvals, burns). It must not appear.
-const watFile = path.join(__dirname, "../build/release/contract.wat");
+const watFile = process.env.PICKS_WAT || path.join(__dirname, "../build/release/contract.wat");
 if (!fs.existsSync(watFile)) fail.push("build/release/contract.wat missing (run npm run build)");
 else {
   const wat = fs.readFileSync(watFile, "utf8");

@@ -1,12 +1,12 @@
-// Fantasy Producers shared math (site/fantasy-math.js): the day index, price sheet, team rules (pool, budget, one
+// Fantasy Producers shared math (fantasy-math.js): the day index, price sheet, team rules (pool, budget, one
 // change a day, captain), scoring with the daily cap, vault points, and Weekly Rival matches and records.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 
 const APP = process.env.APP || ".";
-await import(path.resolve(APP, "site/race-math.js"));
-await import(path.resolve(APP, "site/fantasy-math.js"));
+await import(path.resolve(APP, "race-math.js"));
+await import(path.resolve(APP, "fantasy-math.js"));
 const R = globalThis.KRaceMath, F = globalThis.KFantasyMath;
 
 const A = "1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", B = "1BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", C = "1CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",

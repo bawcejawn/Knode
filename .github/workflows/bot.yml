@@ -141,6 +141,13 @@ jobs:
           BOT_GIT_PUSH: "1"
           # The producer lookup's block snapshot (display only); the publish job puts it on the blocks-data branch.
           SNAPSHOT_OUT: ${{ runner.temp }}/snapshot/recent-blocks.json
+      # Owner, 2026-10-28: a warning on the run when the sponsor's free pool or everyone's total is past 80% today
+      # (read-only, no key), so the caps can be adjusted if free Mana drains fast.
+      - name: Mana sponsor watch
+        continue-on-error: true
+        run: npm run sponsor -- watch
+        env:
+          RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:

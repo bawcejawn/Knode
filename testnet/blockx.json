@@ -1,13 +1,13 @@
 {
   "v": 1,
   "network": "koinos-foundation-testnet",
-  "note": "Koinos TESTNET (Koinos Foundation testnet, the one SwarmTales uses) settings for Who Signs Block X. Test KOIN only; nothing here touches mainnet. Written by npm run picks -- <command> --testnet; read by the testnet page (site/blockx-testnet.html) and the testnet recorder.",
+  "note": "Koinos TESTNET (Koinos Foundation testnet, the one SwarmTales uses) settings for Who Signs Block X. Test KOIN only; nothing here touches mainnet. Written by npm run picks -- <command> --testnet; read by the testnet page (blockx-testnet.html) and the testnet recorder.",
   "rpc": "https://testnet.koinosfoundation.org",
   "chainId": "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==",
   "koin": "1FaSvLjQJsCJKq5ybmGsMMQs8RQYyVv8ju",
   "vhp": "17n12ktwN79sR6ia9DDgCfmw77EgpbTyBi",
-  "picks": null,
-  "picksSha256": null,
+  "picks": "12xNetHpajRi8Xrv4ub8MbMWWjC2q7VrX5",
+  "picksSha256": "39cc5e003c234b0e0b054376bdb53245e97157202ae971a11bc5cc490f7aa7ab",
   "prizesFromWeek": 0,
   "data": "https://raw.githubusercontent.com/bawcejawn/Knode/testnet-data/",
   "faucet": "https://t.me/KoinosTestnetFaucetBot",
@@ -32,5 +32,6 @@
       "picksPerDay": 50,
       "maxChanges": 5
     }
-  ]
+  ],
+  "sponsor": null
 }

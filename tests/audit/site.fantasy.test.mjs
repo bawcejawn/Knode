@@ -1,4 +1,4 @@
-// The Fantasy Producers page (site/fantasy.html, fantasy.js, fantasy.css): what it may load, what it may send, and
+// The Fantasy Producers page (fantasy.html, fantasy.js, fantasy.css): what it may load, what it may send, and
 // what it must say (the owner's nodes disclosed, the rules). The scoring is tested in fantasy-math.test.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -7,7 +7,7 @@ import path from "node:path";
 
 const APP = process.env.APP || ".";
 const read = (f) => fs.readFileSync(path.join(APP, f), "utf8");
-const html = read("site/fantasy.html"), js = read("site/fantasy.js"), css = read("site/fantasy.css");
+const html = read("fantasy.html"), js = read("fantasy.js"), css = read("fantasy.css");
 
 test("page: one strict policy, the shared scoring file before the page script, no wallet keys of its own", () => {
   assert.equal((html.match(/http-equiv="Content-Security-Policy"/g) || []).length, 1);
@@ -50,7 +50,7 @@ test("page: says what players need to know", () => {
 test("owner 2026-10-28: All time tab; rivals need a stake; Terms say Knode's nodes run the same and others can't be controlled", () => {
   assert.match(html, /data-week="all"[^>]*>All time</);
   assert.match(html, /hold a Knode Games stake/);
-  const terms = read("site/terms.html");
+  const terms = read("terms.html");
   assert.match(terms, /never changes how its own nodes produce, or their VHP, because of Fantasy/);
   assert.match(terms, /can't control what other producers or stakers do/);
   assert.match(terms, /rival match counts only when both players hold a Knode Games stake/);

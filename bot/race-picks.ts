@@ -40,13 +40,13 @@ const readJson = (f: string, d: any = null) => (fs.existsSync(f) ? JSON.parse(fs
 const writeJson = (f: string, v: any) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v, null, 2) + "\n"); };
 const need = (k: string) => { if (!E[k]) throw new Error(`${k} is missing from .env`); return E[k]!; };
 const loadAbi = () => {
-  if (!fs.existsSync(ABI_FILE)) throw new Error(`${ABI_FILE} not found: in the race folder run npm ci, npm test`);
+  if (!fs.existsSync(ABI_FILE)) throw new Error(`${ABI_FILE} not found: in the race folder run npm ci --ignore-scripts, npm test`);
   return JSON.parse(fs.readFileSync(ABI_FILE, "utf8"));
 };
 function game() {
   const g = readJson(GAME_DEP);
   if (!g?.contract || !g?.owner) throw new Error(`${GAME_DEP} is needed.`);
-  const rpc = E.RPC ?? g.rpc ?? "https://api.koinos.io";
+  const rpc = E.RPC ?? g.rpc ?? "https://koinos.armana.io";
   pinDeployment("game", g, rpc, GAME_DEP);
   return { g, rpc };
 }
@@ -108,7 +108,7 @@ async function upload(send: boolean) {
   if (!fs.existsSync(WASM)) throw new Error(`${WASM} not found: in the race folder run npm ci && npm test`);
   const wasm = fs.readFileSync(WASM);
   if (!RACE_SHA256) throw new Error("The race contract has not been audited yet: upload is locked until RACE_SHA256 is set to the audited build.");
-  if (sha256hex(wasm) !== RACE_SHA256) throw new Error(`${WASM} is not the audited race build (sha256 ${sha256hex(wasm)}, expected ${RACE_SHA256}). Rebuild: cd race, npm ci, npm test.`);
+  if (sha256hex(wasm) !== RACE_SHA256) throw new Error(`${WASM} is not the audited race build (sha256 ${sha256hex(wasm)}, expected ${RACE_SHA256}). Rebuild: cd race, npm ci --ignore-scripts, npm test.`);
   const abi = loadAbi();
   const have = BigInt(await provider.getAccountRc(A));
   const needRc = toSat(Math.ceil(wasm.length / 1024 * 1.2 + 10));
