@@ -84,7 +84,7 @@ fs.mkdirSync(out, { recursive: true });
 const log = console.log; console.log = () => {};
 let problems = [];
 for (let t = B.seedTime(WK) - H; t <= B.roundDay(WK, B.roundsOf(sd.size)) + 13 * H; t += H) {
-  const r = await run({ p: "main", check: "check", prev: out, out, raceDir, picksContract: null, nodeOf: () => node, picksOf, head: headAt(t) });
+  const r = await run({ p: "main", check: "check", prev: out, out, raceDir, picksContract: null, nodeOf: () => node, picksOf, stakedOf: async (_n, ps) => ps, head: headAt(t) });
   problems.push(...r.problems);
 }
 console.log = log;

@@ -10,9 +10,14 @@
  *      effective(a, H) = max(0, balance just before block H − everything a received in blocks H−19 … H−1).
  *    Every block burns about 4 VHP of its signer's (the block reward is paid in KOIN).
  * 3. THE STANDARD MEASURES (each game picks the one that fits; "window" = a range of blocks):
- *    - cardVhp:   the HIGHEST effective VHP held over the CARD_BLOCKS (7,200, ~6 hours) before a card's block. For any
- *                 multiplier fixed before picks (race handicaps, Block X multipliers, salaries…). Looking small for a
- *                 moment can't pay; looking big only lowers your own multiplier.
+ *    - cardVhp:   the HIGHEST effective VHP held over the CARD_BLOCKS (7,200, ~6 hours) before a card's block. Sets a
+ *                 producer's OWN multiplier fixed before picks (race handicaps, Block X multipliers, salaries…). Looking
+ *                 big only lowers your own multiplier. Looking small can't pay either, because of the CARD CREDIT:
+ *                 a scored block is worth multiplier × min(1, cardVhp ÷ its effective VHP at that block) (audit S-1:
+ *                 hiding VHP for 6+ hours, then bringing it back, would otherwise sign at full strength on a big
+ *                 multiplier).
+ *    - card totals and the field/paddock split use the AVERAGE effective VHP over the same 7,200 blocks, never the
+ *                 maximum: VHP shuffled between one owner's addresses would be counted twice (audit S-2).
  *    - baseline:  a producer's effective VHP at the START of a scoring window (e.g. the Bracket's UTC day), for judging
  *                 how it did after the fact. It is expected to sign at its baseline all window long, so moving VHP away
  *                 only lowers its real chances. A block it signs while holding MORE than its baseline counts as
@@ -110,12 +115,28 @@
     }
     return { field, paddock };
   }
-  /** The standard CARD at index i of B: every producer active at i, by cardVhp (the most effective VHP over the
-   *  CARD_BLOCKS blocks before i). Games set their multipliers from this. */
+  /** The standard CARD at index i of B: every producer active at i. Each row's `vhp` is its cardVhp (the most effective
+   *  VHP over the CARD_BLOCKS blocks before i), which sets its own multiplier; `avg` is its average over the same blocks,
+   *  and the expected blocks `k` and the field/paddock split come from the averages (audit S-2). Rows sorted by cardVhp. */
   function cardAt(B, i, book) {
-    const m = new Map();
-    for (const a of activeAt(B, i)) { const v = book.maxEffective(a, B.hs[Math.max(0, i - CARD_BLOCKS)], B.hs[i]); if (v === null) throw new Error(`no VHP balance for ${a}`); m.set(a, v); }
-    return fieldOf(m);
+    const h0 = B.hs[Math.max(0, i - CARD_BLOCKS)], h1 = B.hs[i], rows = [];
+    for (const a of activeAt(B, i)) {
+      const mx = book.maxEffective(a, h0, h1), av = book.avgEffective(a, h0, h1);
+      if (mx === null || av === null) throw new Error(`no VHP balance for ${a}`);
+      if (mx > 0) rows.push({ a, vhp: Math.round(mx / 1e6) / 100, avg: Math.round(av / 1e6) / 100 });
+    }
+    const tot = rows.reduce((t, r) => t + r.avg, 0), field = [], paddock = [];
+    for (const r of rows.sort((x, y) => y.vhp - x.vhp || (x.a < y.a ? -1 : 1))) {
+      const k = tot > 0 ? RACE_BLOCKS * r.avg / tot : 0;
+      (k >= MIN_K ? field : paddock).push({ ...r, k: Math.round(k * 100) / 100 });
+    }
+    return { field, paddock };
+  }
+  /** The CARD CREDIT (audit S-1): what one block signed at height h is worth, as a share of the card multiplier, for a
+   *  producer whose cardVhp (VHP, as on the card) was `cardVhp`: min(1, cardVhp ÷ its effective VHP at h). */
+  function cardCredit(book, a, h, cardVhp) {
+    const v = book.effective(a, h); if (v === null) throw new Error(`no VHP balance for ${a} at block ${h}`);
+    const c = cardVhp * 1e8; return v <= c ? 1 : c / v;
   }
   /** The standard SEEDING / field over blocks [i0, i1) of B: every producer that signed one of them, by averageVhp. */
   function averageCard(B, i0, i1, book) {
@@ -149,5 +170,5 @@
   const expectedBlocks = (w, q) => w * q / Q_SCALE;
 
   root.KVhp = { VHP_CONTRACT, DELAY_BLOCKS, ACTIVE_BLOCKS, CARD_BLOCKS, SEED_BLOCKS, MIN_K, Q_SCALE,
-    vhpDeltas, vhpBook, activeAt, fieldOf, cardAt, averageCard, windowStats, expectedBlocks };
+    vhpDeltas, vhpBook, activeAt, fieldOf, cardAt, cardCredit, averageCard, windowStats, expectedBlocks };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -41,6 +41,7 @@ async function vhpEvents(it: any) {
   return out;
 }
 export function chainNode(p: any): Node {
+  let effDown = "";
   let headId = "";
   const abi: any = JSON.parse(JSON.stringify(tokenAbi));
   // effective_balance_of (vhp contract entry point 0x629f31e6): same argument and result shapes as balance_of
@@ -92,10 +93,13 @@ export function chainNode(p: any): Node {
       for (let t = 0; t < 6; t++) {
         const h1 = await headNow();
         const r: any = await withRetry(`VHP of ${a}`, () => (vhp.functions as any).balance_of({ owner: a }));
-        const e: any = await withRetry(`effective VHP of ${a}`, () => (vhp.functions as any).effective_balance_of({ owner: a }));
-        if (!r || typeof r !== "object" || !("result" in r) || !e || typeof e !== "object" || !("result" in e)) throw new Error(`no answer reading the VHP of ${a}`);
+        if (!r || typeof r !== "object" || !("result" in r)) throw new Error(`no answer reading the VHP of ${a}`);
+        // the contract's own effective balance is only a cross-check (audit S-3): if a read-only call can't give it,
+        // the node is marked and the check is skipped, with a warning; the exact rebuild still decides
+        let e: any = null;
+        if (!effDown) { try { e = await (vhp.functions as any).effective_balance_of({ owner: a }); if (!e || typeof e !== "object" || !("result" in e)) throw new Error("no result"); } catch (err) { effDown = String((err as Error)?.message || err).slice(0, 200); e = null; console.warn(`effective_balance_of unavailable as a read-only call (${effDown}); cross-check skipped`); } }
         const h2 = await headNow();
-        if (h1.id === h2.id) return { v: Number(r.result?.value ?? "0"), eff: Number(e.result?.value ?? "0"), h: h1.height, id: h1.id };
+        if (h1.id === h2.id) return { v: Number(r.result?.value ?? "0"), ...(e ? { eff: Number(e.result?.value ?? "0") } : {}), h: h1.height, id: h1.id };
       }
       throw new Error(`the head kept moving while reading the VHP of ${a}`);
     },
@@ -128,7 +132,16 @@ export async function bookFor(n: Node, fromH: number, toH: number, also: string[
   for (const [h, id] of at) if (idOf.get(h) !== id) throw new Error(`block ${h} changed while reading (a fork); tried again next run`);
   const book = V.vhpBook(anchors, [...c.deltas, ...tail.deltas]);
   // the contract's own effective balance at the read block must match the rebuild (it is read before block h + 1)
-  for (const [a, x] of Object.entries(effAt)) if (book.effective(a, x.h + 1) !== x.eff) throw new Error(`the VHP rebuild for ${a} doesn't match the contract's effective balance at block ${x.h}`);
+  // (audit S-3: not yet seen live. If the read-only call computes at the head block instead, a match at h is accepted
+  //  too and reported, so the first real run shows which; matching neither is a real miss and stops the run.)
+  const effCheck = { n: 0, atNext: 0, atHead: 0, skipped: who.length - Object.keys(effAt).length };
+  for (const [a, x] of Object.entries(effAt)) {
+    effCheck.n++;
+    if (book.effective(a, x.h + 1) === x.eff) effCheck.atNext++;
+    else if (book.effective(a, x.h) === x.eff) effCheck.atHead++;
+    else throw new Error(`the VHP rebuild for ${a} doesn't match the contract's effective balance at block ${x.h}`);
+  }
+  if (effCheck.skipped) console.warn(`effective VHP cross-check skipped for ${effCheck.skipped} of ${who.length} producers`);
   for (const a of who) { const v = book.before(a, fromH); if (v === null || v < -0.5) throw new Error(`the VHP rebuild for ${a} went below zero (a missed event)`); }
-  return { c, book };
+  return { c, book, effCheck };
 }

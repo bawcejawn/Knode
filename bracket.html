@@ -189,7 +189,7 @@
     <section class="card" id="board-box" hidden>
       <div class="head"><h2>Leaderboard</h2></div>
       <div id="bk-board"></div>
-      <p class="note">Ranked by points; ties go to a right champion, then more right picks; players still tied share the place. The week's rewards go to staked players (1 VHP or more in the Bracket) by the standard KnodeGames rules: the top 30% with at least 1 point win.</p>
+      <p class="note">Ranked by points; ties go to a right champion, then more right picks; players still tied share the place. Two boards: <b>Staked</b> (wallets with at least 1 VHP staked in the Bracket when the week starts) and <b>Free play</b> (everyone else). The week's rewards go to the Staked board by the standard Knode Games rules: the top 30% with at least 1 point win.</p>
     </section>
 
     <section class="card explain" id="how">
@@ -197,7 +197,7 @@
       <p><b>The field.</b> On Saturday at 12:00 UTC the bracket is seeded from every producer's exact VHP averaged over the day before (about 28,800 blocks), read from the chain on two nodes: the producers expected to sign at least 10 blocks a race, biggest VHP first. With 16 to 31 of them the top 16 play; with 12 to 15 the top seeds get a bye; with 8 to 11 it is an 8-producer bracket (Monday to Wednesday); from 32 it is a 32-producer bracket (Monday to Friday); under 8 there is no bracket that week.</p>
       <p><b>Your pick.</b> Fill in every winner, from the first round to the champion, between Saturday 12:00 and Sunday 23:55 UTC. The whole bracket goes to the chain as one number in one transaction; you can change it until the lock.</p>
       <p><b>A matchup.</b> Each round is played on one UTC day (Monday, Tuesday, …). A producer's index is the blocks it signed that day ÷ the blocks it was expected to sign. "Expected" uses its day VHP: the most VHP it held at any block of that day, rebuilt exactly from the chain's own VHP records. Koinos picks each block's signer in proportion to VHP, so a producer that keeps its VHP and signs its fair share scores about 100% whatever its size. In a matchup that comes down to blocks signed per day VHP. The higher index goes through; an exact tie goes to the lower seed.</p>
-      <p><b>Nothing to gain by moving VHP.</b> Moving VHP away for part of a day only lowers a producer's real chances, since its day VHP stays the most it held; VHP added during a day counts for the whole day. What wins is staying online and signing.</p>
+      <p><b>Nothing to gain by moving VHP.</b> Each seed is judged against the VHP it held when the day began. Moving VHP away during the day only lowers its real chances, and a block it signs while holding more counts for less, in proportion, so VHP added during the day (by the producer or as a gift) neither helps nor hurts. What wins is staying online and signing.</p>
       <p><b>Points.</b> A right winner scores 1 point in the first round, then 2, 4, 8 (and 16 in a 32-bracket), plus 2 for the right champion. Byes score nothing.</p>
       <p><b>Fair checks.</b> Every hour of every round is recorded from irreversible blocks that match on two independent Koinos nodes, and the scoring code is public: this page and the recorder run the same file. A week is final 12 hours after its last round.</p>
     </section>

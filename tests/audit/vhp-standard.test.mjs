@@ -103,3 +103,36 @@ test("credit above the baseline: a block signed while holding twice the baseline
   const later = V.windowStats(B, 2000, n, ["1Seed"], book, { "1Seed": 100e8 });
   assert.equal(later.cr["1Seed"], 500 * 0.5);
 });
+
+test("audit S-1: hiding VHP for the whole card window, then bringing it back, gains nothing (card credit)", () => {
+  // 1Hider keeps 97 of its 100 VHP elsewhere for 8,000 blocks (longer than the card window), brings it back just before
+  // the card's block; the card shows it small (3 VHP), so its multiplier is ~33× bigger, but each block it then signs at
+  // 100 VHP is credited 3 ÷ 100: multiplier × credit is what an honest 100-VHP producer gets.
+  const n = 12000, hs = [], ts = [], sig = [];
+  for (let i = 0; i < n; i++) { hs.push(2e6 + i); ts.push(i * 3000); sig.push(i % 2); }
+  const deltas = [{ h: 2e6 + 1000, a: "1Hider", d: -97e8 }, { h: 2e6 + 9000, a: "1Hider", d: 97e8 }];
+  const B = { hs, ts, sig, signers: ["1Hider", "1Other"] };
+  const book = V.vhpBook({ "1Hider": { h: 2e6 + n - 1, v: 100e8 }, "1Other": { h: 2e6 + n - 1, v: 100e8 } }, deltas);
+  const card = V.cardAt(B, 9000, book), row = [...card.field, ...card.paddock].find((r) => r.a === "1Hider");
+  assert.equal(row.vhp, 3, "the card shows it small: that's the risk");
+  const mult = 100 / row.vhp, credit = V.cardCredit(book, "1Hider", 2e6 + 9500, row.vhp);
+  assert.ok(Math.abs(mult * credit - 1) < 1e-9, `a block is worth ${mult * credit}× an honest one's`);
+  assert.equal(V.cardCredit(book, "1Other", 2e6 + 9500, 100), 1, "an honest producer is credited in full");
+});
+
+test("audit S-2: VHP shuffled between one owner's addresses isn't counted twice in the card's totals", () => {
+  // 1A and 1B (one owner) pass 1,000 VHP back and forth for a few blocks; 1Small holds 20 VHP. With the maximum in the
+  // totals, 2,000 VHP would show for 1,000 real, and 1Small would drop to the paddock.
+  const n = 9000, hs = [], ts = [], sig = [];
+  for (let i = 0; i < n; i++) { hs.push(3e6 + i); ts.push(i * 3000); sig.push(i % 3); }
+  const deltas = [];
+  for (let k = 0; k < 4; k++) // each hold lasts 25 blocks: 1B counts for 5 of them
+    { deltas.push({ h: 3e6 + 8000 + 40 * k, a: "1A", d: -1000e8 }, { h: 3e6 + 8000 + 40 * k, a: "1B", d: 1000e8 }); deltas.push({ h: 3e6 + 8025 + 40 * k, a: "1B", d: -1000e8 }, { h: 3e6 + 8025 + 40 * k, a: "1A", d: 1000e8 }); }
+  const B = { hs, ts, sig, signers: ["1A", "1B", "1Small"] };
+  const book = V.vhpBook({ "1A": { h: 3e6 + n - 1, v: 1000e8 }, "1B": { h: 3e6 + n - 1, v: 1e8 }, "1Small": { h: 3e6 + n - 1, v: 20e8 } }, deltas);
+  const card = V.cardAt(B, n - 1, book), all = [...card.field, ...card.paddock];
+  const tot = all.reduce((t, r) => t + r.avg, 0);
+  assert.ok(tot > 980 && tot <= 1021, `the total is at most the real 1,021 VHP, not ~2,021 (got ${tot})`);
+  assert.ok(all.find((r) => r.a === "1B").vhp > 1000, "the shuffler's own multiplier still uses its most (only its own loss)");
+  assert.ok(card.field.some((r) => r.a === "1Small"), "the small producer stays in the field");
+});

@@ -112,7 +112,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/bracket" \) -o \( -type f ! -regex "$IN/\(blockx\|bracket\)/\(index\|board\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/bracket" ! -path "$IN/bracket/vault" \) -o \( -type f ! -regex "$IN/\(blockx\|bracket\)/\(index\|board\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/bracket/vault/W[0-9]+\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           # A game with a file over 2 MB is left out (its files stay as they were); the other game still publishes (R-5).
           for g in blockx bracket; do
@@ -172,7 +172,10 @@ jobs:
               if type(h["cr"]) is not dict or len(h["cr"]) > 32 or not all(isa(a) and num(v) and 0 <= v <= h["n"] for a, v in h["cr"].items()): return False
               return type(h["w"]) is dict and len(h["w"]) <= 32 and all(isa(a) and num(v) and 0 <= v < 1e16 for a, v in h["w"].items())
           def week_ok(j):
-              if not set(j) <= {"v", "week", "start", "end", "status", "seeding", "picks", "days", "results", "points", "void"}: return False
+              if not set(j) <= {"v", "week", "start", "end", "status", "seeding", "picks", "days", "results", "points", "void", "staked", "vault"}: return False
+              st = j.get("staked")
+              if st is not None and (type(st) is not dict or set(st) != {"checked", "list"} or st["checked"] != 2 or type(st["list"]) is not list or len(st["list"]) > 100000 or not all(isa(a) for a in st["list"])): return False
+              if "vault" in j and j["vault"] != "missed": return False
               if j.get("v") != 4 or not nat(j.get("week")) or not nat(j.get("start")) or not nat(j.get("end")): return False
               if j.get("status") not in ("waiting", "none", "void", "open", "locked", "final"): return False
               if "void" in j and (type(j["void"]) is not str or len(j["void"]) > 200): return False
@@ -193,11 +196,22 @@ jobs:
               pts = j.get("points")
               return type(pts) is list and len(pts) <= 100000 and all(type(x) is list and len(x) == 4 and isa(x[0]) and nat(x[1]) and x[1] <= 82 and x[2] in (0, 1) and nat(x[3]) and x[3] <= 31 for x in pts)
           def rows_ok(rows):
-              return type(rows) is list and len(rows) <= 1000 and all(type(x) is dict and set(x) == {"a", "place", "pts", "champion", "correct", "ranked"} and isa(x["a"])
-                  and nat(x["place"]) and nat(x["pts"]) and type(x["champion"]) is bool and nat(x["correct"]) and x["ranked"] is True for x in rows)
+              return type(rows) is list and len(rows) <= 2000 and all(type(x) is dict and set(x) == {"a", "place", "pts", "champion", "correct", "ranked"} and isa(x["a"])
+                  and nat(x["place"]) and nat(x["pts"]) and type(x["champion"]) is bool and nat(x["correct"]) and type(x["ranked"]) is bool for x in rows)
           def view_ok(v):
               return type(v) is dict and set(v) == {"week", "start", "status", "final", "rows"} and nat(v["week"]) and nat(v["start"]) and type(v["status"]) is str and len(v["status"]) <= 10 and type(v["final"]) is bool and rows_ok(v["rows"])
+          # the Vault files (vault/W<week>.json, Vault v6 hand-off): a staked game's final week, points 1-255, no free prize
+          vd = os.path.join(d, "vault")
+          if os.path.isdir(vd):
+              for f in os.listdir(vd):
+                  j = json.load(open(os.path.join(vd, f), encoding="utf-8"))
+                  assert type(j) is dict and set(j) == {"game", "week", "final", "rows", "first", "second"} and j["game"] == 9 and j["final"] is True, f
+                  assert nat(j["week"]) and j["week"] < 10000 and f == "W%d.json" % j["week"], f
+                  assert type(j["rows"]) is list and len(j["rows"]) <= 100000 and all(type(x) is dict and set(x) == {"player", "points"} and isa(x["player"]) and type(x["points"]) is int and 1 <= x["points"] <= 255 for x in j["rows"]), f
+                  assert len({x["player"] for x in j["rows"]}) == len(j["rows"]), f
+                  assert j["first"] == [] and j["second"] == [], f
           for f in os.listdir(d):
+              if f == "vault": continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "board.json":
                   assert set(j) == {"v", "updated", "next", "week", "lastWeek", "allTime"} and j["v"] == 1, f
@@ -228,6 +242,13 @@ jobs:
               blob=$(git hash-object -w "$f")
               git update-index --add --cacheinfo 100644 "$blob" "$g/$(basename "$f")"
             done
+            if [ -d "$IN/$g/vault" ]; then
+              for f in "$IN/$g"/vault/*.json; do
+                [ -e "$f" ] || continue
+                blob=$(git hash-object -w "$f")
+                git update-index --add --cacheinfo 100644 "$blob" "$g/vault/$(basename "$f")"
+              done
+            fi
           done
           tree=$(git write-tree)
           if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi

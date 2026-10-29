@@ -324,6 +324,9 @@
   // ── leaderboard (shared component) ──
   const lb = window.KBoard ? window.KBoard.create($("bk-board"), {
     label: "Bracket leaderboard", hide: ["today"],
+    // Staked: wallets with 1 VHP or more staked in the Bracket that week (the Vault's player rule); Free play: the rest
+    free: { show: 6, prize: "" },
+    unranked: "To be on the Staked board, stake at least 1 VHP in the Producer Bracket before the week starts.",
     columns: [{ key: "pts", label: "Points" }, { key: "correct", label: "Right" }],
     scored: (r) => r.pts > 0,
     summary: (r) => `${fmt(r.pts)} pts · ${fmt(r.correct)} right${r.champion ? " · champion ✓" : ""}`,

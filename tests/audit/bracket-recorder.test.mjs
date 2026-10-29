@@ -10,7 +10,10 @@ import os from "node:os";
 import path from "node:path";
 
 const APP = process.env.APP || ".";
-const { run, scoreWeek } = await import(path.resolve(APP, "bot/games/bracket.ts"));
+const rec = await import(path.resolve(APP, "bot/games/bracket.ts"));
+const { scoreWeek, vaultRows } = rec;
+// The Vault's stakes: unless a test says otherwise, every player is staked in the Bracket
+const run = (o) => rec.run({ stakedOf: async (_n, players) => players, ...o });
 const M = globalThis.KRaceMath, B = globalThis.KBracketMath;
 const plain = (x) => JSON.parse(JSON.stringify(x));
 const H = 3600000, DAY = 24 * H;
@@ -236,7 +239,7 @@ test("files: only the expected names, sizes and fields", async () => {
   const idx = JSON.parse(fs.readFileSync(path.join(dir, "index.json"), "utf8"));
   assert.deepEqual(Object.keys(idx).sort(), ["contract", "game", "updated", "v", "weeks"]); assert.equal(idx.game, B.GAME_ID);
   const wf = readW(dir);
-  assert.deepEqual(Object.keys(wf).sort(), ["days", "end", "picks", "points", "results", "seeding", "start", "status", "v", "week"]);
+  assert.deepEqual(Object.keys(wf).sort(), ["days", "end", "picks", "points", "results", "seeding", "staked", "start", "status", "v", "week"]);
   assert.ok(fs.statSync(path.join(dir, "W003.json")).size < 200000);
 });
 
@@ -262,7 +265,7 @@ test("workflow shape check: accepts a whole recorded week, refuses tampered file
   await runUntil(B.roundDay(W, 4) + 13 * H, o, dir);
   assert.equal(readW(dir).status, "final");
   assert.ok(shapeOk(dir), "the recorder's own files pass");
-  const bad = (f, mut) => { const d = tmp(); for (const x of fs.readdirSync(dir)) fs.copyFileSync(path.join(dir, x), path.join(d, x)); const j = JSON.parse(fs.readFileSync(path.join(d, f), "utf8")); mut(j); fs.writeFileSync(path.join(d, f), JSON.stringify(j)); return shapeOk(d); };
+  const bad = (f, mut) => { const d = tmp(); fs.cpSync(dir, d, { recursive: true }); const j = JSON.parse(fs.readFileSync(path.join(d, f), "utf8")); mut(j); fs.writeFileSync(path.join(d, f), JSON.stringify(j)); return shapeOk(d); };
   assert.equal(bad("W003.json", (j) => { j.points[0][1] = 999; }), false, "points over the maximum");
   assert.equal(bad("W003.json", (j) => { j.seeding.seeds.push("<script>"); }), false, "a non-address");
   assert.equal(bad("W003.json", (j) => { j.extra = 1; }), false, "an unknown field");
@@ -352,4 +355,63 @@ test("the rebuilt effective VHP must equal the VHP contract's own effective bala
   const r = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + H), ...o }));
   assert.ok(r.problems.some((p) => p.includes("doesn't match the contract's effective balance")), JSON.stringify(r.problems));
   assert.ok(!fs.existsSync(path.join(dir, "W003.json")) || !readW(dir).seeding, "not seeded on a mismatch");
+});
+
+test("audit S-3: when a node can't give the effective balance as a read-only call, seeding goes ahead on the exact rebuild", async () => {
+  const field = fieldOf(17), dir = tmp();
+  const noEff = (name) => { const n = nodeOf(signerFn(field))(name); return { ...n, balance: async (a) => { const { eff, ...b } = await n.balance(a); return b; } }; };
+  const r = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + H), picksContract: "1P", nodeOf: noEff, picksOf: picksOf([]) }));
+  assert.deepEqual(r.problems, []);
+  assert.equal(readW(dir).seeding.seeds.length, 16);
+});
+
+// ── the Vault file (Vault v6 hand-off, 2026-10-28) ──
+test("vault rows: staked players with ≥ 1 point, the bracket's order (points, champion, right winners) and ties kept on 1–255", () => {
+  const pts = [[P(1), 20, 1, 9], [P(2), 20, 0, 9], [P(3), 20, 0, 9], [P(4), 31, 0, 12], [P(5), 0, 0, 0], [P(6), 5, 0, 4], [P(7), 40, 1, 14]];
+  const staked = new Set([P(1), P(2), P(3), P(4), P(5), P(7)]);   // P(6) is a free player
+  const rows = plain(vaultRows(pts, staked));
+  assert.deepEqual(rows.map((r) => r.player), [P(7), P(4), P(1), P(2), P(3)], "best first; P(5) has no point; P(6) isn't staked");
+  const v = Object.fromEntries(rows.map((r) => [r.player, r.points]));
+  assert.ok(v[P(7)] > v[P(4)] && v[P(4)] > v[P(1)] && v[P(1)] > v[P(2)], "order kept, including the champion tie-break");
+  assert.equal(v[P(2)], v[P(3)], "a full tie stays a tie");
+  assert.ok(rows.every((r) => Number.isInteger(r.points) && r.points >= 1 && r.points <= 255));
+  assert.deepEqual(plain(vaultRows(pts, new Set())), [], "nobody qualifies: no rows");
+  // more than 255 different scores: falls back to the plain points (order kept, ties merged), still 1–255
+  const many = Array.from({ length: 300 }, (_, i) => [("1Many" + String(i).padStart(4, "1")).padEnd(34, "x"), 1 + (i % 80), i % 2, i % 15]);
+  const big = plain(vaultRows(many, new Set(many.map((r) => r[0]))));
+  assert.equal(big.length, 300); assert.ok(big.every((r) => r.points >= 1 && r.points <= 255));
+  for (let i = 1; i < big.length; i++) assert.ok(big[i - 1].points >= big[i].points);
+});
+
+test("vault file: written once the week is final, with only staked players; none when the stakes can't be read in 3 days", async () => {
+  const field = fieldOf(17), signer = signerFn(field);
+  const rows = [{ player: P(1), number: 0, time: 1 }, { player: P(2), number: 5, time: 2 }, { player: P(3), number: 9, time: 3 }];
+  const base = { picksContract: addr(60), nodeOf: nodeOf(signer), picksOf: picksOf(rows) };
+  const play = async (o, until) => { const d = tmp(); await quiet(() => rec.run({ p: "main", check: "check", prev: d, out: d, head: headAt(B.seedTime(W) + H), ...base, ...o })); await quiet(() => rec.run({ p: "main", check: "check", prev: d, out: d, head: headAt(B.lockTime(W) + 60000), ...base, ...o })); for (let i = 0; i < 40; i++) await quiet(() => rec.run({ p: "main", check: "check", prev: d, out: d, head: headAt(until), ...base, ...o })); return d; };
+  // P(1) and P(3) are staked; P(2) plays free
+  const d = await play({ stakedOf: async (_n, ps) => ps.filter((p) => p !== P(2)) }, B.roundDay(W, 4) + 13 * H);
+  const wf = readW(d); assert.equal(wf.status, "final"); assert.deepEqual(wf.staked.list, [P(1), P(3)].sort());
+  const vf = JSON.parse(fs.readFileSync(path.join(d, "vault", `W${W}.json`), "utf8"));
+  assert.deepEqual(Object.keys(vf).sort(), ["final", "first", "game", "rows", "second", "week"]);
+  assert.equal(vf.game, 9); assert.equal(vf.week, W); assert.equal(vf.final, true); assert.deepEqual(vf.first, []); assert.deepEqual(vf.second, []);
+  assert.ok(vf.rows.every((r) => r.player !== P(2)), "free players never in the rows");
+  assert.equal(vf.week, B.weekOf(B.weekStart(W) + 1), "the Vault's week number = the KnodeGames week");
+  // the board marks staked rows as ranked (Staked tab) and the rest as free play
+  const board = JSON.parse(fs.readFileSync(path.join(d, "board.json"), "utf8"));
+  const lw = board.week.rows; assert.ok(lw.find((r) => r.a === P(2)).ranked === false && lw.find((r) => r.a === P(1)).ranked === true);
+  // the nodes disagree about the stakes: results in, not final
+  const d2 = await play({ stakedOf: async (n, ps) => (n === "check" ? [] : ps) }, B.roundDay(W, 4) + 13 * H);
+  assert.equal(readW(d2).status, "locked"); assert.ok(!fs.existsSync(path.join(d2, "vault")));
+  // still unreadable 3 days after the week ends: final without a file (the Vault rolls the week over)
+  await quiet(() => rec.run({ p: "main", check: "check", prev: d2, out: d2, head: headAt(B.weekStart(W + 1) + 3 * DAY + H), ...base, stakedOf: async () => { throw new Error("no Vault v6 yet"); } }));
+  assert.equal(readW(d2).status, "final"); assert.equal(readW(d2).vault, "missed"); assert.ok(!fs.existsSync(path.join(d2, "vault")));
+  // the publish check refuses a bad vault file
+  const badV = (mut) => { const x = tmp(); fs.cpSync(d, x, { recursive: true }); const f = path.join(x, "vault", `W${W}.json`); const j = JSON.parse(fs.readFileSync(f, "utf8")); mut(j); fs.writeFileSync(f, JSON.stringify(j)); return shapeOk(x); };
+  assert.ok(shapeOk(d));
+  assert.equal(badV((j) => { j.rows[0].points = 0; }), false, "points 0");
+  assert.equal(badV((j) => { j.rows[0].points = 256; }), false, "points over 255");
+  assert.equal(badV((j) => { j.rows.push({ ...j.rows[0] }); }), false, "a player twice");
+  assert.equal(badV((j) => { j.game = 2; }), false, "another game");
+  assert.equal(badV((j) => { j.first = [P(1)]; }), false, "a staked game has no free prize");
+  assert.equal(badV((j) => { j.final = false; }), false);
 });
