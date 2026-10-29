@@ -1,5 +1,6 @@
 import { MockVM } from "@koinos/mock-vm";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 // The chain orders storage keys bytewise; the mock VM's database doesn't (RepoLens fix-check 2, V2-5).
 const { patchDatabase } = createRequire(import.meta.url)("../tools/mockvm-bytewise.cjs");
@@ -11,7 +12,7 @@ export default {
   disclude: [/node_modules/i],
   async instantiate(memory, createImports, instantiate, binary) {
     const mockVM = new MockVM();
-    patchDatabase(mockVM.db, new URL(import.meta.url).pathname);
+    patchDatabase(mockVM.db, fileURLToPath(import.meta.url));   // a real path on Windows too (fix-check 3, V3-1)
     const myImports = {
       wasi_snapshot_preview1: { fd_write: () => {}, proc_exit: () => {} },
       env: { ...mockVM.getImports() },

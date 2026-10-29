@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { Provider, Signer, Contract, Transaction, Serializer, utils } from "koilib";
 
 export const ABI_FILE = "game/abi/kpred.koilib.json";
@@ -152,7 +153,7 @@ export class SimChain implements Chain {
     // The mock VM's database orders keys as UTF-8 strings, so keys with bytes from 0x80 up collide or come back out of
     // order. The chain orders keys bytewise; tools/mockvm-bytewise.cjs makes the simulator do the same, for exact reads
     // and for paging (vault fuzz, 2026-10-28; RepoLens fix-check 2, V2-1).
-    require("../tools/mockvm-bytewise.cjs").patchDatabase(this.vm.db, new URL(import.meta.url).pathname);
+    require("../tools/mockvm-bytewise.cjs").patchDatabase(this.vm.db, fileURLToPath(import.meta.url));   // a real path on Windows too (fix-check 3, V3-1)
   }
 
   async init() {

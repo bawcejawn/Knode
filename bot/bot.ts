@@ -433,7 +433,10 @@ async function healthPass(ctx: Ctx, bs: BotState) {
   //    from the close time that corrections move, so a week held open by repeated corrections is reported too.
   const w = st.weeksClosed;
   const wk = (await ctx.chain.read("get_week", { week: String(w) })).week ?? {};
-  if (st.time > closeAt(st, w, wk) + 3 * HOUR_MS) {
+  if (st.raw.safe_mode) {
+    // The withdrawals-only build closes nothing: not an alarm (fix-check 3, V3-4).
+    if (st.time > closeAt(st, w, wk)) log(`  Safe mode: closes are paused (week ${w} waits for the normal build).`);
+  } else if (st.time > closeAt(st, w, wk) + 3 * HOUR_MS) {
     ctx.problems.push(`Week ${w} is overdue to close (${num(wk.questions) - num(wk.resolved)} question(s) still open).`);
   } else if (st.time > weekEnd(st, w) + st.closeDelay + 3 * HOUR_MS && num(wk.last_resolved_time) > weekEnd(st, w)) {
     ctx.problems.push(`Week ${w} is still open ${((st.time - weekEnd(st, w) - st.closeDelay) / HOUR_MS).toFixed(0)} h after its normal close: its latest result or correction was at ${utc(num(wk.last_resolved_time))}. Only the owner key can change results; if you did not, your admin key may be compromised.`);
@@ -1289,6 +1292,27 @@ async function deploy(send: boolean) {
 //                             add --safe (to every step) for the withdrawals-only build, game/build/safe/contract.wasm
 //   upgrade apply             after the 48 hours: upload exactly that build, then clear the notice
 //   upgrade cancel            withdraw the announcement
+/** Why this local build must not be announced or uploaded ("" = fine). Normal: never the withdrawals-only build (by its
+ *  file or the pinned fingerprint), and assembly/Mode.ts must be the normal one. Safe: exactly the pinned fingerprint.
+ *  Never the test build. (Fix-check VN-10, V2-3, V3-10, V3-12.) */
+export function upgradeGuard(wasm: Buffer, safe: boolean, dep: any, safeFile: Buffer | null, modeTs: string): string {
+  const sha = (b: Buffer) => crypto.createHash("sha256").update(b).digest("hex");
+  const h = sha(wasm);
+  if (wasm.indexOf(Buffer.from("TEST LEDGER", "utf16le")) !== -1) return "This is the TEST build (simulated token ledger). Run `npm run build` in the game folder.";
+  if (safe) {
+    if (!dep.safeWasmSha256) return "game-data/deployment.json has no safeWasmSha256: the withdrawals-only build's fingerprint must be pinned there first.";
+    if (h !== dep.safeWasmSha256) return `${SAFE_WASM} has sha256 ${h}, not the pinned withdrawals-only build ${dep.safeWasmSha256} (game-data/deployment.json safeWasmSha256).`;
+    return "";
+  }
+  if ((safeFile && sha(safeFile) === h) || (dep.safeWasmSha256 && h === dep.safeWasmSha256))
+    return `${WASM} is the withdrawals-only build. In the game folder run: npm run build, then npm run check.`;
+  // The switch line itself, not a comment (V3-10): exactly one live SAFE_MODE declaration, and it is false.
+  const decl = modeTs.split(/\r?\n/).map((l) => l.replace(/\/\/.*$/, "").trim()).filter((l) => /\bSAFE_MODE\b/.test(l));
+  if (decl.length !== 1 || !/^export const SAFE_MODE: bool = false;$/.test(decl[0]))
+    return "game/assembly/Mode.ts is not the normal build's (SAFE_MODE must be false). Restore it (git checkout game/assembly/Mode.ts), then npm run build and npm run check.";
+  return "";
+}
+
 async function upgrade(sub: string | undefined, send: boolean, botPays = false, safe = false) {
   const WASM_FILE = safe ? SAFE_WASM : WASM;
   const P = paths(E.GEN_DIR ?? "game-data");
@@ -1298,20 +1322,13 @@ async function upgrade(sub: string | undefined, send: boolean, botPays = false, 
   const mainnet = isMainnet(rpc);
   pinDeployment("game", dep, rpc, P.deployment);
   if (send && mainnet && E.CONFIRM_MAINNET !== "yes") throw new Error("MAINNET: add CONFIRM_MAINNET=yes to .env first.");
+  // Cancelling needs no local build (fix-check 3, V3-9).
+  if (sub === "cancel") return act("owner", "cancel_upgrade", {}, send);
   if (!fs.existsSync(WASM_FILE)) throw new Error(`${WASM_FILE} not found — in the game folder run: ${safe ? "npm run build:safe" : "npm test && npm run check"}`);
   const wasm = fs.readFileSync(WASM_FILE);
-  // Fix-check VN-10: the normal upgrade never ships the withdrawals-only build, and the safe one only the pinned one.
-  const sha = (b: Buffer) => crypto.createHash("sha256").update(b).digest("hex");
-  // Fix-check 2, V2-3: compared with the pinned fingerprint too, and the build switch must be off for a normal upgrade.
-  if (!safe && ((fs.existsSync(SAFE_WASM) && sha(fs.readFileSync(SAFE_WASM)) === sha(wasm)) || (dep.safeWasmSha256 && sha(wasm) === dep.safeWasmSha256)))
-    throw new Error(`${WASM} is the withdrawals-only build. In the game folder run: npm run build, then npm run check.`);
-  if (!safe && !/SAFE_MODE: bool = false;/.test(fs.readFileSync("game/assembly/Mode.ts", "utf8")))
-    throw new Error("game/assembly/Mode.ts is not the normal build's (SAFE_MODE must be false). Restore it (git checkout game/assembly/Mode.ts), then npm run build and npm run check.");
-  if (safe && !dep.safeWasmSha256)
-    throw new Error("game-data/deployment.json has no safeWasmSha256: the withdrawals-only build's fingerprint must be pinned there first.");
-  if (safe && sha(wasm) !== dep.safeWasmSha256)
-    throw new Error(`${SAFE_WASM} has sha256 ${sha(wasm)}, not the pinned withdrawals-only build ${dep.safeWasmSha256} (game-data/deployment.json safeWasmSha256).`);
-  if (wasm.indexOf(Buffer.from("TEST LEDGER", "utf16le")) !== -1) throw new Error("This is the TEST build (simulated token ledger). Run `npm run build` in the game folder.");
+  // The local-build guards stop schedule and apply; status only reports them (fix-check 3, V3-9).
+  const guard = upgradeGuard(wasm, safe, dep, fs.existsSync(SAFE_WASM) ? fs.readFileSync(SAFE_WASM) : null, fs.readFileSync("game/assembly/Mode.ts", "utf8"));
+  if (guard && sub && sub !== "status") throw new Error(guard);
   const local = "0x" + sha256hex(wasm);
   const chain = new KoinosChain(rpc, dep.contract);
   const st = await chain.read("get_state", {});
@@ -1323,6 +1340,7 @@ async function upgrade(sub: string | undefined, send: boolean, botPays = false, 
   log(`Local build        ${WASM_FILE}${safe ? " (WITHDRAWALS-ONLY emergency build)" : ""}, ${(wasm.length / 1024).toFixed(1)} KB, sha256 ${local}`);
   log(eta > 0 ? `Announced          sha256 ${announced}, can be uploaded from ${utc(eta)}${now >= eta ? " (now)" : ` (in ${((eta - now) / HOUR_MS).toFixed(1)} h)`}` : "Announced          nothing");
   if (eta > 0) log(announced === local ? "                   ✔ matches the local build" : "                   ✖ does NOT match the local build");
+  if (guard) log(`                   ✖ ${guard}`);
 
   if (!sub || sub === "status") return;
   if (sub === "schedule") {
@@ -1330,7 +1348,6 @@ async function upgrade(sub: string | undefined, send: boolean, botPays = false, 
     log(`\nThis announces the local build. Players see it on chain (and the bot emails you): they have 48 hours to withdraw if they disagree.`);
     return act("owner", "schedule_upgrade", { hash: local }, send);
   }
-  if (sub === "cancel") return act("owner", "cancel_upgrade", {}, send);
   if (sub !== "apply") throw new Error("upgrade status | schedule | apply | cancel");
 
   if (eta === 0) throw new Error("Nothing is announced. Run: npm run bot -- upgrade schedule --send   (then wait 48 hours)");

@@ -1361,27 +1361,38 @@ describe("v6 fix-check 2", () => {
     testSetSafeMode(true);
     expect(sponsorTx(k, 0x6868e83d, settleArgs)).toBe(false);
     MockVM.setTransaction(new protocol.transaction());
-    // 1-2. settle
+    // 1. settle
     nobody();
     k.settle(new kpred.settle_arguments(B, 0));
     MockVM.commitTransaction();
-    // 3-4. resolve and correct a question
-    at(2500);
-    as(OPERATOR);
-    k.resolve_question(new kpred.resolve_question_arguments(q2, 0, hash32b(9)));
-    MockVM.commitTransaction();
-    as(OWNER);
-    k.correct_question(new kpred.correct_question_arguments(q2, 1, hash32b(8)));
-    MockVM.commitTransaction();
-    // Week 0 finalizes and week 1 closes only in the normal build.
+    expect(k.get_player(new kpred.get_player_arguments(B, 0)).entry!.settled).toBe(true);
+    // Week 0 finalizes only in the normal build (the clock only moves forward from here: fix-check 3, V3-8).
+    const wk0 = k.get_week(new kpred.get_week_arguments(0)).week!;
+    at(wk0.settle_end / MS + 2);
     nobody();
     gWeek = 0;
     expect(() => { gK!.finalize_week(new kpred.finalize_week_arguments(gWeek)); }).toThrow();
     testSetSafeMode(false);
-    finalizeQ(k, 0);
+    nobody();
+    k.finalize_week(new kpred.finalize_week_arguments(0));
+    MockVM.commitTransaction();
+    testSetSafeMode(true);
+    // 2-3. resolve and correct a question
+    at(2500);
+    as(OPERATOR);
+    k.resolve_question(new kpred.resolve_question_arguments(q2, 0, hash32b(9)));
+    MockVM.commitTransaction();
+    const resolved = k.get_question(new kpred.get_question_arguments(q2)).question!.outcome;
+    expect(resolved > 0).toBe(true);
+    as(OWNER);
+    k.correct_question(new kpred.correct_question_arguments(q2, 1, hash32b(8)));
+    MockVM.commitTransaction();
+    expect(k.get_question(new kpred.get_question_arguments(q2)).question!.outcome != resolved).toBe(true);
+    // Week 1 closes only in the normal build.
+    testSetSafeMode(false);
     closeWeek(k, 1);
     testSetSafeMode(true);
-    // 5-8. other games: post points, prize winners, seal; correct; void
+    // 4-8. other games: post points, prize winners, seal; correct; void
     postRows(k, G2, 1, [row(C, 4)]);
     as(OPERATOR);
     k.post_prize_winners(new kpred.post_prize_winners_arguments(G3, 1, 1, [D]));
@@ -1399,6 +1410,14 @@ describe("v6 fix-check 2", () => {
     MockVM.commitTransaction();
     expect(won > 0).toBe(true);
     k.assertSolvent();
+    testSetSafeMode(false);
+  });
+
+  it("V3-3: get_state reports the withdrawals-only build", () => {
+    const k = setup();
+    expect(k.get_state(new kpred.get_state_arguments()).safe_mode).toBe(false);
+    testSetSafeMode(true);
+    expect(k.get_state(new kpred.get_state_arguments()).safe_mode).toBe(true);
     testSetSafeMode(false);
   });
 

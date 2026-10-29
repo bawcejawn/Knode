@@ -20,7 +20,11 @@ ok(!/\b(i32|i64)\.extend(8|16|32)_s\b/.test(wat), "no sign-extension instruction
 const marker = Buffer.from("TEST LEDGER", "utf16le");
 const bin = fs.existsSync(WASM) ? fs.readFileSync(WASM) : Buffer.alloc(0);
 ok(bin.length > 0 && bin.indexOf(marker) === -1, "production build (the test ledger is NOT included)");
-ok(/SAFE_MODE: bool = false;/.test(fs.readFileSync("assembly/Mode.ts", "utf8")), "the normal build, not the withdrawals-only one (assembly/Mode.ts)");
+{
+  // The live declaration itself, not a comment (fix-check 3, V3-10).
+  const decl = fs.readFileSync("assembly/Mode.ts", "utf8").split(/\r?\n/).map((l) => l.replace(/\/\/.*$/, "").trim()).filter((l) => /\bSAFE_MODE\b/.test(l));
+  ok(decl.length === 1 && decl[0] === "export const SAFE_MODE: bool = false;", "the normal build, not the withdrawals-only one (assembly/Mode.ts)");
+}
 {
   const SAFE = "build/safe/contract.wasm";
   const same = fs.existsSync(SAFE) && bin.length > 0 && Buffer.compare(fs.readFileSync(SAFE), bin) === 0;

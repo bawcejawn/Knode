@@ -6,7 +6,9 @@ const crypto = require("crypto");
 const { execSync } = require("child_process");
 const MODE = "assembly/Mode.ts";
 const normal = fs.readFileSync(MODE, "utf8");
-if (!/SAFE_MODE: bool = false;/.test(normal)) throw new Error(`${MODE} must say SAFE_MODE = false before building`);
+// The live declaration itself, not a comment (fix-check 3, V3-10).
+const decl = normal.split(/\r?\n/).map((l) => l.replace(/\/\/.*$/, "").trim()).filter((l) => /\bSAFE_MODE\b/.test(l));
+if (decl.length !== 1 || decl[0] !== "export const SAFE_MODE: bool = false;") throw new Error(`${MODE} must say SAFE_MODE = false before building`);
 // The contract builder sometimes stops with EAGAIN on a busy machine: try again a few times.
 const build = () => {
   for (let i = 1; ; i++) {

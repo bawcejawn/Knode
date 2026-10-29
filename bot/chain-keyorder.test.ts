@@ -55,3 +55,22 @@ test("list_players pages 120 players exactly once each, in byte order", { skip: 
   const hex = rows.map((r) => Buffer.from(utils.decodeBase58(r.address)).toString("hex"));
   assert.deepEqual(hex, [...hex].sort(), "in byte order");
 });
+
+test("fix-check 3: the patch loads from a path with a space (V3-1) and stays fast at 20,000 objects (V3-2)", async () => {
+  const { createRequire } = await import("node:module");
+  const { fileURLToPath, pathToFileURL } = await import("node:url");
+  const req = createRequire(import.meta.url);
+  const { patchDatabase } = req("../tools/mockvm-bytewise.cjs");
+  const { MockVM } = req("@koinos/mock-vm");
+  // A file URL with a space: fileURLToPath gives a real path ("sp ace"), unlike URL.pathname ("sp%20ace").
+  const url = pathToFileURL("/tmp/sp ace/x.js");
+  assert.equal(fileURLToPath(url), "/tmp/sp ace/x.js");
+  const db = patchDatabase(new MockVM().db, fileURLToPath(url));   // resolves mock-vm from this repo all the same
+  const sp = { id: 3 };
+  const t0 = Date.now();
+  for (let i = 0; i < 20_000; i++) { const k = new Uint8Array(4); new DataView(k.buffer).setUint32(0, i); db.putObject(sp, k, new Uint8Array([1])); }
+  db.commitTransaction();
+  db.rollbackTransaction();
+  assert.ok(Date.now() - t0 < 20_000, "20,000 objects in key order, a commit and a rollback: no stack overflow, not slow");
+  assert.ok(db.getObject(sp, new Uint8Array([0, 0, 0x4e, 0x1f])), "the last key is still there");
+});
