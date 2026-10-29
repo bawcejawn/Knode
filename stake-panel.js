@@ -14,7 +14,7 @@
   const RPC = "https://koinos.armana.io";
   const DEPLOYMENT = "./game-data/deployment.json";
   const Q_GAME = 1;
-  const CLAIM_WEEKS = 6;                   // finished weeks checked for something to claim
+  const CLAIM_WEEKS = 52;                  // finished weeks checked for something to claim (the vault never expires a claim)
   const lib = window.koilib || window.koinos || window;
 
   // ── The parts of the vault (game contract, v6) this panel uses. Entry points = first 4 bytes of sha256(name);
@@ -194,11 +194,21 @@
         P.me = null; P.claims = [];
         if (who) {
           P.me = await read("get_game_player", { player: who, game, week: week.toString() });
-          const from = big(g.game.from_week);
-          for (let w = week - 1n; w >= 0n && w >= from && w >= week - BigInt(CLAIM_WEEKS); w--) {
-            const [gx, px] = await Promise.all([read("get_game", { game, week: w.toString() }), read("get_game_player", { player: who, game, week: w.toString() })]);
-            const r = claimable(gx.week, px.entry, gx.buckets);
-            if (r > 0n) P.claims.push({ week: w, reward: r });
+          // Not from the game's from_week: a game restarted after a gap moves it forward, and the weeks it earned before
+          // stay claimable. The player's own entries first (8 at a time); a week's results only where there's an entry
+          // with something in it.
+          const weeks = [];
+          for (let w = week - 1n; w >= 0n && w >= week - BigInt(CLAIM_WEEKS); w--) weeks.push(w);
+          for (let i = 0; i < weeks.length; i += 8) {
+            const part = weeks.slice(i, i + 8);
+            const mine = await Promise.all(part.map((w) => read("get_game_player", { player: who, game, week: w.toString() })));
+            for (let j = 0; j < part.length; j++) {
+              const e = mine[j] && mine[j].entry;
+              if (!e || e.claimed || !(Number(e.points || 0) > 0 || Number(e.prize_place || 0) > 0)) continue;
+              const gx = await read("get_game", { game, week: part[j].toString() });
+              const r = claimable(gx.week, e, gx.buckets);
+              if (r > 0n) P.claims.push({ week: part[j], reward: r });
+            }
           }
         }
         render();

@@ -160,7 +160,7 @@ test("the race page shows no odds, no wagers, no payouts", () => {
   for (const f of ["race.js", "race.html", "race-math.js"]) assert.doesNotMatch(read(f), /\bodds\b|\bpays\s+\d|\bpaysFor\b|\bwager|\bbet\b/i, f);
 });
 
-test("the race page sends only one thing: the wallet's own pick on the race contract, through the wallet", () => {
+test("the race page sends only one thing itself: the wallet's own pick on the race contract, through the wallet", () => {
   for (const f of ["race-math.js", "chain-blocks.js"]) assert.doesNotMatch(read(f), /\.send\(|signTransaction|sendTransaction|onlyOperation/, f);
   const js = read("race.js");
   const sends = [...js.matchAll(/\.send\(/g)];
@@ -188,4 +188,11 @@ test("the pick lists for upcoming races are never empty once any card exists: a 
   const js = read("race.js");
   assert.match(js, /const fieldOf = \(r\) => \(r\.cards && !r\.provisional && M\.cardForLeg\(r\.cards, 0\)\) \|\| latest\(\);/);
   assert.match(js, /const latest = \(\) => \{ const lr = raceObj\(cur\); return \(lr\.cards && M\.cardForLeg\(lr\.cards, M\.legOf\(lr\.start, Date\.now\(\), M\.legsOf\(lr\.cards\)\)\)\) \|\| prov; \};/);
+});
+
+test("race page: medals only for wallets that earn (the recorder's earns), on both boards", () => {
+  const js = read("race.js"), b = read("board.js");
+  assert.match(js, /freeWinners: \(part, free, weekly\) => new Map\(weekly \? free\.filter\(\(r\) => r\.earns === 1 \|\| r\.earns === 2\)/);
+  assert.match(js, /earned: \(r, weekly\) => weekly && r\.earns === 3/);
+  assert.match(b, /const medalOk = \(r, p\) => \(o\.earned \? !!o\.earned\(r, weekly\) && p <= 3 : p <= 3 && o\.scored\(r\)\)/);
 });

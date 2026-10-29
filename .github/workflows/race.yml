@@ -4,6 +4,8 @@
 # Two jobs, like the main bot, so repository code never runs next to a write token:
 #   record   runs bot/race.ts with a read-only token and no secrets (it only reads the chain), and hands the files on.
 #   publish  runs no repository code: it checks the files' shape and pushes them to the race-data branch.
+#            That includes vault/W<week>.json, the KnodeGames Vault's weekly results (game 7); once one is published
+#            as final, publish refuses to change it.
 # It never touches main, holds no key, and does not run on pull requests.
 #
 # Turn it on: Settings → Secrets and variables → Actions → Variables: RACE_ENABLED = true
@@ -42,11 +44,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/prev"
-          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
-            for f in $(git ls-tree --name-only FETCH_HEAD); do
+          url="https://github.com/${GITHUB_REPOSITORY}.git"
+          # A missing branch is fine (the first run). Any other failure stops the run, so it never starts from nothing.
+          rc=0; git ls-remote --exit-code --heads "$url" race-data >/dev/null 2>&1 || rc=$?
+          if [ "$rc" = 2 ]; then echo "No race-data branch yet."
+          elif [ "$rc" != 0 ]; then echo "::error::Couldn't read the race-data branch (git ls-remote exit $rc)"; exit 1
+          else
+            git fetch -q --depth 1 "$url" race-data
+            for f in $(git ls-tree -r --name-only FETCH_HEAD); do
               if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; fi
+              if [[ "$f" =~ ^vault/W[0-9]{1,4}\.json$ ]]; then mkdir -p "$RUNNER_TEMP/prev/vault"; git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; fi
             done
-          else echo "No race-data branch yet."; fi
+          fi
       - name: Record the race
         run: npm run race
         env:
@@ -81,7 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o -type d -o \( -type f ! -regex "$IN/\(index\|board\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/vault" \) -o \( -type f ! -regex "$IN/\(index\|board\|W[0-9][0-9][0-9]\)\.json" ! -regex "$IN/vault/W[0-9][0-9]?[0-9]?[0-9]?\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           big=$(find "$IN" -type f -size +2048k -print)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
@@ -118,10 +127,38 @@ jobs:
               return type(r.get("checked")) is int and r["checked"] in (1, 2)
           def rows_ok(b):
               rows = b.get("rows") if type(b) is dict else None
-              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "pts", "correct", "shows", "picks", "answers", "points", "ranked"}
-                  and isaddr(x["a"]) and all(type(x[k]) is int and 0 <= x[k] < 10**9 for k in ("pts", "correct", "shows", "picks", "answers", "points"))
+              # earns: 1 or 2 = the free prize's place (free players only), 3 = a share of the staked bucket, 0 = nothing.
+              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "pts", "correct", "shows", "picks", "ranked", "boardPlace", "earns"}
+                  and type(x["earns"]) is int and x["earns"] in (0, 1, 2, 3) and (x["earns"] != 3 or x["ranked"] is True) and (x["earns"] not in (1, 2) or x["ranked"] is False)
+                  and isaddr(x["a"]) and all(type(x[k]) is int and 0 <= x[k] < 10**9 for k in ("pts", "correct", "shows", "picks")) and type(x["boardPlace"]) is int and 1 <= x["boardPlace"] <= len(rows)
                   and x["correct"] + x["shows"] <= x["picks"] and x["pts"] == 3 * x["correct"] + x["shows"] and type(x["ranked"]) is bool for x in rows)
+          import time
+          GENESIS, WEEK = 1792368000, 7 * 86400   # the vault's week 0 (Mon 19 Oct 2026 00:00 UTC), in seconds
+          NOW = float(os.environ.get("RACE_CHECK_NOW") or time.time())   # the tests set a clock; the workflow never does
+          def vault_ok(f, j):
+              # The KnodeGames Vault's results (game 7, the Producer Race). rows: staked players, points 1-255 in board
+              # order. first/second: free-prize places, at most 10 wallets each. No wallet twice. Nothing before the week
+              # is final, and final only once the week has ended by this runner's clock. 2nd only after a single 1st (a
+              # tie for 1st takes both prizes). skipped: race ids of that week.
+              m = re.fullmatch(r"W(\d{1,4})\.json", f)
+              if not m or type(j) is not dict or set(j) != {"game", "week", "final", "rows", "first", "second", "skipped"}: return False
+              if type(j["game"]) is not int or j["game"] != 7 or type(j["week"]) is not int or f != "W%d.json" % j["week"] or type(j["final"]) is not bool: return False
+              a, b, rows, sk = j["first"], j["second"], j["rows"], j["skipped"]
+              if type(a) is not list or type(b) is not list or type(rows) is not list or type(sk) is not list: return False
+              if len(a) > 10 or len(b) > 10 or len(rows) > 100000 or len(sk) > 28: return False
+              if not all(type(r) is dict and set(r) == {"player", "points"} and isaddr(r["player"]) and type(r["points"]) is int and 1 <= r["points"] <= 255 for r in rows): return False
+              if any(rows[i]["points"] < rows[i + 1]["points"] for i in range(len(rows) - 1)): return False
+              who = [r["player"] for r in rows] + a + b
+              if not all(isaddr(x) for x in a + b) or len(set(who)) != len(who): return False
+              if not all(type(x) is str and re.fullmatch(r"\d{4}-\d{2}-\d{2}T(00|06|12|18)", x) for x in sk): return False
+              if not j["final"]: return not (a or b or rows or sk)
+              if GENESIS + (j["week"] + 1) * WEEK > NOW: return False
+              return not (b and len(a) != 1)
           for f in os.listdir(d):
+              if f == "vault":
+                  for g in os.listdir(os.path.join(d, f)):
+                      assert vault_ok(g, json.load(open(os.path.join(d, f, g), encoding="utf-8"))), "vault/" + g
+                  continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "board.json":
                   assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1, f
@@ -144,9 +181,15 @@ jobs:
             parent=$(git rev-parse FETCH_HEAD)
             git read-tree FETCH_HEAD
           else git read-tree --empty; fi
-          for f in "$IN"/*.json; do
+          for f in "$IN"/*.json "$IN"/vault/*.json; do
+            [ -e "$f" ] || continue
+            rel="${f#"$IN"/}"
+            # A vault results file already published as final never changes: the vault may have posted it.
+            if [[ "$rel" == vault/* ]] && [ -n "$parent" ] && git show "$parent:$rel" > "$RUNNER_TEMP/old.json" 2>/dev/null \
+              && /usr/bin/python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("final") is True else 1)' "$RUNNER_TEMP/old.json" \
+              && ! cmp -s "$RUNNER_TEMP/old.json" "$f"; then echo "::error::Refusing to change $rel: it was already published as final."; exit 1; fi
             blob=$(git hash-object -w "$f")
-            git update-index --add --cacheinfo 100644 "$blob" "$(basename "$f")"
+            git update-index --add --cacheinfo 100644 "$blob" "$rel"
           done
           tree=$(git write-tree)
           if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi
