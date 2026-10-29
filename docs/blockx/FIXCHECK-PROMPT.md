@@ -1,15 +1,17 @@
-# Fix-check prompt, round 3: Block X (BX-35 to BX-52) + sponsor v3 (SP-1 to SP-21)
+# Fix-check prompt, round 4: Block X (BX-53 to BX-71) + sponsor v3 (SP-22 to SP-36)
 
-Copy everything below the line into Repo Lens. Give it the package `knode-fixcheck-4.zip` (the repository
+Copy everything below the line into Repo Lens. Give it the package `knode-fixcheck-5.zip` (the repository
 `bawcejawn/Knode` at the commit in `00-COMMIT.txt`, branch `picks`, with this prompt as `00-FIXCHECK-PROMPT.md`).
 
 ---
 
-You are an independent smart-contract and web security auditor. Your report "Block X Fix-Check + Sponsor v3 Audit
-(Knode picks @ 148c00f)" (verdict *fix first* for both parts) has been worked through. The owner's record of every
-fix, with the owner's decisions, is the "Round 2" section of `docs/history/AUDIT-2026-10-28-repolens-blockx.md`; your
-report is `docs/history/AUDIT-2026-10-28-repolens-fixcheck.md`. Check the code, not the comments. Send no transaction
-to mainnet. The repository's own tests can be run:
+You are an independent smart-contract and web security auditor. Your report "Block X + Sponsor v3: Round-3 Fix-Check
+(Knode picks @ 1c66ddc)" (verdict *fix first* for both parts) has been worked through. The owner's record of every fix,
+with the owner's decisions, is the "Round 3" section of `docs/history/AUDIT-2026-10-28-repolens-blockx.md`. Your failing
+tests are in the repository (`tests/audit/repolens-r3-*.test.*`, the sponsor's SP-22 test in
+`sponsor/assembly/__tests__/Sponsor.v3.spec.ts`), next to behaviour tests written with the fixes
+(`tests/audit/repolens-r3-blockx-behaviour.test.mjs`). Check the code, not the comments. Send no transaction to mainnet.
+The repository's own tests can be run:
 
 ```
 npm ci --ignore-scripts
@@ -21,71 +23,54 @@ cd sponsor && npm ci --ignore-scripts && npm test && npm run check && cd ..
 Fingerprints: Picks release `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594` (unchanged); Picks
 testnet (`node picks/scripts/build-testnet.cjs --owner 1JZ5UoH4AU5roCgYEmtJ7G6mCvzE4jSTMC`)
 `39cc5e003c234b0e0b054376bdb53245e97157202ae971a11bc5cc490f7aa7ab` (unchanged); **sponsor v3
-`8d515d153ad7df0c7044c8b8cf3154d5fc333e56c9691b499ebd86fb23113dd7` (34,558 bytes, changed)**.
+`b21251d42beb1c4dd104194c6833d64abe0887c43d9631406765c8c7027aef96` (34,652 bytes, changed)**.
 
-## What changed since 148c00f
+## Owner decisions since your report (2026-10-29)
 
-1. **The site moved to its own domain.** `main` (knodegames.com, pages at the repository root, `CNAME`) is merged into
-   `picks`; Block X's page files moved from `site/` to the root. `site/` now holds only redirects.
-2. **Every Block X / race finding** BX-35 to BX-52: `bot/race.ts` (`combineReads`, `windowHigh`, `samplesIn`,
-   `productionFloor`, `sample`, the card section), `.github/workflows/race.yml` and `race-samples.yml`,
-   `bot/games/blockx.ts` (`firstCardAfter`, `MIN_CARD_SAMPLES`, BX-46 and BX-48), `wallet.js` (guest origin allowlist,
-   `sameArgs`), `board.js`, `bot/picks.ts` (`sameNode`, one primary node).
-3. **Old guest keys (BX-39)**: `tools/old-origin-guest/guest-move.html`, a no-network page for the old
-   `bawcejawn.github.io` address that moves a guest key to knodegames.com and erases it there.
-4. **Block X takes stakes** (owner, 2026-10-28): a wallet is on the Staked board only with at least the vault's minimum
-   staked IN Block X (game 2) that week (`readVault`, `vaultView`, `stakedSet`; vault v6 `get_game_player`). Before v6
-   is live nobody is staked. The weekly vault file (`blockx/vault/W<week>.json`) now carries `rows` (staked players the
-   vault counts for the week, 1-255 in board order, `vaultPoints`) and the free board's `first`/`second`; a wallet
-   staked here at any point that week can't win the free prize. The page shows the player's stake in Block X and mounts
-   the site's shared stake panel when it exists (it signs nothing itself).
-5. **Sponsor v3 contract** (`sponsor/assembly/Sponsor.ts`, `sponsor.proto`):
-   - SP-2: `isPlayer` reads only stakes: ACTIVE stake in the question game (`get_player`), or this week's stake in the
-     call's own game (`get_game_player`, for allowlist rows with `game_arg` and for race picks, game 7). No VHP
-     balance, no pending stake.
-   - SP-3: `freeReleased`: the free pool is released by the hour (1/24 at 00:00 UTC, all of it from 23:00).
-   - SP-16: `arg_types` bytes carry 0x10 for a repeated field; only those may repeat.
-   - `MAX_ARGS_BYTES` 640 (Combo Card up to 10 legs).
-   - **The vault (game v6) calls are covered** (owner, 2026-10-28, hand-off `docs/V6-PLAN.md` on `vault-v6`):
-     `deposit_to` 0x7bb5c436, `withdraw_from` 0x5b0aaef8, `move_stake` 0x7c268e69, `claim_game` 0x4107e3ab
-     (each must name the payee as argument 1, read with `argsPlayer` and the shapes in `vaultShape`; their game id,
-     argument 2, is the game whose stake makes a real player) and `finalize_game_week` 0xec300c11 (no player).
-     A payee's own `claim_game` is free play.
-   - **Owner decision: a wallet that isn't a real player may spend the free pool on ANY covered call** ("the wallet can
-     use their available free Mana as they wish"), within its own caps and the hourly-released pool; `NOT_A_PLAYER`
-     is no longer a refusal reason in `authorize`.
-6. **Sponsor tool** (`bot/sponsor.ts`, `bot/mana-limits.ts`): every SP finding in the record, plus `usageAlerts` and
-   `watch` (an 80% warning, run by `.github/workflows/bot.yml` every hour).
-7. **Sponsor v3 trial on the testnet**: `npm run sponsor -- <command> --testnet` (`testnet/sponsor.json`,
-   `.env.testnet`, its own state files, the chain id checked); the testnet page (`testnet-wallet.js`) asks the test
-   sponsor first and falls back to the player's own Mana only on a sponsor refusal, after checking the signed
-   payer/payee. Runbook `docs/blockx/SPONSOR-TESTNET.md`.
-8. **Local admin page** (`admin/`, `npm run admin`): binds 127.0.0.1 only with a one-time key, runs only the commands
-   listed in `admin/actions.ts`, dry run first. Check it can't run anything else or be reached from another site.
+1. Every wallet, free or staked, gets at most 25 Mana a day and 150 a week (`DEFAULT_CAPS`).
+2. Knode Swap is never sponsored: the contract refuses any call to the Desk and any approve naming the Desk; the tool
+   writes the swap page as players' own Mana and refuses to upload v3 (or send config) while the deployed swap page
+   still asks the sponsor (runbook step 4a, before the upgrade).
+3. SP-2 and SP-3 (lock-outs by many wallets) are accepted for launch, with the alert now emailing (SP-31). Your attack-model
+   tests for them are not in the suite. The free-prize rule against many wallets is decided before prizes start.
+
+## What changed since 1c66ddc
+
+- **Sponsor contract** (`sponsor/assembly/Sponsor.ts`, `sponsor.proto`): SP-28 `isPlayer` asks `get_player` for the
+  current vault week and reads `active_stake` (field 3; `scripts/check.ts` compares the field numbers with the game's
+  ABI); SP-22 `would_pay_arguments.game` (field 4) passed to `isPlayer`; Desk calls refused (`SWAPS_NOT_SPONSORED`),
+  approves only to the game; dead `isFreePlay` removed; proto header rewritten.
+- **Sponsor tool / site** (`bot/sponsor.ts`, `wallet.js`, `testnet-wallet.js`, `.github/workflows/bot.yml`): SP-29 to
+  SP-36 as in the record (`switchedConfig`/`setSwitch`, `secondNode`, `manaAlerts`, testnet paths first, failed reads
+  abort, `sponsorAnswer`/`gameOfOps` in the site, `e.included` in the testnet wallet).
+- **Race cards** (`bot/race.ts`, `race.yml`, `race-samples.yml`): BX-54 (`LIB_LAG_MAX`, `LIB_GAP_MAX`, `HEAD_GAP_MS`; a
+  card's `at` must fit its leg in the publish check), BX-55 (`combineReads` lower read + `flagged` on the card), BX-56
+  (sampler vs this computer's clock), BX-57 (higher supply; impossible supply ignored), BX-53 (the sampler also reads
+  every producer on the latest published card; the job fetches the last two race week files), BX-59 (`ALLOW_ONE_NODE`).
+- **Block X** (`bot/games/blockx.ts`, `blockx.js`, `games.yml`, `games-testnet.yml`): BX-61 (`game/abi/kpred-v6.koilib.json`
+  committed, `STATE_ABI` first), BX-63 (`vaultReader`, `stakeCache`, `pool`), BX-53 (`scoringVhpMoves`, `vhpInflows`,
+  `withMoved`, `MOVE_MARGIN`), BX-55 (`flags`, lock card held/voided, after-card skipped), BX-62/BX-65 (publish check
+  ties the vault file to `board.json` `lastWeek`; a differing re-publish fails), BX-64, BX-66, BX-67.
 
 ## Look hardest at
 
-0. **The vault calls and "free Mana on any covered call"**: with the free pool reachable by any covered call, what
-   can one attacker now cost or lock out (approves, deposits that revert, swaps)? Is each vault call's player read
-   exactly as the game v6 contract reads it (its `deposit_to_arguments` etc. on `vault-v6`)? Can `claim_game` as free
-   play be abused?
-1. **SP-2 in the contract**: can a wallet still count as a real player without a stake that is active this week?
-   Is reading the game id from `game_arg` (`argsVarint`) safe when `argsPlayer` already accepted the arguments, and can
-   a caller choose a game it is staked in while the call is for another? Do race picks (game 7) and the Picks row
-   (`game_arg` 2) read the right game? Can the extra cross-contract reads (at most 4 games) be abused for cost?
-2. **SP-3**: `freeReleased` arithmetic at hour 0 and 23, day rollover, and `would_pay` agreeing with `authorize`.
-3. **SP-16 / 640 bytes**: the repeated-field rule in `argsPlayer` and the `set_config` checks on `arg_types` and
-   `game_arg`; that the sponsor and the Picks v1 decoder still read the same player.
-4. **BX-35 / BX-36 / BX-37 / BX-38** as asked in your report's "What would prove or disprove" section.
-5. **Block X stakes**: the Staked board, the bucket rows and the free prize follow the player rule exactly (staked in
-   THIS game that week; a mid-week withdrawal stays on the Staked board at its lowest stake; staked elsewhere is free
-   here); both nodes agree before a vault file is written; the publish check (`vault_ok` in both games workflows)
-   keeps each wallet in one list.
-6. **BX-39 / BX-40**: the guest origin allowlist and the move page (no network, no other script, erase only after
-   the player confirms).
+1. **SP-28 / SP-22**: is `active_stake` for the current week exactly what the game (v5 live now, and v6) means by a
+   stake this week? Does the site send the right `game` for every sponsored call shape, and can a wallet claim a game
+   it isn't staked in to get a yes it wouldn't get from `authorize`?
+2. **Swaps out**: any remaining path where the sponsor pays for a Desk action (approve, swap, a bundled operation), and
+   whether the site can still choose the sponsor for a swap.
+3. **BX-53**: are the receipt events read correctly for Koinos mainnet's VHP contract (event names, `impacted`, data
+   fields for transfer and mint), is the block range right (lock card time to X, plus `MOVE_MARGIN`), and can a producer
+   still move VHP in so neither card nor this check sees it (e.g. a move inside a block the range misses, or effective
+   VHP counted another way)?
+4. **BX-54 / BX-55**: can one node still steer a card (window, time, a producer's VHP), or now cheaply void targets by
+   disagreeing (the flag holds the target)? Is the leg bound in `race.yml` right for the 3-card (2-hour) races too?
+5. **BX-62 / BX-65**: can the publish job still be made to keep a wrong vault file, or to reject the honest one?
+6. **BX-61 / BX-63**: the real ABI on the mainnet path; the cache never turns a failed read into "not staked".
 
 ## Report
 
-For every finding of your round-2 report (BX-35 to BX-52, SP-1 to SP-21): fixed / partly / not fixed, with file:line,
-and anything new (BX-53…, SP-22…). Then a verdict per part: "ready for mainnet", "fix first" or "not ready", and what
-must be fixed before mainnet. Add a failing test for each new High or Medium where you can.
+For every finding of your round-3 report (BX-53 to BX-71, SP-22 to SP-36, and the round-2 items still open): fixed /
+partly / not fixed, with file:line, and anything new (BX-72…, SP-37…). Then a verdict per part: "ready for mainnet",
+"fix first" or "not ready", and what must be fixed before mainnet. Add a failing test for each new High or Medium where
+you can.

@@ -33,7 +33,7 @@ code from its own key: the address, its KOIN, its settings and today's counters 
 | Room for 10 picks in one transaction; refuses nested data in allowlisted calls; refuses transactions with more than 4 signatures early | audit S3-1, S3-2, S3-8 | – |
 | **Ceiling 5,000 Mana a day** (was 1,000) | more players and games | everyone 5,000 a day |
 | **Free players share at most 2,000 a day** | staked players always keep 3,000+ | free 2,000 |
-| **50 Mana per player per day, 300 per week** | room for several games | 50 / 300 |
+| **25 Mana per wallet per day, 150 per week** (owner, 29 Oct) | plenty for picks; staked or free alike | 25 / 150 |
 | **Per-action Mana limits + the Mana adjuster** | see below | from measurements |
 
 **Per-action Mana limits, in plain words.** The chain charges the sponsor only what a transaction really uses (a

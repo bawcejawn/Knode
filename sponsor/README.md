@@ -68,7 +68,7 @@ website says: the page then falls back to the player's own Mana.
    other than the audited one, and after uploading it stops with an error if the code or the switches on chain are not
    exactly right (pays for transactions ON, call and upload OFF).
 5. **Set the caps** (dry run first, then `--send`):
-   `npm run sponsor -- config --per-tx 1 --per-player-day 50 --per-player-week 300 --per-day 5000 --free-per-day 2000 --min-vhp 1`
+   `npm run sponsor -- config --per-tx 1 --per-player-day 25 --per-player-week 150 --per-day 5000 --free-per-day 2000 --min-vhp 1`
    (once `race-data/deployment.json` exists, this also sets the race contract, so picks are sponsored)
    (`--free-per-day 0` turns free answers off; pass it each time you change the caps, because an unset value means 500)
 6. **Switch it on**: `npm run sponsor -- enable --send`.
@@ -201,6 +201,11 @@ claim's Mana with the answers' 1 Mana limit, not `rcLimitOther`.
 - **Free Mana on any covered call** (owner, 2026-10-28: "the wallet can use their available free mana as they wish"):
   a wallet that isn't a real player is no longer refused for staking, swapping or approving; it spends the free pool
   (released by the hour) within its own caps. Real players spend the rest of the day's total.
+- **Round 3 (2026-10-29)**: a real player is read from the game's `active_stake` for the current week (audit SP-28:
+  the raw `stake` stays 0 for a player who deposited once and only answered since); `would_pay` takes the call's game,
+  as `authorize` does (SP-22); **Knode Swap is never sponsored** (owner): swaps and approves to the Desk are refused,
+  and the swap page uses players' own Mana; enable/disable change only the switch (SP-29); default caps 25 a day and
+  150 a week per wallet (owner).
 - **Repeated fields** (audit SP-16): `arg_types` marks a repeated field with 0x10; any other field may appear once.
   The Picks row is `0x0301011301` (producers repeated), `game_arg` 2.
 - **640 argument bytes** (was 400) so Combo cards up to 10 legs fit. Combo cards (field 6, legs) are a settings change
@@ -215,7 +220,7 @@ claim's Mana with the answers' 1 Mana limit, not `rcLimitOther`.
   action, and never sets a limit after a run-out at the per-transaction cap; other actions ask 1 Mana (the cap); exact
   Mana values; the network is decided by chain id and the testnet keeps its own files; v2 stays allowed as a rollback.
 
-Release candidate sha256 (v3 with the above): `8d515d153ad7df0c7044c8b8cf3154d5fc333e56c9691b499ebd86fb23113dd7`
+Release candidate sha256 (v3 with the above): `b21251d42beb1c4dd104194c6833d64abe0887c43d9631406765c8c7027aef96`
 (34,558 bytes; 167 contract tests). Superseded: `21bec825…` (33,210 bytes). Not yet fix-checked: the upload tool
 allows it on the testnet only. Rollback: v2 `fa4659e6…` stays an allowed build.
 

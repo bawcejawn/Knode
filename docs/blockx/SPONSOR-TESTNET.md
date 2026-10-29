@@ -67,7 +67,7 @@ npm run check
 certutil -hashfile build\release\contract.wasm SHA256
 ```
 
-The hash must be `8d515d153ad7df0c7044c8b8cf3154d5fc333e56c9691b499ebd86fb23113dd7`. Then:
+The hash must be `b21251d42beb1c4dd104194c6833d64abe0887c43d9631406765c8c7027aef96`. Then:
 
 ```powershell
 cd C:\kprediction
@@ -88,7 +88,7 @@ npm run sponsor -- status --testnet
 ```
 
 `upload` writes the sponsor's address into `testnet/blockx.json` (`"sponsor"`); that's how the testnet page knows
-to ask it. `config` uses the owner's caps (1 / 50 / 300 / 5000 / 2000, min VHP 1), the same as mainnet. `status` must
+to ask it. `config` uses the owner's caps (1 / 25 / 150 / 5000 / 2000, min VHP 1), the same as mainnet. `status` must
 show **v3 code**, **ON**, the caps and the Picks `pick` row.
 
 Tell Claude "testnet sponsor up" (or commit `testnet/blockx.json` yourself) so the address is saved on the branch.

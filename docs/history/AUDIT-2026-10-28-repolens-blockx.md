@@ -137,3 +137,61 @@ Picks is unchanged (`700c296a…`, testnet `39cc5e00…`). **Sponsor v3 changed:
 - Sponsor v3 trial on the testnet: `npm run sponsor -- <command> --testnet` (testnet/sponsor.json, .env.testnet), the
   testnet page asks the test sponsor first; the local admin page (`npm run admin`) has Mana sponsor, Block X and
   Testnet trial sections. Runbook: `docs/blockx/SPONSOR-TESTNET.md`.
+
+## Round 3 (Repo Lens fix-check @ 1c66ddc, 2026-10-29): verdict "fix first" for both parts
+
+Report: the owner's Claude Docs page "Block X + Sponsor v3: Round-3 Fix-Check (Knode picks @ 1c66ddc)". The auditor's
+failing tests (`knode-fixcheck-r3-failing-tests.zip`) are in `tests/audit/repolens-r3-*.test.*` and pass.
+
+### Owner decisions (2026-10-29)
+
+- Every wallet, free or staked, gets at most **25 Mana a day and 150 a week** from the sponsor (lower later if a pick
+  measures close to its limit).
+- **Knode Swap is never sponsored** (protects the swap desk from micro-swap abuse; audit SP-24).
+- Many wallets from one person (SP-2 / SP-3 residual): no on-chain defence can tell wallets apart. Kept: per-wallet
+  caps, the hourly free release, stakers' share that free wallets can't touch, Kondor's own free Mana as the fallback,
+  and the hourly alert now emails. The free-prize rule against many wallets is decided before prizes start (vault).
+
+### Part A, Block X
+
+| ID | Finding | Status |
+|---|---|---|
+| BX-61 | Vault ABI missing: every mainnet target voided | **Fixed**: `game/abi/kpred-v6.koilib.json` committed (vault-v6-next f1ecf59); the v6 check reads only a minimal get_state first; real-file tests |
+| BX-62 | Vault file for any week, frozen forever | **Fixed**: publish accepts only the board's last week, final, within 7 days of its end; a differing re-publish fails the run |
+| BX-53 | Flash VHP around block X | **Fixed**: VHP moved into the signer (VHP transfer/mint events in the block receipts, both nodes, the higher) between its lock card and X counts on both cards; the sampler also samples every producer on the latest card |
+| BX-54 | One node steers the window or the card time | **Fixed**: no card when either irreversible block is >200 behind its head, the two differ by >30 blocks, or the head times differ by >60 s; race publish refuses a card dated outside its leg |
+| BX-55 | One node lifts a producer to the top | **Fixed**: a producer the nodes disagree on counts at the lower read and is listed in the card's `flagged`; Block X holds (then voids) a target whose signer is flagged on its lock card, and skips an after-card that flags it (supersedes the round-2 "higher read" rule) |
+| BX-56 | A lagging check node stops samples | **Fixed**: a future head time is judged against this computer's clock only |
+| BX-63 | Stake reads per target, sequential | **Fixed**: once per node, week and wallet per run, 8 at a time, cached (a failed read is retried, never cached) |
+| BX-57 | One node's supply "1" switches samples off | **Fixed**: the higher supply; an impossible supply (below a producer's VHP) is ignored |
+| BX-58 | Race scores from flagged cards | **Documented**: the race keeps its card (picks were made against it); the card shows its sample count; Block X never uses it |
+| BX-59 | Silent one-node mode | **Fixed**: the recorders refuse without a second node unless `ALLOW_ONE_NODE=yes` (warns every run) |
+| BX-64 | Page's staked line used week_stake ≥ 1 | **Fixed**: the recorder's rule (peak stake ≥ the vault's minimum) |
+| BX-65 | Vault file not checked against the board | **Fixed**: rows must be Staked-board players in board order (points never rising); first/second the week's prize winners, never staked |
+| BX-66 | Move page live on knodegames.com | **Fixed**: it does nothing unless at https://bawcejawn.github.io |
+| BX-67 | Guest play on plain http://knodegames.com | **Fixed**: http only for localhost and 127.0.0.1 |
+| BX-60 | Small items | **Fixed**: dead branch gone, `afterAt` typed, default RPC koinos.armana.io; deploy-hour note in the runbook (cards need ~6 hours of samples) |
+| BX-68 | >255 places all get 1 point | Documented behaviour, unchanged |
+| BX-69 | admin/index.html published | Accepted: a static page with no key; it does nothing without the local server |
+| BX-70 | Move page wording | Unchanged (the erase stays the player's own choice) |
+| BX-71 | Old github.io service worker | Can't be published from this repository (the old address now redirects); documented |
+
+### Part B, sponsor v3 (new build `b21251d4…`, 34,652 bytes, 173 specs)
+
+| ID | Finding | Status |
+|---|---|---|
+| SP-28 | isPlayer read the raw stake (week 0) | **Fixed**: get_player for the current vault week, `active_stake` (field 3); `npm run check` compares the field with the game's ABI |
+| SP-22 | would_pay ignored the call's game | **Fixed**: would_pay takes `game` (field 4); the site sends it (race 7, the Picks game argument) |
+| SP-29 | enable/disable reset the caps | **Fixed**: they change only the switch |
+| SP-30 | disable needed the second node | **Fixed**: disable needs no second node; `RPC_CHECK=off` really means none (config/enable then refuse) |
+| SP-31 | Alert emailed nobody; no wallet Mana check | **Fixed**: runs always, warns when the wallet's Mana is below what today's caps allow, and fails the run at the end so GitHub emails |
+| SP-32 | --testnet could write mainnet files | **Fixed**: testnet paths chosen from `--testnet` first |
+| SP-33 | site-limits treated a failed read as empty | **Fixed**: aborts |
+| SP-24 | Swaps for free wallets | **Owner decision**: Knode Swap never sponsored (contract refuses swaps and approves to the Desk; the site's swap page uses players' own Mana; the upload and config refuse while the live swap page still asks the sponsor) |
+| SP-23 | free_play flag dead | **Fixed**: dead code removed; proto and README describe v3 |
+| SP-25 | Vault genesis hard-coded | Accepted: matches mainnet (`genesisTime` 1792368000000); a different deployment needs a rebuild |
+| SP-34 | Guest message said 00:00 UTC for an hourly refusal | **Fixed**: the sponsor's own reason is passed through |
+| SP-35 | Testnet retried after an included revert | **Fixed**: only refusals before inclusion fall back |
+| SP-36 | Runbook `?key=` | **Fixed** (`#`) |
+| SP-26, SP-27 | check.ts vs v6 ABI; Picks/vault id link | SP-26: the v6 ABI is now in the repo (BX-61); SP-27 documented in `docs/ADMIN.md` |
+| SP-2, SP-3 | Lock-outs remain (Medium) | **Accepted for launch** (owner decisions above); the auditor's attack-model tests for these stay out of the suite |

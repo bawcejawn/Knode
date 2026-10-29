@@ -8,6 +8,7 @@ because changing a contract after upload means a new upload.
 | 1 | Repo Lens audit → Claude fixes → Repo Lens fix-check (Part A Block X, Part B sponsor v3) | you + Claude | – |
 | 2 | Claude allows the v3 build on mainnet in the tool (only after the fix-check) | Claude, with your OK | – |
 | 3 | Build in a clean copy with no keys (audit BX-6) | you | – |
+| 4a | Knode Swap pays its own Mana: `payer sponsor --send`, a pull request to `main` | you + Claude | a few minutes |
 | 4 | Upgrade the Mana sponsor to v3 (dry-run its settings) | you | – |
 | 5 | Upload the Picks contract; `status` on two nodes; retire the Picks key (audit BX-9) | you | minutes |
 | 6 | Sponsor covers Picks: `payer sponsor`, a pull request to `main`, then `config` (audit BX-12, SP-8) | you + Claude | a few minutes |
@@ -46,7 +47,7 @@ certutil -hashfile sponsor\build\release\contract.wasm SHA256
 The two hashes must be:
 
 - Picks `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594`
-- Sponsor v3 `8d515d153ad7df0c7044c8b8cf3154d5fc333e56c9691b499ebd86fb23113dd7`
+- Sponsor v3 `b21251d42beb1c4dd104194c6833d64abe0887c43d9631406765c8c7027aef96`
 
 (or the new ones Claude gives you after the fix-check). If either differs, stop. Then copy the builds into your
 working folder (the one with `.env`):
@@ -63,9 +64,25 @@ certutil -hashfile sponsor\build\release\contract.wasm SHA256
 
 Same two hashes again. Don't install or build the contracts in `C:\kprediction`; the tools there only read the `.wasm`.
 
+## 4a. Knode Swap uses players' own Mana first (owner, 2026-10-29)
+
+Sponsor v3 never pays for swaps, so the live swap page must stop asking the sponsor BEFORE v3 goes on (otherwise
+swaps would be refused until the page changes). The upload refuses while it still asks.
+
+```powershell
+cd C:\kprediction
+npm run sponsor -- payer sponsor
+npm run sponsor -- payer sponsor --send
+```
+
+That edits `game-data/deployment.json` (game pages: the sponsor pays) and `desk-data/deployment.json` (Knode Swap:
+players' own Mana). Tell Claude "payer files ready": Claude opens the pull request to `main` for your OK. Once it is
+merged, wait 5 minutes, then step 4.
+
 ## 4. Mana sponsor v3
 
-The sponsor wallet should hold at least 25,000 KOIN (its Mana covers 5,000 a day).
+The sponsor wallet should hold at least 25,000 KOIN (its Mana covers 5,000 a day). If it holds less, choose a smaller
+`--per-day` below (the hourly check warns when the wallet's Mana is below what today's caps still allow).
 
 ```powershell
 cd C:\kprediction
@@ -73,7 +90,7 @@ npm run sponsor -- status
 npm run sponsor -- upload
 ```
 
-The dry run must name the v3 build `8d515d15…`. Then:
+The dry run must name the v3 build `b21251d4…` and show **Knode Swap page: Mana paid by self**. Then:
 
 ```powershell
 npm run sponsor -- upload --send
@@ -83,10 +100,10 @@ npm run sponsor -- status
 `status` must show the v3 code. Check the settings the sponsor will get (a dry run: nothing is sent):
 
 ```powershell
-npm run sponsor -- config --per-tx 1 --per-player-day 50 --per-player-week 300 --per-day 5000 --free-per-day 2000 --min-vhp 1
+npm run sponsor -- config --per-tx 1 --per-player-day 25 --per-player-week 150 --per-day 5000 --free-per-day 2000 --min-vhp 1
 ```
 
-These are also the defaults, so a plain `config` gives the same (audit SP-1: the tool never keeps old values just
+(25 a day and 150 a week for every wallet, free or staked: owner, 2026-10-29.) These are also the defaults, so a plain `config` gives the same (audit SP-1: the tool never keeps old values just
 because they are on chain); every line shows `old → new`. **No per-action Mana limit yet** (owner, 2026-10-28; audit
 SP-4): every action may ask up to 1 Mana until a full day of real mainnet use has been measured (step 10). The `--send`
 comes in step 6, once the Picks contract exists. If anything ever goes wrong with v3, `upload --send` with the v2
@@ -169,6 +186,11 @@ The last `status` must list **2 Who Signs Block X: ON, every 2400 blocks, locks 
 
 - `PINNED_PICKS` in `wallet.js` set to the contract address (guest picks then go only there).
 - Merge `picks` into `main`; the hourly recorder and the race VHP samples start with it.
+- Audit BX-60: race cards made before the round-3 fixes have no sample count and are never used by Block X, so merge
+  at least 6 hours before game 2 goes on (the samples and cards need that long to fill), or expect the first targets to
+  be voided ("no handicap card").
+- Audit BX-59: the recorders refuse to run on one node; the workflows set `RPC_CHECK` (`api.koinosblocks.com` by
+  default). `ALLOW_ONE_NODE=yes` exists only for an emergency and prints a warning every run.
 - Prizes start with the vault (v6) and `PRIZES_FROM_WEEK`.
 
 ## 10. After a full day of play: per-action Mana limits

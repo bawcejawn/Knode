@@ -4,7 +4,7 @@
  *
  *   npm run sponsor -- status                       the sponsor right now: on/off, caps, KOIN and Mana, today's use
  *   npm run sponsor -- upload [--send]              put the sponsor contract on the sponsor wallet (SPONSOR_WIF)
- *   npm run sponsor -- config [--per-tx 1] [--per-player-day 50] [--per-player-week 300] [--per-day 5000] [--free-per-day 2000] [--min-vhp 1] [--send]
+ *   npm run sponsor -- config [--per-tx 1] [--per-player-day 25] [--per-player-week 150] [--per-day 5000] [--free-per-day 2000] [--min-vhp 1] [--send]
  *                                                   set the caps (in Mana; 1 Mana = 1 KOIN of Mana) and the per-action
  *                                                   Mana limits (sponsor-data/mana-limits.json); keeps on/off as is
  *   npm run sponsor -- mana-limit <game|desk|race|picks>:<action> <most used> --source <text> [--save]
