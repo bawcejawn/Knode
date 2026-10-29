@@ -51,7 +51,7 @@ test (`game/scripts/storage-compat.test.ts`) passing from v4, and the runbook st
 
 ## Known and accepted (website, display only)
 
-- The site keeps a cache of blocks in the browser. It is shared with every other site on `bawcejawn.github.io`
+- The site keeps a cache of blocks in the browser. It was shared with every other site on `bawcejawn.github.io` until the site moved to its own domain, knodegames.com (28 Oct)
   (GitHub Pages gives all of one account's sites the same origin), so another of those sites could change what the
   race and producer pages *show*. It can't change results, the chain or a transaction. A free fix is moving Knode
   to its own GitHub organization (for example `knode.github.io`), which gives it its own origin.
