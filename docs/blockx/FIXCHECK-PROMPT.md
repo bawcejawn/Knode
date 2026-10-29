@@ -31,7 +31,9 @@ testnet (`node picks/scripts/build-testnet.cjs --owner 1JZ5UoH4AU5roCgYEmtJ7G6mC
 2. Knode Swap is never sponsored: the contract refuses any call to the Desk and any approve naming the Desk; the tool
    writes the swap page as players' own Mana and refuses to upload v3 (or send config) while the deployed swap page
    still asks the sponsor (runbook step 4a, before the upgrade).
-3. SP-2 and SP-3 (lock-outs by many wallets) are accepted for launch, with the alert now emailing (SP-31). Your attack-model
+3. The old-address guest move page (`tools/old-origin-guest/`) is deleted: the guest wallets made at
+   `bawcejawn.github.io` before 28 October were empty test wallets. BX-39, BX-66, BX-70 and BX-71 are closed by that.
+4. SP-2 and SP-3 (lock-outs by many wallets) are accepted for launch, with the alert now emailing (SP-31). Your attack-model
    tests for them are not in the suite. The free-prize rule against many wallets is decided before prizes start.
 
 ## What changed since 1c66ddc
@@ -50,7 +52,7 @@ testnet (`node picks/scripts/build-testnet.cjs --owner 1JZ5UoH4AU5roCgYEmtJ7G6mC
 - **Block X** (`bot/games/blockx.ts`, `blockx.js`, `games.yml`, `games-testnet.yml`): BX-61 (`game/abi/kpred-v6.koilib.json`
   committed, `STATE_ABI` first), BX-63 (`vaultReader`, `stakeCache`, `pool`), BX-53 (`scoringVhpMoves`, `vhpInflows`,
   `withMoved`, `MOVE_MARGIN`), BX-55 (`flags`, lock card held/voided, after-card skipped), BX-62/BX-65 (publish check
-  ties the vault file to `board.json` `lastWeek`; a differing re-publish fails), BX-64, BX-66, BX-67.
+  ties the vault file to `board.json` `lastWeek`; a differing re-publish fails), BX-64, BX-67.
 
 ## Look hardest at
 
