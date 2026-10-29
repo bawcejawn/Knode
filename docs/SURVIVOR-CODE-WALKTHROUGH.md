@@ -255,6 +255,22 @@ Any problem becomes a warning line, which GitHub shows on the run.
 ### Lines 385–388: run it
 When started as a program (`npm run survivor`), it connects to the two nodes from the settings and runs once.
 
+### Changes after the Repo Lense re-audit (29 October 2026)
+- The site moved to the repository root (the `picks` branch merged in): `survivor.html`, `survivor.js`,
+  `survivor-math.js`. The testnet page is `/survivor-testnet.html`; the test server only serves the files that page
+  loads, plus media images (the root also holds code and the test keys' folder).
+- Stake readings start only once season day 1 is recorded (S2-1). The 1 VHP rule counts all VHP in the vault
+  (`stake + pending + stake_other` from the v6 `get_player`, S2-2). Vault reads run 8 at a time (`pool`) and season work
+  has a time budget (S2-3). On mainnet seasons need two nodes, and a season day needs a day both nodes confirmed
+  (S2-10, S2-11). `vaultMismatch` stops vault files while the vault's weeks or game 3's seasons don't line up (S2-7,
+  S2-21). The write swaps the whole folder with two renames (SV-A26).
+- Publish check: up to 100,000 producers in a season file; a season file that fails is left out on its own (exit 3);
+  a season must sit at `firstDay + 14 × (season − 1)`, Season 1 on a Monday; a final stake reading must be dated after
+  its week (S2-4, S2-13, S2-18). The publish shell is now tested for real (`tests/audit/survivor-publish-shell.test.mjs`).
+- Page: the chain clock only moves the page clock forward (S2-5); a confirmed pick is listed at once and producers
+  picked twice are flagged (S2-6); "couldn't read your picks" instead of "you're not in" (S2-16); only the newest read
+  writes the list (S2-17).
+
 ### Changes after the Repo Lense audit (28 October 2026)
 Line numbers above are from before these changes; the steps are the same.
 - **Game 3's settings** are read on both nodes, which must agree; `enabled` and `max_picks_per_day` are checked too, and

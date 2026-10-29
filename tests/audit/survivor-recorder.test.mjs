@@ -10,7 +10,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 const APP = process.env.APP || ".";
-const { run, encodeSeason, readRanked, readStaked, otherStakes, vaultFiles, vaultWeekOf } = await import(path.resolve(APP, "bot/games/survivor.ts"));
+const { run, encodeSeason, readRanked, readStaked, vaultMismatch, pool, vaultFiles, vaultWeekOf } = await import(path.resolve(APP, "bot/games/survivor.ts"));
 const S = globalThis.KSurvivor;
 const A = (c) => "1" + c.repeat(33);
 const PRODS = ["A", "B", "C", "D", "E"].map(A);
@@ -60,7 +60,7 @@ async function runs(times, opts = {}, prev = "") {
   let out, r;
   for (const t of times) {
     out = tmp();
-    r = await quiet(() => run({ p: "main", check: "check", prev, out, firstDay: FIRST, picksContract: A("P"), blocksOf: blocksOf(), timeOf, picksOf: picksOf(), rankedOf, gameOf, stakedOf: async () => null, head: headAt(t), ...opts }));
+    r = await quiet(() => run({ p: "main", check: "check", prev, out, firstDay: FIRST, picksContract: A("P"), blocksOf: blocksOf(), timeOf, picksOf: picksOf(), rankedOf, gameOf, stakedOf: async () => null, vaultOf: async () => null, head: headAt(t), ...opts }));
     prev = out;
   }
   return { out, r, read: (f) => JSON.parse(fs.readFileSync(path.join(out, f), "utf8")) };
@@ -252,6 +252,7 @@ test("audit SV-2 and SV-3: a 1,000-player season fits under 2 MB, and a 1,000-wa
   assert.ok(sf.result.prizes.reduce((s, p) => s + Math.round(p.vhp * 1e8), 0) <= 6e8, "at most 6 VHP, counted in 1e-8 units");
   const dir = tmp();
   fs.writeFileSync(path.join(dir, "S001.json"), JSON.stringify(encodeSeason(sf)) + "\n");
+  fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify({ v: 1, updated: "2026-12-01T00:00:00.000Z", firstDay: FIRST, contract: null, seasons: [1] }) + "\n");
   const size = fs.statSync(path.join(dir, "S001.json")).size;
   assert.ok(size < 2 * 1024 * 1024, `S001.json is ${(size / 1048576).toFixed(2)} MB`);
   assert.match(execFileSync("python3", ["-", dir], { input: py }).toString(), /survivor files ok/);
@@ -511,15 +512,102 @@ test("vaultFiles and weekRows: ties keep their points, more than 10 tied for a p
   assert.equal(ranked[0], 255); assert.equal(ranked[254], 1); assert.equal(ranked[299], 1);
 });
 
-test("the 1 VHP rule counts VHP staked in any vault game (v6), not a dust stake", async () => {
+test("Repo Lense S2-2: the 1 VHP rule counts all VHP in the vault (stake_other), including a deposit or move made this week", async () => {
   const VHP = 100000000n;
-  const state = async () => ({ config: { v6_rule_week_plus_one: "3", min_stake: String(VHP) } });
-  const games = async () => [{ id: 1 }, { id: 2 }, { id: 4 }];
-  const table = { [ALICE]: { 4: String(VHP) }, [BOB]: { 2: "1" } };
-  const gamePlayer = async (node, a, g) => ({ active_stake: (table[a] && table[a][g]) || "0" });
-  const others = otherStakes(A("G"), 5, { state, games, gamePlayer });
-  const held = await readRanked("n", [ALICE, BOB, CAROL], "1tok", A("G"), { vhp: async () => ({}), player: async () => ({}), others });
-  assert.deepEqual([...held], [ALICE], "1 VHP staked in Fantasy counts; 1e-8 in Block X doesn't");
-  const before = otherStakes(A("G"), 5, { state: async () => ({ config: { v6_rule_week_plus_one: "0" } }), games, gamePlayer });
-  assert.equal(await before("n", ALICE), 0n, "before v6 there are no other games");
+  const players = { [ALICE]: { stake: "0", pending: "0", stake_other: String(VHP) },        // deposited into Block X mid-week
+    [BOB]: { stake: "0", pending: "0", stake_other: "1" },                                      // dust
+    [CAROL]: { stake: "0", pending: String(VHP / 2n), stake_other: String(VHP / 2n) },          // half and half
+    [DAVE]: {} };
+  const held = await readRanked("n", [ALICE, BOB, CAROL, DAVE], "1tok", A("G"), { vhp: async () => ({}), player: async (n, g, a) => players[a] });
+  assert.deepEqual([...held].sort(), [ALICE, CAROL].sort());
+});
+
+// ── Repo Lense re-audit (29 Oct): S2-1 … S2-25 ──
+test("S2-1: no stake reading is taken (let alone saved final) before season day 1 is recorded", async () => {
+  // Day 1's picks disagree between the nodes until day 10, so day 1 isn't recorded when week 1 ends.
+  let reads = 0;
+  const stakedOf = async (node, who) => { reads++; return new Set(who.filter((a) => a === CAROL)); };
+  const stuck = picksOf(FIRST);
+  const times = [S.dayStart(FIRST - 1) + 3600000];
+  for (let k = 1; k <= 10; k++) times.push(S.dayStart(FIRST + k) + 3600000);
+  const r = await runs(times, { stakedOf, picksOf: stuck });
+  assert.equal(reads, 0);
+  assert.deepEqual(r.read("S001.json").stakes, []);
+  // Day 1 finally agrees: the week-1 reading is taken now, after the week ended, with the real players.
+  const r2 = await runs([S.dayStart(FIRST + 10) + 7200000, S.dayStart(FIRST + 10) + 7260000], { stakedOf }, r.out);
+  const st = r2.read("S001.json").stakes.find((x) => x.week === W1());
+  assert.ok(st && st.final, "final, taken after the week");
+  assert.equal(r2.read("S001.json").who[st.staked[0]], CAROL);
+});
+
+test("S2-10, S2-11: on mainnet a season moves only with two nodes, and only on days both confirmed", async () => {
+  const t = S.dayStart(FIRST + 1) + 3600000, start = S.dayStart(FIRST - 1) + 3600000;
+  const one = await runs([start, start + 60000, start + 120000, start + 180000, t], { check: null });
+  assert.ok(one.r.problems.some((p) => /seasons wait for a second node/.test(p)));
+  assert.ok(!fs.existsSync(path.join(one.out, "S001.json")) || one.read("S001.json").days.length === 0);
+  // A day the second node disputes holds the season at that day.
+  const two = await runs([start, start + 60000, start + 120000, start + 180000, t], { blocksOf: blocksOf(FIRST) });
+  assert.equal(two.read("S001.json").days.length, 0);
+  assert.ok(!two.read("days.json").days.some((x) => x.day === FIRST), "the disputed day isn't saved either");
+});
+
+test("S2-3: reads run 8 at a time; season work stops at the time budget and carries on next run", async () => {
+  let at = 0, most = 0;
+  const out = await pool(Array.from({ length: 50 }, (_, i) => i), 8, async (i) => { at++; most = Math.max(most, at); await new Promise((r) => setTimeout(r, 2)); at--; return i * 2; });
+  assert.equal(most, 8); assert.equal(out[49], 98);
+  await assert.rejects(pool([1, 2, 3], 2, async (i) => { if (i === 2) throw new Error("boom"); return i; }), /boom/);
+  const start = S.dayStart(FIRST - 1) + 3600000;
+  const r = await runs([start, start + 60000, start + 120000, start + 180000, S.dayStart(FIRST + 3) + 3600000], { budgetMs: -1 });
+  assert.ok(r.r.problems.some((p) => /out of time for season work/.test(p)));
+  assert.equal(r.read("S001.json").days.length, 0, "no season day this run");
+  const r2 = await runs([S.dayStart(FIRST + 3) + 3660000], {}, r.out);
+  assert.ok(r2.read("S001.json").days.length > 0, "the next run carries on");
+});
+
+test("S2-7, S2-21: no vault file while the vault counts weeks or Survivor's seasons differently", async () => {
+  const WEEK = 7 * 86400000, G = 20745 * 86400000;
+  const g3 = (from, extra = {}) => ({ genesis: G, weekLen: WEEK, game3: { id: 3, season_weeks: 2, from_week: String(from), staked: true, free_prize: true, ...extra } });
+  assert.equal(vaultMismatch(null, FIRST), "", "vault not v6 yet");
+  assert.equal(vaultMismatch({ genesis: G, weekLen: WEEK, game3: null }, FIRST), "", "game 3 not added yet");
+  assert.equal(vaultMismatch(g3(4), FIRST), "");
+  assert.equal(vaultMismatch(g3(6), FIRST), "", "added later, in step");
+  assert.match(vaultMismatch(g3(3), FIRST), /out of step/);
+  assert.match(vaultMismatch(g3(5), FIRST), /out of step/);
+  assert.match(vaultMismatch(g3(4, { season_weeks: 1 }), FIRST), /1-week seasons/);
+  assert.match(vaultMismatch(g3(4, { staked: false }), FIRST), /staked and free-prize/);
+  assert.match(vaultMismatch({ ...g3(4), genesis: G + 86400000 }, FIRST), /weeks/);
+  const r = await runs([...seasonTimes()], { vaultOf: async () => g3(5) });
+  assert.ok(!fs.existsSync(path.join(r.out, "vault")), "no vault files");
+  assert.ok(r.r.problems.some((p) => /out of step/.test(p)));
+});
+
+test("S2-4, S2-13, S2-18: a bad season file is left out on its own; seasons sit on the calendar; no early final reading", async (t) => {
+  try { execFileSync("python3", ["--version"]); } catch { t.skip("python3 not installed"); return; }
+  const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
+  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const indent = /^(\s*)/.exec(m[1])[1].length, py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
+  const code = (dir) => { try { execFileSync("python3", ["-I", "-", dir], { input: py, stdio: "pipe" }); return 0; } catch (e) { return e.status; } };
+  const r = await runs(seasonTimes());
+  assert.equal(code(r.out), 0);
+  // 600 distinct producers named in picks (junk addresses) are a legitimate file now.
+  const many = copyOut(r.out, (j) => { const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"; for (let i = 0; i < 600; i++) j.prods.push("1" + ("T".repeat(33) + B58[i % 58] + B58[Math.floor(i / 58) % 58]).slice(-33)); });
+  assert.equal(code(many), 0, "more than 500 producers is fine");
+  const moved = copyOut(r.out, (j) => { j.startDay += 7; });
+  assert.equal(code(moved), 3, "a season off the calendar is left out on its own (exit 3)");
+  assert.ok(!fs.existsSync(path.join(moved, "S001.json")) && fs.existsSync(path.join(moved, "days.json")), "only that file goes");
+  assert.ok(!fs.existsSync(path.join(moved, "vault", "W5.json")), "and its vault files with it");
+  const early = copyOut(r.out, (j) => { j.stakes[1].day = j.startDay + 10; });
+  assert.equal(code(early), 3, "a final stake reading dated before its week ended");
+});
+
+test("S2-19, SV-A26: no vault file before week 0; the write keeps last run's files it didn't rewrite and swaps the folder", async () => {
+  const early = S.dayIndex(Date.parse("2026-10-05T00:00:00Z"));      // a Monday two weeks before the vault's week 0
+  assert.ok(vaultWeekOf(early) < 0);
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, "S099.json"), "{}");
+  const r = await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, firstDay: FIRST, picksContract: A("P"), blocksOf: blocksOf(), timeOf, picksOf: picksOf(), rankedOf, gameOf, stakedOf: async () => null, vaultOf: async () => null, head: headAt(S.dayStart(FIRST - 1) + 3600000) }));
+  assert.ok(r);
+  assert.ok(fs.existsSync(path.join(dir, "S099.json")) && fs.existsSync(path.join(dir, "days.json")), "kept and written");
+  const side = path.dirname(path.dirname(dir));
+  assert.ok(!fs.readdirSync(side).some((f) => f.startsWith(".survivor-stage-")), "no side folder left behind");
 });

@@ -53,8 +53,11 @@ that day's picks, or the season's file was lost. New days and handicaps keep com
 1. Open the latest **KnodeGames recorders** run on GitHub (Actions tab). Read the warnings just above the stuck one:
    they say why (nodes disagree, VHP check failed, more than 100,000 picks).
 2. Decide:
-   - **Void the season.** Announce it, then remove its number from `index.json` on the `games-data` branch. Ask Claude
-     to make that change and show it to you first.
+   - **Void the season.** Announce it, then remove its number from `index.json` on the `games-data` branch, and
+     delete its vault files (`survivor/vault/W<week>.json` for the season's two weeks), which the publish job never
+     replaces by itself. If the vault has already sealed one of those weeks, void game 3's week in the vault too
+     (`npm run bot -- game-correct …`, within 24 hours of the seal). Ask Claude to make these changes and show them to
+     you first (Repo Lense S2-14).
    - **Fix the data.** Only while the season's next day is less than 50 days old. If one node was wrong, set the
      repository variable `RPC_CHECK` to another public node and let the recorder catch up (3 days a run). The recorder
      keeps the block counts of the last 60 days only, so a season stuck longer than about 50 days can't catch up by
@@ -68,9 +71,21 @@ right settings with the Picks contract's 48-hour notice, then apply them.
 - **"S001.json is … MB, near or over the 2 MB publish limit"**: a very big season. Over 2 MB, only that file is left
   out of publishing (the page keeps showing the last copy that went out); days, handicaps and Block X still publish. The
   run fails, which emails you. Ask Claude to look at it.
-- **"only one node is read this run"** or **"RPC_CHECK is the same node as RPC"**: set the repository variable
-  `RPC_CHECK` to a second, different node. Days saved meanwhile are checked again on it automatically; a day the second
-  node disagrees with is reported ("saved from one node, and the second node disagrees") for you to look at.
+- **"only one node is read this run"**, **"RPC_CHECK is the same node as RPC"** or **"seasons wait for a second
+  node"**: set the repository variable `RPC_CHECK` to a second, different node. Seasons don't move on one node's word
+  (Repo Lense S2-10, S2-11). Days saved meanwhile are checked again on it automatically; a day the second node disagrees
+  with is reported ("saved from one node, and the second node disagrees") and its season waits at that day ("confirmed
+  on one node only") for you to look at.
+- **"no vault results files are written until it is fixed"**: the vault counts weeks, or game 3's seasons, differently
+  from Survivor (Repo Lense S2-7, S2-21): game 3 needs `season_weeks` 2, staked and free prize, and a `from_week` in step
+  with Season 1 (`floor((FIRST_DAY − 20745) ÷ 7)`, or that plus an even number). Fix game 3 in the vault (48-hour notice)
+  before the season's last week; until then its winners can't be posted.
+- **"out of time for season work this run"**: a very busy season; the run stopped season work in time to save what it
+  did, and the next run carries on (Repo Lense S2-3). If it shows every hour for a day, ask Claude.
+- **"vault week N's stakes were read late"**: after an outage, wallets that didn't change their stake that week are read
+  at today's stake (Repo Lense S2-9). Check the staked list before the vault pays that week.
+- **"Couldn't reach the games-data branch; not recording this run"**: GitHub didn't answer; the run stops instead of
+  starting from nothing (Repo Lense S2-15). It is tried again next hour.
 - **"a change to game 3 is announced"**: someone with the Picks owner key announced new settings. If the warning says
   "once applied, …", cancel the change (`cancel_game_change`) unless you meant it.
 - **"VHP check: …" for the same season day, run after run**: the stake read on the Knode contract keeps failing

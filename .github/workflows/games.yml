@@ -201,7 +201,7 @@ jobs:
           print("games files ok:", d)
           PY
           fi
-          # Exit 3: everything checked out except vault files that couldn't be checked, which it removed (the run fails).
+          # Exit 3: everything else checked out, but a season file or a vault file was left out (removed); the run fails.
           rc=0
           if [ -d "$IN/survivor" ]; then /usr/bin/python3 -I - "$IN/survivor" <<'PY' || rc=$?
           # Shape AND meaning (Repo Lense SV-A4, SV-A13): integers are real integers in range, the result agrees with
@@ -321,7 +321,7 @@ jobs:
               assert set(j) == {"v", "season", "startDay", "who", "prods", "days", "stakes", "result"} and j["v"] == 2 and small(j["season"], 1, 9999) and f == "S%03d.json" % j["season"] and day(j["startDay"]), f
               who, prods = j["who"], j["prods"]
               assert type(who) is list and len(who) <= 100000 and all(isaddr(a) for a in who) and len(set(who)) == len(who), f
-              assert type(prods) is list and len(prods) <= 500 and all(isaddr(a) for a in prods) and len(set(prods)) == len(prods), f
+              assert type(prods) is list and len(prods) <= 100000 and all(isaddr(a) for a in prods) and len(set(prods)) == len(prods), f
               assert type(j["days"]) is list and len(j["days"]) <= 14, f
               w1 = week_of(j["startDay"])
               st = j["stakes"]
@@ -329,6 +329,10 @@ jobs:
               for x in st:
                   assert type(x) is dict and set(x) == {"week", "final", "day", "staked"} and type(x["week"]) is int and x["week"] in (w1, w1 + 1), f
                   assert type(x["final"]) is bool and day(x["day"]) and type(x["staked"]) is list and len(x["staked"]) <= 100000, f
+                  # A reading is final only once taken after its week ended, and only with day 1 recorded (S2-1, S2-18).
+                  k = x["week"] - w1
+                  assert not x["final"] or x["day"] >= j["startDay"] + 7 * (k + 1), f + ": a stake reading final before its week ended"
+                  assert len(j["days"]) >= 1, f + ": stake readings before day 1 is recorded"
                   assert all(small(a, 0, len(who) - 1) for a in x["staked"]) and len(set(x["staked"])) == len(x["staked"]), f
               first = None
               for i, x in enumerate(j["days"]):
@@ -356,8 +360,12 @@ jobs:
               can = lambda p: p["eligible"] and not (p["outN"] is not None and p["log"][p["outN"] - 1] == "n")
               assert all(p["player"] in byA and can(byA[p["player"]]) for p in pz), f
               assert not pz or sum(1 for p in ps if can(p) and sum(p["log"].count(c) for c in "sov") >= 2) >= 3, f
-          seasons = {}
-          for f in os.listdir(d):
+          seasons, dropped = {}, []
+          # index.json first: a season must sit where Season 1's start puts it (Repo Lense S2-13).
+          names = sorted(os.listdir(d), key=lambda f: (f != "index.json", f))
+          assert "index.json" in names, "index.json is missing"
+          first_day = None
+          for f in names:
               if f == "vault": continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"), parse_constant=bad_constant)
               assert type(j) is dict, f
@@ -365,6 +373,8 @@ jobs:
                   assert set(j) == {"v", "updated", "firstDay", "contract", "seasons"} and j["v"] == 1 and iso(j["updated"]), f
                   assert (j["firstDay"] is None or day(j["firstDay"])) and (j["contract"] is None or isaddr(j["contract"])), f
                   assert type(j["seasons"]) is list and all(small(s, 1, 9999) for s in j["seasons"]), f
+                  assert j["firstDay"] is None or (j["firstDay"] - 4) % 7 == 0, f + ": Season 1 must start on a Monday"
+                  first_day = j["firstDay"]
                   continue
               if f == "days.json":
                   assert set(j) == {"v", "updated", "days"} and j["v"] == 1 and iso(j["updated"]) and type(j["days"]) is list and len(j["days"]) <= 60, f
@@ -379,8 +389,15 @@ jobs:
                       assert type(x) is dict and set(x) == {"day", "season", "n", "out", "field"} and day(x["day"]) and nat(x["out"]) and field_ok(x["field"]), f
                       assert (x["season"] is None or small(x["season"], 1, 9999)) and (x["n"] is None or small(x["n"], 1, 14)), f
                   continue
-              season_ok(j, f)
-              seasons[j["season"]] = j
+              # A season file that fails is left out on its own (the published copy stays as it was) and the run fails;
+              # the other files still go out (Repo Lense S2-4: one bad season used to stop all of Survivor).
+              try:
+                  season_ok(j, f)
+                  assert first_day is not None and j["startDay"] == first_day + 14 * (j["season"] - 1), f + ": not where Season 1's start puts it"
+                  seasons[j["season"]] = j
+              except (AssertionError, KeyError, TypeError, ValueError, IndexError) as e:
+                  print("::error::Not publishing survivor/%s this run: %s" % (f, e))
+                  os.remove(os.path.join(d, f)); dropped.append(f)
           # The vault's results files (vault/W<week>.json, Vault v6): game 3, no rows, at most 10 wallets per place, and
           # exactly the winners of the season file published with it. A file whose season file isn't here (left out for
           # size) can't be checked, so it is left out too, and the run fails (exit 3) so it alerts.
@@ -417,7 +434,7 @@ jobs:
               print("::error::Not publishing survivor/vault/%s this run: its season file isn't published with it" % f)
               os.remove(os.path.join(vd, f))
           print("survivor files ok")
-          sys.exit(3 if unchecked else 0)
+          sys.exit(3 if unchecked or dropped else 0)
           PY
           fi
           if [ "$rc" = 3 ]; then failed=1; elif [ "$rc" != 0 ]; then drop survivor "its files don't have the recorder's shape"; fi

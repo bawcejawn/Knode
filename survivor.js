@@ -118,10 +118,12 @@
   // because a missing pick would make a used producer look free (Repo Lense SV-A6).
   // A read that fails is tried once more, and a clean read from the last 3 minutes keeps picking on through one bad
   // pass (fix-check: a busy public node used to switch picking off and on).
-  let mineOk = false, mineWho = null, mineAt = 0;
+  // Repo Lense S2-6: after this page's own pick the grace is dropped (the next read must be clean), and the confirmed
+  // pick goes into the list at once. S2-17: only the newest read may write the list.
+  let mineOk = false, mineWho = null, mineAt = 0, mineSeq = 0;
   const twice = (f) => f().catch(() => new Promise((res) => setTimeout(res, 1500)).then(f));
   async function loadMine() {
-    const who = me();
+    const who = me(), seq = ++mineSeq;
     if (who !== mineWho) { myPicks = new Map(); usage = null; mineOk = false; mineAt = 0; mineWho = who; }
     if (picksContract && who) {
       // Every day of the current season so far (whether you joined, and the producers you already picked, before
@@ -132,7 +134,7 @@
       const got = await Promise.allSettled(days.map((d) => twice(() => picksContract.functions.get_pick({ game: S.GAME_ID, round: String(d), player: who }))
         .then((x) => [d, x.result && x.result.pick && Array.isArray(x.result.pick.producers) && x.result.pick.producers.length ? x.result.pick : null])));
       const use = await Promise.allSettled([twice(() => picksContract.functions.get_usage({ game: S.GAME_ID, player: who }))]);
-      if (me() !== who) return;                                   // the wallet changed while reading
+      if (me() !== who || seq !== mineSeq) return;                // the wallet changed, or a newer read started
       if (got.every((x) => x.status === "fulfilled") && use[0].status === "fulfilled") {
         myPicks = new Map(got.map((x) => x.value).filter(([, p]) => p));
         usage = use[0].value.result || null;
@@ -141,10 +143,23 @@
       try {
         const h = await provider.getHeadInfo();
         const t = Number(h && h.head_block_time);
-        if (t > 0) skew = Math.abs(t - Date.now()) > 30000 ? t - Date.now() : 0;
+        // Only ever forward: a lagging node must not make the page offer a day the chain has already locked (S2-5).
+        if (t > 0) skew = t - Date.now() > 30000 ? t - Date.now() : 0;
       } catch { /* the viewer's clock */ }
     }
     renderDays(true); renderToday(); renderStandings();
+  }
+  /** Producers I picked for two or more days of the same season that the recorder hasn't recorded yet: all but one of
+   *  those picks will cost a life (Repo Lense S2-6: e.g. a second tab). */
+  function doubles() {
+    const seen = new Map(), out = new Set();
+    for (const [d, p] of myPicks) {
+      const sd = S.seasonOf(d), a = p.producers && p.producers[0];
+      if (!sd || !a || (season && season.season === sd.season && d < season.startDay + season.days.length)) continue;
+      const k = `${sd.season}|${a}`;
+      if (seen.has(k)) out.add(a); else seen.set(k, d);
+    }
+    return [...out];
   }
 
   // ── where I stand in the season ──
@@ -197,7 +212,7 @@
       : `Season ${se.season}, day ${se.n}. Join season ${se.season + 1} by picking for its day 1, ${dayName(S.seasonStartDay(se.season + 1))}.`;
     const max = usage ? Number(usage.max_picks_per_day) || S.PICKS_PER_DAY : S.PICKS_PER_DAY, used = usage ? Number(usage.picks_today) || 0 : 0;
     $("picks-left").textContent = usage ? `${Math.max(0, max - used)} of ${max} picks left today` : "";
-    $("picks-who").textContent = !picksContract ? "" : who ? `Picking as ${nameOf(who)}${W.kind === "guest" ? " (guest)" : ""}.${mineOk ? "" : " Couldn't read your picks from the chain yet, so picking is paused; it tries again every minute."}` : "Connect a wallet to pick (Kondor, KOIN Vault or a guest wallet).";
+    $("picks-who").textContent = !picksContract ? "" : who ? `Picking as ${nameOf(who)}${W.kind === "guest" ? " (guest)" : ""}.${mineOk ? "" : " Couldn't read your picks from the chain yet, so picking is paused; it tries again every minute."}${doubles().length ? ` Warning: you picked ${doubles().map(nameOf).join(", ")} for more than one day this season; each producer counts once, so change all but one of those picks or they cost a life.` : ""}` : "Connect a wallet to pick (Kondor, KOIN Vault or a guest wallet).";
     const rows = [];
     for (const d of days) {
       const sd = S.seasonOf(d), f = fieldFor(d), mine = myPicks.get(d), mineP = mine && mine.producers && mine.producers[0];
@@ -210,6 +225,7 @@
       let cell;
       if (!picksContract) cell = el("div", { class: "bx-now", text: "Picks open soon" });
       else if (!sd) cell = el("div", { class: "bx-now", text: "Practice day: no season yet." });
+      else if (who && !mineOk && sd.n > 1) cell = el("div", { class: "bx-now", text: "Couldn't read your picks from the chain yet; retrying every minute." });
       else if (!canPickDay(d)) cell = el("div", { class: "bx-now", text: `You're not in season ${sd.season} (or you're out). Join the next one by picking for its day 1.` });
       else if (!who) cell = el("div", { class: "bx-now", text: mineP ? `Your pick: ${nameOf(mineP)}` : "–" });
       else {
@@ -287,6 +303,7 @@
         if (!onChain) await new Promise((res) => setTimeout(res, 3000));
       }
       drafts.delete(d);
+      if (onChain) { myPicks.set(d, { producers: [producer], changes: mine ? Number(mine.changes || 0) + 1 : 0 }); mineAt = 0; }
       if (onChain) pickModal("ok", "Pick confirmed", [el("p", {}, "Your pick: ", el("b", { text: nameOf(producer) }), ` for ${dayName(d)}.`),
         `It locks ${LOCK_TEXT} (${localTime(S.lockTime(d))} your time). Until then you can change it (up to ${S.MAX_CHANGES} times).`,
         id ? el("p", { class: "ago mono", text: `Transaction ${String(id).slice(0, 18)}…` }) : null].filter(Boolean), [okBtn()]);
@@ -318,8 +335,8 @@
     $("standings-sub").textContent = r.final ? `final after day ${r.endN}` : r.over ? `ended after day ${r.endN}; final once both of its weeks are over and 12 hours have passed` : `after day ${r.endN} of ${S.SEASON_DAYS} · ${inNow} of ${r.players.length} still in`;
     const rows = S.rank(r.players.filter((x) => !!x.staked === (board === "staked")));
     $("board-note").textContent = board === "staked"
-      ? `${rows.length} staked player${rows.length === 1 ? "" : "s"}. Staked players share Survivor's weekly bucket in the vault (the top 30% each week, by these standings); they can't win the free prize.`
-      : `${rows.length} free player${rows.length === 1 ? "" : "s"}. Free players play for the season prize: 4 VHP for 1st and 2 VHP for 2nd.`;
+      ? `${rows.length} staked player${rows.length === 1 ? "" : "s"}. Each week the vault pays the top 30% of that week's staked players (those still in when the week began) from Survivor's bucket; they can't win the free prize.`
+      : `${rows.length} free player${rows.length === 1 ? "" : "s"}. Free players play for the season prize: up to 4 VHP for 1st and 2 VHP for 2nd (less in a week the vault's prize money runs short).`;
     const medal = ["🥇", "🥈"];
     $("prizes").replaceChildren(...(r.final && board === "free" ? r.prizes : []).map((p) => el("div", { class: "champ" }, el("b", { text: `${medal[p.place - 1] || "🥈"} ${fmt(p.vhp, p.vhp % 1 ? 2 : 0)} VHP` }), el("span", { class: "mono", text: nameOf(p.player) }))));
     $("standings-rows").replaceChildren(...rows.slice(0, 100).map((x) => el("tr", { class: `${x.outN === null ? "" : "gone"} ${x.a === who ? "me" : ""}` },
