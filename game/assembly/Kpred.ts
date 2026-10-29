@@ -2144,6 +2144,7 @@ export class Kpred {
     System.require(isAddress(args.to), "address required");
     const t = this.totals.get()!;
     System.require(args.amount > 0 && args.amount <= t.fee_vhp, "more than the fee owed");
+    this.accrue(t);                                 // the fee waiting is part of what produces: measure it before it leaves
     t.fee_vhp -= args.amount;
     this.totals.put(t);
     this.ensureVhp(args.amount);
