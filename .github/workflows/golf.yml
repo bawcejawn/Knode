@@ -186,6 +186,7 @@ jobs:
               oi, ni = load(old, "index.json"), load(new, "index.json")
               assert set(oi["weeks"]) <= set(ni["weeks"]), "the list of weeks can only grow"
               assert all(ni["course"].get(k) == v for k, v in oi["course"].items()), "a game's joining week can't change"
+              assert oi.get("stakedFromWeek") is None or ni["stakedFromWeek"] == oi["stakedFromWeek"], "the first staked week can't change once set"
           for f in os.listdir(old):
               if f.startswith("W") and load(old, f).get("final") is True:
                   assert not os.path.exists(os.path.join(new, f)) or load(new, f) == load(old, f), f + ": a final week can't change"

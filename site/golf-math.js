@@ -16,8 +16,8 @@
  *     the rest                                    double bogey   6
  *     didn't play that game this week            lost ball      7
  * - The field is the wallets that game's own leaderboard ranks (they hold 1 VHP or have a Knode stake) AND that scored
- *   on it that week. Wallets that played but scored nothing don't count, so a crowd of empty or idle wallets can't push
- *   anyone up the table (audit H5). A player outside the field is placed among it as if they were one more player, so
+ *   on it that week. Wallets that played but scored nothing don't count (audit H5). This makes padding a field harder,
+ *   not impossible: wallets that each score a little still count, so staked weeks need a stricter rule before prizes. A player outside the field is placed among it as if they were one more player, so
  *   a player who played but scored nothing gets a double bogey (6): still better than a lost ball.
  * - Players on the same score share the middle of their places, so tied players are treated alike.
  * - A hole with fewer than MIN_FIELD ranked players that week is skipped for everyone. A hole whose results aren't

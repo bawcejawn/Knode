@@ -323,3 +323,43 @@ test("the publish job's history check: final weeks can't change, weeks only grow
   assert.throws(() => execFileSync("python3", [history, b3, old], { stdio: "pipe" }), "joining week changed");
   assert.match(execFileSync("python3", [history, next, tmp("none-")], { encoding: "utf8" }), /golf history ok/, "first publish");
 });
+
+test("a read problem that never clears stops holding the week back 66 hours after it ends (fix-check N1)", async () => {
+  const failing = async () => { throw new Error("node down"); };
+  let prev = tmp("golf-");
+  await run(base({ now: END + 13 * H, out: prev, raceDir: raceDir(), gamesDir: FINAL_GAMES(), questionsOf: failing }));
+  for (const h of [61, 65]) {
+    const out = tmp("golf-");
+    await run(base({ now: END + h * H, prev, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), questionsOf: failing }));
+    assert.equal(readOut(out, "W003.json").final, false, `${h} h`);
+    prev = out;
+  }
+  const out = tmp("golf-");
+  const r = await run(base({ now: END + 67 * H, prev, out, raceDir: raceDir(), gamesDir: FINAL_GAMES(), questionsOf: failing }));
+  const wf = readOut(out, "W003.json");
+  assert.equal(wf.final, true);
+  assert.equal(holeOf(out, "questions").status, "skipped");
+  assert.match(r.problems.join(" "), /made final despite read problems/);
+});
+
+test("practice or staked is fixed when a week is first recorded (fix-check N2)", async () => {
+  const prev = tmp("golf-");
+  await run(base({ stakedFromWeek: null, now: START + DAY, out: prev, raceDir: raceDir(), gamesDir: gamesDir() }));
+  assert.equal(readOut(prev, "W003.json").practice, true);
+  const out = tmp("golf-");
+  await run(base({ stakedFromWeek: W, now: START + 2 * DAY, prev, out, raceDir: raceDir(), gamesDir: gamesDir() }));
+  assert.equal(readOut(out, "W003.json").practice, true, "set mid-week: this week stays practice");
+  assert.equal(readOut(out, "index.json").stakedFromWeek, W);
+});
+
+test("the publish job's history check: the first staked week can't change once set", async (t) => {
+  try { execFileSync("python3", ["--version"]); } catch { t.skip("no python3 here"); return; }
+  const [, history] = checks();
+  const old = tmp("golf-");
+  await run(base({ stakedFromWeek: 5, now: START + DAY, out: old, raceDir: raceDir(), gamesDir: gamesDir() }));
+  const next = copyDir(old);
+  const i = readOut(next, "index.json"); i.stakedFromWeek = 4; write(next, "index.json", i);
+  assert.throws(() => execFileSync("python3", [history, next, old], { stdio: "pipe" }));
+  const same = copyDir(old);
+  assert.match(execFileSync("python3", [history, same, old], { encoding: "utf8" }), /golf history ok/);
+});

@@ -20,8 +20,9 @@
  *  3. Each hole's standings are kept in the week file as they were last read, so a game's board rolling on to a new
  *     week never loses them. A hole that was final once the week ended stays final: a later bad read never undoes it.
  *  4. A week is final 12 hours after it ends once every hole is final and the run read everything without a problem;
- *     a hole still not final 60 hours after the week ends is skipped for everyone (never guessed), so the week's
- *     points reach the vault within its 3-day window. A final week is never recomputed.
+ *     a hole still not final 60 hours after the week ends is skipped for everyone (never guessed), and from 66 hours a
+ *     read problem no longer holds the week back, so the week's points reach the vault within its 3-day window.
+ *     A final week is never recomputed. Whether a week is practice or staked is fixed when it is first recorded.
  *  5. Writes index.json, W<week>.json and board.json (Today and This week: this week so far; Last week; All time:
  *     final weeks only). The publish job checks their shape and pushes them to the data branch.
  * Safety: a previous run's files that exist but can't be read stop the run (never treated as a fresh start).
@@ -42,6 +43,7 @@ const E = process.env;
 const HOUR = 3600000;
 const FINAL_WAIT_MS = 12 * HOUR;              // a week is final 12 hours after it ends (the correction window)
 const DEADLINE_MS = 60 * HOUR;                // a hole not final 60 hours after its week ends is skipped
+const FORCE_MS = 66 * HOUR;                   // after this, a read problem no longer holds the week back (fix-check N1)
 const ONE_VHP = 100000000n;
 const MAX_ROWS = 100000;
 const MAX_PAGES = 2000;                       // question game: up to 100,000 players a week, else the read fails
@@ -193,6 +195,7 @@ export async function run(o: Opts) {
   const PREV = o.prev, OUT = o.out || "games-data/golf";
   const STAKED_FROM = Number.isInteger(o.stakedFromWeek) && (o.stakedFromWeek as number) >= 0 ? (o.stakedFromWeek as number) : null;
   const ruleOf = (w: number) => { const r = G.rule(w, STAKED_FROM); return { ...r, minField: o.minField ?? r.minField }; };
+  const ruleFixed = (practice: boolean) => { const r = G.rule(0, practice ? null : 0); return { ...r, minField: o.minField ?? r.minField }; };
   const sources = (o.sources ?? sourcesFromGames()).filter((s) => READERS[s.reader]);
   const KNODE = o.knodeGame === undefined ? MAINNET_KNODE_GAME || null : o.knodeGame;
   const VHP = o.vhpContract || MAINNET_VHP;
@@ -248,7 +251,8 @@ export async function run(o: Opts) {
     if (!old && known.has(w)) throw new Error(`week ${w} was recorded before but its file can't be read: stopping`);
     if (old && old.final === true) { weeks.set(w, old); continue; }
     const start = M.weekStart(w), end = M.weekStart(w + 1);
-    const R = ruleOf(w);
+    // Practice or staked is fixed when the week is first recorded (fix-check N2).
+    const R = old && typeof old.practice === "boolean" ? ruleFixed(old.practice) : ruleOf(w);
     // The week's holes are fixed once it has been recorded; until then, the live games that joined by this week.
     const ids: string[] = old && old.holes.length ? old.holes.map((h) => h.id) : G.courseFor(w, course, liveIds);
     const holes: HoleRec[] = [];
@@ -257,7 +261,7 @@ export async function run(o: Opts) {
       const was = old?.holes.find((h) => h && h.id === id) ?? null;
       const kept = was && Array.isArray(was.rows) && was.rows.length ? was.rows.map(([a, score, scored, ranked]) => ({ a, score, scored: !!scored, ranked: !!ranked })) : null;
       // Once the week has ended, a hole that was final (or had no game that week) stays as it was.
-      if (was && now >= end && (was.status === "final" || (was.status === "skipped" && was.why.startsWith("no ")))) { holes.push(was); continue; }
+      if (was && now >= end && was.status === "final" && Array.isArray(was.rows)) { holes.push({ ...was, why: "" }); continue; }
       let rd: Read;
       if (!s) rd = { state: "live", rows: [], why: "its game has no reader on this recorder" };
       else {
@@ -293,7 +297,8 @@ export async function run(o: Opts) {
       lost: c.lost, under: c.under, best: c.best, mulligan: c.mulligan,
       holes: c.holes.map((x: any) => [x.id, x.strokes, x.place, x.of]),
     }));
-    const final = now >= end + FINAL_WAIT_MS && !troubled.has(w) && holes.every((h) => h.status !== "live");
+    if (troubled.has(w) && now >= end + FORCE_MS) problems.push(`week ${w}: made final despite read problems (66 hours after it ended); check the run`);
+    const final = now >= end + FINAL_WAIT_MS && (!troubled.has(w) || now >= end + FORCE_MS) && holes.every((h) => h.status !== "live");
     weeks.set(w, { v: 1, week: w, start, end, final, practice: R.practice, holes, cards });
   }
 
@@ -339,7 +344,9 @@ export async function run(o: Opts) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const sf = E.GOLF_STAKED_FROM_WEEK && /^\d{1,4}$/.test(E.GOLF_STAKED_FROM_WEEK) ? Number(E.GOLF_STAKED_FROM_WEEK) : null;
+  const raw = (E.GOLF_STAKED_FROM_WEEK || "").trim();
+  if (raw && !/^\d{1,4}$/.test(raw)) { console.error(`GOLF_STAKED_FROM_WEEK must be a week number, not "${raw}"`); process.exit(1); }
+  const sf = raw ? Number(raw) : null;
   const RPC = E.RPC || "https://koinos.armana.io";
   const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
   run({
