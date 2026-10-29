@@ -43,6 +43,10 @@
     "guest": true
   },
   "vaultGames": {
+    "2": {
+      "name": "Who Signs Block X",
+      "results": "games-data:blockx/vault"
+    },
     "3": {
       "name": "Survivor",
       "results": "games-data:survivor/vault"
