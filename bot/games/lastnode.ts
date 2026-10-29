@@ -38,7 +38,9 @@ let L: any = L0;
 
 const E = process.env;
 const RPC = E.RPC || "https://koinos.armana.io";
-const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
+/** The same node however it is spelled (case, a trailing slash, a default port): fix-check, as picks.ts's sameNode. */
+export const nodeKey = (u: string) => { try { const x = new URL(u); return `${x.protocol}//${x.host.toLowerCase()}${x.pathname.replace(/\/+$/, "")}`; } catch { return String(u).trim().toLowerCase().replace(/\/+$/, ""); } };
+const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && nodeKey(E.RPC_CHECK) !== nodeKey(RPC) ? E.RPC_CHECK : "";
 const LOOKBACK_MS = 3 * 86400000;           // an event not finished 3 days after its start is closed as void
 const MAX_HOURS_PER_RUN = 30;               // a long outage catches up over a few runs
 const CORRECTION_MS = 12 * 3600000;         // a week is final 12 hours after it ends

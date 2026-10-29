@@ -32,12 +32,14 @@
   const H = L.CUT, SEND_MARGIN = 60000;      // H: one cut window (1 hour; 20 minutes in the fast test game)
 
   // Audit LN-5: the page's clock is the chain's (the newest block's time when it was read), not the device's. Stalls
-  // only make a reading older, so the freshest of the last 10 minutes' readings is used.
+  // only make a reading older, so the freshest of the last 10 minutes' readings is used. Readings are anchored to the
+  // page's own steady timer (performance.now), so a device clock that jumps (a phone syncing its time) changes nothing.
+  const mono = () => performance.now();
   const offsets = [];
-  const nowT = () => Date.now() + (offsets.length ? Math.max(...offsets) : 0);
+  const nowT = () => (offsets.length ? mono() + Math.max(...offsets) : Date.now());
   function noteChainTime(tip) {
-    const off = tip - Date.now();
-    if (!Number.isFinite(off) || Math.abs(off) > 3600000) return;     // a clock over an hour out: leave it alone
+    const off = tip - mono();
+    if (!Number.isFinite(off) || Math.abs(tip - Date.now()) > 3600000) return;     // a clock over an hour out: leave it alone
     offsets.push(off); if (offsets.length > 20) offsets.shift();
   }
   // Audit LN-22: the lock and open times of the game as registered in the Picks contract (get_game), so a later
@@ -247,7 +249,9 @@
     // A short note when a cut happens while you watch: once per cut, only within 5 minutes of it, never covering the race.
     const fresh = (c) => now - (df.start + c.at * H) < 5 * 60000;
     // Audit LN-4: whether the cut was yours is told only once your picks have been read (else the note waits for them).
-    if (seen && seen.day === ev.day && (!me() || !picksContract || mineOk)) {
+    // (fix-check) While the note waits, the cut isn't marked as seen, so the note still comes once the picks are read.
+    const holdNote = !!(me() && picksContract && !mineOk && just && fresh(just));
+    if (seen && seen.day === ev.day && !holdNote) {
       if (res.done && !seen.done && !announced.has(`${ev.day}:won`) && fresh(res.cuts[res.cuts.length - 1]) && announced.add(`${ev.day}:won`)) flash(`${nameOf(res.winner)} wins`, mine && mine.rode ? `You rode it home: +${mine.points} points` : "The last node standing", "gold");
       else if (just && !announced.has(`${ev.day}:${res.cuts.length}`) && fresh(just) && announced.add(`${ev.day}:${res.cuts.length}`)) {
         const hit = mine && mine.entered && (mine.path[mine.path.length - 1].a === just.a || (mine.out && mine.out === res.cuts.length));
@@ -255,7 +259,7 @@
         flash(`${nameOf(just.a)} is out`, backedUp ? `Your backup kicked in: now riding ${nameOf(mine.node)}` : hit ? (jumpOpen(df, res, ev) ? "That was your node. Jump now!" : "That was your node.") : mine && mine.entered && !mine.out ? `You survived cut ${res.cuts.length}` : `Cut ${res.cuts.length} of ${n - 1}`, hit || backedUp ? "you" : "");
       }
     }
-    seen = { day: ev.day, cuts: Math.max(res.cuts.length, seen && seen.day === ev.day ? seen.cuts : 0), done: res.done };
+    if (!holdNote) seen = { day: ev.day, cuts: Math.max(res.cuts.length, seen && seen.day === ev.day ? seen.cuts : 0), done: res.done };
     renderField(df);
     renderMe(ev, df, res, mine);
   }

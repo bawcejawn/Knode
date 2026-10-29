@@ -159,6 +159,9 @@ jobs:
           # Audit LN-1: only LAST week's file, and only while the recorder may write it (from 12 h after the week ends, when
           # it is final, to the Vault's 3-day limit; a few minutes' leeway for the runner's clock against chain time). Its
           # rows must be the final "Last week" board's players, in the board's order. Nothing else can reach the Vault.
+          # A file that arrives after the window (a long queue on GitHub) is left out with a warning, not the whole run.
+          # The push step below also checks the rows against what earlier runs already PUBLISHED (fix-check: one bad run
+          # can't bring its own board).
           WEEK0 = datetime.datetime(2026, 10, 19, tzinfo=datetime.timezone.utc).timestamp() * 1000
           WEEK, HOUR = 7 * 86400000, 3600000
           now = float(os.environ.get("KG_TEST_NOW") or datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)  # tests only
@@ -173,7 +176,8 @@ jobs:
                   assert type(j) is dict and set(j) == {"game", "week", "final", "rows", "first", "second"}, f
                   assert type(j["game"]) is int and j["game"] == 13 and nat(j["week"]) and f == "W%d.json" % j["week"] and j["final"] is True, f
                   assert j["week"] == now_w - 1, "%s: only last week's file (week %d) may be published" % (f, now_w - 1)
-                  assert ws + 12 * HOUR - 10 * 60000 <= now < ws + 3 * 24 * HOUR + HOUR, "%s: outside the vault file's window" % f
+                  assert now >= ws + 12 * HOUR, "%s: before the week is final" % f
+                  if now >= ws + 3 * 24 * HOUR + HOUR: print("::warning::%s arrived after the Vault's 3 days; not published." % f); skip.append(f); continue
                   assert j["first"] == [] and j["second"] == [], f
                   rs = j["rows"]
                   assert type(rs) is list and len(rs) <= 100000 and all(type(x) is dict and set(x) == {"player", "points"} and isa(x["player"]) and type(x["points"]) is int and 1 <= x["points"] <= 255 for x in rs), f
@@ -205,6 +209,35 @@ jobs:
           print("lastnode files ok")
           PY
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # The vault file's rows against the published "Last week" board and the published day files of that week:
+          # exit 3 = not final there yet (try next run), 1 = a mismatch (not published, the run fails).
+          cat > vaultcheck.py <<'PY'
+          import json, subprocess, sys, datetime
+          parent, f = sys.argv[1], sys.argv[2]
+          show = lambda p: subprocess.run(["git", "show", "%s:%s" % (parent, p)], capture_output=True, text=True)
+          j = json.load(open(f, encoding="utf-8")); w = j["week"]
+          r = show("lastnode/board.json")
+          if r.returncode: sys.exit(3)
+          lw = json.loads(r.stdout).get("lastWeek")
+          if type(lw) is not dict or lw.get("week") != w or lw.get("final") is not True: sys.exit(3)
+          rows = [x for x in lw.get("rows") or [] if type(x) is dict and type(x.get("pts")) is int and x["pts"] >= 1]
+          order = {x["a"]: i for i, x in enumerate(rows)}
+          rs = j["rows"]
+          if not all(x["player"] in order for x in rs): sys.exit("::error::%s: a row that is not on the published Last week board" % f)
+          if not all(order[rs[i]["player"]] < order[rs[i + 1]["player"]] for i in range(len(rs) - 1)): sys.exit("::error::%s: rows not in the published board's order" % f)
+          # The published board's points must be the sum of the published day files of that week.
+          start = datetime.datetime(2026, 10, 19, tzinfo=datetime.timezone.utc) + datetime.timedelta(weeks=w)
+          pts = {}
+          for k in range(7):
+              d = show("lastnode/D%s.json" % (start + datetime.timedelta(days=k)).strftime("%Y-%m-%d"))
+              if d.returncode: continue
+              dj = json.loads(d.stdout)
+              if dj.get("week") != w or "void" in dj: continue
+              for p in dj.get("players") or []:
+                  if type(p) is dict and type(p.get("points")) is int: pts[p.get("a")] = pts.get(p.get("a"), 0) + p["points"]
+          bad = [x["player"] for x in rs if pts.get(x["player"], 0) != rows[order[x["player"]]]["pts"]]
+          if bad: sys.exit("::error::%s: the published day files don't give the board's points for %s" % (f, bad[0]))
+          PY
           git init -q work && cd work
           export GIT_AUTHOR_NAME=kpred-bot GIT_AUTHOR_EMAIL=kpred-bot@users.noreply.github.com GIT_COMMITTER_NAME=kpred-bot GIT_COMMITTER_EMAIL=kpred-bot@users.noreply.github.com
           # Other games publish to the same branch: if a push loses the race, take the new branch tip and try again.
@@ -225,7 +258,7 @@ jobs:
             done
             # A vault file is final: once published it is never replaced (the Vault posts it within the hour). Audit LN-1: a
             # different copy is an error you are told about (the run fails after publishing the rest).
-            differs=""
+            differs=""; vbad=""
             for f in "$IN"/lastnode/vault/W*.json; do
               [ -e "$f" ] || continue
               name="lastnode/vault/$(basename "$f")"
@@ -235,8 +268,16 @@ jobs:
                 if [ "$old" != "$blob" ]; then differs="$differs $name"; fi
                 continue
               fi
+              # First publish of this week's file: its rows must match the board and day files already on games-data.
+              if [ -z "$parent" ]; then echo "Holding $name: nothing published yet to check it against."; continue; fi
+              rc=0; /usr/bin/python3 -I ../vaultcheck.py "$parent" "$f" || rc=$?
+              if [ "$rc" = 3 ]; then echo "Holding $name until the final Last week board is published (next run)."; continue; fi
+              if [ "$rc" != 0 ]; then vbad="$vbad $name"; continue; fi
               git update-index --add --cacheinfo 100644 "$blob" "$name"
             done
+            # A vault file that doesn't match the published history: nothing from this run is published (its board and
+            # day files are suspect too).
+            if [ -n "$vbad" ]; then echo "::error::Refusing to publish this run: the vault file doesn't match what is already published:$vbad"; exit 1; fi
             tree=$(git write-tree)
             if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; nochange=1; break; fi
             commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "games: last node standing")

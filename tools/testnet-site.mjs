@@ -157,7 +157,10 @@ function recordAll() {
     const c = spawn(process.execPath, ["--import", "tsx", jobs[i][0], "--testnet", "--game", String(jobs[i][1])], { cwd: ROOT, stdio: "inherit" });
     // Audit LN-25: a recorder that hangs is stopped after 4 minutes, so the next ones still run.
     const t = setTimeout(() => { console.log(`(${jobs[i][0]} game ${jobs[i][1]} took over 4 minutes; stopped)`); c.kill(); }, 4 * 60000);
-    c.on("exit", () => { clearTimeout(t); one(i + 1); });
+    let done = false;
+    const next = () => { if (done) return; done = true; clearTimeout(t); one(i + 1); };
+    c.on("exit", next);
+    c.on("error", (e) => { console.log(`(couldn't start ${jobs[i][0]}: ${e.message})`); next(); });   // never stuck as "still going"
   };
   recording = true;
   console.log(`\n[${new Date().toISOString()}] recording ${jobs.map(([f, id]) => `${f.includes("lastnode") ? "Last Node" : "Block X"} ${id}`).join(", ")}`);

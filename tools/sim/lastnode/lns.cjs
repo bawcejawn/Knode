@@ -1,4 +1,4 @@
-require("../../../site/race-math.js");
+require("../../../race-math.js");
 const M = globalThis.KRaceMath;
 const w = require(require("path").resolve(process.env.RACE_W || "W001.json"));
 let card=null; for (const r of w.races) for (const c of (r.cards||[])) if (c) card=c;

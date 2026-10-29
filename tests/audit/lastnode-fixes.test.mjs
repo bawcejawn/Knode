@@ -68,12 +68,15 @@ test("LN-4: picks are swapped in only after every read worked; a failed read kee
   assert.match(body, /if \(who !== mineWho\) \{ drafts\.clear\(\); myPicks\.clear\(\);/);
   assert.match(body, /mineErr = true;[\s\S]*setTimeout\(\(\) => loadMine\(\)\.then\(render\), 8000\)/);
   assert.match(page, /if \(!mineOk\) parts\.push\(.*Couldn't read your picks\. Retrying…/);
-  assert.match(page, /if \(seen && seen\.day === ev\.day && \(!me\(\) \|\| !picksContract \|\| mineOk\)\)/, "the cut note waits for your picks");
+  assert.match(page, /const holdNote = !!\(me\(\) && picksContract && !mineOk && just && fresh\(just\)\);/, "the cut note waits for your picks");
+  assert.match(page, /if \(seen && seen\.day === ev\.day && !holdNote\)/);
+  assert.match(page, /if \(!holdNote\) seen = /, "and the cut isn't marked seen while it waits (fix-check)");
 });
 
 test("LN-5: the page's clock is the chain's (freshest reading of the newest block's time)", () => {
-  assert.equal((page.match(/Date\.now\(\)/g) || []).length, 2, "Date.now only in nowT and the offset reading");
-  assert.match(page, /const nowT = \(\) => Date\.now\(\) \+ \(offsets\.length \? Math\.max\(\.\.\.offsets\) : 0\)/);
+  assert.match(page, /const nowT = \(\) => \(offsets\.length \? mono\(\) \+ Math\.max\(\.\.\.offsets\) : Date\.now\(\)\)/);
+  assert.match(page, /const off = tip - mono\(\);/, "anchored to the steady timer, so a device clock jump changes nothing (fix-check)");
+  assert.equal((page.match(/Date\.now\(\)/g) || []).length, 2, "Date.now only before the first reading and in the sanity check");
   assert.match(page, /noteChainTime\(B\.ts\[B\.ts\.length - 1\]\)/);
 });
 
@@ -129,7 +132,8 @@ test("LN-26: the testnet recorder uses its own env names and writes only inside 
 test("LN-25: one hung recorder is stopped, so the local loop keeps going", () => {
   const src = fs.readFileSync(path.resolve(APP, "tools/testnet-site.mjs"), "utf8");
   assert.match(src, /c\.kill\(\); \}, 4 \* 60000\)/);
-  assert.match(src, /c\.on\("exit", \(\) => \{ clearTimeout\(t\); one\(i \+ 1\); \}\)/);
+  assert.match(src, /c\.on\("exit", next\);/);
+  assert.match(src, /c\.on\("error", /, "a recorder that can't start doesn't stop later runs");
 });
 
 test("LN-3: the runbook uses a separate clone with no mainnet keys and installs without scripts", () => {
@@ -137,5 +141,20 @@ test("LN-3: the runbook uses a separate clone with no mainnet keys and installs 
   assert.match(doc, /C:\\kprediction-lns/);
   assert.match(doc, /npm ci --ignore-scripts/);
   assert.ok(!/^\s*npm ci\s*$/m.test(doc), "no plain npm ci");
+});
+test("LN-19: week 0 is the vault's genesis in the rules, the publish check and deployment.json", () => {
+  const dep = JSON.parse(fs.readFileSync(path.resolve(APP, "game-data/deployment.json"), "utf8"));
+  assert.equal(L.GENESIS, dep.genesisTime); assert.equal(L.WEEK, dep.weekLength);
+  const yml = fs.readFileSync(path.resolve(APP, ".github/workflows/lastnode.yml"), "utf8");
+  assert.equal(Date.UTC(2026, 9, 19), dep.genesisTime);
+  assert.match(yml, /WEEK0 = datetime\.datetime\(2026, 10, 19, tzinfo=datetime\.timezone\.utc\)/);
+  assert.match(yml, /start = datetime\.datetime\(2026, 10, 19, tzinfo=datetime\.timezone\.utc\) \+ datetime\.timedelta\(weeks=w\)/);
+});
+
+test("fix-check: the two mainnet nodes are compared however they are spelled", async () => {
+  const { nodeKey } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+  assert.equal(nodeKey("https://koinos.armana.io/"), nodeKey("https://KOINOS.armana.io"));
+  assert.equal(nodeKey("https://koinos.armana.io:443"), nodeKey("https://koinos.armana.io"));
+  assert.notEqual(nodeKey("https://koinos.armana.io"), nodeKey("https://api.koinosblocks.com"));
 });
 void os;
