@@ -7,7 +7,7 @@ mainnet also needs `CONFIRM_MAINNET=yes` in `.env`. Run everything in PowerShell
 |---|---|
 | Contract | `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr` (the game; it becomes the vault, same address) |
 | Live code | `c17066ae988d204fd43d43f662ad87fcdc38170419943c20b5164a5bd34dd784` (v5, uploaded 2026-10-28) |
-| **New code** | **set after the audits' fixes** (today's build: `ea914c84…9364`, 81,910 bytes; it will change) |
+| **New code** | **set after the audits' fixes** (today's build after the audit fixes: `5ff7366b…8010`, 85,215 bytes; it changes again only if the fix-check asks for more) |
 | Timelock | 48 h after `schedule`, then 7 days to upload |
 | Upload paid by | the owner wallet: about **91 KOIN of Mana** (the tool checks it) |
 | Design | `docs/V6-PLAN.md`; owner explainer: the Docs page "KnodeGames Vault: how it works" |
@@ -110,7 +110,7 @@ Each game shows "from week N", the coming Monday.
   - `npm run bot -- games` shows each game's week.
 - **Tuesday to Thursday:** the bot posts each game's results once its recorder publishes them, then seals them.
   - You have 24 hours after the seal to correct anything: `game-correct`, `game-unprize` or `game-void`.
-  - The bot finalizes each week 12 hours after the seal (or after your last correction). Winners then claim.
+  - The bot finalizes each week 24 hours after the seal (12 hours after your last correction, if later). Once finalizing has started, nothing can be corrected. Winners then claim.
 - **Fee:** `npm run bot -- claim-fee-vhp all --send` collects the 5% in VHP. The KOIN fee from v5 weeks is still `claim-fee`.
 
 ## If something goes wrong
@@ -120,4 +120,25 @@ Each game shows "from week N", the coming Monday.
 - **Bad results:** `game-correct <id> <week> <player> <points> --send` within 24 hours of the seal.
 - **Deposits:** `npm run bot -- pause on --send` stops new deposits and moves. Withdrawals and claims never stop.
 - **Stolen bot key:** `npm run bot -- admin set_operator operator=<new address> --as owner --send`. A stolen bot key can, at worst, misdirect one week's bucket or prize in one game, which you can correct. It can never touch stakes.
-- **Rollback:** another upgrade, with the same 48-hour notice, scheduling the v5 fingerprint. **Only safe before other games take stakes**: v5 can't see stakes in other games. Once they do, stop those games first and have their players withdraw, or move their stake back to the question game, and claim.
+- **Never roll back to v5.** The vault refuses to schedule v5's (or v3's) fingerprint: that code can't see stakes in other games or what's owed in VHP.
+
+## Emergency: the withdrawals-only build
+If something is wrong and everything must stop, upgrade to the withdrawals-only build. It keeps the same address and
+storage and only lets money out: every stake (`withdraw`, `withdraw_from`), prizes of finished weeks, the seed and
+your fee. Deposits, moves, answers, results, closes and finalizing are refused. New block rewards wait in the vault
+for the fixed build.
+
+1. Build it and note its fingerprint (keep it with this runbook):
+   ```
+   cd game; npm run build:safe; cd ..
+   ```
+   It prints `sha256 …` for `game\build\safe\contract.wasm`, and rebuilds the normal build afterwards.
+2. Stop new money at once while the 48 hours run: `npm run bot -- pause on --send`, and `game-stop <id> --send` for any game that misbehaves.
+3. Announce it: `npm run bot -- upgrade schedule --safe`, then again with `--send`.
+4. 48 hours later: `npm run bot -- upgrade apply --safe`, then again with `--send`.
+5. Tell players on the site: withdraw any time; claims for finished weeks work.
+6. Going back: fix the bug, build normally, and upgrade again the usual way (48 hours).
+
+## Mana (before announcing, on testnet)
+Measure what the heaviest calls cost with 13 games (audit V6-12): a close with 13 games, an answer that closes and
+finalizes a week, a 50-row `post_results`, and a 500-place finalize page. Each must fit the sponsor's per-call limit.

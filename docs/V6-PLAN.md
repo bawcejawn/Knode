@@ -87,15 +87,31 @@ are closed and paid by the v5 code paths unchanged. The per-game stake accumulat
 |---|---|---|
 | post results / prize winners | after the week ends, until the week's results deadline (week end + 3 days) | operator |
 | seal | once posting is complete | operator |
-| correct a player's points, remove a winner, or void the game's week | until 24 h after the seal (unsealed: until the deadline) | owner |
-| finalize | after the vault week is closed, and 12 h after both the seal and the last correction | anyone |
+| correct a player's points, remove a winner, or void the game's week | from the week's end until 24 h after the seal (unsealed: until the deadline), and never once finalizing has started | owner |
+| finalize | after the vault week is closed, 24 h after the seal (the correction window has closed) and 12 h after the last correction; later pages at any time | anyone |
 | roll over | not sealed by the deadline: anyone may finalize it as "no results"; the bucket rolls over within the game | anyone |
 
 One game's missing results never hold up another game or the question game.
 
 ## Claims
 `claim_game(player, game, week)` pays a staked winner or a free-prize winner. Unclaimed rewards never expire.
-Every claim ends with `assertSolvent`.
+Every claim is capped by its own week's pot (a game week: its bucket plus prize; a question week: its pot), and ends
+with `assertSolvent`, which is computed in 128 bits. Every counter of what the vault owes refuses to go below zero.
+
+## Late closes
+A week closes once someone sends a transaction after its close time (the hourly bot does). If closes fall behind,
+the oldest open week measures all the gain since the last close, splits it by that week's games and funds one week of
+prizes; the weeks after it close with no gain. Nothing is lost, but the gain lands in one week. The bot alerts when a
+close is overdue.
+
+## Upgrades and the emergency build
+- The vault refuses to schedule the game's code from before the vault (v3 `917708a7…`, v5 `c17066ae…`): that code
+  can't see stakes in other games or the fee and rollovers owed in VHP. **Never roll back to v5.**
+- The emergency target is the **withdrawals-only build** (`npm run build:safe`): the same storage and code with
+  `SAFE_MODE` on. It refuses deposits, moves, answers, results, closes and finalizing, and keeps open every way money
+  leaves: `withdraw`, `withdraw_from`, claims of finished weeks, the seed withdrawal, the fee, and a later upgrade back
+  to a fixed normal build. Rewards that arrive while it runs stay in the vault, owed to nobody yet; the next normal
+  build's first close splits them.
 
 ## Compatibility
 - `get_player`, `get_state` and every v5 method keep their arguments and results. New fields are appended only.
@@ -120,3 +136,22 @@ Every claim ends with `assertSolvent`.
 | 7 | Stopped game | withdrawals open; its VHP's rewards go to the running games |
 | 8 | Unclaimed rewards | never expire |
 | 9 | Results deadline | 3 days after the week; then the bucket rolls over in its game |
+| 10 | Unfilled 1st place | 2nd places still get their third; 1st's part goes back to the pool (2026-10-28) |
+| 11 | Emergency | a withdrawals-only build is kept ready, so funds can always leave even if everything is shut down (2026-10-28) |
+
+## RepoLens audit fixes (2026-10-28, `claude/audit-vault-v6-report.md`)
+| Finding | Fix |
+|---|---|
+| V6-1 Critical: a correction between finalize pages overpaid a week | finalizing starts only after the correction window; corrections and voids refused once it starts; per-pot claim caps |
+| V6-2 High: rollback to v5 | v3/v5 fingerprints refused; withdrawals-only build as the emergency target |
+| V6-3 High: weight lost after 4 quiet weeks | every unclosed week a game passes keeps its weight; also on restart |
+| V6-4 Medium: wrap hid an overdraw | checked subtractions; u128 liabilities and solvency check |
+| V6-5 Medium: void without limits | only a past week the game earned, in the correction window, before finalizing |
+| V6-6 Medium: restart reset the earning week | restart in the last earning week keeps running; after a gap, only once earned weeks are closed, and they keep their results |
+| V6-7 Medium: new minimum folded early | folded only after the other games' last week under the old minimum is past corrections |
+| V6-8 Low: 12 h to react | finalizing waits the full 24 h |
+| V6-9 Low: 2nd with no 1st | 2nd gets its third |
+| V6-10 Low: staked flag dropped with stake | refused |
+| V6-11 Low: late closes | documented above |
+| V6-12 Low: Mana not measured | measured on testnet before the upgrade (owner task) |
+| V6-13 Low: tests | audit tests, 13-game close, late closes, safe mode, a conservation fuzz (`bot/vault-fuzz.test.ts`), check.ts lists the vault methods |

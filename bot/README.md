@@ -125,8 +125,8 @@ Example, adding Who Signs Block X (game 2, free prize):
 `npm run bot -- game-apply 2 --send`. Survivor adds `--season 2` (its prize is paid once every 2 weeks).
 
 **Results files.** The hourly bot posts each game's week once that game's recorder has published it as final, then
-seals it. The owner then has 24 hours to correct anything, and anyone can finalize 12 hours after the seal and the
-last correction. Results are due 3 days after the week ends; a week with none by then rolls over. Each game says
+seals it. The owner then has 24 hours to correct anything, and anyone can finalize once those 24 hours are over and
+the last correction has stood for 12 hours. Results are due 3 days after the week ends; a week with none by then rolls over. Each game says
 where its files are in `game-data/deployment.json`:
 
 ```json

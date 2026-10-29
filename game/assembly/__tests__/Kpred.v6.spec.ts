@@ -4,7 +4,7 @@
  * exit. MockVM; in-contract test ledger. Run: npm test
  */
 import { Base58, MockVM, authority, chain, System, protocol } from "@koinos/sdk-as";
-import { Kpred, testSetInitV6Rule, testSetFinalizePage } from "../Kpred";
+import { Kpred, testSetInitV6Rule, testSetFinalizePage, testSetSafeMode } from "../Kpred";
 import { Tokens } from "../Tokens";
 import { kpred } from "../proto/kpred";
 
@@ -1110,5 +1110,63 @@ describe("v6 audit fixes", () => {
     expect(k.get_week(new kpred.get_week_arguments(2)).week!.gain).toBe(0);
     expect(k.get_week(new kpred.get_week_arguments(3)).week!.gain).toBe(0);
     k.assertSolvent();
+  });
+});
+
+describe("v6 withdrawals-only build (emergency)", () => {
+  it("refuses everything that moves the game on, and lets every stake, finished reward, the seed and the fee out", () => {
+    const k = setup();
+    gK = k;
+    playG2Week1(k);
+    depositQ(k, F, 7 * VHP);
+    seedIn(k, 50 * VHP);
+    closeWeek(k, 1);
+    postRows(k, G2, 1, [row(A, 4), row(B, 9)]);
+    seal(k, G2, 1);
+    at(weekEnd(1) + CLOSE + 1 + 2 * CLOSE);
+    nobody();
+    k.finalize_game_week(new kpred.finalize_game_week_arguments(G2, 1));
+    MockVM.commitTransaction();
+    give(VHP_TAG, CONTRACT, 30 * VHP);             // rewards keep arriving; nothing distributes them in safe mode
+    testSetSafeMode(true);
+    at(weekEnd(2) + CLOSE + 1);
+    gWho = E; gGame = G2; gWeek = 2;
+    as(E);
+    expect(() => { gK!.deposit_vhp(new kpred.deposit_vhp_arguments(gWho, VHP)); }).toThrow();
+    expect(() => { gK!.deposit_to(new kpred.deposit_to_arguments(gWho, gGame, VHP, false)); }).toThrow();
+    gWho = A;
+    as(A);
+    expect(() => { gK!.move_stake(new kpred.move_stake_arguments(gWho, gGame, 1, VHP)); }).toThrow();
+    nobody();
+    expect(() => { gK!.close_week(new kpred.close_week_arguments(gWeek)); }).toThrow();
+    as(OPERATOR);
+    expect(() => { gK!.post_results(new kpred.post_results_arguments(gGame, gWeek, [row(gWho, 3)])); }).toThrow();
+    as(OWNER);
+    expect(() => { gK!.propose_game(new kpred.propose_game_arguments(5, "New", true, false)); }).toThrow();
+    // Out: B's finished prize, every stake, the seed, the fee.
+    expect(claimG(k, G2, 1, B)).toBe(gweek(k, G2, 1).bucket);
+    const before = vhpOf(A);
+    as(A); k.withdraw_from(new kpred.withdraw_from_arguments(A, G2, 20 * VHP));
+    as(B); k.withdraw_from(new kpred.withdraw_from_arguments(B, G2, 10 * VHP));
+    as(C); k.withdraw_from(new kpred.withdraw_from_arguments(C, G2, 5 * VHP));
+    as(D); k.withdraw_from(new kpred.withdraw_from_arguments(D, G2, 1 * VHP));
+    as(F); k.withdraw(new kpred.withdraw_arguments(F, 7 * VHP));
+    MockVM.commitTransaction();
+    expect(vhpOf(A) - before).toBe(20 * VHP);
+    as(SEED);
+    k.request_seed_withdrawal(new kpred.request_seed_withdrawal_arguments(50 * VHP, 0));
+    at(weekEnd(2) + CLOSE + 1 + LOCK + 1);
+    as(SEED);
+    k.execute_seed_withdrawal(new kpred.execute_seed_withdrawal_arguments());
+    as(OWNER);
+    const fee = k.totals.get()!.fee_vhp;
+    if (fee > 0) k.claim_fee_vhp(new kpred.claim_fee_vhp_arguments(OWNER, fee));
+    const r = k.schedule_upgrade(new kpred.schedule_upgrade_arguments(hexBytes("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")));
+    expect(r.eta > 0).toBe(true);                  // the way back to the normal build stays open
+    const t = k.totals.get()!;
+    expect(t.total_stake).toBe(0);
+    expect(t.seed_vhp).toBe(0);
+    k.assertSolvent();
+    testSetSafeMode(false);
   });
 });

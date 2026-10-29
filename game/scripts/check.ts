@@ -20,6 +20,7 @@ ok(!/\b(i32|i64)\.extend(8|16|32)_s\b/.test(wat), "no sign-extension instruction
 const marker = Buffer.from("TEST LEDGER", "utf16le");
 const bin = fs.existsSync(WASM) ? fs.readFileSync(WASM) : Buffer.alloc(0);
 ok(bin.length > 0 && bin.indexOf(marker) === -1, "production build (the test ledger is NOT included)");
+ok(/SAFE_MODE: bool = false;/.test(fs.readFileSync("assembly/Mode.ts", "utf8")), "the normal build, not the withdrawals-only one (assembly/Mode.ts)");
 
 ok(fs.existsSync(ABI), `${ABI} exists`);
 const abi = fs.existsSync(ABI) ? JSON.parse(fs.readFileSync(ABI, "utf8")) : { methods: {} };

@@ -1122,6 +1122,7 @@ async function logLiveProduction(ctx: Ctx, lib: number, nowMs: number) {
 // ═══════════════════════════════ deploy ═══════════════════════════════
 
 const WASM = "game/build/release/contract.wasm";
+const SAFE_WASM = "game/build/safe/contract.wasm";   // the withdrawals-only emergency build (npm run build:safe)
 
 // Koinos mainnet system contracts (KOIN and VHP confirmed against the explorer). The game contract itself never uses
 // these: on-chain it asks the chain for "koin", "vhp" and "pob" by name. The bot only needs KOIN and VHP to approve
@@ -1288,9 +1289,11 @@ async function deploy(send: boolean) {
 // (stakes, weeks, the seed) stays. Steps:
 //   upgrade status            what is announced, and whether the local build matches it
 //   upgrade schedule          announce the local build (game/build/release/contract.wasm); the 48 hours start
+//                             add --safe (to every step) for the withdrawals-only build, game/build/safe/contract.wasm
 //   upgrade apply             after the 48 hours: upload exactly that build, then clear the notice
 //   upgrade cancel            withdraw the announcement
-async function upgrade(sub: string | undefined, send: boolean, botPays = false) {
+async function upgrade(sub: string | undefined, send: boolean, botPays = false, safe = false) {
+  const WASM_FILE = safe ? SAFE_WASM : WASM;
   const P = paths(E.GEN_DIR ?? "game-data");
   const dep = readJson(P.deployment, null);
   if (!dep?.contract) throw new Error(`${P.deployment} not found — deploy first.`);
@@ -1298,8 +1301,8 @@ async function upgrade(sub: string | undefined, send: boolean, botPays = false) 
   const mainnet = isMainnet(rpc);
   pinDeployment("game", dep, rpc, P.deployment);
   if (send && mainnet && E.CONFIRM_MAINNET !== "yes") throw new Error("MAINNET: add CONFIRM_MAINNET=yes to .env first.");
-  if (!fs.existsSync(WASM)) throw new Error(`${WASM} not found — in the game folder run: npm test && npm run check`);
-  const wasm = fs.readFileSync(WASM);
+  if (!fs.existsSync(WASM_FILE)) throw new Error(`${WASM_FILE} not found — in the game folder run: ${safe ? "npm run build:safe" : "npm test && npm run check"}`);
+  const wasm = fs.readFileSync(WASM_FILE);
   if (wasm.indexOf(Buffer.from("TEST LEDGER", "utf16le")) !== -1) throw new Error("This is the TEST build (simulated token ledger). Run `npm run build` in the game folder.");
   const local = "0x" + sha256hex(wasm);
   const chain = new KoinosChain(rpc, dep.contract);
@@ -1309,7 +1312,7 @@ async function upgrade(sub: string | undefined, send: boolean, botPays = false) 
   const eta = Number(up.eta ?? 0);
   const now = Number(st.time ?? Date.now());
   log(`Contract           ${dep.contract} on ${rpc}${mainnet ? "  ⚠ MAINNET" : ""}`);
-  log(`Local build        ${WASM}, ${(wasm.length / 1024).toFixed(1)} KB, sha256 ${local}`);
+  log(`Local build        ${WASM_FILE}${safe ? " (WITHDRAWALS-ONLY emergency build)" : ""}, ${(wasm.length / 1024).toFixed(1)} KB, sha256 ${local}`);
   log(eta > 0 ? `Announced          sha256 ${announced}, can be uploaded from ${utc(eta)}${now >= eta ? " (now)" : ` (in ${((eta - now) / HOUR_MS).toFixed(1)} h)`}` : "Announced          nothing");
   if (eta > 0) log(announced === local ? "                   ✔ matches the local build" : "                   ✖ does NOT match the local build");
 
@@ -2053,7 +2056,7 @@ async function main() {
     for (const kv of rest.slice(1)) { const m = kv.match(/^([a-z_]+)=(.*)$/); if (m) args[m[1]] = m[2]; }
     return act(opt("--as", "owner")!, rest[0], args, flag("--send"));
   }
-  if (cmd === "upgrade") return upgrade(rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined, flag("--send"), flag("--bot-pays"));
+  if (cmd === "upgrade") return upgrade(rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined, flag("--send"), flag("--bot-pays"), flag("--safe"));
   if (cmd === "chain-check") return chainCheck();
   if (cmd === "verify-results") return verifyResults(Number(opt("--days", "3")), opt("--rpc"));
   if (await friendly(cmd, rest, flag("--send"))) return;

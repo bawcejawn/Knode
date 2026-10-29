@@ -26,6 +26,7 @@
  *   seed owner  add seed VHP/KOIN; withdraw it only after an announced timelock; hand the seed over (two steps, v5)
  *   nobody      can take players' stakes or rewards, or the seed — not the owner, not the deploy key
  */
+import { SAFE_MODE } from "./Mode";
 import { System, Storage, Protobuf, Arrays, Crypto, authority, value, protocol, Base58, u128 } from "@koinos/sdk-as";
 import { kpred } from "./proto/kpred";
 import { Tokens } from "./Tokens";
@@ -73,6 +74,11 @@ export function testSetFinalizePage(n: u32): void { if (BUILD_FOR_TESTING) final
 let initV6Rule: u64 = BUILD_FOR_TESTING ? 1_000_000 : 1;
 /** Test hook: the v6 rule week (+1) that init will set. */
 export function testSetInitV6Rule(n: u64): void { if (BUILD_FOR_TESTING) initV6Rule = n; }
+// The withdrawals-only build (assembly/Mode.ts). Tests switch it on with the hook; the release builds fold it away.
+let testSafeMode: bool = false;
+/** Test hook: behave as the withdrawals-only build. */
+export function testSetSafeMode(b: bool): void { if (BUILD_FOR_TESTING) testSafeMode = b; }
+function safeMode(): bool { return BUILD_FOR_TESTING ? testSafeMode : SAFE_MODE; }
 
 // Entry points the contract is willing to pay Mana for (first 4 bytes of sha256 of the name).
 const EP_ANSWER: u32 = 0x0db52f40;
@@ -381,7 +387,13 @@ export class Kpred {
     return h > this.weeks.get(u64Key(t.weeks_finalized))!.settle_end;
   }
 
+  /** Refuses everything but getting money out when this is the withdrawals-only build (assembly/Mode.ts). */
+  live(): void {
+    System.require(!safeMode(), "the vault is in withdrawals-only mode: you can withdraw your stake and claim finished weeks");
+  }
+
   advance(c: kpred.config_object): void {
+    if (safeMode()) return;                          // withdrawals-only build: nothing moves forward
     const h = this.now();
     let t = this.totals.get()!;
     if (this.finalizeDue(t, h)) {
@@ -609,11 +621,13 @@ export class Kpred {
   }
 
   deposit_vhp(args: kpred.deposit_vhp_arguments): kpred.deposit_vhp_result {
+    this.live();
     this.deposit(args.from!, args.amount, false);
     return new kpred.deposit_vhp_result();
   }
 
   deposit_koin(args: kpred.deposit_koin_arguments): kpred.deposit_koin_result {
+    this.live();
     this.deposit(args.from!, args.amount, true);
     return new kpred.deposit_koin_result();
   }
@@ -673,6 +687,7 @@ export class Kpred {
   }
 
   answer(args: kpred.answer_arguments): kpred.answer_result {
+    this.live();
     const c = this.cfg();
     const player = args.player!;
     System.requireAuthority(authority.authorization_type.contract_call, player);
@@ -700,6 +715,7 @@ export class Kpred {
   }
 
   settle(args: kpred.settle_arguments): kpred.settle_result {
+    this.live();
     const c = this.cfg();
     this.advance(c);
     const player = args.player!;
@@ -824,6 +840,7 @@ export class Kpred {
   }
 
   close_week(args: kpred.close_week_arguments): kpred.close_week_result {
+    this.live();
     const c = this.cfg();
     const t = this.totals.get()!;
     System.require(args.week == t.weeks_closed, "weeks close in order: close week " + t.weeks_closed.toString() + " first");
@@ -896,6 +913,7 @@ export class Kpred {
   }
 
   finalize_week(args: kpred.finalize_week_arguments): kpred.finalize_week_result {
+    this.live();
     const c = this.cfg();
     const wk = this.weeks.get(u64Key(args.week))!;
     System.require(wk.closed, "week not closed yet");
@@ -1027,6 +1045,7 @@ export class Kpred {
   // ═══════════════════════ operator ═══════════════════════
 
   post_question(args: kpred.post_question_arguments): kpred.post_question_result {
+    this.live();
     const c = this.cfg();
     System.requireAuthority(authority.authorization_type.contract_call, c.operator!);
     this.advance(c);
@@ -1081,6 +1100,7 @@ export class Kpred {
   }
 
   resolve_question(args: kpred.resolve_question_arguments): kpred.resolve_question_result {
+    this.live();
     const c = this.cfg();
     System.requireAuthority(authority.authorization_type.contract_call, c.operator!);
     const key = u32Key(args.id);
@@ -1103,6 +1123,7 @@ export class Kpred {
   // ═══════════════════════ owner ═══════════════════════
 
   correct_question(args: kpred.correct_question_arguments): kpred.correct_question_result {
+    this.live();
     const c = this.cfg();
     System.require(this.isOwner(c), "owner only");
     const key = u32Key(args.id);
@@ -1161,6 +1182,7 @@ export class Kpred {
   }
 
   set_min_stake(args: kpred.set_min_stake_arguments): kpred.set_min_stake_result {
+    this.live();
     const c = this.cfg();
     System.require(this.isOwner(c), "owner only");
     System.require(args.min_stake > 0, "the minimum stake can never be 0");
@@ -1325,6 +1347,7 @@ export class Kpred {
   // ═══════════════════════ seed ═══════════════════════
 
   seed_deposit_vhp(args: kpred.seed_deposit_vhp_arguments): kpred.seed_deposit_vhp_result {
+    this.live();
     const c = this.cfg();
     System.requireAuthority(authority.authorization_type.contract_call, c.seed_owner!);
     System.require(args.amount > 0, "amount must be positive");
@@ -1337,6 +1360,7 @@ export class Kpred {
   }
 
   seed_deposit_koin(args: kpred.seed_deposit_koin_arguments): kpred.seed_deposit_koin_result {
+    this.live();
     const c = this.cfg();
     System.requireAuthority(authority.authorization_type.contract_call, c.seed_owner!);
     System.require(args.amount > 0, "amount must be positive");
@@ -1699,6 +1723,7 @@ export class Kpred {
   }
 
   deposit_to(args: kpred.deposit_to_arguments): kpred.deposit_to_result {
+    this.live();
     const c = this.cfg();
     this.advance(c);
     const g = this.otherGame(args.game);
@@ -1748,6 +1773,7 @@ export class Kpred {
   }
 
   move_stake(args: kpred.move_stake_arguments): kpred.move_stake_result {
+    this.live();
     const c = this.cfg();
     const player = args.player!;
     System.requireAuthority(authority.authorization_type.contract_call, player);
@@ -1848,6 +1874,7 @@ export class Kpred {
   }
 
   post_results(args: kpred.post_results_arguments): kpred.post_results_result {
+    this.live();
     const c = this.cfg();
     System.requireAuthority(authority.authorization_type.contract_call, c.operator!);
     const gw = this.postable(c, args.game, args.week);
@@ -1869,6 +1896,7 @@ export class Kpred {
   }
 
   post_prize_winners(args: kpred.post_prize_winners_arguments): kpred.post_prize_winners_result {
+    this.live();
     const c = this.cfg();
     System.requireAuthority(authority.authorization_type.contract_call, c.operator!);
     const gw = this.postable(c, args.game, args.week);
@@ -1898,6 +1926,7 @@ export class Kpred {
   }
 
   seal_results(args: kpred.seal_results_arguments): kpred.seal_results_result {
+    this.live();
     const c = this.cfg();
     System.requireAuthority(authority.authorization_type.contract_call, c.operator!);
     const gw = this.postable(c, args.game, args.week);
@@ -1922,6 +1951,7 @@ export class Kpred {
   /** The owner may correct a game week's results until a day after the seal (or, unsealed, until the deadline).
    *  Every correction restarts the 12-hour wait before the week can be finalized, so it is visible first. */
   correct_result(args: kpred.correct_result_arguments): kpred.correct_result_result {
+    this.live();
     const c = this.cfg();
     System.require(this.isOwner(c), "owner only");
     const g = this.otherGame(args.game);
@@ -1953,6 +1983,7 @@ export class Kpred {
   }
 
   void_game_week(args: kpred.void_game_week_arguments): kpred.void_game_week_result {
+    this.live();
     const c = this.cfg();
     System.require(this.isOwner(c), "owner only");
     const g = this.otherGame(args.game);
@@ -1971,6 +2002,7 @@ export class Kpred {
    *  seal and the last correction. A week voided, or not sealed by its deadline, rolls over: its bucket stays in the
    *  game for its next week and its prize returns to the pool. */
   finalize_game_week(args: kpred.finalize_game_week_arguments): kpred.finalize_game_week_result {
+    this.live();
     const c = this.cfg();
     const g = this.otherGame(args.game);
     const gk = this.gweekKey(args.game, args.week);
@@ -2150,6 +2182,7 @@ export class Kpred {
   // ───────────── the game registry (owner) ─────────────
 
   propose_game(args: kpred.propose_game_arguments): kpred.propose_game_result {
+    this.live();
     const c = this.cfg();
     System.require(this.isOwner(c), "owner only");
     System.require(args.game > Q_GAME, "game ids start at 2 (1 is the question game)");
@@ -2180,6 +2213,7 @@ export class Kpred {
   }
 
   apply_game(args: kpred.apply_game_arguments): kpred.apply_game_result {
+    this.live();
     const c = this.cfg();
     System.require(this.isOwner(c), "owner only");
     const pk = u32Key(args.game);
