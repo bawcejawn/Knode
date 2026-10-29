@@ -16,7 +16,7 @@ mainnet also needs `CONFIRM_MAINNET=yes` in `.env`. Run everything in PowerShell
 
 1. **Done:** the RepoLens audit, its fix-check and the third-party audit are clean; branch `vault-v6` holds the fixed code.
 2. **Sponsor:** sponsor v3, with the Vault's calls added (`claude/handoff-sponsor-vault-calls.md`), is live. Without it, staking in other games, moving stake and claiming their prizes aren't sponsored.
-3. **Seed:** it covers the free prizes. Four free games need 12 VHP a week, roughly **3,000 VHP** of seed at today's ~90 VHP of weekly rewards:
+3. **Seed:** it covers the free prizes, 3 VHP a week per game with a free prize. The question game, Block X, Survivor and the Race need 12 VHP a week, roughly **3,000 VHP** of seed at today's ~90 VHP of weekly rewards; with Producer Bracket, 15 VHP a week, roughly **3,750 VHP**. When the seed's share is short, every prize is cut that week:
    ```
    npm run bot -- seed-vhp <VHP>           then again with --send
    ```
@@ -67,7 +67,7 @@ npm run bot -- admin cancel_upgrade --as owner --send
 ```
 
 ## 4. Put the v6 bot live
-Merge branch `vault-v6` into `main` on GitHub (pull request, then merge). **Do this the same day:** the Race recorder (and any other that reads the vault's ABI from `main`) refuses to write its results file until `game/abi/kpred.koilib.json` on `main` has the vault's methods, so a late merge would roll those weeks over. The hourly bot then knows the vault: other games' results, finalizing, alerts and status. The v5 bot keeps working on v6 until then, so there is no rush within the day.
+Merge branch `vault-v6` into `main` on GitHub (pull request, then merge). **Do this the same day:** the Race, Block Golf and Producer Bracket recorders (and any other that reads the vault's ABI from `main`) refuses to write its results file until `game/abi/kpred.koilib.json` on `main` has the vault's methods, so a late merge would roll those weeks over. The hourly bot then knows the vault: other games' results, finalizing, alerts and status. The v5 bot keeps working on v6 until then, so there is no rush within the day.
 
 ## 5. Verify
 ```
@@ -87,7 +87,7 @@ npm run bot -- game-add 2 "Who Signs Block X" --staked --free           then aga
 npm run bot -- game-add 3 "Survivor" --staked --free --season 2         then again with --send
 npm run bot -- game-add 7 "Producer Race" --staked --free               then again with --send
 ```
-Staked games are added the same way when each one launches (for example `game-add 13 "Last Node Standing" --staked`).
+Staked games are added the same way when each one launches (for example `game-add 13 "Last Node Standing" --staked`). **Producer Bracket also pays a free prize** (its chat's request, 2026-10-29): `game-add 9 "Producer Bracket" --staked --free`.
 
 **Survivor's timing:** a game earns from the week after you apply it, and Survivor's seasons start at its first week. Its Season 1 starts Monday 16 Nov 2026 (vault week 4), so **apply game 3 between Mon 9 Nov and Sun 15 Nov (UTC)**, which means announcing it between Sat 7 Nov and Fri 13 Nov. If the vault isn't live by then, tell the Survivor chat: its first season then starts with the week after you apply it (`npm run bot -- games` shows its "from week").
 
