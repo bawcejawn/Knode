@@ -9,23 +9,36 @@
   - **93 Fast test:** a cut every 20 minutes, an event every 4 hours (00:00, 04:00, 08:00 … UTC = 5 pm, 9 pm, 1 am, 5 am, 9 am, 1 pm Pacific). Start picks lock 15 minutes before the start. A jump is open until 5 minutes after your node's cut.
   - **13 Real settings:** exactly the live game's settings. Daily at 14:00 UTC (7 am Pacific), a cut every hour, start picks lock at 13:10 UTC (6:10 am Pacific), jumps until 10 past the hour.
 
-Everything runs in `C:\kprediction`, where your `.env.testnet` and testnet settings already are.
+Everything runs in **its own folder, `C:\kprediction-lns`**, a separate copy of the code with only your testnet settings in it. Never check this branch out in `C:\kprediction`: that folder holds your mainnet `.env`, and the scheduled tasks there must keep running the `picks` code (audit LN-3).
 
 > **Never paste a private key (WIF) into a chat, an issue or GitHub**, testnet ones included.
 
-## 1. Get the code
+## 1. Get the code (a separate folder)
+
+The first time:
 
 ```powershell
-cd C:\kprediction
-git fetch origin
+cd C:\
+git clone https://github.com/bawcejawn/Knode.git kprediction-lns
+cd C:\kprediction-lns
 git checkout lastnode
-git pull
-npm ci
+Copy-Item C:\kprediction\.env.testnet .
+Copy-Item C:\kprediction\testnet\blockx.json testnet\blockx.json
+npm ci --ignore-scripts
 ```
 
-- **Expect:** `Switched to branch 'lastnode'`, then npm installs and ends without errors.
-- **The `lastnode` branch is the `picks` branch plus Last Node Standing.** Your scheduled tasks run the same bot code as before.
-- **Your local file `testnet\blockx.json`** (it holds your testnet Picks contract address) comes along unchanged.
+- **Expect:** `Switched to a new branch 'lastnode'`, then npm installs and ends without errors.
+- **Copy only `.env.testnet`** (test keys). Never copy `.env` (mainnet) into this folder.
+- **`testnet\blockx.json`** holds your testnet Picks contract address; the copy keeps it.
+- `--ignore-scripts`: packages install without running their own install scripts, as on the `picks` branch.
+
+After that, to update:
+
+```powershell
+cd C:\kprediction-lns
+git pull
+npm ci --ignore-scripts
+```
 
 ## 2. Check the testnet Picks contract
 
@@ -64,7 +77,7 @@ npm run picks -- apply 13 --testnet --send
 ## 4. Start the test site and the recorder
 
 ```powershell
-cd C:\kprediction
+cd C:\kprediction-lns
 npm run testnet-site -- --record
 ```
 
@@ -103,5 +116,7 @@ Stop it with **Ctrl+C**. Running it again carries on where it left off.
 
 - **Field size:** the fast test holds at most 11 nodes, so one event always ends before the next one's picks lock. Today the field is 10.
 - **Ranked on the testnet:** a wallet holding at least 1 test KOIN. Nothing is paid.
+- **Two clocks (practice only):** picks lock on testnet block time, while cuts use mainnet block time, and testnet picks are read from one testnet node at its head. Both chains keep real time, so this rarely shows; the live game uses mainnet only, on two nodes.
+- **Env names:** the testnet recorder reads only `TESTNET_LASTNODE_OUT`, `TESTNET_LASTNODE_PREV` and `TESTNET_RACE_DATA` (all must be inside `testnet-data\`), so mainnet settings left in your PowerShell window can't redirect it.
 - **The test page and the live game page share one script** (`lastnode.js`). The test page loads only the testnet wallet, and that wallet refuses to sign for mainnet or for any contract except the testnet Picks contract.
 - **Online version for other testers:** this needs your OK, because it changes `main` and GitHub settings. It is a separate step.

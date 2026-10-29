@@ -120,6 +120,8 @@
     if (!(g.ahead > g.lead && g.ahead <= 35 * DAY)) throw new Error("ahead must be above lead and at most 35 days");
     if (g.period % g.cut || g.phase % g.cut || g.phase < 0 || g.phase >= g.period || DAY % g.period || HOUR % g.cut && g.cut % HOUR)
       throw new Error("events must start on cut boundaries, a whole number of events a day");
+    // Audit LN-14: an event's id is its UTC day, or its UTC hour, so every event must start on the hour.
+    if (g.period < HOUR || g.period % HOUR || g.phase % HOUR) throw new Error("events must start on the hour (a period of at least 1 hour)");
     const CUT = g.cut, OFFSET = g.offset, LEAD = g.lead, AHEAD = g.ahead, PERIOD = g.period, PHASE = g.phase;
     /** At most 23 nodes, and fewer than the rounds between two event starts, so rounds never overlap the next event. */
     const MAX_FIELD = Math.min(23, PERIOD / CUT - 1);
@@ -154,6 +156,16 @@
     }
     /** The event after ev. */
     const nextEvent = (ev) => eventOf(ev.start + PERIOD + (PERIOD === DAY ? -PHASE : 0));
+    /** The page's view of a round (audit LN-6/LN-22): reg = the game's lead and ahead as registered (default: these
+     *  rules'), margin = how long before the lock the page stops sending. pickable: open now and before the cut-off. */
+    const pickable = (r, t, reg = {}, margin = 0) => { const lead = reg.lead ?? LEAD, ahead = reg.ahead ?? AHEAD, rt = roundTime(r); return rt > lead && t >= rt - ahead && t + margin < rt - lead; };
+    /** The next event whose start pick isn't past the page's cut-off, and whether picks for it are open at t. */
+    function nextEntry(t, reg = {}, margin = 0) {
+      const lead = reg.lead ?? LEAD, ahead = reg.ahead ?? AHEAD;
+      let ev = eventOf(t);
+      for (let k = 0; k < 4 && t + margin >= roundTime(ev.round) - lead; k++) ev = nextEvent(ev);
+      return { ...ev, lock: roundTime(ev.round) - lead, opens: roundTime(ev.round) - ahead, open: pickable(ev.round, t, reg, margin) };
+    }
 
     /** The event's field from the race card of its cardTime. card: { at, field: [{ a, vhp, k }] } (k = expected blocks
      *  in a 6-hour race). Returns { at, c, fairness, nodes: [{ a, vhp, kh, h }] }, biggest first, or null when fewer
@@ -245,7 +257,7 @@
     return {
       GAME: g, GAME_ID: g.id, PICKS_GAME, CUT, LEAD, OFFSET, AHEAD, PERIOD, PHASE, MAX_FIELD, JUMP_WINDOW: OFFSET - LEAD,
       HOUR, DAY, WEEK, GENESIS, MIN_KH, BONUS, SEED, TRIALS, H_SCALE, START_HOUR: PERIOD === DAY ? PHASE / HOUR : null,
-      roundOf, roundTime, lockTime, isOpen, eventOf, nextEvent, weekOf, weekStart, rng, handicapOf, calibrate, makeField, hInt,
+      roundOf, roundTime, lockTime, isOpen, eventOf, nextEvent, pickable, nextEntry, weekOf, weekStart, rng, handicapOf, calibrate, makeField, hInt,
       cutsFrom, playerResult, canJump, byOffset, roundForJump, board, places, forGame, MAINNET_GAME, FAST_GAME,
     };
   }

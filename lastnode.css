@@ -73,12 +73,14 @@ body.ln-arena a { color: var(--violet); }
 .ln-ko.mine { box-shadow: inset 0 0 0 2px var(--ln-you); }
 
 /* the one loud moment: a cut */
-.ln-flash { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 10px; padding: 10px 14px; border-radius: 14px; background: rgba(255, 77, 109, .16); box-shadow: inset 0 0 0 1px rgba(255, 77, 109, .6); animation: ln-note 6s ease-out forwards; }
+/* Audit LN-33: a toast over the bottom of the screen, so nothing on the page moves while you're tapping. */
+.ln-flash { position: fixed; z-index: 30; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px); pointer-events: none;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 10px 14px; border-radius: 14px; background: linear-gradient(rgba(255, 77, 109, .16), rgba(255, 77, 109, .16)), var(--ln-night); box-shadow: inset 0 0 0 1px rgba(255, 77, 109, .6), 0 10px 30px rgba(0, 0, 0, .45); animation: ln-note 6s ease-out forwards; }
 .ln-flash b { font-family: var(--ln-display); font-weight: 900; font-size: 22px; line-height: 1; color: #fff; }
 .ln-flash span { font-size: 15px; color: var(--ln-text); }
-.ln-flash.gold { background: rgba(255, 200, 61, .16); box-shadow: inset 0 0 0 1px var(--ln-gold); }
+.ln-flash.gold { background: linear-gradient(rgba(255, 200, 61, .16), rgba(255, 200, 61, .16)), var(--ln-night); box-shadow: inset 0 0 0 1px var(--ln-gold); }
 .ln-flash.gold b { color: var(--ln-gold); }
-.ln-flash.you { background: rgba(62, 230, 255, .12); box-shadow: inset 0 0 0 1px var(--ln-you); }
+.ln-flash.you { background: linear-gradient(rgba(62, 230, 255, .12), rgba(62, 230, 255, .12)), var(--ln-night); box-shadow: inset 0 0 0 1px var(--ln-you); }
 .ln-flash.you b { color: var(--ln-you); }
 .ln-lane.just-out { animation: ln-fall .9s ease-in forwards; }
 
@@ -151,7 +153,7 @@ body.ln-arena a { color: var(--violet); }
 @keyframes ln-blink { 50% { opacity: .25; } }
 @keyframes ln-throb { 50% { transform: scale(1.04); } }
 @keyframes ln-glow { 50% { box-shadow: inset 0 0 0 2px var(--ln-storm), 0 0 30px -4px var(--ln-storm); } }
-@keyframes ln-note { 0% { opacity: 0; transform: translateY(-6px); } 6% { opacity: 1; transform: none; } 85% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes ln-note { 0% { opacity: 0; transform: translate(-50%, 6px); } 6% { opacity: 1; transform: translateX(-50%); } 85% { opacity: 1; } 100% { opacity: 0; } }
 @keyframes ln-fall { to { opacity: 0; transform: translateY(18px) rotate(-2deg); } }
 @media (prefers-reduced-motion: reduce) {
   .ln-tag.live::before, .ln-clock.hot b, .ln-jump, .pk-spin { animation: none; }
@@ -167,6 +169,8 @@ body.ln-arena a { color: var(--violet); }
   .ln-lane .ln-badge { width: 36px; height: 36px; font-size: 14px; }
   .ln-run { grid-column: 1 / -1; grid-row: 2; }
   .ln .hist .hide-sm { display: none; }
+  .ln .hist th, .ln .hist td { padding: 9px 4px; }
+  .ln .relbar { width: 40px; margin-right: 6px; }
   .ln-runcard { grid-template-columns: auto minmax(0, 1fr); }
   .ln-pts { grid-column: 1 / -1; text-align: left; }
   .ln-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }

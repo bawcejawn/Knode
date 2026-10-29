@@ -70,8 +70,9 @@
       ...o.columns.map((c) => el("th", { class: "num" + (c.wide ? " hide-sm" : ""), text: c.label })));
     const mine = el("p", { class: "note kb-me", role: "status" });
     host.classList.add("kb");
+    // Only real nodes: replaceChildren(null) would print the word "null" above a board with no Free play tab.
     host.replaceChildren(
-      F ? el("div", { class: "tabs2 kb-kinds", role: "group", "aria-label": "Who" }, ...kinds) : null,
+      ...(F ? [el("div", { class: "tabs2 kb-kinds", role: "group", "aria-label": "Who" }, ...kinds)] : []),
       el("div", { class: "tabs2", role: "group", "aria-label": o.label || "Leaderboard" }, ...btns),
       sub, podium,
       el("div", { class: "table-scroll" }, el("table", { class: "hist kb-table" }, el("thead", {}, head), body)),

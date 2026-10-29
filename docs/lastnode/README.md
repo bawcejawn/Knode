@@ -4,7 +4,7 @@ A staked daily game. Pick a block producer ("node"). Every hour the slowest node
 
 The live game is not launched. It waits for:
 - the Picks contract (Build 3);
-- Vault v6 (Build 1).
+- Vault v6 (Build 1). Until the v6 vault ABI (`game/abi/kpred.koilib.json` with `get_game_player` and `get_state`) is on this branch, no vault file is written at all (audit LN-18: it fails safe, but merge that ABI before launch).
 
 A testnet practice copy runs on the owner's PC (`docs/lastnode/TESTNET.md`).
 
@@ -33,11 +33,11 @@ A testnet practice copy runs on the owner's PC (`docs/lastnode/TESTNET.md`).
 
 ## Weekly results to the Vault (v6)
 - **File:** `games-data:lastnode/vault/W<week>.json` with `{ game: 13, week, final: true, rows, first: [], second: [] }`.
-- **rows:** wallets whose `week_stake` in game 13 is at least 1 VHP (vault `get_game_player`) and that have at least 1 point.
-- **Scores:** whole numbers 1–255 that keep the board's order and ties.
+- **rows:** wallets whose `week_stake` in game 13 is at least the vault's minimum stake for that week (1 VHP unless you change it; vault `get_game_player` and `get_state`) and that have at least 1 point. Stakes are read on both mainnet nodes; any difference holds the file to the next run.
+- **Scores:** whole numbers 1–255 that keep the board's order and ties. Over 255 different places, the top 254 keep their tie-breaks and the rest share 1.
 - **When it is written:** once the week is final (12 h after it ends), and only within the Vault's 3-day window.
 - **No file at all** while the game contract has no per-game stakes (before v6).
-- **Publishing:** the publish step never replaces a published vault file.
+- **Publishing:** the publish step takes only last week's file, from 12 hours to 3 days after the week ends, with rows that are the final "Last week" board's players in its order. It never replaces a published vault file, and a different copy fails the run so you are told. A file with no rows while the board has scoring players is not published (the week's bucket stays in the game if no file arrives).
 
 ## Where the code is
 | File | What |
@@ -72,4 +72,5 @@ A testnet practice copy runs on the owner's PC (`docs/lastnode/TESTNET.md`).
   - M-3: a mid-week launch never closed its week;
   - Lows.
   All fixed. Two fix-checks were clean (commits up to `f6a1e14`).
-- **28 Oct:** added since, and not reviewed yet: testnet practice, page redesign, vault file (`git diff f6a1e14 HEAD`).
+- **28 Oct:** Repo Lens audit of testnet practice, the page redesign and the vault file: 1 High, 3 Medium, 13 Low, 16 Info.
+- **29 Oct:** all fixed or answered, and the branch rebuilt on the current `picks` with the site at the repo root. Tests in `tests/audit/lastnode-fixes.test.mjs`, `lastnode-vault.test.mjs`.

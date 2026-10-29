@@ -91,7 +91,7 @@ function freshDay(day: string): DayFile {
 function loadDay(dir: string | undefined, day: string): DayFile {
   const f = freshDay(day), o = readJson(dir, dName(day));
   if (!o || o.v !== 1 || o.day !== f.day || o.start !== f.start) return f;
-  if (o.field && Array.isArray(o.field.nodes) && o.field.nodes.length >= 2 && o.field.nodes.every((n: any) => isAddr(n?.a) && Number.isFinite(n.h) && n.h > 0 && Number.isFinite(n.vhp)))
+  if (o.field && Array.isArray(o.field.nodes) && o.field.nodes.length >= 2 && o.field.nodes.length <= L.MAX_FIELD && o.field.nodes.every((n: any) => isAddr(n?.a) && Number.isFinite(n.h) && n.h > 0 && Number.isFinite(n.vhp)))
     f.field = { at: Number(o.field.at) || 0, c: Number(o.field.c) || 0, fairness: o.field.fairness ?? null, nodes: o.field.nodes.map((n: any) => ({ a: n.a, vhp: n.vhp, kh: n.kh, h: n.h })) };
   if (typeof o.void === "string") f.void = o.void.slice(0, 200);
   if (Array.isArray(o.hours)) for (const [k, h] of o.hours.entries()) {
@@ -475,7 +475,10 @@ async function main() {
   const mr = E.MAINNET_RPC || cfg.mainnet.rpc, mc = E.MAINNET_RPC_CHECK || cfg.mainnet.check;
   const p = new Provider([mr]), check = mc && mc !== "off" && mc !== mr ? new Provider([mc]) : null;
   for (const [node, url] of [[p, mr], [check, mc]] as const) if (node && (await withRetry("mainnet chain id", () => node.getChainId())) !== MAINNET_CHAIN_ID) throw new Error(`${url} is not a Koinos mainnet node (the race is read from mainnet)`);
-  const raceDir = E.RACE_DATA || "testnet-data/race-cards";
+  // Audit LN-26: the testnet's own names (TESTNET_…), so a mainnet LASTNODE_OUT / LASTNODE_PREV / RACE_DATA left in the
+  // shell can't redirect it, and every folder must be inside testnet-data/.
+  const inTestData = (d: string) => { const r = path.relative(path.resolve("testnet-data"), path.resolve(d)); if (!r || r.startsWith("..") || path.isAbsolute(r)) throw new Error(`${d} is not inside testnet-data/`); return d; };
+  const raceDir = inTestData(E.TESTNET_RACE_DATA || "testnet-data/race-cards");
   await fetchRaceCards(cfg.mainnet.raceData, raceDir, Date.now());
   const koin = new Contract({ id: cfg.koin, abi: (await import("koilib")).utils.tokenAbi, provider: tp });
   // Ranked on the testnet: holds at least 1 test KOIN (test wallets have no VHP).
@@ -485,7 +488,7 @@ async function main() {
     return out;
   };
   const dir = `testnet-data/lastnode-${id}`;
-  return run({ p, check, pp: tp, pcheck: null, game, practice: true, picksContract: picks, rankedOf, raceDir, out: E.LASTNODE_OUT || dir, prev: E.LASTNODE_PREV || dir });
+  return run({ p, check, pp: tp, pcheck: null, game, practice: true, picksContract: picks, rankedOf, raceDir, out: inTestData(E.TESTNET_LASTNODE_OUT || dir), prev: inTestData(E.TESTNET_LASTNODE_PREV || dir) });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

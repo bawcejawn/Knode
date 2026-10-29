@@ -119,11 +119,11 @@
 
     <section class="ln-panel explain" id="how" style="margin-top:16px">
       <h2>How it works</h2>
-      <p><b>The event.</b> Every day at 14:00 UTC. One cut every hour on the hour until one node is left: about 9 hours with 10 nodes. Your pick locks at 13:10 UTC; picks open 24 hours before.</p>
+      <p><b>The event.</b> Every day at 14:00 UTC. One cut every hour on the hour until one node is left: about 9 hours with 10 nodes. Your pick locks at 13:10 UTC (this page sends until 13:09, a minute early to be safe); picks open 24 hours before.</p>
       <p><b>The field.</b> Producers expected to sign at least 20 blocks an hour, from a Producer Race card taken before picks open.</p>
       <p><b>The handicap.</b> Big nodes sign more blocks, so smaller nodes move further per block. A small luck trim, set for each event, gives every node about the same chance to be last standing.</p>
       <p><b>The cut.</b> At each cut, the node with the fewest steps since the start is knocked out. Ties go to fewer blocks, then less VHP.</p>
-      <p><b>Your run.</b> Drop in on one node. If it's knocked out, jump once to a node still standing, or set a backup in advance and it jumps for you. Lose a second node, or miss the jump, and your run ends (your points so far count).</p>
+      <p><b>Your run.</b> Drop in on one node. If it's knocked out, jump once to a node still standing, or set a backup in advance and it jumps for you (a backup covers the next cut only). Lose a second node, or miss the jump, and your run ends (your points so far count). If the chain stalls for 10 minutes or more across a cut, that cut's jump can't be made in time.</p>
       <p><b>Fair checks.</b> Results come from irreversible blocks that match on two independent Koinos nodes, and the page and the recorder run the same rules file.</p>
     </section>
   </main>

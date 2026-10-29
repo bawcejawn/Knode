@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const APP = process.env.APP || ".";
+import { readsMainnetBlocks, mainnetPageScripts } from "./lib/html-tags.mjs";
 const dir = `${APP}`;
 const pages = fs.readdirSync(dir).filter((f) => f.endsWith(".html"));
 const scripts = fs.readdirSync(dir).filter((f) => f.endsWith(".js"));
@@ -98,8 +99,10 @@ test("(guard) every origin the pages fetch or load from is allowed (connect-src 
       // A testnet page that declares it READS mainnet blocks (Last Node Standing: the testnet has one producer, so its
       // race is the real mainnet producers) may reach the mainnet read nodes, but loads no mainnet wallet code, and
       // still never reaches KOIN Vault or the live games' data.
-      const readsMainnet = /<meta name="kg-reads" content="mainnet-blocks">/.test(html);
-      if (readsMainnet) for (const s of ["wallet.js", "guest.js", "header-wallet.js"]) if (html.includes(`<script src="${s}">`)) missing.push(`${p}: reads mainnet but loads the mainnet wallet ${s}`);
+      // Audit LN-10: the marker counts only as a real <meta> (not inside a comment), and such a page may load only the
+      // scripts on a short list (any spelling of a path is reduced to the file it names), never the mainnet wallets.
+      const readsMainnet = readsMainnetBlocks(html);
+      if (readsMainnet) for (const bad of mainnetPageScripts(html)) missing.push(`${p}: reads mainnet but loads ${bad}`);
       for (const bad of [...(readsMainnet ? [] : ["https://api.koinos.io/", "https://koinos.armana.io/"]), "https://koinvault.app/api/dapp/status", "https://raw.githubusercontent.com/bawcejawn/Knode/games-data/x"])
         if (allows(conn, bad)) missing.push(`${p}: the testnet page may reach ${bad}`);
       for (const m of html.matchAll(/<script\b[^>]*\bsrc="(https:[^"]+)"/g)) if (!allows(srcList(c, "script-src"), m[1])) missing.push(`${p}: script-src blocks ${m[1]}`);

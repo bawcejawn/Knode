@@ -119,7 +119,8 @@ export function serve(port = PORT) {
     if ((req.url || "/") === "/") { res.writeHead(302, { Location: "/blockx-testnet.html" }).end(); return; }
     const f = allowed(req.url || "/");
     let st = null;
-    try { st = f && fs.lstatSync(f); } catch { /* missing */ }
+    // Audit LN-27: no symlinks anywhere on the path (a linked folder too), only the real file under the project.
+    try { st = f && fs.lstatSync(f); if (st && fs.realpathSync(f) !== path.join(fs.realpathSync(ROOT), path.relative(ROOT, f))) st = null; } catch { /* missing */ }
     if (!f || !st || !st.isFile()) { res.writeHead(404, { "Content-Type": "text/plain" }).end("Not found"); return; }
     res.writeHead(200, { "Content-Type": TYPES[path.extname(f)] || "application/octet-stream", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
     if (req.method === "HEAD") { res.end(); return; }
@@ -154,7 +155,9 @@ function recordAll() {
     if (i >= jobs.length) { recording = false; return; }
     // Node itself runs the recorder (no shell, so nothing is pieced together into a command line).
     const c = spawn(process.execPath, ["--import", "tsx", jobs[i][0], "--testnet", "--game", String(jobs[i][1])], { cwd: ROOT, stdio: "inherit" });
-    c.on("exit", () => one(i + 1));
+    // Audit LN-25: a recorder that hangs is stopped after 4 minutes, so the next ones still run.
+    const t = setTimeout(() => { console.log(`(${jobs[i][0]} game ${jobs[i][1]} took over 4 minutes; stopped)`); c.kill(); }, 4 * 60000);
+    c.on("exit", () => { clearTimeout(t); one(i + 1); });
   };
   recording = true;
   console.log(`\n[${new Date().toISOString()}] recording ${jobs.map(([f, id]) => `${f.includes("lastnode") ? "Last Node" : "Block X"} ${id}`).join(", ")}`);

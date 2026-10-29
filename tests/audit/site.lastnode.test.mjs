@@ -46,7 +46,8 @@ test("lastnode.js: text only (no HTML sinks), one kind of transaction, and never
   assert.match(js, /functions\.pick\(\{ player: who, game: L\.GAME_ID, round: String\(round\), producers: \[producer\], number: "0" \}, \{ onlyOperation: true \}\)/);
   assert.match(js, /if \(!isAddr\(producer\)\) return/);
   // The contract's own rule, a minute early, right before sending.
-  assert.match(js, /if \(!L\.isOpen\(round, Date\.now\(\) \+ SEND_MARGIN\)\) return/);
+  assert.match(js, /if \(!pickable\(round\)\) return/);
+  assert.match(js, /const pickable = \(r, t = nowT\(\)\) => L\.pickable\(r, t, REG, SEND_MARGIN\)/);
   assert.match(js, /SEND_MARGIN = 60000/);
   // Data from files only reaches the page as text: every element is built by el(), which sets textContent.
   assert.match(js, /if \(k === "text"\) e\.textContent = v/);
@@ -77,8 +78,8 @@ test("lastnode.html is in the SEO list and the sitemap, and has the shared tab b
 
 test("review M-1: the page offers the Jump box (via canJump) before it says you're out, and ignores stale pick reads", () => {
   const js = read("lastnode.js");
-  const jump = js.indexOf("L.canJump(df.field, res, picksFor(ev))"), box = js.indexOf('class: "ln-jump"'), out = js.indexOf("You're out: your node was cut");
+  const jump = js.indexOf("jumpOpen(df, res, ev, now)"), box = js.indexOf('class: "ln-jump"'), out = js.indexOf("You're out: your node was cut");
   assert.ok(jump > 0 && box > jump && out > box, "jump check, then the Jump box, then the out message");
   assert.match(js, /if \(call !== mineCall \|\| me\(\) !== who\) return;/);
-  assert.match(js, /if \(who !== mineWho\) \{ drafts\.clear\(\); mineWho = who; \}/);
+  assert.match(js, /if \(who !== mineWho\) \{ drafts\.clear\(\); myPicks\.clear\(\); mineWho = who; mineOk = false; mineErr = false; \}/);
 });

@@ -31,6 +31,25 @@
   const W = TESTNET ? window.KTestWallet : window.KWallet;
   const H = L.CUT, SEND_MARGIN = 60000;      // H: one cut window (1 hour; 20 minutes in the fast test game)
 
+  // Audit LN-5: the page's clock is the chain's (the newest block's time when it was read), not the device's. Stalls
+  // only make a reading older, so the freshest of the last 10 minutes' readings is used.
+  const offsets = [];
+  const nowT = () => Date.now() + (offsets.length ? Math.max(...offsets) : 0);
+  function noteChainTime(tip) {
+    const off = tip - Date.now();
+    if (!Number.isFinite(off) || Math.abs(off) > 3600000) return;     // a clock over an hour out: leave it alone
+    offsets.push(off); if (offsets.length > 20) offsets.shift();
+  }
+  // Audit LN-22: the lock and open times of the game as registered in the Picks contract (get_game), so a later
+  // tighten_game (a longer lead, a shorter ahead) is followed here. Until it is read: the rules' own settings.
+  const REG = { lead: L.LEAD, ahead: L.AHEAD };
+  const lockAt = (r) => L.roundTime(r) - REG.lead;
+  const openAt = (r) => L.roundTime(r) - REG.ahead;
+  /** A pick for round r can be sent now: the round is open, and its lock is more than a minute away. */
+  const pickable = (r, t = nowT()) => L.pickable(r, t, REG, SEND_MARGIN);
+  /** The page's own cut-off for a round: a minute before the lock (what the countdowns count down to). */
+  const cutoff = (r) => lockAt(r) - SEND_MARGIN;
+
   const $ = (id) => document.getElementById(id);
   const el = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (v == null) continue; if (k === "text") e.textContent = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v); } for (const c of kids) if (c != null) e.append(c); return e; };
   const isAddr = (a) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
@@ -52,20 +71,17 @@
   const me = () => (W && W.address) || null;
 
   // ── which event to show: one still running (a big field runs past midnight), else today's ──
-  function shownEvent(now = Date.now()) {
+  function shownEvent(now = nowT()) {
     const today = L.eventOf(now), y = L.eventOf(today.start - L.PERIOD);
     const yd = days.get(y.day);
     if (yd && yd.field && !yd.void && now < today.start && !result(yd).done) return { ev: y, df: yd };
     return { ev: today, df: days.get(today.day) || null };
   }
-  /** The next event whose start pick is still open. */
-  function nextEntry(now = Date.now()) {
-    const today = L.eventOf(now);
-    return now < today.lock - SEND_MARGIN ? today : L.nextEvent(today);
-  }
+  /** Audit LN-6: the next event whose start pick isn't past the page's cut-off; open: whether its picks are open now. */
+  const nextEntry = (now = nowT()) => L.nextEntry(now, REG, SEND_MARGIN);
 
   // ── the hours: the recorder's where it has them, else counted here from recent blocks ──
-  function liveHours(df, now = Date.now()) {
+  function liveHours(df, now = nowT()) {
     const hours = (df.hours || []).map((h) => ({ blocks: h.blocks, recorded: true }));
     if (!B || !B.ts.length || !df.field) return { hours, partial: null };
     const inField = new Set(df.field.nodes.map((n) => n.a));
@@ -88,21 +104,29 @@
 
   // ── loading ──
   async function loadDay(day) {
+    const ev0 = L.eventOf(day);
     try {
       const j = await fetchJson(`${DATA}D${day}.json`);
-      if (j && j.v === 1 && j.day === day && (j.field === null || (j.field && Array.isArray(j.field.nodes)))) {
+      // Audit LN-24/LN-32: the event's own start, and no more nodes than the rules allow.
+      if (j && j.v === 1 && j.day === day && ev0 && j.start === ev0.start && (j.field === null || (j.field && Array.isArray(j.field.nodes) && j.field.nodes.length <= L.MAX_FIELD))) {
         if (j.field) j.field.nodes = j.field.nodes.filter((n) => n && isAddr(n.a) && Number.isFinite(n.h) && n.h > 0);
         days.set(day, j);
         return;
       }
-    } catch { /* not published yet */ }
+    } catch (e) {
+      // Audit LN-29: a failed read (not "not published yet") keeps the recorder's file the page already has.
+      const have = days.get(day);
+      if (String((e && e.message) || e) !== "404" && have && !have.provisional) return;
+    }
     // No recorder file yet: work the field out here from the same card (it is only shown as provisional).
     const ev = L.eventOf(day);
-    if (Date.now() < ev.opens) return;
+    if (nowT() < ev.opens) return;
     try {
       const c = await raceCardAt(ev.cardTime, ev.opens);
       const f = c && L.makeField(c);
-      if (f) days.set(day, { v: 1, day, start: ev.start, field: f, hours: [], provisional: true });
+      // Audit LN-31: the same address check as the recorder's files.
+      if (f) f.nodes = f.nodes.filter((n) => n && isAddr(n.a));
+      if (f && f.nodes.length >= 2) days.set(day, { v: 1, day, start: ev.start, field: f, hours: [], provisional: true });
     } catch { /* none */ }
   }
   async function raceCardAt(t, opens) {
@@ -115,14 +139,14 @@
     return null;
   }
   async function loadAll() {
-    const now = Date.now();
+    const now = nowT();
     const cur = L.eventOf(now);
     await Promise.all([L.eventOf(cur.start - L.PERIOD).day, cur.day, L.nextEvent(cur).day].map(loadDay));
     try { card = await raceCardNow(); } catch { /* keep */ }
     try { const b = await fetchJson(DATA + "board.json"); if (b && b.v === 1) board = b; } catch { /* none yet */ }
   }
   async function raceCardNow() {
-    const now = Date.now(), ra = M.raceAt(now), w = M.weekOf(ra.start);
+    const now = nowT(), ra = M.raceAt(now), w = M.weekOf(ra.start);
     const wf = await fetchJson(`${RACE_DATA}W${String(w).padStart(3, "0")}.json`);
     const race = wf && Array.isArray(wf.races) ? wf.races.find((r) => r && r.id === ra.id) : null;
     return race && Array.isArray(race.cards) ? M.cardForLeg(race.cards, M.legOf(ra.start, now, M.legsOf(race.cards))) : null;
@@ -130,7 +154,7 @@
   async function loadBlocks() {
     // A copy: the block loader trims and re-reads its newest blocks while it updates, and the page must never draw
     // from that half-updated list (it showed a cut disappear and come back, and announced it twice).
-    try { const r = await KBlocks.ensure(provider, { blocks: 31000 }); B = { ts: r.B.ts.slice(), sig: r.B.sig.slice(), signers: r.B.signers.slice() }; say(""); } catch { say("Couldn't reach the Koinos network. Trying again in a moment…"); }
+    try { const r = await KBlocks.ensure(provider, { blocks: 31000 }); B = { ts: r.B.ts.slice(), sig: r.B.sig.slice(), signers: r.B.signers.slice() }; if (B.ts.length) noteChainTime(B.ts[B.ts.length - 1]); say(""); } catch { say("Couldn't reach the Koinos network. Trying again in a moment…"); }
   }
 
   /** Each node's blocks over the last day ÷ what its VHP share says (the current race card, field and paddock). */
@@ -154,13 +178,13 @@
   const badge = (a, size = "") => el("span", { class: `ln-badge${size ? " " + size : ""}`, style: `--node:${colorOf(a)}`, "aria-hidden": "true", text: callsign(a) });
   /** The big clock: m:ss, or h:mm:ss over an hour. */
   const timer = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = String(s % 60).padStart(2, "0"); return h ? `${h}:${String(m).padStart(2, "0")}:${x}` : `${m}:${x}`; };
-  /** What the page knows about a node: its field entry (handicap) from any loaded event. */
-  function nodeInfo(a) { for (const d of days.values()) { const n = d && d.field && d.field.nodes.find((x) => x.a === a); if (n) return n; } return null; }
+  /** Audit LN-7: a node's field entry (handicap) in the event being picked for. */
+  function nodeInfo(a, df) { return (df && df.field && df.field.nodes.find((x) => x.a === a)) || null; }
   let seen = null;                 // { day, cuts, done }: the most cuts drawn so far, to spot a new cut
   const announced = new Set();     // "event:cut" notes already shown (each cut is announced once)
 
   function render() {
-    const now = Date.now(), { ev, df } = shownEvent(now);
+    const now = nowT(), { ev, df } = shownEvent(now);
     $("ev-title").textContent = `${new Date(ev.start).toLocaleDateString(undefined, { weekday: "long" })} ${clock(ev.start)} event`;
     const track = $("track");
     const tag = (text, cls) => { $("ev-tag").textContent = text; $("ev-tag").className = `ln-tag ${cls}`; };
@@ -187,7 +211,7 @@
     $("ev-clock-label").textContent = res.done ? "last node standing" : now < ev.start ? "until the drop" : `until cut ${res.cuts.length + 1} of ${n - 1}`;
     const recorded = (df.hours || []).length;
     $("ev-sub").textContent = res.done ? `${res.cuts.length} cuts, ${clock(ev.start)} to ${clock(df.start + res.cuts.length * H)}.`
-      : now < ev.start ? `${n} nodes. Picks lock at ${clock(ev.lock)}, first cut at ${clock(ev.start + H)}.`
+      : now < ev.start ? `${n} nodes. Picks close at ${clock(cutoff(ev.round))}, first cut at ${clock(ev.start + H)}.`
       : `${res.standing.length} of ${n} still standing${recorded < res.cuts.length ? " · latest cut not final yet" : ""}${df.provisional ? " · field provisional" : ""}`;
     const mine = myState(ev, df, res);
     const tot = new Map(live.totals.map((t) => [t.a, t]));
@@ -222,17 +246,23 @@
         badge(c.a, "sm"), el("s", { text: nameOf(c.a) }), `cut ${res.cuts.length - i}`)));
     // A short note when a cut happens while you watch: once per cut, only within 5 minutes of it, never covering the race.
     const fresh = (c) => now - (df.start + c.at * H) < 5 * 60000;
-    if (seen && seen.day === ev.day) {
+    // Audit LN-4: whether the cut was yours is told only once your picks have been read (else the note waits for them).
+    if (seen && seen.day === ev.day && (!me() || !picksContract || mineOk)) {
       if (res.done && !seen.done && !announced.has(`${ev.day}:won`) && fresh(res.cuts[res.cuts.length - 1]) && announced.add(`${ev.day}:won`)) flash(`${nameOf(res.winner)} wins`, mine && mine.rode ? `You rode it home: +${mine.points} points` : "The last node standing", "gold");
       else if (just && !announced.has(`${ev.day}:${res.cuts.length}`) && fresh(just) && announced.add(`${ev.day}:${res.cuts.length}`)) {
         const hit = mine && mine.entered && (mine.path[mine.path.length - 1].a === just.a || (mine.out && mine.out === res.cuts.length));
         const backedUp = mine && mine.jumped && mine.path.some((p) => p.at === just.at);
-        flash(`${nameOf(just.a)} is out`, backedUp ? `Your backup kicked in: now riding ${nameOf(mine.node)}` : hit ? (L.canJump(df.field, res, picksFor(ev)) ? "That was your node. Jump now!" : "That was your node.") : mine && mine.entered && !mine.out ? `You survived cut ${res.cuts.length}` : `Cut ${res.cuts.length} of ${n - 1}`, hit || backedUp ? "you" : "");
+        flash(`${nameOf(just.a)} is out`, backedUp ? `Your backup kicked in: now riding ${nameOf(mine.node)}` : hit ? (jumpOpen(df, res, ev) ? "That was your node. Jump now!" : "That was your node.") : mine && mine.entered && !mine.out ? `You survived cut ${res.cuts.length}` : `Cut ${res.cuts.length} of ${n - 1}`, hit || backedUp ? "you" : "");
       }
     }
     seen = { day: ev.day, cuts: Math.max(res.cuts.length, seen && seen.day === ev.day ? seen.cuts : 0), done: res.done };
     renderField(df);
     renderMe(ev, df, res, mine);
+  }
+  /** Audit LN-15: the Jump box is open (a jump due and its round before the page's cut-off). */
+  function jumpOpen(df, res, ev, now = nowT()) {
+    const at = L.canJump(df.field, res, picksFor(ev)), r = at ? L.roundForJump(df.start, at) : null;
+    return r != null && now < cutoff(r) ? r : null;
   }
   function flash(big, small, kind) {
     const box = $("arena");
@@ -245,15 +275,18 @@
 
   /** Once a second: only the clock (a full redraw comes with new blocks, every 30 seconds). */
   function tick() {
-    const now = Date.now(), { ev, df } = shownEvent(now);
+    const now = nowT(), { ev, df } = shownEvent(now);
     if (!df || !df.field) { $("ev-clock").textContent = timer((now < ev.start ? ev : L.nextEvent(ev)).start - now); return; }
     const res = L.cutsFrom(df.field, liveHours(df, now).hours);
     if (res.done) return;
     const nextCut = df.start + (res.cuts.length + 1) * H;
     $("ev-clock").textContent = timer((now < ev.start ? ev.start : nextCut) - now);
     $("ev-clockbox").className = `ln-clock${now >= ev.start && nextCut - now < 60000 ? " hot" : ""}`;
-    if (now >= nextCut + 2 * 60000 || (now >= ev.start && $("ev-tag").textContent !== "Live")) render();
+    // Audit LN-17: while the blocks are late after a cut, redraw at most every 15 seconds (not every second), so taps
+    // on the cards aren't lost to a redraw.
+    if ((now >= ev.start && $("ev-tag").textContent !== "Live") || (now >= nextCut + 2 * 60000 && now - lastStale >= 15000)) { lastStale = now; render(); }
   }
+  let lastStale = 0;
 
   function renderField(df) {
     const rel = reliability();
@@ -279,11 +312,11 @@
   }
   const drafts = new Map();        // round → the node chosen on a card but not sent yet (kept across redraws)
   /** Node cards to choose from, and one button that sends the choice. */
-  function picker(label, options, current, onPick, cls = "", round = null) {
+  function picker(label, options, current, onPick, cls = "", round = null, df = null) {
     const rel = reliability();
     const want = round != null && drafts.has(round) ? drafts.get(round) : current;
     const cards = el("div", { class: "ln-cards", role: "group", "aria-label": label }, ...options.map((a) => {
-      const info = nodeInfo(a), r = rel.get(a);
+      const info = nodeInfo(a, df), r = rel.get(a);
       const b = el("button", { type: "button", class: "ln-card", style: `--node:${colorOf(a)}`, "aria-pressed": String(a === want),
         onclick: () => { if (round != null) drafts.set(round, a); render(); } },
         badge(a, "sm"), el("b", { text: NAMES[a] || `${a.slice(0, 4)}…${a.slice(-3)}` }),
@@ -309,7 +342,7 @@
       el("div", { class: "ln-pts" }, String(st.points), el("small", { text: st.points === 1 ? "point" : "points" })));
   }
   function renderMe(ev, df, res, st) {
-    const box = $("me"), now = Date.now(), who = me(), parts = [];
+    const box = $("me"), now = nowT(), who = me(), parts = [];
     $("me-who").textContent = !picksContract ? "" : who ? `as ${nameOf(who)}${W.kind === "guest" ? " (guest: can play, can't win; this is a staked game)" : ""}` : "";
     if (!picksContract) { box.replaceChildren(); return; }
     const nx = nextEntry(now), nf = days.get(nx.day);
@@ -321,34 +354,50 @@
     }
     // The event running now: your run, a jump or a backup.
     if (df && df.field && res && now >= ev.start && !res.done) {
-      const jumpAt = st && st.entered ? L.canJump(df.field, res, picksFor(ev)) : 0;
-      const jumpRound = jumpAt ? L.roundForJump(df.start, jumpAt) : null;
+      const jumpRound = st && st.entered ? jumpOpen(df, res, ev, now) : null;
       const standing = res.standing;
-      if (!st || !st.entered) parts.push(el("p", { class: "note", style: "margin:0", text: `You're not in the ${clock(ev.start)} event. Get in the next one below.` }));
-      // Your node is the one just cut and no valid jump is set yet: the Jump box, while the jump round is open.
-      else if (jumpRound && now < L.lockTime(jumpRound) - SEND_MARGIN)
+      // Audit LN-4: until your picks have been read, the page doesn't say you're not in (or out).
+      if (!mineOk) parts.push(el("p", { class: "note", style: "margin:0", text: mineErr ? "Couldn't read your picks. Retrying…" : "Reading your picks…" }));
+      else if (!st || !st.entered) parts.push(el("p", { class: "note", style: "margin:0", text: `You're not in the ${clock(ev.start)} event. Get in the next one below.` }));
+      // Your node is the one just cut and no valid jump is set yet: the Jump box, until the page's cut-off.
+      else if (jumpRound)
         parts.push(el("div", { class: "ln-jump" }, el("h3", { text: `${nameOf(st.node)} is out. Jump!` }),
-          el("p", { class: "note", style: "margin:0 0 12px", text: `Pick a node still standing before ${clock(L.lockTime(jumpRound))} (${dur(L.lockTime(jumpRound) - now)} left). One jump per event.` }),
-          picker("Jump", standing, myPicks.get(jumpRound), (a) => sendPick(jumpRound, a, "your jump"), "storm", jumpRound)));
+          el("p", { class: "note", style: "margin:0 0 12px", text: `Pick a node still standing before ${clock(cutoff(jumpRound))} (${dur(cutoff(jumpRound) - now)} left). One jump per event.` }),
+          picker("Jump", standing, myPicks.get(jumpRound), (a) => sendPick(jumpRound, a, "your jump"), "storm", jumpRound, df)));
       else if (st.out) parts.push(runCard(st, df, res), el("p", { class: "note", style: "margin:0", text: `You're out: your node was cut at cut ${st.out}. Points this event: ${st.points}.` }));
       else {
         parts.push(runCard(st, df, res));
         if (!st.jumped) {
           const nextAt = res.cuts.length + 1, backupRound = L.roundForJump(df.start, nextAt), backup = myPicks.get(backupRound);
-          if (nextAt < df.field.nodes.length - 1 && now < L.lockTime(backupRound) - SEND_MARGIN)
-            parts.push(el("div", {}, el("p", { class: "note", style: "margin:0 0 10px", text: backup ? `Backup set: if ${nameOf(st.node)} goes at ${clock(df.start + nextAt * H)}, you jump to ${nameOf(backup)} (if it's still standing).` : `Set a backup: if ${nameOf(st.node)} goes at ${clock(df.start + nextAt * H)}, you jump to it automatically.` }),
-              picker(backup ? "Change backup" : "Set backup", standing.filter((a) => a !== st.node), backup, (a) => sendPick(backupRound, a, "your backup"), "ghost", backupRound)));
+          if (nextAt < df.field.nodes.length - 1 && now < cutoff(backupRound))
+            parts.push(el("div", {}, el("p", { class: "note", style: "margin:0 0 10px", text: (backup ? `Backup set: if ${nameOf(st.node)} goes at ${clock(df.start + nextAt * H)}, you jump to ${nameOf(backup)} (if it's still standing).` : `Set a backup: if ${nameOf(st.node)} goes at ${clock(df.start + nextAt * H)}, you jump to it automatically.`) + ` It covers that cut only; set by ${clock(cutoff(backupRound))}.` }),
+              picker(backup ? "Change backup" : "Set backup", standing.filter((a) => a !== st.node), backup, (a) => sendPick(backupRound, a, "your backup"), "ghost", backupRound, df)));
         }
       }
     } else if (df && df.field && res && res.done && st && st.entered) parts.push(runCard(st, df, res));
     // The start pick for the next event that is still open.
     const startMine = myPicks.get(nx.round);
-    if (nf && nf.field) parts.push(el("div", { class: "ln-act" },
+    if (nf && nf.field && !nx.open) parts.push(el("p", { class: "note", style: "margin:0", text: `Picks for the ${dayTime(nx.start)} event open at ${clock(nx.opens)} (in ${dur(nx.opens - now)}).` }));
+    else if (nf && nf.field) parts.push(el("div", { class: "ln-act" },
       el("p", { class: "ln-cta", text: startMine ? `You drop in on ${nameOf(startMine)} at ${clock(nx.start)}` : `Pick your node for the ${clock(nx.start)} drop` }),
-      el("p", { class: "note", style: "margin:0", text: `Picks lock in ${dur(nx.lock - now)}${startMine ? "; you can switch until then" : ""}. Tip: a node that signs every block it should is hard to knock out.` }),
-      picker(startMine ? "Switch to" : "Drop in", nf.field.nodes.map((x) => x.a), startMine, (a) => sendPick(nx.round, a, `your node for the ${clock(nx.start)} event`), "", nx.round)));
+      el("p", { class: "note", style: "margin:0", text: `${nf.provisional ? "Field provisional (the recorder's file isn't out yet). " : ""}Picks close in ${dur(cutoff(nx.round) - now)}, at ${clock(cutoff(nx.round))}${startMine ? "; you can switch until then" : ""}. Tip: a node that signs every block it should is hard to knock out.` }),
+      picker(startMine ? "Switch to" : "Drop in", nf.field.nodes.map((x) => x.a), startMine, (a) => sendPick(nx.round, a, `your node for the ${clock(nx.start)} event`), "", nx.round, nf)));
     else parts.push(el("p", { class: "note", style: "margin:0", text: `The field for the ${dayTime(nx.start)} event appears when picks open, at ${clock(nx.opens)}.` }));
     box.replaceChildren(...parts);
+  }
+
+  /** Audit LN-22: the game as registered in the Picks contract. Its timing must be this page's rules; its lead and
+   *  ahead (which tighten_game can change) set the page's lock and open times. */
+  async function readRegistration() {
+    const g = (await picksContract.functions.get_game({ game: L.GAME_ID })).result?.game;
+    if (!g) return;                                 // not registered yet: the pick error explains it
+    if (String(g.round_size) !== String(L.PICKS_GAME.round_size) || String(g.round_offset) !== String(L.PICKS_GAME.round_offset) || Number(g.lock_mode) !== 2) {
+      picksContract = null; say("This game's registration in the Picks contract doesn't match this page's rules. Picks are off here.");
+      return;
+    }
+    const lead = Number(g.lead), ahead = Number(g.ahead);
+    if (Number.isFinite(lead) && lead > 0) REG.lead = lead;
+    if (Number.isFinite(ahead) && ahead > 0) REG.ahead = ahead;
   }
 
   // ── picks (live once picks-data/deployment.json is on the site; on the test page, the testnet Picks contract) ──
@@ -360,6 +409,8 @@
     try { dep = await fetchJson(new URL("game-data/deployment.json", ROOT)); } catch { /* the wallet keeps its defaults */ }
     const abi = await fetchJson(new URL("picks/abi/picks.koilib.json", ROOT));
     picksContract = new lib.Contract({ id: pdep.contract, abi, provider });
+    await readRegistration().catch(() => { /* the rules' own settings */ });
+    if (!picksContract) return;
     if (W) W.init({ provider, chainId: dep && dep.chainId, payer: dep && dep.payer, sponsor: dep && dep.sponsor, onChange: () => loadMine().then(render) });
     $("picks-soon").hidden = true;
   }
@@ -369,6 +420,8 @@
     if (!cfg || cfg.network !== "koinos-foundation-testnet" || !cfg.chainId || cfg.chainId === MAINNET_CHAIN_ID) throw new Error("This page's testnet settings are missing or name mainnet.");
     const g = Array.isArray(cfg.games) ? cfg.games.find((x) => x && x.id === L.GAME_ID) : null;
     if (!g || ["cut", "offset", "lead", "ahead", "period", "phase"].some((k) => g[k] !== L.GAME[k])) throw new Error(`Game ${L.GAME_ID}'s settings don't match the rules on this page.`);
+    // Audit LN-28: the faucet link must be an https address.
+    if (cfg.faucet != null && !/^https:\/\/[^\s"<>]+$/.test(String(cfg.faucet))) cfg.faucet = null;
     NET = cfg;
     const local = location.hostname === "localhost" || location.hostname === "127.0.0.1";
     DATA = local ? new URL(`testnet-data/lastnode-${L.GAME_ID}/`, ROOT).href : `${cfg.data}lastnode-${L.GAME_ID}/`;
@@ -380,6 +433,8 @@
     if (!bx || bx.network !== "koinos-foundation-testnet" || !isAddr(bx.picks)) return;   // no testnet Picks contract yet
     const abi = await fetchJson(new URL("picks/abi/picks.koilib.json", ROOT));
     picksContract = new lib.Contract({ id: bx.picks, abi, provider: picksProvider });
+    await readRegistration().catch(() => { /* the rules' own settings */ });
+    if (!picksContract) return;
     if (W) W.init({ provider: picksProvider, chainId: cfg.chainId, picks: bx.picks });
     $("picks-soon").hidden = true;
     renderWallet();
@@ -423,12 +478,13 @@
   if ($("wallet-btn")) $("wallet-btn").addEventListener("click", walletButton);
 
   /** Your picks for the rounds that matter: the shown event's start and jump rounds, and the next event's start. */
-  let mineCall = 0, mineWho = null;
+  // Audit LN-4: picks are read into a new map and swapped in only when every read worked; a failed read keeps the old
+  // ones, says so, and tries again in 8 seconds. The map is cleared only when the wallet changes.
+  let mineCall = 0, mineWho = null, mineOk = false, mineErr = false, mineRetry = null;
   async function loadMine() {
     const call = ++mineCall, who = me();
-    if (who !== mineWho) { drafts.clear(); mineWho = who; }
-    myPicks.clear();
-    if (!picksContract || !who) return;
+    if (who !== mineWho) { drafts.clear(); myPicks.clear(); mineWho = who; mineOk = false; mineErr = false; }
+    if (!picksContract || !who) { mineOk = true; return; }
     const { ev, df } = shownEvent(), nx = nextEntry();
     const rounds = new Set([nx.round, ev.round]);
     const n = df && df.field ? df.field.nodes.length : 0;
@@ -437,8 +493,15 @@
       const got = await Promise.all([...rounds].map((r) => picksContract.functions.get_pick({ game: L.GAME_ID, round: String(r), player: who })
         .then((x) => [r, x.result && x.result.pick && Array.isArray(x.result.pick.producers) ? x.result.pick.producers[0] : null])));
       if (call !== mineCall || me() !== who) return;      // a newer call (or another wallet) took over
+      myPicks.clear();
       for (const [r, a] of got) if (isAddr(a)) myPicks.set(r, a);
-    } catch { /* shown as none */ }
+      mineOk = true; mineErr = false;
+    } catch {
+      if (call !== mineCall || me() !== who) return;
+      mineErr = true;
+      clearTimeout(mineRetry);
+      mineRetry = setTimeout(() => loadMine().then(render), 8000);
+    }
   }
 
   // ── the pick pop-up: wallet → sent → confirmed on the chain ──
@@ -464,9 +527,9 @@
     if (!who || !picksContract || sending) return;
     if (!isAddr(producer)) return pickModal("info", "Choose a node first", ["Choose a node from the list, then press the button."], [okBtn("OK")]);
     if (myPicks.get(round) === producer) return pickModal("info", "That is already your pick", [`${nameOf(producer)} is ${what}.`], [okBtn("OK")]);
-    if (!L.isOpen(round, Date.now() + SEND_MARGIN)) return pickModal("bad", "Too close to the lock", ["This pick locks in under a minute. It can't be sent safely now."], [okBtn("OK")]);
+    if (!pickable(round)) return pickModal("bad", nowT() < openAt(round) ? "Not open yet" : "Too close to the lock", [nowT() < openAt(round) ? `Picks for this round open at ${clock(openAt(round))}.` : "This pick locks in under a minute. It can't be sent safely now."], [okBtn("OK")]);
     sending = true; render();
-    const line = `${nameOf(producer)} as ${what} (round of ${dayTime(L.roundTime(round))}, locks ${clock(L.lockTime(round))})`;
+    const line = `${nameOf(producer)} as ${what} (round of ${dayTime(L.roundTime(round))}, locks ${clock(lockAt(round))})`;
     const wallet = W.kind === "guest" ? "your guest wallet" : W.label ? W.label() : "your wallet";
     pickModal("busy", W.kind === "guest" ? "Sending your pick…" : `Confirm in ${wallet}`, [line, TESTNET ? "Testnet: the Mana comes from your test KOIN. Nothing here is real money." : "Free: the KnodeGames Mana sponsor pays the Mana."]);
     try {
@@ -479,7 +542,7 @@
         if (!onChain) await new Promise((res) => setTimeout(res, 3000));
       }
       if (onChain) pickModal("ok", "Pick confirmed", [el("p", {}, el("b", { text: nameOf(producer) }), ` is ${what}.`),
-        `You can change it until ${clock(L.lockTime(round))}.`,
+        `You can change it until ${clock(cutoff(round))}.`,
         id ? el("p", { class: "ago mono", text: `Transaction ${String(id).slice(0, 18)}…` }) : null].filter(Boolean), [okBtn()]);
       else pickModal("info", "Sent, not seen on the chain yet", ["Your wallet sent it. It usually shows within a minute; this page updates by itself."], [okBtn("OK")]);
     } catch (e) {
