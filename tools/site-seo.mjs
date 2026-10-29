@@ -5,7 +5,7 @@
 // "https://your-domain/site/"; robots.txt and sitemap.xml are written to the repository root, which is the domain root.
 import fs from "node:fs";
 
-export const SITE = "https://bawcejawn.github.io/Knode/site/";
+export const SITE = "https://knodegames.com/site/";
 const ROOT = new URL("../", import.meta.url).pathname;
 
 export const PAGES = [
@@ -88,6 +88,6 @@ if (process.argv[1] && process.argv[1].endsWith("site-seo.mjs")) {
   }
   const today = new Date().toISOString().slice(0, 10);
   fs.writeFileSync(ROOT + "sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${PAGES.map((p) => `  <url><loc>${SITE + p.path}</loc><lastmod>${today}</lastmod><priority>${p.priority}</priority></url>`).join("\n")}\n</urlset>\n`);
-  fs.writeFileSync(ROOT + "robots.txt", `# Served from the domain root once Knode Games has its own domain (until then search engines read it at the github.io root).\nUser-agent: *\nAllow: /\nDisallow: /site/producer.html\nSitemap: ${SITE.replace(/site\/$/, "")}sitemap.xml\n`);
+  fs.writeFileSync(ROOT + "robots.txt", `# Knode Games, https://knodegames.com\nUser-agent: *\nAllow: /\nDisallow: /site/producer.html\nSitemap: ${SITE.replace(/site\/$/, "")}sitemap.xml\n`);
   console.log(`Wrote tags for ${PAGES.length} pages, sitemap.xml and robots.txt (site: ${SITE}).`);
 }

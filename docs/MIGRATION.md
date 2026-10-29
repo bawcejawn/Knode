@@ -97,7 +97,7 @@ npm run bot -- node-key personal         # its PUBLIC key
 
    It has its own Docker project and ports (RPC 8090, P2P 8898), so it never collides with the game node (8080, 8888)
    or the testnet node (8081, 8889). Delete the snapshot file afterwards to free 60 GB.
-3. Register that public key for the new address at **https://bawcejawn.github.io/Knode/site/producer.html**:
+3. Register that public key for the new address at **https://knodegames.com/site/producer.html**:
    connect Kondor with the new account, paste the public key, Register, confirm in Kondor.
 4. Move your VHP from the old personal address to the new one (a normal VHP transfer in Kondor). Send a small test
    amount first. The new node starts producing as soon as the VHP arrives.

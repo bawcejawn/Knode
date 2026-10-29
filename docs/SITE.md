@@ -21,4 +21,4 @@ sitemap and robots.txt follow.
 
 ## Installable app
 `site/install.html` explains installing Knode on iPhone, Android and computers (and offers the browser's install
-button where there is one). Share link: https://bawcejawn.github.io/Knode/site/install.html
+button where there is one). Share link: https://knodegames.com/site/install.html
