@@ -16,6 +16,7 @@
  *   npm run bot -- games                      the vault's games (v6), their stakes, weeks and announcements
  *   npm run bot -- vault-snapshot [--out f]   read-only: save the live contract's state to a file (for rehearse-v6)
  *   npm run bot -- rehearse-v6 [--snapshot f] [--weeks 3] [--reward 90]   the v6 upgrade on a copy of that state
+ *   npm run bot -- testnet-v6 [status]        the Vault's testnet check: Mana of the heaviest calls, key order (testnet only)
  *   Vault v6 commands (dry run unless --send; bot/README.md has the details):
  *     owner     game-add <id> "<name>" [--staked] [--free] [--season <weeks>] · game-apply <id> · game-stop <id>
  *               game-correct <id> <week> <player> <points> · game-unprize <id> <week> <player> · game-void <id> <week>
@@ -2087,6 +2088,7 @@ async function main() {
   if (cmd === "rehearse") { const { rehearse } = await import("./rehearse.ts"); return rehearse({ weeks: Number(opt("--weeks", "3")), verbose: flag("--verbose") }); }
   // Vault v6: copy the live contract's state to a file (read-only, no key), and rehearse the upgrade on that copy.
   if (cmd === "vault-snapshot") { const { snapshotCommand } = await import("./rehearse-v6.ts"); return snapshotCommand(gameChain(), opt("--out", "v5-snapshot.json")!); }
+  if (cmd === "testnet-v6") { const { testnetV6 } = await import("./testnet-v6.ts"); return testnetV6(rest.filter((a) => !a.startsWith("--"))); }
   if (cmd === "rehearse-v6") { const { rehearseCommand } = await import("./rehearse-v6.ts"); return rehearseCommand(opt("--snapshot", "v5-snapshot.json")!, Number(opt("--weeks", "3")), opt("--reward")); }
   throw new Error(`Unknown command "${cmd}". See bot/README.md for the list of commands.`);
 }

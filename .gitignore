@@ -21,3 +21,6 @@ node/release-kick-state.json
 # local diagnostics and one-off notes on the owner PC
 node/diag*.txt
 before-upgrade.txt
+
+# the Vault's testnet check (throwaway testnet keys and results)
+testnet-v6/
