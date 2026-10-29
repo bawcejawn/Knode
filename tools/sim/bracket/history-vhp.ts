@@ -79,7 +79,7 @@ async function main() {
   if (MODE === "plan") {
     const hi: any = await withRetry("head", () => p.getHeadInfo());
     const top = Number(hi.last_irreversible_block), days = Number(E.DAYS || 100), chunks = Number(E.CHUNKS || 6);
-    const from = top - Math.round(days * 28800) + 1, size = Math.ceil((top - from + 1) / chunks);
+    const from = E.FROM ? Number(E.FROM) : top - Math.round(days * 28800) + 1, size = Math.ceil((top - from + 1) / chunks);   // FROM: continue an earlier history
     const list = Array.from({ length: chunks }, (_, k) => ({ from: from + k * size, to: Math.min(top, from + (k + 1) * size - 1) }));
     fs.appendFileSync(E.GITHUB_OUTPUT || "/dev/stdout", `top=${top}\nchunks=${JSON.stringify(list)}\n`);
     return;

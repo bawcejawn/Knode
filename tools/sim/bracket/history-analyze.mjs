@@ -69,7 +69,7 @@ function indexOver(t0, t1, who) {
 const PTS = { chalk: [], underdog: [], random: [], form: [], perfect: [] };
 const gap = new Map(), margins = [], sizes = [];
 let x = 777; const rnd = () => { x = (x * 1103515245 + 12345) % 2147483648; return x / 2147483648; };
-for (let w = 0; w < 400; w++) {
+for (let w = -40; w < 400; w++) {
   const seedT = B.seedTime(w), endT = B.roundDay(w, 5);
   if (seedT - 7 * DAY < ts[0] + B.ACTIVE_BLOCKS * 3000 + H) continue;
   if (B.roundDay(w, 4) + DAY > ts[n - 1]) break;
