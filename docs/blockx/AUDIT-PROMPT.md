@@ -58,7 +58,8 @@ with no problems. Check these conclusions against the code; P-5 asked for exactl
 9. **CI.** `games.yml` and `games-testnet.yml`: can repository code run next to a write token? Can a crafted file
    name or content reach a shell or get published? Is only the expected branch pushed?
 10. **Admin tool** (`bot/picks.ts`): key handling, mainnet guards (`--mainnet` + `CONFIRM_MAINNET`), chain-id checks,
-   uploads only the audited build on mainnet.
+   uploads only the audited build on mainnet; the upload is signed by the new Picks wallet and paid by a second
+   wallet (`PAYER_WIF`, else `OPERATOR_WIF`), so the Picks wallet never holds KOIN it could not move out again.
 
 **Out of scope.** The Mana sponsor contract (`sponsor/`, its v3 is audited separately) and the game vault. Do
 note anything in Block X that relies on the sponsor (what a sponsored pick must look like, the spam budget).
