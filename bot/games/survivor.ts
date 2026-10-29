@@ -25,6 +25,7 @@ import { Provider, Contract } from "koilib";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { readVhp, MAINNET_VHP, withRetry } from "../../common.ts";
 await import("../../survivor-math.js");
@@ -299,7 +300,12 @@ export async function readStaked(node: any, who: string[], week: number, game: s
 export async function readRanked(node: any, who: string[], token = MAINNET_VHP, game: string | null = GAME,
   deps: { vhp?: (node: any, token: string, who: string[]) => Promise<Record<string, string>>; player?: (node: any, game: string, a: string) => Promise<any> } = {}): Promise<Set<string>> {
   if (!who.length) return new Set();
-  const vhpOf = deps.vhp ?? (async (n: any, t: string, w: string[]) => (await readVhp(n, t, w)).values);
+  // Balances in chunks of 25 wallets, 8 chunks at a time (fix-check: one at a time was too slow for a big day 1).
+  const vhpOf = deps.vhp ?? (async (n: any, t: string, w: string[]) => {
+    const chunks: string[][] = [];
+    for (let i = 0; i < w.length; i += 25) chunks.push(w.slice(i, i + 25));
+    return Object.assign({}, ...(await pool(chunks, READS_AT_ONCE, async (c) => (await readVhp(n, t, c)).values)));
+  });
   // Read with the v6 ABI: its get_player also gives stake_other, the VHP the wallet has in the vault's other games
   // (stake and pending deposits, kept current on every deposit, withdrawal and move). On the v5 contract it is 0.
   const playerOf = deps.player ?? (async (n: any, g: string, a: string) => {
@@ -359,11 +365,60 @@ export function vaultFiles(sf: { startDay: number; days: any[]; result: any; sta
   return out;
 }
 
+// ── writing the files: a side folder, then a swap ──
+// The side folder sits next to OUT's parent (never inside it, so a leftover one is never published) and on the same
+// disk, so the swap is two renames. When OUT's parent is a top folder (e.g. /tmp/x), the system temp folder is used and
+// the files are copied in instead. The old folder is parked under a fixed name, so a run that died between the two
+// renames is put right by the next one (fix-check of SV-A26: the testnet kit's OUT is also its PREV).
+function sideOf(final: string): { side: string; sameDisk: boolean } {
+  const side = path.dirname(path.dirname(final));
+  return side === path.parse(side).root ? { side: os.tmpdir(), sameDisk: false } : { side, sameDisk: true };
+}
+const oldOf = (final: string) => path.join(sideOf(final).side, `.survivor-old-${crypto.createHash("sha256").update(final).digest("hex").slice(0, 12)}`);
+function renameRetry(a: string, b: string) {
+  for (let i = 0; ; i++) {
+    try { fs.renameSync(a, b); return; }
+    catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (i >= 4 || !["EPERM", "EBUSY", "EACCES"].includes(code ?? "")) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * (i + 1));   // e.g. a virus scan holding a new file
+    }
+  }
+}
+/** A run that died between the two renames left OUT missing and the old folder parked: put it back. */
+export function recoverOut(final: string) {
+  const old = oldOf(final);
+  if (!fs.existsSync(final) && fs.existsSync(old)) renameRetry(old, final);
+}
+function stageFor(final: string): string {
+  const { side, sameDisk } = sideOf(final);
+  if (sameDisk) { try { return fs.mkdtempSync(path.join(side, ".survivor-stage-")); } catch { /* not writable: the temp folder */ } }
+  return fs.mkdtempSync(path.join(os.tmpdir(), "survivor-stage-"));
+}
+function swapIn(stage: string, final: string) {
+  try {
+    // Files of the last run that this run didn't write again (a season skipped this run) are kept.
+    if (fs.existsSync(final)) fs.cpSync(final, stage, { recursive: true, force: false, errorOnExist: false });
+    const old = oldOf(final);
+    if (path.dirname(stage) !== sideOf(final).side || !sideOf(final).sameDisk) {
+      fs.mkdirSync(final, { recursive: true });
+      fs.cpSync(stage, final, { recursive: true });           // another disk: copied (not atomic)
+      return;
+    }
+    fs.rmSync(old, { recursive: true, force: true });
+    if (fs.existsSync(final)) renameRetry(final, old);
+    try { renameRetry(stage, final); }
+    catch (e) { if (fs.existsSync(old) && !fs.existsSync(final)) renameRetry(old, final); throw e; }
+    fs.rmSync(old, { recursive: true, force: true });
+  } finally { fs.rmSync(stage, { recursive: true, force: true }); }
+}
+
 /** One run. Exported for the tests, which pass fake nodes. */
 export async function run(o: Opts) {
   S = o.math ?? MAINNET_S;
   const OUT = o.out ?? E.SURVIVOR_OUT ?? "games-data/survivor";
   const PREV = o.prev ?? E.SURVIVOR_PREV ?? "";
+  recoverOut(path.resolve(OUT));
   const firstDay: number | null = o.firstDay === undefined ? S.FIRST_DAY : o.firstDay;
   const contract = o.picksContract === undefined ? defaultPicksContract() : o.picksContract;
   const problems: string[] = [];
@@ -424,11 +479,15 @@ export async function run(o: Opts) {
   let outOfTime = false;
   const timeLeft = () => { if (!outOfTime && Date.now() - t0 > budget) { outOfTime = true; problems.push(`Survivor: out of time for season work this run (${Math.round(budget / 60000)} min); it carries on next run`); } return !outOfTime; };
   // The vault must count weeks and seasons as the files do, or no vault file is written (Repo Lense S2-7, S2-21).
-  let vaultOk = true;
+  let vaultOk = true, vault: { genesis: number; weekLen: number; game3: any | null } | null = null;
   if (S.MAINNET && firstDay !== null) {
     try {
       const vaultRead = o.vaultOf ?? ((node: any) => readVault(node, holdGame));
-      const why = vaultMismatch(await vaultRead(o.p), firstDay);
+      vault = await vaultRead(o.p);
+      // Both nodes must give the same vault settings (fix-check).
+      if (o.check && JSON.stringify(await vaultRead(o.check)) !== JSON.stringify(vault)) throw new Error("the two nodes disagree about the vault's settings");
+      if (vault?.game3 && vault.game3.active === false) problems.push("Survivor: game 3 is stopped in the vault; its weeks earn nothing until it is re-activated");
+      const why = vaultMismatch(vault, firstDay);
       if (why) { problems.push(`Survivor: ${why}; no vault results files are written until it is fixed (docs/SURVIVOR-RUNBOOK.md)`); vaultOk = false; }
     } catch (e) { problems.push(`Survivor: the vault's settings: ${(e as Error).message}; no vault files this run`); vaultOk = false; }
   }
@@ -559,6 +618,9 @@ export async function run(o: Opts) {
       if (!rec) break;
       // A day the second node hasn't confirmed (or disputes) doesn't decide lives (Repo Lense S2-10).
       if (o.check && rec.checked !== 2) { problems.push(`season ${s} day ${nDay}: its blocks are confirmed on one node only; the season waits until the second node agrees`); break; }
+      // So must the 7 days its handicap comes from (fix-check of S2-10).
+      const unconfirmed = o.check ? S.formDays(d).filter((x: number) => days.get(x)?.checked !== 2) : [];
+      if (unconfirmed.length) { problems.push(`season ${s} day ${nDay}: ${unconfirmed.length} of the days behind its handicap are confirmed on one node only; the season waits until the second node agrees`); break; }
       const field = S.fieldFor(d, days);
       if (!field) { problems.push(`season ${s} day ${nDay}: the 7 days behind its handicap aren't all recorded yet`); break; }
       let raw: RawPick[];
@@ -581,6 +643,7 @@ export async function run(o: Opts) {
       let noVhp: string[];
       try { const h = await heldOf(inNow); noVhp = inNow.filter((a) => !h.has(a)).sort(); }
       catch (e) { problems.push(`season ${s} day ${nDay}: VHP check: ${(e as Error).message} (tried again next run)`); break; }
+      if (!timeLeft()) break;                              // ran past the budget during this day's checks: next run
       sf.days.push({ n: nDay, day: d, field, counts: rec.counts, picks, noVhp });
       played = S.playSeason(sf.days);
       console.log(`season ${s} day ${nDay} (${S.dayLabel(d)}): ${picks.length} picks, ${played.players.filter((x: any) => x.outN === null).length} still in`);
@@ -623,7 +686,7 @@ export async function run(o: Opts) {
   // same disk, so the swap at the end is two renames (Repo Lense SV-A26: copying file by file wasn't atomic).
   const FINAL = path.resolve(OUT);
   fs.mkdirSync(path.dirname(FINAL), { recursive: true });
-  const STAGE = fs.mkdtempSync(path.join(path.dirname(path.dirname(FINAL)), ".survivor-stage-"));
+  const STAGE = stageFor(FINAL);
   const keep = [...days.values()].sort((x, y) => x.day - y.day).slice(-KEEP_DAYS);
   fs.writeFileSync(path.join(STAGE, "days.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), days: keep }) + "\n");
   fs.writeFileSync(path.join(STAGE, "fields.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), fields }) + "\n");
@@ -638,17 +701,14 @@ export async function run(o: Opts) {
     // The vault's results files (mainnet only: the test clock's rounds aren't vault weeks).
     if (S.MAINNET && vaultOk) for (const [w, f] of Object.entries(vaultFiles(sf, S, problems))) {
       if (Number(w) < 0) continue;                         // before the vault's week 0 (Repo Lense S2-19)
+      // A season's last week before game 3's first vault week: its winners can't be paid (fix-check).
+      if (vault?.game3 && Number(w) === vaultWeekOf(sf.startDay) + 1 && Number(w) < Number(vault.game3.from_week || 0)) problems.push(`Survivor: season ${sf.season} ends in vault week ${w}, before game 3 starts in the vault (week ${vault.game3.from_week}); its free prize can't be paid`);
       fs.mkdirSync(path.join(STAGE, "vault"), { recursive: true });
       fs.writeFileSync(path.join(STAGE, "vault", `W${w}.json`), JSON.stringify(f) + "\n");
     }
   }
   fs.writeFileSync(path.join(STAGE, "index.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), firstDay, contract: contract || null, seasons: [...known].sort((a, b) => a - b) }) + "\n");
-  // Files of the last run that this run didn't write again (a season skipped this run) are kept.
-  if (fs.existsSync(FINAL)) fs.cpSync(FINAL, STAGE, { recursive: true, force: false, errorOnExist: false });
-  const OLD = `${STAGE}-old`;
-  if (fs.existsSync(FINAL)) fs.renameSync(FINAL, OLD);
-  fs.renameSync(STAGE, FINAL);
-  fs.rmSync(OLD, { recursive: true, force: true });
+  swapIn(STAGE, FINAL);
   for (const pr of problems) console.log(`::warning::${pr}`);
   return { problems, days, fields, seasons };
 }

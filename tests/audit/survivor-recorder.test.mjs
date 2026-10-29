@@ -611,3 +611,31 @@ test("S2-19, SV-A26: no vault file before week 0; the write keeps last run's fil
   const side = path.dirname(path.dirname(dir));
   assert.ok(!fs.readdirSync(side).some((f) => f.startsWith(".survivor-stage-")), "no side folder left behind");
 });
+
+test("fix-check: the 7 days behind a season day's handicap must be confirmed on both nodes too", async () => {
+  const start = S.dayStart(FIRST - 1) + 3600000;
+  const r = await runs([start, start + 60000, start + 120000, start + 180000]);
+  const j = r.read("days.json");
+  j.days.find((x) => x.day === FIRST - 3).checked = 1;            // saved from one node only
+  fs.writeFileSync(path.join(r.out, "days.json"), JSON.stringify(j));
+  const r2 = await runs([S.dayStart(FIRST + 1) + 3600000], { blocksOf: blocksOf(FIRST - 3) }, r.out);   // and node C disputes it
+  assert.equal(r2.read("S001.json").days.length, 0);
+  assert.ok(r2.r.problems.some((p) => /days behind its handicap are confirmed on one node only/.test(p)), JSON.stringify(r2.r.problems));
+});
+
+test("fix-check: a run that died between the two renames is put right by the next one", async () => {
+  const { recoverOut } = await import(path.resolve(APP, "bot/games/survivor.ts"));
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "sv-swap-")), out = path.join(parent, "data", "survivor");
+  fs.mkdirSync(out, { recursive: true });
+  const r = await quiet(() => run({ p: "main", check: "check", prev: out, out, firstDay: FIRST, picksContract: A("P"), blocksOf: blocksOf(), timeOf, picksOf: picksOf(), rankedOf, gameOf, stakedOf: async () => null, vaultOf: async () => null, head: headAt(S.dayStart(FIRST - 1) + 3600000) }));
+  assert.ok(r && fs.existsSync(path.join(out, "days.json")));
+  assert.deepEqual(fs.readdirSync(parent).filter((f) => f.startsWith(".survivor-")), [], "no side folder left");
+  // Simulate the crash: the folder parked under its fixed name, OUT missing.
+  const old = fs.readdirSync(parent);
+  void old;
+  const crypto = await import("node:crypto");
+  const parked = path.join(parent, `.survivor-old-${crypto.createHash("sha256").update(out).digest("hex").slice(0, 12)}`);
+  fs.renameSync(out, parked);
+  recoverOut(out);
+  assert.ok(fs.existsSync(path.join(out, "days.json")) && !fs.existsSync(parked));
+});

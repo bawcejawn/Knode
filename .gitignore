@@ -21,3 +21,7 @@ node/release-kick-state.json
 # local diagnostics and one-off notes on the owner PC
 node/diag*.txt
 before-upgrade.txt
+
+# Survivor recorder side folders (bot/games/survivor.ts), if a local run is stopped mid-write
+.survivor-stage-*
+.survivor-old-*

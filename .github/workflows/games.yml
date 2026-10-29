@@ -46,14 +46,14 @@ jobs:
           mkdir -p "$RUNNER_TEMP/prev/blockx" "$RUNNER_TEMP/prev/survivor" "$RUNNER_TEMP/race"
           # A games-data branch that exists but can't be fetched stops the run: starting from nothing would publish
           # regressed files over the good ones (Repo Lense S2-15). ls-remote exits 2 when the branch doesn't exist.
-          has=0; git ls-remote --exit-code --heads "https://github.com/${GITHUB_REPOSITORY}.git" games-data >/dev/null 2>&1 || has=$?
+          has=0; git ls-remote --exit-code "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/games-data >/dev/null 2>&1 || has=$?
           if [ "$has" = 0 ]; then
             git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" games-data
             # (audit BX-34: names read line by line, never word-split; only expected names are taken)
-            git ls-tree --name-only FETCH_HEAD:blockx 2>/dev/null | while IFS= read -r f; do
+            { git ls-tree --name-only FETCH_HEAD:blockx 2>/dev/null || true; } | while IFS= read -r f; do
               if [[ "$f" =~ ^(index|board|W[0-9]{3}|P[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:blockx/$f" > "$RUNNER_TEMP/prev/blockx/$f"; fi
             done
-            git ls-tree --name-only FETCH_HEAD:survivor 2>/dev/null | while IFS= read -r f; do
+            { git ls-tree --name-only FETCH_HEAD:survivor 2>/dev/null || true; } | while IFS= read -r f; do
               if [[ "$f" =~ ^(index|days|fields|S[0-9]{3,4})\.json$ ]]; then git show "FETCH_HEAD:survivor/$f" > "$RUNNER_TEMP/prev/survivor/$f"; fi
             done
           elif [ "$has" = 2 ]; then echo "No games-data branch yet."
@@ -74,7 +74,7 @@ jobs:
       # Survivor runs even if Block X failed this hour, and the files of whichever recorder worked are published.
       - name: Record Survivor
         if: ${{ !cancelled() }}
-        timeout-minutes: 20
+        timeout-minutes: 15          # a step timeout fails the step, not the job: Block X's files still go out
         run: npm run survivor
         env:
           RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
