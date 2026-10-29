@@ -3,9 +3,9 @@ name: Sponsor contract tests
 
 on:
   push:
-    paths: ["sponsor/**", "game/abi/**", "desk/abi/**", "race/abi/**", "site/wallet.js", ".github/workflows/sponsor-test.yml"]
+    paths: ["sponsor/**", "game/abi/**", "desk/abi/**", "race/abi/**", "wallet.js", ".github/workflows/sponsor-test.yml"]
   pull_request:
-    paths: ["sponsor/**", "game/abi/**", "desk/abi/**", "race/abi/**", "site/wallet.js", ".github/workflows/sponsor-test.yml"]
+    paths: ["sponsor/**", "game/abi/**", "desk/abi/**", "race/abi/**", "wallet.js", ".github/workflows/sponsor-test.yml"]
   workflow_dispatch: {}
 
 permissions:

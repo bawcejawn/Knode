@@ -264,7 +264,7 @@ before the start, the override is set aside and the node starts on its old folde
 | `desk/` | Knode Swap contract and tests ([`desk/README.md`](desk/README.md)) |
 | `bot/` | The hourly operator bot, the Desk and upgrade tools, the rehearsal ([`bot/README.md`](bot/README.md)) |
 | `admin/` | The local admin page (`npm run admin`) |
-| `site/` | The website (GitHub Pages) |
+| `*.html`, `*.js`, `*.css`, `media/` | The website (GitHub Pages, https://knodegames.com) · `site/` only redirects old links |
 | `generator.ts`, `resolver.ts`, `common.ts` | Build and score the questions ([`docs/QUESTIONS.md`](docs/QUESTIONS.md)) |
 | `backtest.ts`, `export-blocks.ts`, `data/` | Tune the question templates on real history |
 | `game-data/`, `desk-data/` | The live, public game files (questions, results, deployment details) |

@@ -6,7 +6,7 @@
   "use strict";
   const M = window.KRaceMath;
   const W = window.KWallet;
-  const BASE = location.pathname.includes("/site/") ? "../" : "./";
+  const BASE = "./";
   const GAME_DATA = BASE + "game-data/";
   const RACE_DATA = "https://raw.githubusercontent.com/bawcejawn/Knode/race-data/";
   const $ = (id) => document.getElementById(id);

@@ -236,7 +236,7 @@
     $("hist-rows").replaceChildren(...rows);
   }
   // ── picks (once the race picks contract is live: race-data/deployment.json on the site) ──
-  const ROOT = new URL("../", location.href);
+  const ROOT = new URL("./", location.href);
   const W = window.KWallet;
   let raceContract = null, myPicks = new Map(), usage = null, sending = false, board = null;
   // The pick panel is redrawn only when something in it changed (the race redraws every few seconds), and a horse you

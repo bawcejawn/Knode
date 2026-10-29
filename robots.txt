@@ -1,5 +1,5 @@
 # Knode Games, https://knodegames.com
 User-agent: *
 Allow: /
-Disallow: /site/producer.html
+Disallow: /producer.html
 Sitemap: https://knodegames.com/sitemap.xml

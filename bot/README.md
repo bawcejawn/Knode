@@ -170,12 +170,12 @@ The publish job already refuses anything outside `game-data/`. To have GitHub en
 
 - Name: `bot can only change game-data`; Enforcement: Active; Target: all branches (push rulesets apply to the whole
   repository).
-- Rule **Restrict file paths**, with every path except the bot's: `.github/**`, `site/**`, `desk-data/**`, `game/**`,
+- Rule **Restrict file paths**, with every path except the bot's: `.github/**`, `*.html`, `*.js`, `*.css`, `media/**`, `site/**`, `desk-data/**`, `game/**`,
   `desk/**`, `bot/**`, `node/**`, `docs/**`, `tests/**`, `data/**`, `game-data/deployment.json`,
   `game-data/game.json`, and the files in the repository's root folder by name (`package.json`, `package-lock.json`,
   `common.ts`, `resolver.ts`, `generator.ts`, … as they are listed there). Do not use a bare `*.json`: it could also
   match the bot's own files under `game-data/`.
-- This advice has not been tested by the project. Check it before relying on it: from a test branch, a push changing `site/` must be refused for a non-admin token,
+- This advice has not been tested by the project. Check it before relying on it: from a test branch, a push changing `index.html` must be refused for a non-admin token,
   and the next hourly run must still publish `game-data/`.
 - Bypass list: **Repository admin** (you), so your own pushes and pull requests still work. Do not add GitHub Actions.
 

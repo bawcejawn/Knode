@@ -1588,7 +1588,7 @@ async function friendly(cmd: string, a: string[], send: boolean): Promise<boolea
     case "node-key": {
       if (a[0] === "personal") {
         const pub = nodePublicKey(PERSONAL_KEY_FILE);
-        log(`Your PERSONAL node's PUBLIC key (safe to share):\n  ${pub}\n\nRegister it for your own address on https://knodegames.com/site/producer.html (signed in Kondor).\nDo NOT register this one for the game contract.`);
+        log(`Your PERSONAL node's PUBLIC key (safe to share):\n  ${pub}\n\nRegister it for your own address on https://knodegames.com/producer.html (signed in Kondor).\nDo NOT register this one for the game contract.`);
         return true;
       }
       const pub = nodePublicKey(a[0] && !a[0].startsWith("--") ? a[0] : undefined);

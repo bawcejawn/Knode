@@ -6,7 +6,7 @@
   const UNIT = 100000000n;
   const RPC = "https://koinos.armana.io";
   const SCAN = "https://koinosscan.com/address/";
-  const BASE = location.pathname.includes("/site/") ? "../" : "./";
+  const BASE = "./";
   const lib = window.koilib || window.koinos || window;
   const $ = (s) => document.querySelector(s);
   const el = (tag, attrs = {}, ...kids) => {

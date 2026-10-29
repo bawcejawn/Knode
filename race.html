@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- Only these sources may run scripts, load data or be framed. 'unsafe-eval' is needed by koilib (its protobuf
+       encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://raw.githubusercontent.com/bawcejawn/Knode/blocks-data/ https://raw.githubusercontent.com/bawcejawn/Knode/race-data/ https://koinvault.app; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Producer Race · Four handicapped races a day between Koinos block producers</title>
+  <!-- seo:start (written by tools/site-seo.mjs; edit there) -->
+  <meta name="description" content="Every Koinos block producer is a horse. Four 6-hour races a day, handicapped by VHP so every horse has the same chance. Free, live from the chain.">
+  <link rel="canonical" href="https://knodegames.com/race.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Knode Games">
+  <meta property="og:title" content="Koinos Producer Race">
+  <meta property="og:description" content="Every Koinos block producer is a horse. Four 6-hour races a day, handicapped by VHP so every horse has the same chance. Free, live from the chain.">
+  <meta property="og:url" content="https://knodegames.com/race.html">
+  <meta property="og:image" content="https://knodegames.com/media/og-knode.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Koinos Producer Race">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Koinos Producer Race">
+  <meta name="twitter:description" content="Every Koinos block producer is a horse. Four 6-hour races a day, handicapped by VHP so every horse has the same chance. Free, live from the chain.">
+  <meta name="twitter:image" content="https://knodegames.com/media/og-knode.png">
+  <!-- seo:end -->
+  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="media/icon-180.png">
+  <meta name="theme-color" content="#14213D">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Archivo:wdth,wght@62..125,600;62..125,800;62..125,900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="board.css">
+  <style>
+    .pr { max-width: 1000px; margin: 0 auto; padding: 28px 16px 60px; }
+    .pr h1 { font-family: var(--display); font-size: clamp(28px, 4vw, 40px); margin: 0 0 6px; }
+    .pr h2 { font-family: var(--display); font-size: 20px; margin: 0 0 8px; }
+    .pr .lede { color: var(--muted); margin: 0 0 18px; max-width: 70ch; }
+    .tools { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; margin-bottom: 16px; }
+    .tools a { color: var(--violet); }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; box-shadow: var(--shadow); margin-bottom: 16px; }
+    .status { font-size: 14px; color: var(--muted); min-height: 1.3em; margin: 0 0 8px; }
+    .note { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+    .head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .head .tag { font-size: 12px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; padding: 3px 10px; border-radius: 99px; background: var(--mint-soft); color: var(--mint); }
+    .head .tag.done { background: var(--paper); color: var(--muted); }
+
+    /* The race clock: charges like the Mana gauge as the 6 hours pass. */
+    .clock { margin: 12px 0 16px; }
+    .clock-bar { position: relative; height: 26px; border-radius: 9px; border: 2px solid var(--ink); background: var(--paper); overflow: hidden; }
+    .clock-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--violet); background-image: repeating-linear-gradient(115deg, rgba(255,255,255,.2) 0 12px, transparent 12px 24px); background-size: 200% 100%; animation: flow 2.4s linear infinite; transition: width 1s linear; }
+    .clock-fill.done { animation: none; background-image: none; }
+    @keyframes flow { to { background-position: -54px 0; } }
+    .clock-leg { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px dashed var(--surface); opacity: .9; }
+    .clock-txt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--num); font-weight: 800; font-size: 14px; color: var(--ink); text-shadow: 0 0 5px var(--surface), 0 0 2px var(--surface); font-variant-numeric: tabular-nums; }
+    .clock-legs { display: grid; grid-template-columns: repeat(3, 1fr); font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .clock-legs span:nth-child(2) { text-align: center; } .clock-legs span:nth-child(3) { text-align: right; }
+    @media (prefers-reduced-motion: reduce) { .clock-fill { animation: none; transition: none; } }
+
+    /* The track: turf lanes toward a finish line. Nobody is ever drawn past it. */
+    .pr-track { display: flex; flex-direction: column; gap: 6px; }
+    .pr-lane { display: grid; grid-template-columns: 230px 1fr 118px; gap: 10px; align-items: center; padding: 3px 4px; border-radius: 10px; }
+    .pr-who { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 14px; flex-wrap: wrap; }
+    .pr-rank { font-family: var(--num); font-weight: 800; width: 22px; text-align: right; color: var(--muted); }
+    .pr-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; display: inline-block; }
+    .pr-name { font-weight: 700; color: var(--ink); text-decoration: none; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+    .pr-name:hover { text-decoration: underline; }
+    .pr-meta { width: 100%; padding-left: 39px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .pr-run { position: relative; height: 34px; border-radius: 8px; background: repeating-linear-gradient(90deg, var(--mint-soft) 0 38px, color-mix(in srgb, var(--mint-soft) 70%, var(--surface)) 38px 76px); border: 1px solid var(--line); overflow: hidden; }
+    .pr-run::after { content: ""; position: absolute; top: 0; bottom: 0; right: 0; width: 10px; background: repeating-linear-gradient(0deg, var(--ink) 0 5px, var(--surface) 5px 10px); opacity: .85; }
+    .pr-trail { position: absolute; left: 0; top: 50%; height: 4px; margin-top: -2px; opacity: .55; border-radius: 4px; transition: width 1.2s ease; }
+    .pr-horse { position: absolute; top: 2px; font-size: 25px; line-height: 30px; transform: scaleX(-1); transition: left 1.2s ease; filter: drop-shadow(0 1px 1px rgba(0,0,0,.25)); }
+    .pr-gap { font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
+    .pr-gap b { color: var(--ink); }
+    .pr-lane.lead .pr-run { border-color: var(--sun); box-shadow: 0 0 0 1px var(--sun) inset; }
+    .pr-lane.win { background: var(--sun-soft); }
+    .pr-step .pr-horse { animation: hop .5s ease; }
+    /* Horses that moved since the last refresh: a "+steps" badge by the name and a glow on the lane, fading out. */
+    .pr-plus { font-family: var(--num); font-weight: 800; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--ink); background: var(--sun); border-radius: 99px; padding: 1px 8px; opacity: 0; }
+    .pr-plus:not(.on) { display: none; }
+    .pr-plus.on { animation: plus 5s ease-out forwards; }
+    @keyframes plus { 0% { opacity: 1; transform: scale(1.25); } 12% { transform: scale(1); } 70% { opacity: 1; } 100% { opacity: 0; } }
+    .pr-lane.moved .pr-run { animation: glow 2.5s ease-out; }
+    @keyframes glow { 0% { box-shadow: 0 0 0 3px var(--sun) inset; } 100% { box-shadow: 0 0 0 0 transparent inset; } }
+    @media (prefers-reduced-motion: reduce) { .pr-plus.on { animation: none; opacity: 1; } .pr-lane.moved .pr-run { animation: none; } }
+    @keyframes hop { 40% { transform: scaleX(-1) translateY(-6px); } }
+    @media (prefers-reduced-motion: reduce) { .pr-horse, .pr-trail { transition: none; } .pr-step .pr-horse { animation: none; } }
+
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .list { list-style: none; padding: 0; margin: 0; font-size: 14px; display: grid; gap: 6px; }
+    .feed li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .ago { color: var(--muted); font-size: 12px; }
+    table.hist, table.cardt { width: 100%; border-collapse: collapse; font-size: 14px; }
+    .hist th, .hist td, .cardt th, .cardt td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    .hist th, .cardt th { font-size: 12px; color: var(--muted); font-weight: 700; }
+    .hist td.num, .hist th.num, .cardt td.num, .cardt th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .hist tr.sel td { background: var(--sun-soft); }
+    .hist button { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+    .mono { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+    .st { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 99px; white-space: nowrap; }
+    .st.live { background: var(--mint-soft); color: var(--mint); } .st.final { background: var(--paper); color: var(--ink); }
+    .st.checking { background: var(--sun-soft); color: var(--ink); } .st.up { background: var(--paper); color: var(--muted); } .st.missed { background: var(--rose-soft); color: var(--rose); }
+    .tabs2 { display: flex; gap: 6px; margin-bottom: 10px; }
+    .tabs2 button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+    .tabs2 button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+    .soon { border: 2px dashed var(--line); background: transparent; box-shadow: none; }
+    .pk-list { display: grid; gap: 8px; margin-top: 8px; }
+    .pk-row { display: grid; grid-template-columns: 170px 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 12px; background: var(--paper); font-size: 14px; }
+    .pk-row.live { background: var(--mint-soft); }
+    .pk-row.done { background: transparent; border: 1px solid var(--line); }
+    .pk-when b { display: block; }
+    .pk-when span { font-size: 12px; color: var(--muted); }
+    .pk-row select { font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); width: 100%; min-width: 0; }
+    .pk-row .btn { padding: 9px 16px; font-size: 14px; }
+    .pk-now { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+    .pk-ok { color: var(--mint); font-weight: 800; } .pk-no { color: var(--rose); font-weight: 800; }
+    .pk-msg:empty { display: none; }
+    /* The pick pop-up. */
+    .pk-modal { position: fixed; inset: 0; z-index: 1000; background: rgba(10, 12, 30, .55); display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .pk-modal[hidden] { display: none; }
+    .pk-box { background: var(--surface); color: var(--ink); width: 100%; max-width: 400px; border-radius: 20px; padding: 24px 22px; box-shadow: 0 20px 60px rgba(0,0,0,.35); text-align: center; }
+    .pk-box h3 { font-family: var(--display); font-size: 21px; margin: 10px 0 6px; }
+    .pk-box p { margin: 6px 0; font-size: 14px; color: var(--muted); }
+    .pk-box p b { color: var(--ink); }
+    .pk-box .pk-acts { margin-top: 16px; display: flex; justify-content: center; gap: 8px; }
+    .pk-big { display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 50%; font-size: 30px; font-weight: 800; background: var(--paper); }
+    .pk-big.ok { background: var(--mint-soft); color: var(--mint); } .pk-big.bad { background: var(--rose-soft); color: var(--rose); }
+    .pk-spin { display: inline-block; width: 44px; height: 44px; border-radius: 50%; border: 4px solid var(--line); border-top-color: var(--violet); animation: spin .9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .pk-spin { animation: none; } }
+    .pr-lane.mine .pr-name::after { content: " ★ your pick"; font-family: var(--body); font-weight: 800; font-size: 11px; color: var(--ink); background: var(--sun); border-radius: 99px; padding: 1px 7px; margin-left: 6px; }
+    .champs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+    .champs:empty { display: none; }
+    .champ { border-radius: 12px; padding: 10px 12px; background: var(--sun-soft); border: 1px solid var(--sun); font-size: 13px; }
+    .champ b { display: block; font-family: var(--display); font-size: 16px; }
+    .champ .mono { word-break: break-all; }
+    .hist tr.top td { font-weight: 700; }
+    .hist tr.me td { background: var(--violet-soft); }
+    @media (max-width: 640px) { .pk-row { grid-template-columns: 1fr auto; } .pk-when { grid-column: 1 / -1; } .champs { grid-template-columns: 1fr; } }
+    .explain { font-size: 14px; color: var(--muted); }
+    .explain p { margin: 8px 0; }
+    .explain code { font-size: 13px; color: var(--ink); }
+    .paddock a { color: var(--ink); }
+    @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+    #live, #pick-zone, #board-box, #history, #how { scroll-margin-top: 80px; }
+    @media (max-width: 760px) {
+      .pr { padding-top: 16px; }
+      .pr .lede { font-size: 15px; margin-bottom: 12px; }
+      .lede-more, .tools .hide-sm { display: none; }
+      #live, #pick-zone, #board-box, #history, #how { scroll-margin-top: 124px; }
+      .tools { position: sticky; top: calc(60px + env(safe-area-inset-top, 0px)); z-index: 19; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 8px; margin: 0 -16px 14px; padding: 8px 16px; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+      .tools::-webkit-scrollbar { display: none; }
+      .tools a { flex: none; padding: 7px 14px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); text-decoration: none; font-weight: 700; font-size: 14px; }
+      .tools a.go-pick { background: var(--tang); border-color: var(--tang); color: #1b1206; }
+      .card { padding: 14px; border-radius: 18px; }
+    }
+    @media (max-width: 640px) { .pr-lane { grid-template-columns: 1fr 96px; } .pr-who { grid-column: 1 / -1; } .pr-meta { padding-left: 0; } .hist .hide-sm { display: none; } }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href="./" aria-label="Knode Games home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="brand-name">Knode Games</span>
+      </a>
+      <nav class="tabs" aria-label="Sections">
+        <details class="dd on">
+          <summary>Games</summary>
+          <div class="dd-menu">
+            <a href="games.html">All games</a>
+            <a href="index.html#play">Daily Questions</a>
+            <a href="race.html" aria-current="page">Producer Race</a>
+          </div>
+        </details>
+        <a href="index.html#leaderboard">Leaderboards</a>
+        <a href="index.html#results">Results</a>
+        <details class="dd">
+          <summary>Tools</summary>
+          <div class="dd-menu">
+            <a href="swap.html">Swap VHP → KOIN</a>
+            <a href="burn.html">Burn KOIN</a>
+            <a href="mana.html">Mana levels</a>
+            <a href="node.html">Producer lookup</a>
+            <a href="pulse.html">Network pulse</a>
+          </div>
+        </details>
+        <a href="index.html#how/race">Rules</a>
+        <a href="start.html" class="tab-start">New to Koinos?</a>
+        <details class="dd">
+          <summary>Info</summary>
+          <div class="dd-menu">
+            <a href="get.html">Get VHP</a>
+            <a href="index.html#welcome">New here? Quick tour</a>
+            <a href="install.html">Install app</a>
+            <a href="trust.html">Trust</a>
+            <a href="terms.html">Terms &amp; risks</a>
+          </div>
+        </details>
+      </nav>
+      <a class="btn btn-wallet" href="./#play">Play Knode Games</a>
+    </div>
+  </header>
+
+  <main class="pr">
+    <h1>Producer Race</h1>
+    <p class="lede">Every Koinos block producer is a horse. Each block it signs moves it forward, and smaller producers get a handicap so every horse has the same chance.<span class="lede-more"> Four 6-hour races a day, starting at 00:00, 06:00, 12:00 and 18:00 UTC.</span> Free, just for fun.</p>
+    <nav class="tools" aria-label="On this page"><a href="#live">Live race</a><a href="#pick-zone" class="go-pick">Pick a horse</a><a href="#board-box">Race board</a><a href="#history">Results</a><a href="#how">How it works</a><a href="node.html" class="hide-sm">Producer lookup</a></nav>
+
+    <section class="card" id="live">
+      <p class="status" id="status" role="status">Getting the horses ready…</p>
+      <div class="head"><h2 id="race-title">–</h2><span class="tag" id="race-tag">–</span></div>
+      <div class="clock">
+        <div class="clock-bar" role="progressbar" aria-label="Race time elapsed" aria-valuemin="0" aria-valuemax="100" id="clock">
+          <div class="clock-fill" id="clock-fill"></div>
+          <div id="clock-marks"></div>
+          <div class="clock-txt" id="clock-txt">–</div>
+        </div>
+        <div class="clock-legs"><span id="leg1">–</span><span id="leg2">–</span><span id="leg3">–</span></div>
+      </div>
+      <div class="pr-track" id="track" aria-label="The race"></div>
+      <p class="note" id="track-note"></p>
+    </section>
+
+    <div id="pick-zone">
+    <section class="card soon" id="picks-soon">
+      <h2>Picks: coming next</h2>
+      <p class="note" style="margin-top:0">Soon: connect a wallet and pick one horse per race, up to 24 hours ahead. Picks lock when the race starts and are free. A weekly leaderboard follows the Knode Games week (Monday 00:00 UTC).</p>
+    </section>
+
+    <section class="card" id="picks" hidden>
+      <div class="head"><h2>My picks</h2><span class="note" id="picks-left" style="margin:0"></span></div>
+      <p class="note" style="margin-top:0" id="picks-who"></p>
+      <div class="pk-list" id="pk-list"></div>
+      <p class="note">Free: one horse per race, for the next 4 races. You can change a pick until its race starts; then the chain locks it. Up to 5 picks a day (changes count). The Mana is paid by Knode Games' Mana sponsor.</p>
+      <p class="note pk-msg" id="pk-msg" role="status"></p>
+    </section>
+    </div>
+
+    <section class="card" id="board-box" hidden>
+      <div class="head"><h2>Leaderboard</h2></div>
+      <div id="race-board"></div>
+      <p class="note">A pick on the winner is a win (3 points). A pick on the horse that finishes 2nd or 3rd is a show (1 point). Ranked by points; ties go to more wins, then more picks placed, then more question-game answers, then a higher question-game score. Weeks are Knode Games weeks (Monday 00:00 UTC). To be ranked, a wallet holds at least 1 VHP or has a Knode Games stake; other wallets see their own score here, only on their device.</p>
+    </section>
+
+    <div class="cols">
+      <section class="card">
+        <h2 id="card-title">Handicap card</h2>
+        <p class="note" style="margin-top:0" id="card-sub"></p>
+        <table class="cardt"><thead><tr><th>Producer</th><th class="num">VHP share</th><th class="num">Steps per block</th></tr></thead><tbody id="card-rows"></tbody></table>
+        <div id="paddock-box" hidden>
+          <p class="note"><b>In the paddock</b> (expected to sign fewer than 10 blocks in a race: with so few blocks, one lucky block would decide it):</p>
+          <ul class="list paddock note" id="paddock"></ul>
+        </div>
+      </section>
+      <section class="card">
+        <h2>Latest blocks</h2>
+        <ul class="list feed" id="feed"></ul>
+      </section>
+    </div>
+
+    <section class="card" id="history">
+      <div class="head"><h2>Results</h2></div>
+      <div class="tabs2" role="group" aria-label="Show"><button type="button" id="h-today" aria-pressed="true">Today</button><button type="button" id="h-week" aria-pressed="false">This week</button></div>
+      <table class="hist"><thead><tr><th>Race (your time)</th><th>Status</th><th>Winner</th><th class="num hide-sm">Steps</th><th class="num hide-sm">Ahead by</th><th class="num hide-sm">Wins · Shows</th><th></th></tr></thead><tbody id="hist-rows"></tbody></table>
+      <p class="note">Results are final once every block of the race is irreversible and matches on two independent Koinos nodes, the same check the question game uses. Days are UTC days; weeks are the Knode Games weeks.</p>
+    </section>
+
+    <section class="card explain" id="how">
+      <h2 style="color:var(--ink)">How the handicap works</h2>
+      <p><b>Same speed.</b> Koinos picks who signs each block in proportion to VHP, so a producer with a third of the leader's VHP signs about a third as many blocks. It moves 3 steps per block, which gives every horse the same expected speed. The biggest producer always moves exactly 1 step per block.</p>
+      <p><b>Same chance.</b> A small producer's few blocks come in lucky and unlucky bursts, which would let the smallest horses win most races. A luck trim evens that out:</p>
+      <p><code>steps per block = (biggest VHP ÷ your VHP) × (1 − c ÷ √k) ÷ (1 − c ÷ √k of the biggest)</code></p>
+      <p>Here <i>k</i> is how many blocks a producer is expected to sign in a 6-hour race (luck in <i>k</i> blocks is about √<i>k</i>). <i>c</i> is re-tuned on every card by thousands of simulated races (the same ones for everyone) to the value where each horse's chance of winning is as equal as it gets.</p>
+      <p><b>Six cards per race.</b> The handicap is set from VHP at the start and updated every hour. Each card applies to the blocks signed in its hour, so moving VHP around during a race buys at most an hour. Cards are recorded publicly by the race recorder.</p>
+      <p><b>The finish line</b> is the 6-hour mark. You see the real live order all the way to the end: the track is drawn so the leader gets close to the line, and only the winner crosses it when the 6 hours are up. The winner is the horse with the most steps at the 6-hour mark.</p>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="Main">
+    <a href="games.html"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect></svg>Games</a>
+    <a href="index.html#leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg>Leaders</a>
+    <a href="index.html#results"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg>Results</a>
+    <a href="swap.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4L3 8l4 4"></path><path d="M3 8h14"></path><path d="M17 20l4-4-4-4"></path><path d="M21 16H7"></path></svg>Swap</a>
+    <button type="button" class="tb-more" aria-expanded="false" aria-controls="more-sheet"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>More</button>
+  </nav>
+  <div class="more-sheet" id="more-sheet" hidden>
+    <nav class="more-panel" aria-label="More pages">
+      <p class="ms-h">Play</p>
+      <a href="index.html#play"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.6 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg><span>Daily Questions</span></a>
+      <a href="race.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 21V4"></path><path d="M5 4h12l-2.5 4L17 12H5"></path></svg><span>Producer Race</span></a>
+      <a href="index.html#how"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"></path><path d="M9 9h6M9 13h6"></path></svg><span>Rules</span></a>
+      <p class="ms-h">Tools</p>
+      <a href="burn.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 21c-4 0-6.5-2.6-6.5-6 0-3.5 3-5.5 3.5-9 2 1.5 3 3 3 5 1-1 1.5-2 1.5-3.5 2.5 2 4.5 4.6 4.5 7.5 0 3.4-2.5 6-6 6z"></path></svg><span>Burn KOIN</span></a>
+      <a href="mana.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M13 3L5 14h6l-1 7 8-11h-6z"></path></svg><span>Mana levels</span></a>
+      <a href="node.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg><span>Producer lookup</span></a>
+      <a href="pulse.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12h4l2-5 4 10 2-5h6"></path></svg><span>Network pulse</span></a>
+      <p class="ms-h">Learn</p>
+      <a href="start.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg><span>New to Koinos?</span></a>
+      <a href="index.html#welcome"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg><span>New here? Quick tour</span></a>
+      <a href="get.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8M8 12h8"></path></svg><span>Get VHP</span></a>
+      <p class="ms-h">About</p>
+      <a href="install.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v11"></path><path d="M7.5 10.5L12 15l4.5-4.5"></path><path d="M5 20h14"></path></svg><span>Install app</span></a>
+      <a href="trust.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z"></path></svg><span>Trust</span></a>
+      <a href="terms.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"></path><path d="M10 12h5M10 16h5"></path></svg><span>Terms &amp; risks</span></a>
+    </nav>
+  </div>
+
+  <footer class="foot">
+    <div class="wrap">
+      <div class="foot-row">
+        <span>Knode Games runs fully on Koinos. Open source.</span>
+        <span class="foot-links"><a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a> · <a href="install.html">Install app</a> · <a href="https://github.com/bawcejawn/Knode" target="_blank" rel="noopener">Source code</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js" integrity="sha384-IAL9o3r4bQJvWhvszkorFINY2ct4LBA/LvyXE9NSOPCyYB25BsFV12JITA7Gxbk6" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js" integrity="sha384-WOeNFfSdOron0s4x9jdzLtA7Ic7RSqZCXZAaeQd6HRL6WezQp0KAtIF2XSa+11TL" crossorigin="anonymous"></script>
+  <script src="guest.js"></script>
+  <script src="wallet.js"></script>
+  <script src="header-wallet.js"></script>
+  <script src="nav.js"></script>
+  <script src="chain-blocks.js"></script>
+  <script src="race-math.js"></script>
+  <script src="board.js"></script>
+  <script src="race.js"></script>
+</body>
+</html>

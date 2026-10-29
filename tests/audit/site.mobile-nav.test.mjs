@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const APP = process.env.APP || ".";
-const pages = fs.readdirSync(`${APP}/site`).filter((f) => f.endsWith(".html"));
-const read = (p) => fs.readFileSync(`${APP}/site/${p}`, "utf8");
+const pages = fs.readdirSync(`${APP}`).filter((f) => f.endsWith(".html"));
+const read = (p) => fs.readFileSync(`${APP}/${p}`, "utf8");
 
 test("every page with a tab bar has Games · Leaders · Results · Swap · More and a More sheet with the rest", () => {
   let n = 0;
