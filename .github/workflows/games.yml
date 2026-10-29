@@ -178,6 +178,77 @@ jobs:
               if p["lives"] != max(0, 2 - lost) or len(p["used"]) != sum(log.count(c) for c in "sov") or lost > 2: return False
               if p["outN"] is None: return lost < 2
               return lost == 2 and len(log) == p["outN"] and log[-1] in "onfu"
+          # The season is played again here from its days, with the same rules as site/survivor-math.js (mainnet: 14
+          # days, 2 lives, no out-zone floor), and the result must be exactly that (Repo Lense fix-check, SV-A4).
+          import math
+          def jsround(x): r = math.floor(x); return r + 1 if x - r >= 0.5 else r
+          round4 = lambda x: jsround(x * 1e4) / 1e4
+          def score_day(field, counts, n):
+              got = {a: c for a, c in counts}
+              rows = sorted(({"a": x["a"], "score": round4(got.get(x["a"], 0) * x["h"])} for x in field), key=lambda r: (-r["score"], r["a"]))
+              o = (len(rows) * (12 + min(14, max(1, n)))) // 52
+              if not o: return rows, set()
+              line = sorted(r["score"] for r in rows)[o]
+              return rows, {r["a"] for r in rows if r["score"] < line}
+          def rank(players):
+              key = lambda x: (math.inf if x["outN"] is None else x["outN"], x["lives"], x["total"])
+              ps = sorted(players, key=lambda x: x["a"])
+              ps.sort(key=key, reverse=True)
+              out, place = [], 0
+              for i, x in enumerate(ps):
+                  if i == 0 or key(ps[i - 1]) != key(x): place = i + 1
+                  out.append(dict(x, place=place))
+              return out
+          def play(days):
+              if not days or days[0]["n"] != 1: return [], False, 0
+              ps = {}
+              for p, _ in days[0]["picks"]:
+                  if p not in ps: ps[p] = {"a": p, "lives": 2, "outN": None, "t4": 0, "used": [], "log": "", "eligible": True}
+              started, over, endN = len(ps), False, 0
+              for i, day in enumerate(days):
+                  if day["n"] != i + 1 or over: break
+                  rows, out = score_day(day["field"], day["counts"], day["n"])
+                  score = {r["a"]: r["score"] for r in rows}
+                  pick = {}
+                  for p, a in day["picks"]: pick[p] = a
+                  novhp = set(day["noVhp"])
+                  fate = []
+                  for x in [x for x in ps.values() if x["outN"] is None]:
+                      a = pick.get(x["a"])
+                      code = "n" if not a else "f" if a not in score else "u" if a in x["used"] else "o" if a in out else "s"
+                      fate.append((x, a, code))
+                  all_lose = len(fate) > 0 and all(c != "s" for _, _, c in fate)
+                  for x, a, code in fate:
+                      if x["a"] in novhp: x["eligible"] = False
+                      if code in ("s", "o"): x["used"].append(a); x["t4"] += jsround(score[a] * 1e4)
+                      if code == "s": x["log"] += "s"; continue
+                      if all_lose and code == "o": x["log"] += "v"; continue
+                      x["log"] += code; x["lives"] -= 1
+                      if x["lives"] <= 0: x["outN"] = day["n"]
+                  endN = day["n"]
+                  left = sum(1 for x in ps.values() if x["outN"] is None)
+                  if (started > 2 and left <= 2) or day["n"] >= 14: over = True
+              players = rank([{"a": x["a"], "lives": max(0, x["lives"]), "outN": x["outN"], "total": x["t4"] / 1e4, "used": x["used"], "log": x["log"], "eligible": x["eligible"]} for x in ps.values()])
+              return players, over, endN
+          def prizes(players):
+              missed = lambda x: x["outN"] is not None and x["log"][x["outN"] - 1] == "n"
+              can = [x for x in players if x["eligible"] and not missed(x)]
+              if sum(1 for x in can if sum(x["log"].count(c) for c in "sov") >= 2) < 3: return []
+              ranked, amounts, out, i = rank(can), [4, 2], [], 0
+              while i < len(ranked) and i < len(amounts):
+                  j = i
+                  while j + 1 < len(ranked) and ranked[j + 1]["place"] == ranked[i]["place"]: j += 1
+                  pot = sum(amounts[k] for k in range(i, j + 1) if k < len(amounts))
+                  each = math.floor((pot / (j - i + 1)) * 1e8) / 1e8
+                  out += [{"player": ranked[k]["a"], "place": ranked[k]["place"], "vhp": each} for k in range(i, j + 1)]
+                  i = j + 1
+              return out
+          def replay_ok(j, r, f):
+              who, prods = j["who"], j["prods"]
+              days = [{"n": x["n"], "field": x["field"], "counts": x["counts"], "picks": [(who[p], prods[q]) for p, q in x["picks"]], "noVhp": [who[a] for a in x["noVhp"]]} for x in j["days"]]
+              players, over, endN = play(days)
+              assert r["players"] == players and r["over"] == over and r["endN"] == endN, f + ": the result isn't what its days give"
+              assert r["prizes"] == (prizes(players) if r["final"] else []), f + ": the prizes aren't what the result gives"
           def season_ok(j, f):
               assert set(j) == {"v", "season", "startDay", "who", "prods", "days", "result"} and j["v"] == 2 and small(j["season"], 1, 9999) and f == "S%03d.json" % j["season"] and day(j["startDay"]), f
               who, prods = j["who"], j["prods"]
@@ -194,6 +265,7 @@ jobs:
                   if i == 0: first = {who[p[0]] for p in x["picks"]}
               r = j["result"]
               if r is None: return
+              replay_ok(j, r, f)
               assert type(r) is dict and set(r) == {"over", "endN", "final", "players", "prizes"} and type(r["over"]) is bool and type(r["final"]) is bool, f
               assert small(r["endN"], 0, len(j["days"])) and (r["over"] or not r["final"]), f
               ps = r["players"]

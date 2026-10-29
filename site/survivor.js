@@ -116,25 +116,28 @@
   }
   // mineOk: my picks were read in full, without an error, for the wallet shown. Until then Pick and Change are off,
   // because a missing pick would make a used producer look free (Repo Lense SV-A6).
-  let mineOk = false, mineWho = null;
+  // A read that fails is tried once more, and a clean read from the last 3 minutes keeps picking on through one bad
+  // pass (fix-check: a busy public node used to switch picking off and on).
+  let mineOk = false, mineWho = null, mineAt = 0;
+  const twice = (f) => f().catch(() => new Promise((res) => setTimeout(res, 1500)).then(f));
   async function loadMine() {
     const who = me();
-    if (who !== mineWho) { myPicks = new Map(); usage = null; mineOk = false; mineWho = who; }
+    if (who !== mineWho) { myPicks = new Map(); usage = null; mineOk = false; mineAt = 0; mineWho = who; }
     if (picksContract && who) {
       // Every day of the current season so far (whether you joined, and the producers you already picked, before
       // the recorder has those days: audit SV-5), today, and the open days.
       const se = S.seasonOf(today());
       const past = se ? Array.from({ length: today() - se.start }, (_, i) => se.start + i) : [];
       const days = [...past, today(), ...S.openDays(now())].filter((d, i, a) => a.indexOf(d) === i);
-      const got = await Promise.allSettled(days.map((d) => picksContract.functions.get_pick({ game: S.GAME_ID, round: String(d), player: who })
+      const got = await Promise.allSettled(days.map((d) => twice(() => picksContract.functions.get_pick({ game: S.GAME_ID, round: String(d), player: who }))
         .then((x) => [d, x.result && x.result.pick && Array.isArray(x.result.pick.producers) && x.result.pick.producers.length ? x.result.pick : null])));
-      const use = await Promise.allSettled([picksContract.functions.get_usage({ game: S.GAME_ID, player: who })]);
+      const use = await Promise.allSettled([twice(() => picksContract.functions.get_usage({ game: S.GAME_ID, player: who }))]);
       if (me() !== who) return;                                   // the wallet changed while reading
       if (got.every((x) => x.status === "fulfilled") && use[0].status === "fulfilled") {
         myPicks = new Map(got.map((x) => x.value).filter(([, p]) => p));
         usage = use[0].value.result || null;
-        mineOk = true;
-      } else mineOk = false;                                      // keep the last good list; Pick waits for a clean read
+        mineOk = true; mineAt = Date.now();
+      } else mineOk = mineAt > 0 && Date.now() - mineAt < 3 * 60000;   // keep the last good list; Pick waits for a clean read
       try {
         const h = await provider.getHeadInfo();
         const t = Number(h && h.head_block_time);

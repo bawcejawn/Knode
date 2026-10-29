@@ -34,9 +34,10 @@ let S: any = MAINNET_S;
 
 const E = process.env;
 const RPC = E.RPC || "https://koinos.armana.io";
-const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK !== RPC ? E.RPC_CHECK : "";
+const RPC_CHECK = E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK.trim().toLowerCase().replace(/\/+$/, "") !== RPC.trim().toLowerCase().replace(/\/+$/, "") ? E.RPC_CHECK : "";
 // Repo Lense SV-A16: a second node set to the same address as the first is no second node; say so every run.
-const SAME_CHECK = !!E.RPC_CHECK && E.RPC_CHECK !== "off" && E.RPC_CHECK === RPC;
+const nodeKey = (u: string) => u.trim().toLowerCase().replace(/\/+$/, "");
+const SAME_CHECK = !!E.RPC_CHECK && E.RPC_CHECK !== "off" && nodeKey(E.RPC_CHECK) === nodeKey(RPC);
 const MAX_DAYS_PER_RUN = 3;
 const KEEP_DAYS = 60;                         // days.json keeps the last 60 recorded days
 const CATCHUP_DAYS = 50;                      // after an outage, a season's older days are recorded back to 50 days
@@ -199,7 +200,8 @@ async function readGame(node: any, contract: string): Promise<any> {
   const r: any = await withRetry("game 3", () => (c.functions as any).get_game({ game: S.GAME_ID }));
   return r?.result ? { game: r.result.game ?? null, pending: r.result.pending ?? null } : null;
 }
-const GAME = (() => { try { return JSON.parse(fs.readFileSync(new URL("../../game-data/deployment.json", import.meta.url), "utf8")).contract as string; } catch { return ""; } })();
+// Anything but a valid address counts as missing, which the run reports (fix-check: a bad file used to be silent).
+const GAME = (() => { try { const c = JSON.parse(fs.readFileSync(new URL("../../game-data/deployment.json", import.meta.url), "utf8")).contract; return isAddr(c) ? (c as string) : ""; } catch { return ""; } })();
 const GAME_ABI = () => JSON.parse(fs.readFileSync(new URL("../../game/abi/kpred.koilib.json", import.meta.url), "utf8"));
 /** Who may win a prize: at least 1 VHP, or a Knode stake (the owner's 1 VHP rule; a staked player's VHP sits in the vault).
  *  The testnet passes its own token (and no game contract). */

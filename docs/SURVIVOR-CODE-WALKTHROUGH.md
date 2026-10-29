@@ -289,7 +289,10 @@ Two jobs, so repository code never runs next to the key that can write to GitHub
      - logs use only the letters `sonfuv`;
      - days are numbered 1–14 in order;
      - prizes total at most 6 VHP, counted in whole units of 0.00000001;
-     - and the meaning (Repo Lense SV-A4, SV-A13): the players are exactly the day-1 pickers; lives, "out" and used
+     - and the result itself: the check plays the season again from its days with the same rules (a short Python copy
+       of `playSeason`, `rank` and `prizes`) and refuses any result or prize that differs. It can't tell whether the
+       days themselves are true; only the chain can, so the vault recomputes before paying (Repo Lense SV-A4);
+     - plus (SV-A13): the players are exactly the day-1 pickers; lives, "out" and used
        producers match each log; places are in order; prizes only when final, once per wallet, place 1 or 2, only to
        eligible players not knocked out by a missed pick, and only with 3 such players; integers are real integers in
        range; `updated` is a time; NaN is refused. Python runs isolated (`-I`).

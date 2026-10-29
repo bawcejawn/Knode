@@ -61,6 +61,9 @@ right settings with the Picks contract's 48-hour notice, then apply them.
   node disagrees with is reported ("saved from one node, and the second node disagrees") for you to look at.
 - **"a change to game 3 is announced"**: someone with the Picks owner key announced new settings. If the warning says
   "once applied, …", cancel the change (`cancel_game_change`) unless you meant it.
+- **"VHP check: …" for the same season day, run after run**: the stake read on the Knode contract keeps failing
+  (for example after a contract change, or a node that refuses it). The day waits rather than wrongly marking stakers;
+  try another node for `RPC_CHECK`, and ask Claude if it lasts more than a day.
 - **"game-data/deployment.json names no Knode contract"**: the Knode contract's address is missing, so stakes can't be
   checked. No season day is recorded until it is back.
 - **"the two nodes disagree"** about a day: it is tried again every hour. If it lasts more than a day, check both nodes.

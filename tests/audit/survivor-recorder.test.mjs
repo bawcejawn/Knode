@@ -302,6 +302,11 @@ test("Repo Lense SV-A4 / SV-A13: the publish check tests meaning, not only shape
     "a pick index out of range": (j) => { j.days[0].picks[0][0] = j.who.length; },
     "the same wallet twice in who": (j) => { j.who.push(j.who[0]); },
     "a forged v1 file": (j) => { j.v = 1; },
+    // Fix-check: the check plays the season again from its days, so the result can't be rewritten on its own.
+    "last place rewritten as the winner": (j) => { const ps = j.result.players; [ps[0].a, ps[ps.length - 1].a] = [ps[ps.length - 1].a, ps[0].a]; },
+    "listed as missing a VHP check but eligible": (j) => { const w = j.who.indexOf(ALICE); j.days[1].noVhp.push(w); },
+    "2nd place given 4 VHP": (j) => { j.result.prizes[1].vhp = 4; j.result.prizes[0].vhp = 2; },
+    "a lost life erased": (j) => { const p = j.result.players.find((x) => x.log.includes("o")); p.log = p.log.replace("o", "s"); },
   };
   for (const [why, edit] of Object.entries(bad)) assert.equal(ok(copyOut(r.out, edit)), false, why);
   // A bad `updated`, and NaN, are refused too.

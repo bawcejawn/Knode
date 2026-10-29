@@ -204,5 +204,8 @@ The recorder refuses to record a season if game 3's settings on the chain differ
 - **Audits.** An independent audit found 1 High, 4 Medium, 4 Low and 3 Info issues, all fixed or accepted. The worst:
   idle wallets could farm the prize through the safety net. A fix-check and a re-check followed; the re-check's verdict
   was "ready". Then the owner's Repo Lense audit (28 October 2026) found 1 Critical (testnet kit only), 2 High and 5
-  Medium issues among 26; all were fixed except the owner's open decisions (SV-A2's residual, SV-A10, SV-A19). See
-  `claude/builds/04-survivor-plan.md` in the project.
+  Medium issues among 26. Most are fixed; a fix-check then tightened the publish check so it plays each season again
+  from its days. What remains: the owner's open decisions (SV-A2's residual, SV-A10, SV-A19); the season's recorded days
+  themselves are trusted once published (the vault must recompute from the chain before paying: SV-A4); a season with
+  about 10,000 one-day wallets outgrows the 2 MB publish limit (SV-A5); VHP balances are read at each node's head
+  (SV-A12); a UTC day with no blocks can't be recorded (SV-A26). See `claude/builds/04-survivor-plan.md` in the project.
