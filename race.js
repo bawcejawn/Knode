@@ -438,4 +438,7 @@
       document.querySelectorAll("#feed .ago[data-t]").forEach((n) => { const t = Number(n.dataset.t); n.textContent = n.textContent.replace(/· \d+ s ago$/, `· ${Math.max(0, Math.round((Date.now() - t) / 1000))} s ago`); });
     }, 1000);
   })();
+
+  // Stake in the Race (vault game 7): the shared panel stays hidden until the Knode Games vault (v6) is live.
+  if (window.KStake) window.KStake.mount(document.getElementById("race-stake"), { game: 7 });
 })();
