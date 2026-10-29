@@ -182,9 +182,10 @@ jobs:
               if "void" in j and (type(j["void"]) is not str or len(j["void"]) > 200): return False
               s = j.get("seeding")
               if s is not None:
-                  if type(s) is not dict or set(s) != {"at", "cardAt", "size", "seeds", "vhp", "totalVhp", "out", "hash"} or s["size"] not in (0, 8, 16, 32) or not num(s["totalVhp"]): return False
+                  if type(s) is not dict or set(s) != {"at", "cardAt", "size", "seeds", "vhp", "totalVhp", "out", "pooled", "hash"} or s["size"] not in (0, 8, 16, 32) or not num(s["totalVhp"]): return False
                   if not (nat(s["at"]) and num(s["cardAt"]) and type(s["seeds"]) is list and len(s["seeds"]) <= s["size"] and all(isa(a) for a in s["seeds"])): return False
                   if not (type(s["vhp"]) is list and len(s["vhp"]) == len(s["seeds"]) and all(num(v) for v in s["vhp"]) and type(s["out"]) is list and len(s["out"]) <= 1000 and all(isa(a) for a in s["out"])): return False
+                  if not (type(s["pooled"]) is list and len(s["pooled"]) <= 4 and all(isa(a) and a in s["seeds"] for a in s["pooled"])): return False
                   if type(s["hash"]) is not str or not re.fullmatch(r"[0-9a-f]{64}", s["hash"]): return False
               ds = j.get("days")
               if type(ds) is not list or len(ds) > 5 or not all(type(x) is list and len(x) == 24 and all(hour_ok(h) for h in x) for x in ds): return False

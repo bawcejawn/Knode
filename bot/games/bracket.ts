@@ -62,7 +62,7 @@ const isAddr = (a: unknown): a is string => typeof a === "string" && /^1[1-9A-HJ
 
 export type RawPick = { player: string; number: number; time: number };
 type Hour = { from: number; to: number; n: number; by: Record<string, number>; cr: Record<string, number>; w: Record<string, number>; q: number; checked: number };
-type Seeding = { at: number; cardAt: number; size: number; seeds: string[]; vhp: number[]; totalVhp: number; out: string[]; hash: string };
+type Seeding = { at: number; cardAt: number; size: number; seeds: string[]; vhp: number[]; totalVhp: number; out: string[]; pooled: string[]; hash: string };
 /** A recorded pick: [player, number, pick time (ms), valid bracket 1/0]. */
 type Pick = [string, number, number, number];
 /** Points: [player, points, correct champion 1/0, correct winners]. */
@@ -87,6 +87,7 @@ type Opts = {
   picksContract?: string | null;
   picksOf?: (node: any, round: number) => Promise<RawPick[]>;   // for the tests
   gameOf?: (node: any) => Promise<any>;                          // the Picks game's settings (for the tests)
+  vault?: string | null;                                 // the Vault's address (pooled: never forfeits); default deployment.json
   stakedOf?: (node: any, players: string[], week: number) => Promise<string[] | Stakes>;   // the Vault's stakes (tests;
                                                          // a plain list = staked, and held = the same)
   nodeOf?: (node: any) => Node;                                  // for the tests and the replay
@@ -114,7 +115,7 @@ function loadWeek(dir: string | undefined, w: number): WeekFile {
   if (!old || old.v !== FILE_V || old.week !== w) return f;
   const s = old.seeding;
   if (s && Number.isInteger(s.size) && [0, 8, 16, 32].includes(s.size) && Array.isArray(s.seeds) && s.seeds.every(isAddr) && s.seeds.length <= s.size
-      && typeof s.hash === "string" && s.hash === seedHash(w, s)) f.seeding = s;
+      && Array.isArray(s.pooled) && s.pooled.every(isAddr) && typeof s.hash === "string" && s.hash === seedHash(w, s)) f.seeding = s;
   if (old.status === "void") { f.status = "void"; f.void = typeof old.void === "string" ? old.void.slice(0, 200) : "void"; }
   else if (old.status === "none" && f.seeding && f.seeding.size === 0) { f.status = "none"; f.void = typeof old.void === "string" ? old.void.slice(0, 200) : "no bracket this week"; }
   if (f.seeding && old.picks && Array.isArray(old.picks.rows)) f.picks = { checked: old.picks.checked === 2 ? 2 : 1, rows: old.picks.rows.filter((x: any) => Array.isArray(x) && isAddr(x[0]) && Number.isSafeInteger(x[1]) && x[1] >= 0).map((x: any) => [x[0], x[1], Number(x[2]) || 0, x[3] ? 1 : 0] as Pick) };
@@ -132,7 +133,7 @@ function loadWeek(dir: string | undefined, w: number): WeekFile {
   return f;
 }
 function seedHash(w: number, s: Omit<Seeding, "hash">) {
-  return crypto.createHash("sha256").update(JSON.stringify({ week: w, at: s.at, cardAt: s.cardAt, size: s.size, seeds: s.seeds, vhp: s.vhp, totalVhp: s.totalVhp, out: s.out })).digest("hex");
+  return crypto.createHash("sha256").update(JSON.stringify({ week: w, at: s.at, cardAt: s.cardAt, size: s.size, seeds: s.seeds, vhp: s.vhp, totalVhp: s.totalVhp, out: s.out, pooled: s.pooled })).digest("hex");
 }
 function defaultPicksContract(): string | null {
   try { const d = JSON.parse(fs.readFileSync(new URL("../../picks-data/deployment.json", import.meta.url), "utf8")); return isAddr(d.contract) ? d.contract : null; } catch { return null; }
@@ -218,40 +219,49 @@ async function readStaked(node: any, players: string[], w: number): Promise<Stak
 }
 const asStakes = (x: string[] | Stakes): Stakes => (Array.isArray(x) ? { staked: [...x], held: [...x] } : { staked: [...x.staked], held: [...x.held] });
 
-/** The free prize's winners (owner 2026-10-28; Vault payout rules): free players (not `held`) with at least 1 point,
- *  ranked like the boards (points, then a right champion, then right winners). first = everyone tied at the top. If
- *  exactly one is first, second = everyone tied next; if several share first, they share all 3 VHP and second is
- *  empty. A place with more than 10 tied (the Vault's limit) is left empty, and so is everything below it. */
-export function freeWinners(points: Points[], held: Set<string>) {
-  const rows = points.filter(([p, pts]) => !held.has(p) && pts >= 1);
-  const key = (r: Points) => r[1] * 10000 + r[2] * 1000 + r[3];
-  const keys = [...new Set(rows.map(key))].sort((a, b) => b - a);
-  const at = (k: number | undefined) => (k === undefined ? [] : rows.filter((r) => key(r) === k).map((r) => r[0]).sort());
-  const first = at(keys[0]);
-  if (first.length > 10) return { first: [] as string[], second: [] as string[] };
-  if (first.length !== 1) return { first, second: [] as string[] };
-  const second = at(keys[1]);
-  return { first, second: second.length > 10 ? [] : second };
+/** Order key for a week's standings: points, a right champion, right winners, then the earlier pick (owner 2026-10-29:
+ *  ties go to who submitted first; same block → still tied). timeOf: player → pick time (ms); left out: no time. */
+const keyOf = (r: Points, timeOf?: Map<string, number>) => [r[1], r[2], r[3], timeOf && timeOf.has(r[0]) ? -timeOf.get(r[0])! : 0];
+const cmpKey = (a: number[], b: number[]) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return b[i] - a[i]; return 0; };
+/** Groups of tied players, best first. */
+function tiedGroups(rows: Points[], timeOf?: Map<string, number>): string[][] {
+  const s = rows.map((r) => ({ p: r[0], k: keyOf(r, timeOf) })).sort((x, y) => cmpKey(x.k, y.k) || (x.p < y.p ? -1 : 1));
+  const out: string[][] = [];
+  s.forEach((x, i) => { if (i > 0 && cmpKey(s[i - 1].k, x.k) === 0) out[out.length - 1].push(x.p); else out.push([x.p]); });
+  return out;
 }
-/** The Vault file's points: every staked player with ≥ 1 point, the bracket's ranking (points, then a right champion,
- *  then right winners) mapped onto whole numbers 1–255 keeping the order and the ties. Over 255 different scores: the best 254 exact, the rest share 1. */
-export function vaultRows(points: Points[], staked: Set<string>) {
-  const rows = points.filter(([p, pts]) => staked.has(p) && pts >= 1);
-  const key = (r: Points) => r[1] * 10000 + r[2] * 1000 + r[3];
-  const distinct = [...new Set(rows.map(key))].sort((a, b) => b - a);
-  // up to 255 different scores: one value each. More (fix-check F-9): the best 254 keep their exact order and ties,
-  // the rest share 1. The Vault pays the top 30%, so this only matters if the paid part alone holds 254+ scores.
-  const n = distinct.length, map = new Map(distinct.map((k, i) => [k, n <= 255 ? n - i : Math.max(1, 255 - i)]));
-  return rows.map((r) => ({ player: r[0], points: map.get(key(r))! }))
-    .sort((x, y) => y.points - x.points || (x.player < y.player ? -1 : 1));
+/** The Vault file's points: every staked player with ≥ 1 point, in the week's order (points, then a right champion,
+ *  then right winners, then the earlier pick) mapped onto whole numbers 1–255 keeping the order and the ties. More than
+ *  255 different places (fix-check F-9): the best 254 keep one value each, the rest share 1 (the Vault pays the top
+ *  30%, so this only matters if the paid part alone holds 254+ places). */
+export function vaultRows(points: Points[], staked: Set<string>, timeOf?: Map<string, number>) {
+  const groups = tiedGroups(points.filter(([p, pts]) => staked.has(p) && pts >= 1), timeOf), n = groups.length;
+  const out: { player: string; points: number }[] = [];
+  groups.forEach((g, i) => { const v = n <= 255 ? n - i : Math.max(1, 255 - i); for (const p of g) out.push({ player: p, points: v }); });
+  return out.sort((x, y) => y.points - x.points || (x.player < y.player ? -1 : 1));
 }
 
+/** The free prize's winners (owner 2026-10-28; Vault payout rules): free players (not `held`) with at least 1 point,
+ *  in the week's order (with the earlier pick breaking ties, owner 2026-10-29). first = everyone tied at the top. If
+ *  exactly one is first, second = everyone tied next; if several share first, they share all 3 VHP and second is
+ *  empty. A place with more than 10 tied (the Vault's limit) is left empty, and so is everything below it. */
+export function freeWinners(points: Points[], held: Set<string>, timeOf?: Map<string, number>) {
+  const g = tiedGroups(points.filter(([p, pts]) => !held.has(p) && pts >= 1), timeOf);
+  const first = [...(g[0] ?? [])].sort();
+  if (first.length > 10) return { first: [] as string[], second: [] as string[] };
+  if (first.length !== 1) return { first, second: [] as string[] };
+  const second = [...(g[1] ?? [])].sort();
+  return { first, second: second.length > 10 ? [] : second };
+}
+
+/** Each player's pick time (the last change, ms) from a week's recorded picks. */
+const timesOf = (wf: WeekFile | undefined) => new Map<string, number>((wf?.picks?.rows ?? []).map((r) => [r[0], r[2]]));
 /** Score a week from what is recorded (live during the week, final after). */
 export function scoreWeek(wf: WeekFile) {
   if (!wf.seeding || !wf.seeding.size || !wf.picks) return { results: null, points: [] as Points[] };
   const { size, seeds } = wf.seeding;
   const days = wf.days.map((d) => (d.every(Boolean) ? B.indexFromHours(d) : null));
-  const res = B.results(seeds, size, days, wf.seeding.vhp);   // with the forfeit rule (S-5)
+  const res = B.results(seeds, size, days, wf.seeding.vhp, wf.seeding.pooled);   // with the forfeit rule (S-5, F-1)
   // During a round's day: the winners so far are not known, so only finished rounds score.
   const points: Points[] = wf.picks.rows.map(([player, number]) => {
     const s = B.score(B.decode(number, size, seeds.length), res, size, seeds.length);
@@ -312,7 +322,9 @@ export async function run(o: Opts) {
       const s = B.seeding(card);
       const vhpOf = new Map<string, number>(card.field.map((r: any) => [r.a, Number(r.vhp)]));
       const totalVhp = Math.round([...card.field, ...card.paddock].reduce((t: number, r: any) => t + r.vhp, 0) * 100) / 100;
-      const base = { at, cardAt: card.height, size: s.size, seeds: [...s.seeds], vhp: s.seeds.map((a: string) => vhpOf.get(a) ?? 0), totalVhp, out: [...s.out] };
+      // pooled producers (never forfeit, fix-check F-1): the KnodeGames Vault, whose VHP is players' withdrawable stakes
+      const pooledAll = [o.vault === undefined ? defaultVault() : o.vault].filter((a): a is string => !!a && isAddr(a));
+      const base = { at, cardAt: card.height, size: s.size, seeds: [...s.seeds], vhp: s.seeds.map((a: string) => vhpOf.get(a) ?? 0), totalVhp, out: [...s.out], pooled: pooledAll.filter((a) => s.seeds.includes(a)) };
       wf.seeding = { ...base, hash: seedHash(w, base) };
       wf.days = emptyDays(s.size);
       if (!s.size) { wf.status = "none"; wf.void = `only ${s.seeds.length + s.out.length} producers in the field (8 needed); no bracket this week`; continue; }
@@ -415,14 +427,14 @@ export async function run(o: Opts) {
   const allW = new Map(weeks);
   for (const w of known) if (!allW.has(w)) allW.set(w, loadWeek(PREV, w));
   // each board keeps its own places: Staked (ranked) and Free play (the shared board shows the top 6 of those)
-  const view = (rows: { player: string; points: number; champion: boolean; correct: number; ranked: boolean }[]) => {
+  const view = (rows: { player: string; points: number; champion: boolean; correct: number; ranked: boolean; time?: number }[]) => {
     const part = (r: boolean) => B.rank(rows.filter((x) => x.ranked === r)).slice(0, MAX_BOARD_ROWS).map((x: any) => ({ a: x.player, place: x.place, pts: x.points, champion: x.champion, correct: x.correct, ranked: r }));
     return [...part(true), ...part(false)];
   };
   // Staked board: staked that week, or held a stake in the Bracket during it (a withdrawal doesn't move a player to Free
   // play, where it could never win the prize: fix-check F-5)
   const stakedSet = (wf: WeekFile | undefined) => new Set([...(wf?.staked?.list ?? []), ...(wf?.staked?.held ?? [])]);
-  const weekRows = (wf: WeekFile | undefined) => { const st = stakedSet(wf); return wf ? wf.points.map(([player, points, champ, correct]) => ({ player, points, champion: !!champ, correct, ranked: st.has(player) })) : []; };
+  const weekRows = (wf: WeekFile | undefined) => { const st = stakedSet(wf), tm = timesOf(wf); return wf ? wf.points.map(([player, points, champ, correct]) => ({ player, points, champion: !!champ, correct, ranked: st.has(player), time: tm.get(player) })) : []; };
   const wv = (w: number) => { const wf = allW.get(w); return { week: w, start: B.weekStart(w), status: wf ? wf.status : "waiting", final: wf?.status === "final", rows: view(weekRows(wf)) }; };
   const tot = new Map<string, { player: string; points: number; champion: boolean; correct: number; champs: number; ranked: boolean }>();
   for (const wf of allW.values()) if (wf.status === "final") { const st = stakedSet(wf); for (const [player, points, champ, correct] of wf.points) {
@@ -443,8 +455,8 @@ export async function run(o: Opts) {
   for (const [w, wf] of weeks) {
     if (wf.status !== "final" || !wf.staked || wf.vault === "missed" || now > B.weekStart(w + 1) + VAULT_DAYS) continue;
     fs.mkdirSync(path.join(OUT, "vault"), { recursive: true });
-    const prize = freeWinners(wf.points, new Set([...(wf.staked.held ?? []), ...wf.staked.list]));
-    const file = { game: B.GAME_ID, week: w, final: true, rows: vaultRows(wf.points, new Set(wf.staked.list)), first: prize.first, second: prize.second };
+    const tm = timesOf(wf), prize = freeWinners(wf.points, new Set([...(wf.staked.held ?? []), ...wf.staked.list]), tm);
+    const file = { game: B.GAME_ID, week: w, final: true, rows: vaultRows(wf.points, new Set(wf.staked.list), tm), first: prize.first, second: prize.second };
     fs.writeFileSync(path.join(OUT, "vault", `W${w}.json`), JSON.stringify(file) + "\n");
   }
   fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), weeks: [...known].sort((a, b) => a - b), contract: contract || null, game: B.GAME_ID }) + "\n");

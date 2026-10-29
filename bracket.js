@@ -188,7 +188,7 @@
         const meta = [`${fmt(p.share * 100, p.share < 0.01 ? 2 : 1)}% VHP`, `~${fmt(p.perDay)} blocks/day`, p.form !== null ? `recent form ${fmt(p.form * 100)}%` : null].filter(Boolean).join(" · ");
         const kids = [el("span", { class: "bk-seed", text: String(seed) }),
           el("span", { class: "bk-name" }, el("b", { text: nameOf(p.a) }), el("small", { text: meta })),
-          ix && BM.forfeits(ix, p.vhp) ? el("span", { class: "bk-ix", text: "forfeit", title: `Started the day with ${fmt(ix.baseline / 1e8)} VHP, under half its seeding ${fmt(p.vhp)} VHP: it loses this matchup` })
+          ix && !(s.pooled || []).includes(p.a) && BM.forfeits(ix, p.vhp) ? el("span", { class: "bk-ix", text: "forfeit", title: `Started the day with ${fmt(ix.baseline / 1e8)} VHP, under half its seeding ${fmt(p.vhp)} VHP: it loses this matchup` })
             : ix && ix.expected > 0 ? el("span", { class: "bk-ix", text: `${fmt(ix.index * 100, 1)}%`, title: `${fmt(ix.blocks)} blocks of ${fmt(ix.expected, 1)} expected` }) : null,
           myPick === seed && !bye && (open || mine !== null) ? el("span", { class: "bk-mark", text: winner ? (winner === seed ? "✓" : "✗") : "★" }) : null];
         if (open && !bye && seed) return el("button", { type: "button", class: cls, "aria-pressed": String(myPick === seed), onclick: () => choose(round, m, seed) }, ...kids);

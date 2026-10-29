@@ -470,3 +470,39 @@ test("fix-check F-5: a player who withdrew mid-week stays on the Staked board an
   const vf = JSON.parse(fs.readFileSync(path.join(d, "vault", `W${W}.json`), "utf8"));
   assert.ok(!vf.first.includes(P(2)) && !vf.second.includes(P(2)) && !vf.rows.some((r) => r.player === P(2)));
 });
+
+test("owner 2026-10-29: ties go to who submitted first (a copied bracket can't tie the original); same block still shares", () => {
+  const pts = [[P(1), 9, 0, 5], [P(2), 9, 0, 5], [P(3), 9, 0, 5], [P(4), 4, 0, 2]];
+  const tm = new Map([[P(1), 3000], [P(2), 1000], [P(3), 1000], [P(4), 500]]);
+  assert.deepEqual(plain(freeWinners(pts, new Set(), tm)), { first: [P(2), P(3)].sort(), second: [] }, "P(2) and P(3) picked in the same block: they share 1st");
+  const tm2 = new Map([[P(1), 3000], [P(2), 1000], [P(3), 2000], [P(4), 500]]);
+  assert.deepEqual(plain(freeWinners(pts, new Set(), tm2)), { first: [P(2)], second: [P(3)] }, "the earliest is 1st, the next earliest 2nd");
+  // 11 copies of the leader's bracket, all made after it: the leader stays alone in 1st
+  const copies = Array.from({ length: 11 }, (_, i) => [P(20 + i), 9, 0, 5]);
+  const tm3 = new Map([[P(1), 100], ...copies.map((r, i) => [r[0], 200 + i])]);
+  assert.deepEqual(plain(freeWinners([[P(1), 9, 0, 5], ...copies], new Set(), tm3)).first, [P(1)]);
+  // the champion and right winners still come before the time
+  assert.deepEqual(plain(freeWinners([[P(1), 9, 0, 5], [P(2), 9, 1, 5]], new Set(), new Map([[P(1), 1], [P(2), 9]]))).first, [P(2)]);
+  // the Vault rows keep the same order
+  const v = plain(vaultRows(pts, new Set(pts.map((r) => r[0])), tm2));
+  const at = Object.fromEntries(v.map((r) => [r.player, r.points]));
+  assert.ok(at[P(2)] > at[P(3)] && at[P(3)] > at[P(1)] && at[P(1)] > at[P(4)]);
+  // the boards rank the same way
+  const ranked = B.rank([{ player: P(1), points: 9, champion: false, correct: 5, time: 3000 }, { player: P(2), points: 9, champion: false, correct: 5, time: 1000 }]);
+  assert.deepEqual(ranked.map((r) => [r.player, r.place]), [[P(2), 1], [P(1), 2]]);
+  assert.equal(B.rank([{ player: P(1), points: 9, champion: false, correct: 5 }, { player: P(2), points: 9, champion: false, correct: 5 }])[1].place, 1, "no time (all-time board): shared");
+});
+
+test("fix-check F-1: the Vault (a pooled producer: players' withdrawable stakes) never forfeits; it stays in the field", async () => {
+  const day = new Map([["1Vault", { baseline: 10e8, credited: 5, expected: 0.1 }], ["1Dog", { baseline: 100e8, credited: 1, expected: 1 }]]);
+  const sv = new Map([["1Vault", 100], ["1Dog", 100]]);
+  assert.equal(B.otherWins(day, "1Vault", "1Dog", sv), true, "an ordinary producer this far under would forfeit");
+  assert.equal(B.otherWins(day, "1Vault", "1Dog", sv, new Set(["1Vault"])), false, "the Vault doesn't: its index decides");
+  // the recorder records the Vault as pooled when it is seeded
+  const field = fieldOf(17), dir = tmp();
+  await quiet(() => run({ p: "main", check: "check", prev: dir, out: dir, head: headAt(B.seedTime(W) + H), picksContract: addr(60), nodeOf: nodeOf(signerFn(field)), picksOf: picksOf([]), vault: addr(2) }));
+  const s = readW(dir).seeding;
+  assert.ok(s.seeds.includes(addr(2)), "the Vault is seeded like any producer");
+  assert.deepEqual(s.pooled, [addr(2)]);
+  assert.ok(shapeOk(dir));
+});

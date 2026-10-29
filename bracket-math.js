@@ -22,6 +22,8 @@
  *   FORFEIT (owner decision 2026-10-28, audit S-5): a seed that starts a round's day with less than half its seeding
  *   VHP (baseline < FORFEIT_SHARE × seeding VHP) loses that matchup, whatever its index: holding little VHP all day
  *   would otherwise turn a matchup it expects to lose into a lottery. If both seeds forfeit, the index decides.
+ *   POOLED producers (the KnodeGames Vault: its VHP is players' stakes, which they can withdraw at any time) never
+ *   forfeit: a depositor could otherwise force it (fix-check F-1). Every producer stays in the field (owner 2026-10-29).
  *
  * THE PICK: one number for the whole bracket (one Picks game, kind NUMBER).
  * - The bracket has size − 1 matchups, numbered round by round, top to bottom. Bit n of the number says who wins
@@ -30,7 +32,9 @@
  *   or on a bye is not a valid bracket and scores nothing (the page never makes one).
  *
  * SCORING: a correct winner scores 1, 2, 4, 8, 16 points by round (round 1 = 1 point), plus 2 for the right champion.
- *   Byes score nothing. Ranking: points, then a correct champion, then more correct winners; still tied → shared place. */
+ *   Byes score nothing. Ranking: points, then a correct champion, then more correct winners, then the EARLIER bracket
+ *   (the time of its last change, from the Picks contract; owner 2026-10-29: a copied bracket can't tie the original);
+ *   still tied (same block) → shared place. All-time boards have no pick time: ties share there. */
 (function (root) {
   "use strict";
   const HOUR = 3600000, DAY = 24 * HOUR, WEEK = 7 * DAY;
@@ -189,10 +193,11 @@
   }
   /** Does `other` beat `better` on a day? Higher index wins; an exact tie (compared without division) goes to `other`,
    *  the lower seed. A producer missing from the day's index counts as 0 blocks. */
-  function otherWins(idx, better, other, seedVhp) {
+  function otherWins(idx, better, other, seedVhp, pooled) {
     const A = idx.get(better) || { credited: 0, expected: 0 }, B = idx.get(other) || { credited: 0, expected: 0 };
     if (seedVhp) {
-      const fa = forfeits(A, seedVhp.get(better)), fb = forfeits(B, seedVhp.get(other));
+      const ok = (a) => !(pooled && pooled.has(a));
+      const fa = ok(better) && forfeits(A, seedVhp.get(better)), fb = ok(other) && forfeits(B, seedVhp.get(other));
       if (fa !== fb) return fa;   // only one forfeits: it loses
     }
     const ca = A.credited ?? A.blocks ?? 0, cb = B.credited ?? B.blocks ?? 0;
@@ -212,13 +217,15 @@
   }
 
   /** The real results of a week: seeds (addresses), days: [dayIndex Map for each round, or null if not known yet],
-   *  seedVhp: each seed's seeding VHP in seed order (the forfeit rule; left out: no forfeits).
+   *  seedVhp: each seed's seeding VHP in seed order (the forfeit rule; left out: no forfeits); pooled: addresses that
+   *  never forfeit.
    *  Returns { rounds: [[winner seed]] for each round played so far, done: true when every round is known }. */
-  function results(seeds, size, days, seedVhp) {
+  function results(seeds, size, days, seedVhp, pooled) {
     const nSeeds = seeds.length, R = roundsOf(size), rounds = [];
     const sv = Array.isArray(seedVhp) ? new Map(seeds.map((a, i) => [a, Number(seedVhp[i]) || 0])) : null;
+    const pl = new Set(Array.isArray(pooled) ? pooled : []);
     let known = 0; while (known < R && days[known]) known++;
-    const full = play(size, nSeeds, (r, m, a, b) => (r < known ? otherWins(days[r], seeds[a - 1], seeds[b - 1], sv) : false));
+    const full = play(size, nSeeds, (r, m, a, b) => (r < known ? otherWins(days[r], seeds[a - 1], seeds[b - 1], sv, pl) : false));
     for (let r = 0; r < known; r++) rounds.push(full.rounds[r]);
     return { rounds, done: known === R };
   }
@@ -236,11 +243,12 @@
     return s;
   }
 
-  /** Rank rows [{ player, points, champion, correct }]: points, then a correct champion, then more correct winners.
-   *  Tied rows share a place (1, 2, 2, 4 …). Returns new rows with `place`, best first (ties by player for a stable order). */
+  /** Rank rows [{ player, points, champion, correct, time? }]: points, then a correct champion, then more correct
+   *  winners, then the earlier pick time (rows with a time); tied rows share a place (1, 2, 2, 4 …). Returns new rows
+   *  with `place`, best first (ties by player for a stable order). */
   function rank(rows) {
-    const key = (r) => [r.points, r.champion ? 1 : 0, r.correct];
-    const cmp = (x, y) => { const a = key(x), b = key(y); for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return b[i] - a[i]; return 0; };
+    const key = (r) => [r.points, r.champion ? 1 : 0, r.correct, Number.isFinite(r.time) ? -r.time : 0];
+    const cmp = (x, y) => { const a = key(x), b = key(y); for (let i = 0; i < 4; i++) if (a[i] !== b[i]) return b[i] - a[i]; return 0; };
     const out = rows.map((r) => ({ ...r })).sort((x, y) => cmp(x, y) || (x.player < y.player ? -1 : x.player > y.player ? 1 : 0));
     out.forEach((r, i) => { r.place = i > 0 && cmp(out[i - 1], r) === 0 ? out[i - 1].place : i + 1; });
     return out;
