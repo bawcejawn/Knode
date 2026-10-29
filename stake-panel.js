@@ -118,10 +118,15 @@
         if (!(Number(cfg.v6_rule_week_plus_one || 0) > 0)) return;                                // the vault isn't live
         if (!(await reloadGames())) return;                                                       // no such game
         host.hidden = false;
-        await refresh();
-      } catch (e) { /* not live, or the node can't be reached: the panel stays hidden */ }
+      } catch (e) { return; /* not live, or the node can't be reached: the panel stays hidden */ }
+      await refresh().catch(failed);
+    }
+    function failed() {
+      body.replaceChildren(el("p", { class: "note", text: "Couldn't load your stake in this game right now." }),
+        el("div", { class: "ks-actions" }, el("button", { type: "button", class: "btn btn-ghost", onclick: () => refresh().catch(failed) }, "Try again")));
     }
     async function reloadGames() {
+      cfg = (await vault.functions.get_state({})).result.config || cfg;   // paused and the minimum can change
       const list = (await vault.functions.list_games({})).result.games || [];
       game = list.find((g) => Number(g.id) === o.game) || null;
       targets = list.filter((g) => g.active && g.staked && Number(g.id) !== o.game);
@@ -132,7 +137,8 @@
 
     /** The finished weeks this wallet can claim, newest first: [week, amount]. */
     async function claimsOf(who) {
-      const from = Math.max(Number(game.from_week || 0), cur - CLAIM_WEEKS), weeks = [];
+      // Not from game.from_week: a game restarted after a gap moves it forward, and earlier weeks stay claimable.
+      const from = Math.max(0, cur - CLAIM_WEEKS), weeks = [];
       for (let w = cur - 1; w >= from && w >= 0; w--) weeks.push(w);
       const out = [];
       for (let i = 0; i < weeks.length; i += 8) {
@@ -166,12 +172,12 @@
       me = state;
       if (!who) rows.push(el("p", { class: "note", text: "Connect a wallet to stake in this game." }));
       else {
-        const later = me.total > me.week && me.stand !== "free";
+        const later = me.total > me.week;
         rows.push(el("p", {}, "Your stake: ", el("b", { text: `${vhp(me.total)} VHP` }),
           ` · this week: ${vhp(me.week)} VHP`, later ? " (the rest counts from next week)" : "",
           { staked: " · Staked board", free: " · Free play board", neither: " · this week: no bucket share and no free prize (you withdrew below the minimum)" }[me.stand]));
         if (kind === "guest") {
-          rows.push(el("p", { class: "note", text: "A guest wallet can't stake." + (me.claims.length ? " It has a prize to claim: back up your guest key and import it into Kondor or KOIN Vault, then claim it here." : "") }));
+          rows.push(el("p", { class: "note", text: "A guest wallet can't stake." + (me.claims.length ? " It has a prize to claim: back up your guest key, import it into Kondor, then claim it here." : "") }));
           if (me.claims.length) rows.push(el("p", { class: "note", text: me.claims.map(([w, a]) => `Week ${w + 1}: ${vhp(a)} VHP`).join(" · ") }));
         } else {
           rows.push(el("div", { class: "ks-actions" },
@@ -193,6 +199,7 @@
       body.querySelectorAll("button").forEach((b) => { b.disabled = true; });
       try {
         const ops = await build();
+        if (W.address !== who) throw new Error("your wallet changed while preparing it; nothing was sent");
         say(`Confirm “${label}” in ${W.label()}…`, 20000);
         const txid = await W.send(label, ops, {});
         say(txid ? `Done: ${label}` : `Sent: ${label}. It may take a minute to show.`, 8000);
@@ -274,7 +281,7 @@
       amount.focus();
     }
 
-    if (W && W.subscribe) W.subscribe(() => { if (!host.hidden) refresh().catch(() => {}); });
+    if (W && W.subscribe) W.subscribe(() => { if (!host.hidden) refresh().catch(failed); });
     load();
     return { refresh: () => (host.hidden ? Promise.resolve() : refresh()) };
   }

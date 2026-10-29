@@ -580,3 +580,14 @@ test("boards: each row's place on its own board (Staked or Free play), tied wall
   const bad = tmp(); const b2 = JSON.parse(JSON.stringify(board)); delete b2.lastWeek.rows[0].boardPlace;
   fs.writeFileSync(path.join(bad, "board.json"), JSON.stringify(b2)); assert.equal(shapeOk(bad), false);
 });
+
+test("vault: a failure of the whole stake read (not one wallet's) is reported once a run, and the file stays not final", async () => {
+  const { dir } = await weekTwoDone();
+  const out = tmp(), lines = [], log = console.log; console.log = (x) => lines.push(String(x));
+  try {
+    await run({ p: node(U("2026-11-09T05:37Z")), check: node(U("2026-11-09T05:37Z")), prev: dir, out, vhpOf, raceContract: "x", picksOf: async () => [],
+      stakedOf: async () => { throw Object.assign(new Error("the vault's get_state came back empty: Race stakes can't be read"), { once: true }); } });
+  } finally { console.log = log; }
+  assert.equal(vaultOf(out).final, false);
+  assert.equal(lines.filter((l) => l.includes("get_state came back empty")).length, 1);
+});

@@ -155,14 +155,14 @@ const vaultState = new WeakMap<object, Promise<any>>();
 export const NO_V6_ABI = "game/abi/kpred.koilib.json has no get_game_player (still v5): Race stakes can't be read";
 async function readStaked(node: any, who: string, week: number): Promise<boolean> {
   const abi = GAME_ABI();
-  if (!GAME) throw new Error("game-data/deployment.json gives no contract: Race stakes can't be read");
+  if (!GAME) throw Object.assign(new Error("game-data/deployment.json gives no contract: Race stakes can't be read"), { once: true });
   // This repository's contract ABI is still v5: it can't tell whether the vault is live, so it can't say who is free.
   // Throwing keeps the vault file from being final (the boards show everyone on Free play, with one warning a run).
-  if (!abi.methods?.get_game_player) throw new Error(NO_V6_ABI);
+  if (!abi.methods?.get_game_player) throw Object.assign(new Error(NO_V6_ABI), { once: true });
   const c = new Contract({ id: GAME, abi, provider: node });
   if (!vaultState.has(node)) vaultState.set(node, withRetry("vault state", () => (c.functions as any).get_state({})));
   const cfg = (await vaultState.get(node))?.result?.config;
-  if (!cfg) { vaultState.delete(node); throw new Error("the vault's get_state came back empty"); }
+  if (!cfg) { vaultState.delete(node); throw Object.assign(new Error("the vault's get_state came back empty: Race stakes can't be read"), { once: true }); }
   if (!(Number(cfg.v6_rule_week_plus_one || 0) > 0)) return false;   // the contract on chain isn't v6 yet
   const r: any = await withRetry(`Race stake of ${who}`, () => (c.functions as any).get_game_player({ player: who, game: VAULT_GAME, week: String(week) }));
   return stakedFrom(cfg, r?.result ?? {}, week);
@@ -327,7 +327,8 @@ async function leaderboards(weeks: Map<number, WeekFile>, now: number, problems:
     if (!stakes.has(k)) {
       try { stakes.set(k, await stakedOf(who, week)); }
       catch (e) {
-        const m = (e as Error).message, line = m === NO_V6_ABI ? m : `Race stake of ${who}: ${m}`;
+        // A problem with the whole read (not one wallet) is reported once a run.
+        const m = (e as Error).message, line = (e as any).once ? m : `Race stake of ${who}: ${m}`;
         if (!problems.includes(line)) problems.push(line);
         failed.add(`stake:${k}`); stakes.set(k, false);
       }
