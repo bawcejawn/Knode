@@ -6,9 +6,9 @@ const crypto = require("crypto");
 const { execSync } = require("child_process");
 const MODE = "assembly/Mode.ts";
 const normal = fs.readFileSync(MODE, "utf8");
-// The live declaration itself, not a comment (fix-check 3, V3-10).
-const decl = normal.split(/\r?\n/).map((l) => l.replace(/\/\/.*$/, "").trim()).filter((l) => /\bSAFE_MODE\b/.test(l));
-if (decl.length !== 1 || decl[0] !== "export const SAFE_MODE: bool = false;") throw new Error(`${MODE} must say SAFE_MODE = false before building`);
+// The live declaration itself, not a comment (fix-check 3, V3-10; fix-check 4, C4-1: one shared parser).
+const { isNormal, isSafe, toSafe } = require("../../tools/mode-switch.cjs");
+if (!isNormal(normal)) throw new Error(`${MODE} must say SAFE_MODE = false before building`);
 // The contract builder sometimes stops with EAGAIN on a busy machine: try again a few times.
 const build = () => {
   for (let i = 1; ; i++) {
@@ -18,7 +18,8 @@ const build = () => {
 };
 let hash = "";
 try {
-  fs.writeFileSync(MODE, normal.replace("SAFE_MODE: bool = false;", "SAFE_MODE: bool = true;"));
+  fs.writeFileSync(MODE, toSafe(normal));   // only the live declaration (C4-1)
+  if (!isSafe(fs.readFileSync(MODE, "utf8"))) throw new Error(`${MODE} did not switch to the safe build`);
   build();
   fs.mkdirSync("build/safe", { recursive: true });
   fs.copyFileSync("build/release/contract.wasm", "build/safe/contract.wasm");
@@ -30,4 +31,10 @@ try {
   fs.rmSync("build/release/contract.wasm", { force: true });
 }
 build();
+// The two builds must differ: if they don't, the switch didn't take (C4-1). Nothing is pinned from a failed run.
+const releaseHash = crypto.createHash("sha256").update(fs.readFileSync("build/release/contract.wasm")).digest("hex");
+if (releaseHash === hash) {
+  fs.rmSync("build/safe/contract.wasm", { force: true });
+  throw new Error("build:safe produced the same code as the normal build: the switch didn't take. build/safe was removed.");
+}
 console.log(`\nbuild/safe/contract.wasm: the withdrawals-only build\nsha256 ${hash}\n(build/release is the normal build again)`);

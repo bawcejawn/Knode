@@ -56,16 +56,22 @@ test("list_players pages 120 players exactly once each, in byte order", { skip: 
   assert.deepEqual(hex, [...hex].sort(), "in byte order");
 });
 
-test("fix-check 3: the patch loads from a path with a space (V3-1) and stays fast at 20,000 objects (V3-2)", async () => {
+test("fix-check 4: the patch resolves from the caller's real folder only (C4-2, C4-3), and stays fast at 20,000 objects (V3-2)", async () => {
+  const os = await import("node:os");
+  const path = await import("node:path");
   const { createRequire } = await import("node:module");
   const { fileURLToPath, pathToFileURL } = await import("node:url");
   const req = createRequire(import.meta.url);
   const { patchDatabase } = req("../tools/mockvm-bytewise.cjs");
   const { MockVM } = req("@koinos/mock-vm");
-  // A file URL with a space: fileURLToPath gives a real path ("sp ace"), unlike URL.pathname ("sp%20ace").
-  const url = pathToFileURL("/tmp/sp ace/x.js");
-  assert.equal(fileURLToPath(url), "/tmp/sp ace/x.js");
-  const db = patchDatabase(new MockVM().db, fileURLToPath(url));   // resolves mock-vm from this repo all the same
+  // A real folder with a space, platform-correct (Windows too): fileURLToPath gives the path back, URL.pathname doesn't.
+  const spaced = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sp ace ")), "x.js");
+  assert.equal(fileURLToPath(pathToFileURL(spaced)), spaced);
+  assert.notEqual(new URL(pathToFileURL(spaced)).pathname, spaced);
+  // From this file's real path the patch loads; from a folder with no node_modules it fails instead of falling back.
+  assert.doesNotThrow(() => patchDatabase(new MockVM().db, fileURLToPath(import.meta.url)));
+  assert.throws(() => patchDatabase(new MockVM().db, spaced), /Cannot find module/);
+  const db = patchDatabase(new MockVM().db, fileURLToPath(import.meta.url));
   const sp = { id: 3 };
   const t0 = Date.now();
   for (let i = 0; i < 20_000; i++) { const k = new Uint8Array(4); new DataView(k.buffer).setUint32(0, i); db.putObject(sp, k, new Uint8Array([1])); }
@@ -73,4 +79,35 @@ test("fix-check 3: the patch loads from a path with a space (V3-1) and stays fas
   db.rollbackTransaction();
   assert.ok(Date.now() - t0 < 20_000, "20,000 objects in key order, a commit and a rollback: no stack overflow, not slow");
   assert.ok(db.getObject(sp, new Uint8Array([0, 0, 0x4e, 0x1f])), "the last key is still there");
+});
+
+test("fix-check 4 (C4-4): a stored value is a copy, so a wasm memory.grow can't empty it", async () => {
+  const { createRequire } = await import("node:module");
+  const { fileURLToPath } = await import("node:url");
+  const req = createRequire(import.meta.url);
+  const db = req("../tools/mockvm-bytewise.cjs").patchDatabase(new (req("@koinos/mock-vm").MockVM)().db, fileURLToPath(import.meta.url));
+  const mem = new WebAssembly.Memory({ initial: 1 });
+  const v = new Uint8Array(mem.buffer, 8, 4);
+  v.set([1, 2, 3, 4]);
+  const k = new Uint8Array(mem.buffer, 16, 1);
+  k[0] = 1;
+  db.putObject({ id: 1 }, k, v);
+  mem.grow(1);   // detaches the old views
+  assert.deepEqual([...db.getObject({ id: 1 }, new Uint8Array([1])).value], [1, 2, 3, 4]);
+});
+
+test("fix-check 4 (C4-1): build:safe switches the live declaration, never a comment", async () => {
+  const { createRequire } = await import("node:module");
+  const m = createRequire(import.meta.url)("../tools/mode-switch.cjs");
+  const src = "// Normal build: SAFE_MODE: bool = false; (build:safe flips it)\nexport const SAFE_MODE: bool = false;\n";
+  const out = m.toSafe(src);
+  assert.deepEqual(m.liveDecl(out).map((d: any) => d[1]), ["export const SAFE_MODE: bool = true;"]);
+  assert.equal(out.split("\n")[0], src.split("\n")[0], "the comment is untouched");
+  assert.equal(m.toSafe(src.replace(/\n/g, "\r\n")).includes("\r\n"), true, "CRLF kept");
+  assert.equal(m.isNormal("/* export const SAFE_MODE: bool = false; */\nexport const SAFE_MODE: bool = true;\n"), false, "block comments don't count");
+  assert.equal(m.isNormal("export const SAFE_MODE: bool = false;\nexport const SAFE_MODE: bool = false;\n"), false, "two declarations");
+  assert.throws(() => m.toSafe("export const SAFE_MODE: bool = true;\n"));
+  // The real file switches cleanly.
+  const real = fs.readFileSync("game/assembly/Mode.ts", "utf8");
+  assert.ok(m.isNormal(real) && m.isSafe(m.toSafe(real)));
 });

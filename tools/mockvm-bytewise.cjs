@@ -36,10 +36,9 @@ class BytewiseMap {
 
 /** Patch one mock-VM Database instance in place. `from`: a file inside the project using mock-vm (module lookup). */
 function patchDatabase(db, from = __filename) {
-  // Resolve from the caller's folder, else from this one (fix-check 3, V3-1: a bad `from` must not stop the tests).
-  let base;
-  try { base = path.dirname(require.resolve("@koinos/mock-vm", { paths: [path.dirname(from)] })); }
-  catch { base = path.dirname(require.resolve("@koinos/mock-vm")); }
+  // Resolve from the caller's real folder only (fix-check 4, C4-2/C4-3: no fallback, so a wrong path fails loudly and
+  // nothing is ever loaded from a shared folder such as /tmp/node_modules).
+  const base = path.dirname(require.resolve("@koinos/mock-vm", { paths: [path.dirname(from)] }));
   const { koinos } = require(require.resolve("@koinos/proto-js", { paths: [base] }));
   const sameSpace = (s, space) =>
     !!s.system === !!space.system && (s.id || 0) === (space.id || 0) && bytewise(s.zone || new Uint8Array(0), space.zone || new Uint8Array(0)) === 0;
@@ -66,6 +65,10 @@ function patchDatabase(db, from = __filename) {
     }
     return bestKey === null ? null : koinos.chain.database_object.create({ exists: true, value: best, key: bestKey });
   };
+  // Store copies (fix-check 4, C4-4): the mock VM hands over views into the contract's wasm memory, which a later
+  // memory.grow would detach, leaving the stored value empty.
+  const put = db.putObject.bind(db);
+  db.putObject = (space, key, obj) => put(space, new Uint8Array(key), new Uint8Array(obj));
   db.getNextObject = (space, key) => step(canonical(space), key, 1);
   db.getPrevObject = (space, key) => step(canonical(space), key, -1);
   return db;

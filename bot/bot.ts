@@ -1306,9 +1306,8 @@ export function upgradeGuard(wasm: Buffer, safe: boolean, dep: any, safeFile: Bu
   }
   if ((safeFile && sha(safeFile) === h) || (dep.safeWasmSha256 && h === dep.safeWasmSha256))
     return `${WASM} is the withdrawals-only build. In the game folder run: npm run build, then npm run check.`;
-  // The switch line itself, not a comment (V3-10): exactly one live SAFE_MODE declaration, and it is false.
-  const decl = modeTs.split(/\r?\n/).map((l) => l.replace(/\/\/.*$/, "").trim()).filter((l) => /\bSAFE_MODE\b/.test(l));
-  if (decl.length !== 1 || !/^export const SAFE_MODE: bool = false;$/.test(decl[0]))
+  // The switch line itself, not a comment (V3-10, C4-1): exactly one live SAFE_MODE declaration, and it is false.
+  if (!createRequire(import.meta.url)("../tools/mode-switch.cjs").isNormal(modeTs))
     return "game/assembly/Mode.ts is not the normal build's (SAFE_MODE must be false). Restore it (git checkout game/assembly/Mode.ts), then npm run build and npm run check.";
   return "";
 }

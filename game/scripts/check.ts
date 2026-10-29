@@ -3,6 +3,7 @@
  * No network, no keys.
  */
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import { Signer, Contract, Provider, Serializer } from "koilib";
 
 let failures = 0;
@@ -22,8 +23,8 @@ const bin = fs.existsSync(WASM) ? fs.readFileSync(WASM) : Buffer.alloc(0);
 ok(bin.length > 0 && bin.indexOf(marker) === -1, "production build (the test ledger is NOT included)");
 {
   // The live declaration itself, not a comment (fix-check 3, V3-10).
-  const decl = fs.readFileSync("assembly/Mode.ts", "utf8").split(/\r?\n/).map((l) => l.replace(/\/\/.*$/, "").trim()).filter((l) => /\bSAFE_MODE\b/.test(l));
-  ok(decl.length === 1 && decl[0] === "export const SAFE_MODE: bool = false;", "the normal build, not the withdrawals-only one (assembly/Mode.ts)");
+  const { isNormal } = createRequire(import.meta.url)("../../tools/mode-switch.cjs");
+  ok(isNormal(fs.readFileSync("assembly/Mode.ts", "utf8")), "the normal build, not the withdrawals-only one (assembly/Mode.ts)");
 }
 {
   const SAFE = "build/safe/contract.wasm";
