@@ -195,3 +195,9 @@ failing tests (`knode-fixcheck-r3-failing-tests.zip`) are in `tests/audit/repole
 | SP-36 | Runbook `?key=` | **Fixed** (`#`) |
 | SP-26, SP-27 | check.ts vs v6 ABI; Picks/vault id link | SP-26: the v6 ABI is now in the repo (BX-61); SP-27 documented in `docs/ADMIN.md` |
 | SP-2, SP-3 | Lock-outs remain (Medium) | **Accepted for launch** (owner decisions above); the auditor's attack-model tests for these stay out of the suite |
+
+### Owner decision, 2026-10-29: BX-39 / BX-66 / BX-70 / BX-71 closed
+
+The guest wallets made on the old `bawcejawn.github.io` address before 28 October were the owner's and testers' test
+wallets and hold nothing. The move page (`tools/old-origin-guest/`) is deleted and never published; those keys are
+left to expire in the testers' browsers. BX-66, BX-70 and BX-71 (about that page and the old address) no longer apply.

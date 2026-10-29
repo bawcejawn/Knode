@@ -5,11 +5,10 @@ import fs from "node:fs";
 const APP = process.env.APP || ".";
 const read = (f) => fs.readFileSync(`${APP}/${f}`, "utf8");
 
-// W-1 (Low): the move page is also published at https://knodegames.com/tools/old-origin-guest/guest-move.html (repo root is
-// the Pages root, .nojekyll), where it finds the CURRENT guest key and offers to erase it. It must run only on the old origin.
-test("W-1: guest-move.html does nothing unless it runs at bawcejawn.github.io", () => {
-  const h = read("tools/old-origin-guest/guest-move.html");
-  assert.match(h, /location\.hostname\s*!==?\s*["']bawcejawn\.github\.io["']/, "page checks it is on the old origin before reading or erasing");
+// W-1 (BX-66): the old-address move page was removed (owner, 2026-10-29: the pre-move guest wallets were test
+// wallets holding nothing), so it can no longer run on knodegames.com either.
+test("W-1: the old-address move page is gone from the published site", () => {
+  assert.equal(fs.existsSync(`${APP}/tools/old-origin-guest/guest-move.html`), false);
 });
 
 // W-2 (Low): http: is accepted for knodegames.com; only the dev hosts need http.
