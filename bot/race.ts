@@ -119,6 +119,8 @@ type Pick = [string, string, number];
 type PlayerInfo = { stake: bigint; answers: number; points: number };
 type Opts = {
   p: any; check: any | null; prev?: string; out?: string; vhpOf?: (who: string[]) => Promise<Record<string, string>>;
+  /** The second node's VHP read (tests). Default: the check node; with vhpOf given and this not, the same as vhpOf. */
+  vhpCheckOf?: (who: string[]) => Promise<Record<string, string>>;
   raceContract?: string | null;                                       // the picks contract (default: race-data/deployment.json)
   picksOf?: (node: any, race: number) => Promise<Pick[]>;             // for the tests
   playerOf?: (node: any, who: string, week: number) => Promise<PlayerInfo>;
@@ -153,10 +155,11 @@ async function readPlayer(node: any, who: string, week: number): Promise<PlayerI
   return { stake: BigInt(p.stake || "0") + BigInt(p.pending || "0"), answers: Array.isArray(e.answers) ? e.answers.length : 0, points: Number(e.points || 0) };
 }
 /** One run. Exported for the tests, which pass fake nodes. */
-export async function run({ p, check, prev, out, vhpOf, raceContract, picksOf, playerOf }: Opts) {
+export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract, picksOf, playerOf }: Opts) {
   if (prev !== undefined) PREV = prev;
   if (out !== undefined) OUT = out;
   const vhpRead = vhpOf || (async (who: string[]) => (await readVhp(p, MAINNET_VHP, who)).values);
+  const vhpCheck = !check ? null : vhpCheckOf || vhpOf || (async (who: string[]) => (await readVhp(check, MAINNET_VHP, who)).values);
   const picksContract = raceContract === undefined ? defaultRaceContract() : raceContract;
   const picksRead = picksOf || (picksContract ? (node: any, r: number) => readPicks(node, picksContract, r) : null);
   const playerRead = playerOf || readPlayer;
@@ -201,9 +204,22 @@ export async function run({ p, check, prev, out, vhpOf, raceContract, picksOf, p
     const blocksPerRace = span > 0 ? (recent.ts.length - 1) * M.RACE / span : 7200;
     const producers = recent.signers.filter(isAddr);
     const values = await vhpRead(producers);
-    const vhp: [string, number][] = producers.map((a) => [a, Number(values[a] || "0") / 1e8]);
-    const card: Card = M.makeCard(vhp, blocksPerRace, now);
-    for (const { race, leg } of want) { race.cards[leg] = card; console.log(`card for ${race.id} leg ${leg + 1}: ${card.field.length} horses, c = ${card.c}`); }
+    // Audit BX-4: the card's VHP must agree on both nodes. VHP moves a little between two reads (block rewards), so a
+    // difference above 0.5% of a producer's VHP (or a producer one node does not have) holds the card for the next run.
+    let differ: string | null = null;
+    if (vhpCheck) {
+      const theirs = await vhpCheck(producers);
+      for (const a of producers) {
+        const x = Number(values[a] || "0"), y = Number(theirs[a] || "0");
+        if (Math.abs(x - y) > 0.005 * Math.max(x, y)) { differ = a; break; }
+      }
+    }
+    if (differ) problems.push(`the two nodes disagree on ${differ}'s VHP; the handicap card waits for the next run`);
+    else {
+      const vhp: [string, number][] = producers.map((a) => [a, Number(values[a] || "0") / 1e8]);
+      const card: Card = M.makeCard(vhp, blocksPerRace, now);
+      for (const { race, leg } of want) { race.cards[leg] = card; console.log(`card for ${race.id} leg ${leg + 1}: ${card.field.length} horses, c = ${card.c}${vhpCheck ? ", VHP checked on 2 nodes" : ""}`); }
+    }
   }
 
   // ── 2. results ──

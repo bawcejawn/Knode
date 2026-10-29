@@ -70,7 +70,7 @@ const readJson = (f: string, d: any = null) => (fs.existsSync(f) ? JSON.parse(fs
 const writeJson = (f: string, v: any) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v, null, 2) + "\n"); };
 const need = (k: string) => { if (!E[k]) throw new Error(`${k} is missing from .env`); return E[k]!; };
 const loadAbi = () => {
-  if (!fs.existsSync(ABI_FILE)) throw new Error(`${ABI_FILE} not found: in the sponsor folder run npm ci, npm test, npm run check`);
+  if (!fs.existsSync(ABI_FILE)) throw new Error(`${ABI_FILE} not found: in the sponsor folder run npm ci --ignore-scripts, npm test, npm run check`);
   return JSON.parse(fs.readFileSync(ABI_FILE, "utf8"));
 };
 
@@ -146,7 +146,7 @@ async function upload(send: boolean) {
   const wasm = fs.readFileSync(WASM);
   // Audit L-1: only the audited build goes on chain.
   const okBuilds = allowedBuilds(mainnet);
-  if (!okBuilds.includes(sha256hex(wasm))) throw new Error(`${WASM} is not ${mainnet ? "the audited sponsor build" : "an allowed sponsor build"} (sha256 ${sha256hex(wasm)}, expected ${okBuilds.join(" or ")}). Rebuild: cd sponsor, npm ci, npm test, npm run check.`);
+  if (!okBuilds.includes(sha256hex(wasm))) throw new Error(`${WASM} is not ${mainnet ? "the audited sponsor build" : "an allowed sponsor build"} (sha256 ${sha256hex(wasm)}, expected ${okBuilds.join(" or ")}). Rebuild: cd sponsor, npm ci --ignore-scripts, npm test, npm run check (best in a clean copy with no .env).`);
   const abi = loadAbi();
   const m = await contractMetadata(provider, A);
   const have = BigInt(await provider.getAccountRc(A));

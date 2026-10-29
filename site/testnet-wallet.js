@@ -102,11 +102,15 @@
   /** Delete the test key from this browser (any test KOIN on it is lost). */
   function forget() { store.set(KEY, null); if (W.kind === "test") disconnect(); }
 
+  // Audit BX-31: only the Picks contract's `pick` entry point (2363702380), never an owner action.
+  const PICK_ENTRY = 2363702380;
+  const isPick = (o) => !!(o && o.call_contract && o.call_contract.contract_id === W.picks && Number(o.call_contract.entry_point) === PICK_ENTRY);
+
   /** Sign and send: only calls to the testnet Picks contract, for this testnet, the player paying their own test Mana. */
   async function send(label, ops) {
     if (!W.address) throw new Error("Connect a testnet wallet first.");
     if (!Array.isArray(ops) || !ops.length || ops.length > 10) throw new Error("Nothing to send.");
-    for (const o of ops) if (!o || !o.call_contract || o.call_contract.contract_id !== W.picks) throw new Error("The testnet wallet signs only picks on the testnet Picks contract. Nothing was sent.");
+    for (const o of ops) if (!isPick(o)) throw new Error("The testnet wallet signs only picks on the testnet Picks contract. Nothing was sent.");
     await checkChain();
     const mana = BigInt(await W.provider.getAccountRc(W.address));
     if (mana < 6000000n) throw new Error("This wallet has no test Mana yet. Get test KOIN from the faucet bot (see “Get test KOIN”), then try again.");
@@ -121,7 +125,7 @@
     // The wallet (Kondor) must not have raised the Mana limit or changed what is signed (review 2026-10-28, #7).
     if (BigInt(signed.header.rc_limit || "0") > limit) throw new Error("The wallet raised the Mana limit. Nothing was sent.");
     const sent = signed.operations || [];
-    if (sent.length !== ops.length || sent.some((o) => !o || !o.call_contract || o.call_contract.contract_id !== W.picks)) throw new Error("The wallet changed what is signed. Nothing was sent.");
+    if (sent.length !== ops.length || sent.some((o) => !isPick(o))) throw new Error("The wallet changed what is signed. Nothing was sent.");
     tx.transaction = signed;
     const receipt = await tx.send();
     if (receipt && receipt.reverted) throw new Error(JSON.stringify(receipt.logs || "the contract refused it"));

@@ -258,7 +258,9 @@
   // reads game-data/deployment.json and passes its sponsor settings here (setGuestConfig), so the switch is the same
   // everywhere. A guest still signs only free play (answers and race picks); anything else is refused with a reason.
   const guestCfg = () => (W.sponsor && W.sponsor.guest === true ? W.sponsor : W.guestConfig && W.guestConfig.guest === true ? W.guestConfig : null);
-  const guestOn = () => !!guestCfg();
+  // Audit BX-1: never on a shared *.github.io address (other sites there share this storage), whatever the setting says.
+  const sharedOrigin = () => { try { return String(window.location.hostname || "").toLowerCase().endsWith(".github.io"); } catch { return false; } };
+  const guestOn = () => !sharedOrigin() && !!guestCfg();
   // Ready only while the sponsor pays (deployment.json "payer": "sponsor"): the page's own setting, or the header's copy.
   const guestPayer = () => (W.sponsor && W.sponsor.guest === true ? W.payer : W.guestConfig ? W.guestConfig.payer : "self");
   const guestReady = () => { const g = guestCfg(); return !!(window.KGuest && g && typeof g.address === "string" && g.address && guestPayer() === "sponsor"); };
@@ -512,7 +514,11 @@
     }
     // Not sponsored: the player's own Mana, always named as payer (owner, 2026-10-28: the game contract pays for no one,
     // so Kondor's free Mana option, which names the game, would only be refused).
-    return sendKondorWith(label, ops, { ...opts, ownMana: true });
+    // Audit BX-10: an explicit Mana limit (not "all of it"): 1 Mana for answers and picks, 10 for anything else, never
+    // more than the account has. The chain charges only what is used; the limit is only held aside until it settles.
+    let own = answerOnly || (ops.length && ops.every((o) => o.call_contract && [ANSWER, PICK].includes(Number(o.call_contract.entry_point)))) ? 100000000n : 1000000000n;
+    try { const have = BigInt(await W.provider.getAccountRc(W.address)); if (have > 0n && have < own) own = have; } catch { /* keep the limit */ }
+    return sendKondorWith(label, ops, { ...opts, ownMana: true, rcLimit: own.toString() });
   }
 
   async function sendKondorWith(label, ops, opts = {}) {
@@ -520,7 +526,7 @@
     try { signer.provider = W.provider; } catch {}
     // Audit BXW-2: name the chain in the transaction (not re-read from the node by koilib) when the page knows it.
     const chain = W.chainId ? { chainId: W.chainId } : {};
-    const options = opts.sponsor ? { payer: opts.sponsor, payee: W.address, rcLimit: opts.rcLimit, ...chain } : opts.ownMana ? { payer: W.address, ...chain } : null;
+    const options = opts.sponsor ? { payer: opts.sponsor, payee: W.address, rcLimit: opts.rcLimit, ...chain } : opts.ownMana ? { payer: W.address, ...(opts.rcLimit ? { rcLimit: opts.rcLimit } : {}), ...chain } : null;
     const tx = new lib.Transaction({ signer, provider: W.provider, ...(options ? { options } : {}) });
     for (const op of ops) await tx.pushOperation(op);
     W.status && W.status(`Confirm “${label}” in Kondor…`);
@@ -531,7 +537,7 @@
       }
       tx.transaction = signed;
       // Audit BXW-2: send only what the page built: this chain, no higher Mana limit, the same operations.
-      checkSigned(signed, ops, opts.sponsor ? opts.rcLimit : null);
+      checkSigned(signed, ops, opts.rcLimit || null);
       const payer = signed.header && signed.header.payer;
       // ownMana: never the game contract. The sponsor (when chosen) or the player may pay.
       const okPayers = opts.sponsor ? [opts.sponsor, W.address] : [W.address];

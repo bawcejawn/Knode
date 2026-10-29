@@ -271,3 +271,32 @@ test("local testnet server: Play free funding only answers this computer's own t
     assert.equal(bad.status, 403);
   } finally { s.close(); }
 });
+
+test("audit BX-31 / BX-11: the local server answers only Host 127.0.0.1/localhost, and one wallet is funded once even when asked twice at once", async () => {
+  const { serve, fund } = await import(path.resolve(APP, "tools/testnet-site.mjs"));
+  const http = await import("node:http");
+  const s = serve(0); await new Promise((r) => s.once("listening", r));
+  const port = s.address().port;
+  const get = (host) => new Promise((ok, no) => { const q = http.request({ host: "127.0.0.1", port, path: "/site/blockx-testnet.html", headers: { Host: host } }, (r) => { r.resume(); ok(r.statusCode); }); q.on("error", no); q.end(); });
+  try {
+    assert.equal(await get(`127.0.0.1:${port}`), 200);
+    assert.equal(await get(`localhost:${port}`), 200);
+    assert.equal(await get(`evil.example:${port}`), 421, "DNS rebinding: another name pointing here is refused");
+  } finally { s.close(); }
+  let sends = 0, release;
+  const gate = new Promise((r) => { release = r; });
+  const slow = async () => { sends++; await gate; return [200, { ok: true }]; };
+  const A = "1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const one = fund(A, "k", slow), two = fund(A, "k", slow);
+  release();
+  const [r1, r2] = await Promise.all([one, two]);
+  assert.equal(sends, 1, "only one transfer");
+  assert.deepEqual([r1[0], r2[0]].sort(), [200, 409]);
+});
+
+test("audit BX-31: the testnet wallet signs only the Picks `pick` entry point, checked before and after signing", () => {
+  const src = fs.readFileSync(path.resolve(APP, "site/testnet-wallet.js"), "utf8");
+  const abi = JSON.parse(fs.readFileSync(path.resolve(APP, "picks/abi/picks.koilib.json"), "utf8"));
+  assert.match(src, new RegExp(`PICK_ENTRY = ${abi.methods.pick.entry_point}\\b`));
+  assert.equal((src.match(/isPick\(o\)/g) || []).length, 2, "before signing and on the signed operations");
+});

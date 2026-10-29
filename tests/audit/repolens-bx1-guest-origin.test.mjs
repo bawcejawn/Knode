@@ -12,7 +12,7 @@ const read = (f) => fs.readFileSync(`${APP}/${f}`, "utf8");
 // BXW-1 (High): guest keys live in plaintext IndexedDB/localStorage on the shared bawcejawn.github.io origin while guest
 // play is switched on. Either the site moves to its own origin (canonical no longer *.github.io / a CNAME exists), or
 // guest play stays off there, or wallet.js itself refuses guest play on a shared *.github.io host.
-test("BXW-1: no guest wallet on a shared *.github.io origin", { todo: "owner decision: a custom domain (tracker k01), or guest play off on github.io" }, () => {
+test("BXW-1: no guest wallet on a shared *.github.io origin", () => {
   const dep = JSON.parse(read("game-data/deployment.json"));
   const canonical = (read("site/blockx.html").match(/<link rel="canonical" href="([^"]+)"/) || [])[1] || "";
   const shared = /^https:\/\/[^/]+\.github\.io\//.test(canonical) && !fs.existsSync(`${APP}/CNAME`);

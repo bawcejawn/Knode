@@ -108,8 +108,12 @@
       sub.textContent = [weekly && F.prize ? F.prize : "", `Top ${F.show} shown; everyone else stays private.`].filter(Boolean).join(" ");
       podium.replaceChildren();
       const shown = free.slice(0, F.show);
-      body.replaceChildren(...shown.map((r, i) => el("tr", { class: [weekly && i < 2 ? "top" : "", r.a === who ? "me" : ""].join(" ").trim() || null },
-        el("td", { text: weekly && i < 2 ? MEDAL[i] : String(i + 1) }),
+      // o.freeWinners(part, rows, weekly) → Map(address → 1 | 2): who gets a medal (a game's own prize rule and ties).
+      // Without it, the top 2 of a weekly board. Shown places use the row's own-board place (boardPlace) when present.
+      const win = o.freeWinners ? o.freeWinners(part, free, weekly) : null;
+      const medal = (r, i) => (win ? win.get(r.a) || 0 : weekly && i < 2 ? i + 1 : 0);
+      body.replaceChildren(...shown.map((r, i) => el("tr", { class: [medal(r, i) ? "top" : "", r.a === who ? "me" : ""].join(" ").trim() || null },
+        el("td", { text: medal(r, i) ? MEDAL[medal(r, i) - 1] : String(r.boardPlace || i + 1) }),
         el("td", { class: "mono" }, el("span", { text: o.name(r.a) })),
         ...o.columns.map((c) => el("td", { class: "num" + (c.wide ? " hide-sm" : ""), text: fmt(r[c.key]) })))));
       if (!shown.length) body.replaceChildren(el("tr", {}, el("td", { colspan: String(2 + o.columns.length), class: "ago", text: "No free-play scores yet." })));

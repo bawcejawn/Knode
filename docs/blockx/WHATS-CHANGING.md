@@ -13,7 +13,7 @@ can check, and nothing goes on chain until the audit is done and you run the com
 
 - One contract that keeps everyone's picks for KnodeGames games. Block X is its game 2; later games (Survivor…) are
   more games in the same contract.
-- Holds no tokens and can never move any. Its own account refuses every transfer and refuses to pay Mana.
+- Holds no tokens, and this code can never move any (an announced upgrade could change that after 48 hours: audit BX-8). Its own account refuses every transfer and refuses to pay Mana.
 - New code only with your owner key, a sha256 announced 48 hours ahead.
 - Audited 2026-10-27, fix-checked, tested on the testnet 2026-10-28 (lock and Mana measured: see TESTNET-RESULTS.md).
 - Fingerprint: `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594`.
@@ -63,13 +63,20 @@ Lens with the Picks contract**, then a testnet trial. Review notes: docs/history
 - The recorder (GitHub Actions, no keys) reads blocks and picks every hour and publishes the results and boards.
 - The website pins the Picks contract's address so a guest's wallet can only ever sign a pick on it.
 - Prizes start with the vault (v6).
+- After the Repo Lens audit (2026-10-28, all in `docs/history/AUDIT-2026-10-28-repolens-blockx.md`): guest play is
+  refused on any `*.github.io` page until knodegames.com; the recorder reads cards, Staked status and irreversibility
+  on two nodes and holds anything they disagree on; a card counts only if taken at or before the lock; a week's
+  prizes are frozen once final; the page shows your place on your own board and medals by the prize rule; the admin
+  tool checks the contract's code and overrides on two nodes before any owner-signed send; builds are pinned and run
+  without install scripts, in a clean copy with no keys.
 
 ## Order on launch day(s)
 
 1. Repo Lens audit of 1 and 2 → Claude fixes → Repo Lens fix-check.
 2. Sponsor v3 on the testnet (trial).
 3. Sponsor v3 on mainnet: upload, `config` with the new caps, check `status`.
-4. Picks contract on mainnet (docs/blockx/MAINNET-LAUNCH.md). Then `npm run sponsor -- mana-limit picks:pick 0.0477
+4. Picks contract on mainnet (docs/blockx/MAINNET-LAUNCH.md: built in a clean copy, status on two nodes, `PICKS_WIF`
+   deleted afterwards). Then `npm run sponsor -- payer sponsor --send`, `npm run sponsor -- mana-limit picks:pick 0.0477
    --source testnet --save` for its first limit, `site-limits --send` (commit, push, wait), and `config --send` so the
    sponsor pays Block X picks.
 5. Announce game 2, wait 48 hours, apply.

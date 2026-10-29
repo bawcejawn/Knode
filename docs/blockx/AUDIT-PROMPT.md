@@ -21,7 +21,7 @@ Mainnet Mana is paid by a separate sponsor contract. A testnet copy runs on the 
 `tools/testnet-site.mjs`.
 
 **Release under audit.** `picks/build/release/contract.wasm`, sha256
-`700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594`. Rebuild it with `cd picks; npm ci; npm test`
+`700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594`. Rebuild it with `cd picks; npm ci --ignore-scripts; npm test`
 and confirm the hash. The testnet build is the same source with exactly three constants changed
 (`picks/scripts/build-testnet.cjs`): check that nothing else can differ.
 
@@ -70,7 +70,7 @@ with no problems. Check these conclusions against the code; P-5 asked for exactl
 transaction-application override on. When a transaction names it as payer, its `authorize` decides whether to pay:
 only listed player actions, signed by the player (payee) alone, within per-transaction, per-player daily/weekly,
 everyone-daily and free-player-daily caps. Live on mainnet: v2 `fa4659e6…`. Candidate: v3 sha256
-`21bec82583e1a7decbb2c70376f4b08e026f617c32bca268ab700f50e9aef2df` (rebuild: `cd sponsor; npm ci; npm test;
+`21bec82583e1a7decbb2c70376f4b08e026f617c32bca268ab700f50e9aef2df` (rebuild: `cd sponsor; npm ci --ignore-scripts; npm test;
 npm run check`). Read `sponsor/README.md` and `sponsor/assembly/proto/sponsor.proto`.
 
 **Earlier audits.** `docs/history/AUDIT-2026-10-27-sponsor-v3.md` (S3-1…S3-8) and the v1/v2 audits it cites. Check

@@ -40,3 +40,11 @@ for (const name of fs.readdirSync(helpers)) {
   }
   fs.cpSync(from, to, { recursive: true });
 }
+
+// Audit BX-6: fail the build, rather than let protobufjs fetch anything itself, if any helper it needs is not pinned
+// here or not in place.
+const need = JSON.parse(fs.readFileSync(path.join(cli, "..", "package.json"), "utf8")).cliDependencies || [];
+const unpinned = need.filter((n) => !(n in pkg.dependencies));
+if (unpinned.length) throw new Error(`tools/pbjs-helpers: protobufjs needs ${unpinned.join(", ")}, which are not pinned here. Pin them (exact versions) and run npm install --package-lock-only.`);
+const absent = need.filter((n) => !fs.existsSync(path.join(cli, "node_modules", n, "package.json")));
+if (absent.length) throw new Error(`tools/pbjs-helpers: ${absent.join(", ")} not in place after install.`);

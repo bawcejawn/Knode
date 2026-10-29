@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
-import { buildGameConfig, uploadBuild, encodeNonce, network, mainnetGuard, uploadTx, PICKS_SHA256, MAINNET_CHAIN_ID } from "../../bot/picks.ts";
+import { buildGameConfig, uploadBuild, encodeNonce, network, mainnetGuard, uploadTx, assertAuditedContract, PICKS_SHA256, PICKS_ABI_SHA256, MAINNET_CHAIN_ID } from "../../bot/picks.ts";
 
 const require = createRequire(import.meta.url);
 const sha = (b: Buffer) => crypto.createHash("sha256").update(b).digest("hex");
@@ -120,4 +120,20 @@ test("upload: another wallet pays the Mana, so the Picks wallet never needs KOIN
   assert.deepEqual(who.sort(), [picksW.getAddress(), payerW.getAddress()].sort(), "both signed");
   const src = fs.readFileSync("bot/picks.ts", "utf8");
   assert.ok(!/you can move it out afterwards/.test(src), "never tells the owner to fund the Picks wallet");
+});
+
+test("BX-21: the Picks ABI used for owner calls is pinned to the audited one", () => {
+  assert.equal(sha(fs.readFileSync("picks/abi/picks.koilib.json")), PICKS_ABI_SHA256);
+  assert.match(fs.readFileSync("bot/picks.ts", "utf8"), /sha256hex\(raw\) !== PICKS_ABI_SHA256/);
+});
+test("BX-9/BX-20: the contract must check out on BOTH mainnet nodes before the owner signs", async () => {
+  const good = { exists: true, hash: "0x1220" + PICKS_SHA256, call: true, tx: true, upload: true };
+  const bad = { ...good, hash: "0x1220" + "11".repeat(32) };
+  const A: any = { id: "a" }, B: any = { id: "b" };
+  const meta = (byNode: Record<string, any>) => async (node: any) => byNode[node.id];
+  assert.equal(await assertAuditedContract({ testnet: false, picks: "1P" }, A, meta({ a: good, b: good }) as any, undefined, [B]), 2);
+  await assert.rejects(assertAuditedContract({ testnet: false, picks: "1P" }, A, meta({ a: good, b: bad }) as any, undefined, [B]), /node 2 of 2/);
+  const src = fs.readFileSync("bot/picks.ts", "utf8");
+  assert.match(src, /Do not announce games/);
+  assert.match(src, /holds \$\{showKoin\(held\)\} KOIN/, "BX-22: a Picks wallet holding KOIN is refused");
 });

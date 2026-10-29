@@ -46,7 +46,11 @@ const writeJson = (f: string, v: any) => { fs.mkdirSync(path.dirname(f), { recur
 export const PICKS_SHA256 = "700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594";
 export const MAINNET_OWNER = "1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717";
 export const MAINNET_CHAIN_ID = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";
-const MAINNET_RPCS = ["https://koinos.armana.io", "https://api.koinos.io"];
+const MAINNET_RPCS = ["https://koinos.armana.io", "https://api.koinosblocks.com"];
+/** Audit BX-9/BX-20: the second, independent mainnet node every on-chain check also asks (RPC_CHECK overrides). */
+const MAINNET_CHECK_RPC = () => E.RPC_CHECK && E.RPC_CHECK !== "off" ? E.RPC_CHECK : "https://api.koinosblocks.com";
+/** Audit BX-21: the Picks ABI the owner calls are encoded with (picks/abi/picks.koilib.json, from the audited build). */
+export const PICKS_ABI_SHA256 = "8efa3ad40d3d0bd9a3bfe22533fa2f9ca14445174095c66d3d34b1fc88e0a1ff";
 const ABI_FILE = "picks/abi/picks.koilib.json";
 const MAINNET_WASM = "picks/build/release/contract.wasm";
 const TESTNET_WASM = "picks/build/testnet/contract.wasm", TESTNET_MANIFEST = "picks/build/testnet/manifest.json";
@@ -58,8 +62,10 @@ const MAINNET_GAMES = [{ ...X.MAINNET_GAME, name: "Who Signs Block X" }];
 const MAX_PICKS_PER_DAY = 50, MAX_CHANGES = 50;
 
 const loadAbi = () => {
-  if (!fs.existsSync(ABI_FILE)) throw new Error(`${ABI_FILE} not found: in the picks folder run npm ci, npm test`);
-  return JSON.parse(fs.readFileSync(ABI_FILE, "utf8"));
+  if (!fs.existsSync(ABI_FILE)) throw new Error(`${ABI_FILE} not found: in the picks folder run npm ci --ignore-scripts, npm test`);
+  const raw = fs.readFileSync(ABI_FILE);
+  if (sha256hex(raw) !== PICKS_ABI_SHA256) throw new Error(`${ABI_FILE} is not the audited Picks ABI (sha256 ${sha256hex(raw)}). Restore it: git checkout -- ${ABI_FILE}`);
+  return JSON.parse(raw.toString("utf8"));
 };
 const need = (k: string) => { if (!E[k]) throw new Error(`${k} is missing from ${TESTNET ? ".env.testnet" : ".env"} (npm run picks -- keys${TESTNET ? " --testnet" : ""})`); return E[k]!; };
 
@@ -145,6 +151,8 @@ async function status() {
   const have = m.hash.replace(/^0x1220/, "");
   log(`  Code           sha256 ${have} ${have === want ? "✔ (the expected build)" : "⚠ NOT the expected build " + want}`);
   log(`  Overrides      ${m.call && m.tx && m.upload ? "✔ all three ON (the contract decides for its own account)" : "⚠ NOT all on: the upload key still controls it. Do not announce games."}`);
+  try { const n = await assertAuditedContract(net, p); log(`  Checked on     ${n} node${n > 1 ? "s (both agree)" : " (the testnet has one public node)"} ✔`); }
+  catch (e) { log(`  ⚠ ${(e as Error).message}`); }
   const cfg = await read(p, net.picks, "get_config");
   log(`  Owner          ${cfg.owner}${cfg.owner === net.owner ? " ✔" : " ⚠ not " + net.owner}${cfg.pending_owner ? `  (handover proposed to ${cfg.pending_owner})` : ""}`);
   if (cfg.upgrade_eta && cfg.upgrade_eta !== "0") log(`  Upgrade        announced: ${cfg.upgrade_hash}, from ${new Date(Number(cfg.upgrade_eta)).toISOString()}`);
@@ -160,9 +168,9 @@ async function status() {
 /** The build to upload and why it is the right one. Exported for the tests. */
 export function uploadBuild(testnet: boolean, files = { mainnet: MAINNET_WASM, testnet: TESTNET_WASM, manifest: TESTNET_MANIFEST }) {
   if (!testnet) {
-    if (!fs.existsSync(files.mainnet)) throw new Error(`${files.mainnet} not found: in the picks folder run npm ci, npm test`);
+    if (!fs.existsSync(files.mainnet)) throw new Error(`${files.mainnet} not found: in the picks folder run npm ci --ignore-scripts, npm test`);
     const wasm = fs.readFileSync(files.mainnet), h = sha256hex(wasm);
-    if (h !== PICKS_SHA256) throw new Error(`${files.mainnet} is not the audited Picks build (sha256 ${h}, expected ${PICKS_SHA256}). Rebuild: cd picks, npm ci, npm test.`);
+    if (h !== PICKS_SHA256) throw new Error(`${files.mainnet} is not the audited Picks build (sha256 ${h}, expected ${PICKS_SHA256}). Rebuild: cd picks, npm ci --ignore-scripts, npm test (best in a clean copy with no .env).`);
     return { wasm, sha256: h, what: "the audited mainnet build" };
   }
   const man = readJson(files.manifest);
@@ -196,6 +204,12 @@ async function upload(send: boolean) {
   const b = uploadBuild(net.testnet);
   const m = await contractMetadata(p, A);
   if (m.exists) throw new Error(`${A} already has a contract (sha256 ${m.hash}). See npm run picks -- status.`);
+  // Audit BX-22: the Picks wallet must be brand new and empty: once uploaded it can never move anything out.
+  const koinId = net.testnet ? net.cfg?.koin : "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK";
+  const held = koinId ? BigInt(((await (new Contract({ id: koinId, abi: utils.tokenAbi, provider: p }).functions as any).balanceOf({ owner: A })).result?.value) ?? "0") : 0n;
+  const used = BigInt(await p.getNonce(A).catch(() => 0));
+  if (held > 0n) throw new Error(`The Picks wallet ${A} holds ${showKoin(held)} KOIN. Once uploaded it could never move it out. Use a brand-new, empty wallet (delete PICKS_WIF from the env file and run keys again), or move the KOIN out first.`);
+  if (used > 0n) throw new Error(`The Picks wallet ${A} has already sent transactions. Use a brand-new wallet.`);
   const abi = loadAbi();
   // The Mana is paid by another wallet, so the Picks wallet never needs KOIN (anything it held would be stuck there).
   const payerKey = E.PAYER_WIF ? "PAYER_WIF" : "OPERATOR_WIF";
@@ -208,17 +222,18 @@ async function upload(send: boolean) {
   log(`Code               ${b.what}, ${(b.wasm.length / 1024).toFixed(1)} KB, sha256 ${b.sha256}`);
   log(`Overrides          all three ON: it refuses to move anything or pay Mana; new code only by the owner after the wait`);
   log(`Mana paid by       ${PA} (${payerKey}): has ${showKoin(have)}, the upload may use up to ${showKoin(needRc)} (the testnet upload used 2.8)`);
+  // Audit BX-34: the transaction uses the payer's nonce. If the payer is the hourly bot's wallet (OPERATOR_WIF), a bot
+  // transaction at the same moment can take that nonce and this upload is refused (nothing happens; run it again).
+  if (payerKey === "OPERATOR_WIF") log(`                   (tip: set PAYER_WIF to a wallet the hourly bot doesn't use, so their nonces can't collide)`);
   if (have < needRc) throw new Error(`${PA} needs at least ${showKoin(needRc)} Mana; it has ${showKoin(have)}. Send it ${net.testnet ? "test KOIN (faucet)" : "KOIN"} first.`);
   if (!send) { log("\nDry run only. Nothing was sent. Run again with --send to upload."); return; }
   const tx = await uploadTx(p, s, payer, b.wasm, abi, chainId, needRc);
   const receipt: any = await tx.send();
   if (receipt?.reverted) throw new Error(`upload reverted: ${JSON.stringify(receipt.logs)}`);
   await tx.wait("byBlock", 300_000).catch(() => { throw new Error("Sent but not confirmed within 5 minutes. Check npm run picks -- status in a few minutes."); });
-  const after = await contractMetadata(p, A);
-  const bad: string[] = [];
-  if (after.hash.replace(/^0x1220/, "") !== b.sha256) bad.push(`code on chain is ${after.hash}`);
-  if (!(after.call && after.tx && after.upload)) bad.push("not all three overrides are ON");
-  if (bad.length) throw new Error(`Uploaded, but not as expected: ${bad.join("; ")}. Do not announce games; check npm run picks -- status.`);
+  // Audit BX-9/BX-20: the code and all three overrides, confirmed on two nodes on mainnet, before anything else.
+  try { await assertAuditedContract({ testnet: net.testnet, picks: A, cfg: net.cfg }, p, contractMetadata, b.sha256); }
+  catch (e) { throw new Error(`Uploaded, but not as expected: ${(e as Error).message} Do not announce games; check npm run picks -- status.`); }
   const rec = { contract: A, wasmSha256: b.sha256, uploadTx: tx.transaction?.id, uploadedAt: new Date().toISOString() };
   if (net.testnet) writeJson(TESTNET_CONFIG, { ...net.cfg, chainId, picks: A, picksSha256: b.sha256, vhp: net.cfg.vhp ?? (await findVhp(p)) ?? null, uploadTx: rec.uploadTx, uploadedAt: rec.uploadedAt });
   else writeJson(MAINNET_STATE, { network: "mainnet", rpc: net.rpc[0], ...rec });
@@ -293,15 +308,21 @@ export async function sendOps(p: Provider, chainId: string, signer: Signer, ops:
 /** Audit BX-19: before the owner key signs anything for the Picks contract, check on chain that the address named in
  *  the settings holds exactly the expected build (mainnet: the audited one; testnet: the manifest's build) with all
  *  three overrides on. A wrong or edited deployment file can't make the owner sign for another contract. */
-export async function assertAuditedContract(net: { testnet: boolean; picks: string | null; cfg?: any }, p: Provider, meta = contractMetadata) {
+export async function assertAuditedContract(net: { testnet: boolean; picks: string | null; cfg?: any }, p: Provider, meta = contractMetadata, want?: string, checkNodes?: Provider[]) {
   if (!net.picks) throw new Error("No Picks contract yet.");
-  const want = net.testnet ? (readJson(TESTNET_MANIFEST)?.sha256 ?? net.cfg?.picksSha256) : PICKS_SHA256;
+  want = want ?? (net.testnet ? (readJson(TESTNET_MANIFEST)?.sha256 ?? net.cfg?.picksSha256) : PICKS_SHA256);
   if (!want) throw new Error("No expected build for the testnet Picks contract (picks/build/testnet/manifest.json).");
-  const m = await meta(p, net.picks);
-  if (!m.exists) throw new Error(`${net.picks} has no contract on chain. Nothing was signed.`);
-  const have = String(m.hash).replace(/^0x1220/, "");
-  if (have !== want) throw new Error(`${net.picks} holds code ${have}, not the expected Picks build ${want}. Nothing was signed.`);
-  if (!(m.call && m.tx && m.upload)) throw new Error(`${net.picks} does not have all three overrides on. Nothing was signed.`);
+  // Audit BX-9/BX-20: on mainnet a second, independent node must say the same (the testnet has one public node).
+  const nodes = [p, ...(checkNodes ?? (net.testnet ? [] : [new Provider([MAINNET_CHECK_RPC()])]))];
+  for (const [i, node] of nodes.entries()) {
+    const where = nodes.length > 1 ? ` (node ${i + 1} of ${nodes.length})` : "";
+    const m = await meta(node, net.picks);
+    if (!m.exists) throw new Error(`${net.picks} has no contract on chain${where}. Nothing was signed.`);
+    const have = String(m.hash).replace(/^0x1220/, "");
+    if (have !== want) throw new Error(`${net.picks} holds code ${have}${where}, not the expected Picks build ${want}. Nothing was signed.`);
+    if (!(m.call && m.tx && m.upload)) throw new Error(`${net.picks} does not have all three overrides on${where}. Nothing was signed.`);
+  }
+  return nodes.length;
 }
 
 async function announce(id: number, send: boolean) {

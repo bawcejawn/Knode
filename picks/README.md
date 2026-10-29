@@ -18,7 +18,7 @@ the vault pays prizes from the scores.
 - **Daily cap.** At most `max_picks_per_day` picks (new picks and changes together) per wallet per game per UTC day.
 - **The choice fits the game.** One producer (kind 1), a list of distinct producers up to `list_size` (kind 2), or a
   number from `number_min` to `number_max` (kind 3). A producer is any valid address.
-- **Signed by the player** in the player's own transaction (not through another contract).
+- **Signed by the player** in the player's own transaction: the caller is the player, or the player's own wallet contract (a smart wallet; audit BX-28). No other contract can pick for them.
 
 ## The owner (KnodeGames owner `1635QUr…H717`)
 
@@ -32,13 +32,17 @@ the vault pays prizes from the scores.
 A game's **shape** (kind, list size, number range, lock mode, round size and offset) never changes once registered, so a
 round always means the same target.
 
-## Why it can never move tokens
+## Why this code can't move tokens (and what an upgrade could change)
 
 - The code makes no call to any other contract (`npm run check` fails the build if one appears).
 - It is uploaded with all three overrides **on**, and its `authorize` refuses `contract_call` (moving anything out of
   its account) and `transaction_application` (paying Mana) always. So after the upload, the wallet key it was uploaded
   with has no power over it, and anything sent to its address by mistake stays there.
 - New code needs the owner's signature, the announced sha256 and the 48-hour wait, and must keep all three overrides on.
+- Audit BX-8: that protects against a surprise, not against a bad upgrade. The hash doesn't show what new code does, so
+  an announced upgrade could in principle add a transfer or rewrite stored picks after the wait. Before any
+  `schedule_upgrade`: publish the new source and a reproducible build of it (anyone can check the hash), watch for the
+  upgrade event, and keep scored rounds frozen in the published week files.
 
 ## Build and test (PowerShell, in `C:\kprediction`)
 

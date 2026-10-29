@@ -131,8 +131,10 @@
     } catch { /* keep the last card */ }
   }
   function producers() {
+    // Audit BX-24: on mainnet, pick only from the handicap card (the recorder scores from it); no card, no chips.
+    if (!card && !TESTNET) return [];
     if (!card) {
-      // No handicap card yet (the recorder's first run): offer the producers seen signing just now, multiplier unknown.
+      // Testnet: no handicap card yet (the recorder's first run): offer the producers seen signing just now, multiplier unknown.
       const seen = new Map(); for (const b of recent) seen.set(b.signer, (seen.get(b.signer) || 0) + 1);
       const tot = recent.length || 1;
       return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([a, n]) => ({ a, share: n / tot, mult: null }));
@@ -209,6 +211,7 @@
     const whoLine = $("picks-who");
     whoLine.replaceChildren();
     if (!card && ps.length) whoLine.append("Showing the producers signing right now. Multipliers appear with the first handicap card (the recorder takes one within the hour).");
+    if (!card && !TESTNET && picksContract && rounds.length) whoLine.append("Picks open when the next handicap card is published (within the hour).");
     if (!picksContract || !rounds.length) { list.replaceChildren(el("div", { class: "bx-empty", text: picksContract ? "No target is open right now." : "Picks open soon." })); return; }
     const cards = rounds.map((r, i) => {
       const h = G.target(r), mine = myPicks.get(r), mineP = mine && mine.producers && mine.producers[0];
@@ -224,7 +227,7 @@
         !who ? (TESTNET ? "Play free to pick" : "Connect to pick") : mineP && !changed ? "Picked" : mineP ? "Change pick" : "Lock in pick");
       if (who && (sending || !changed || used >= max || noChanges)) btn.disabled = true;
       const foot = el("div", { class: "bx-t-foot" },
-        mineP ? el("span", { class: "bx-yours", text: `Yours: ${nameOf(mineP)}${noChanges ? " (no changes left)" : ""}` }) : el("span", { text: who && used >= max ? "Today's picks are used up" : choice ? `${nameOf(choice)} · ${multText(ps.find((p) => p.a === choice)?.mult)} if right` : "Choose a producer" }), btn);
+        mineP ? el("span", { class: "bx-yours", text: `Yours: ${nameOf(mineP)}${noChanges ? " (no changes left)" : ""}` }) : el("span", { text: who && used >= max ? "Today's picks are used up" : choice ? `${nameOf(choice)} · about ${multText(ps.find((p) => p.a === choice)?.mult)} if right` : "Choose a producer", title: "By the current handicap card. The card taken at or before the lock decides the score." }), btn);
       return el("article", { class: "bx-t" + (i === 0 ? " first" : "") + (mineP ? " mine" : ""), id: `t-${r}` },
         el("div", { class: "bx-t-top" }, el("b", { text: `Block ${fmt(h)}` }), el("span", { "data-h": String(h), class: "bx-eta", text: etaText(r) }), i === 0 ? el("em", { text: "Next up" }) : null),
         chips, foot);
@@ -260,7 +263,8 @@
     $("you-left").textContent = usage ? String(Math.max(0, max - used)) : "–";
     const rows = (board && board.week && board.week.rows) || [], mine = rows.find((x) => x.a === who);
     $("you-pts").textContent = mine ? fmt(mine.points, 2) : "0.00";
-    $("you-rank").textContent = mine ? `#${mine.place}` : "–";
+    // Audit BX-14: the place on the player's own board (Staked or Free play), not the combined list.
+    $("you-rank").textContent = mine ? `#${mine.boardPlace || mine.place} ${mine.ranked ? "Staked" : "Free"}` : "–";
     $("you-mana").textContent = mana == null ? "–" : fmt(mana, 2);
   }
   async function readMana() {
@@ -361,7 +365,11 @@
     const mult = X.multiplier(card, producer);
     const what = `${nameOf(producer)} signs block ${fmt(h)} (about ${dayTime(about(h))})`;
     const wallet = W.kind === "guest" ? "your guest wallet" : W.label ? W.label() : "your wallet";
-    const mana = TESTNET ? "Testnet: your wallet pays a little test Mana." : "Free: the Knode Mana sponsor pays the Mana.";
+    // Audit BX-12: say who really pays on this wallet.
+    const mana = TESTNET ? "Testnet: your wallet pays a little test Mana."
+      : W.kind === "guest" ? "Free: the Knode Mana sponsor pays the Mana."
+      : W.kind === "vault" ? "KOIN Vault chooses who pays the Mana for this pick."
+      : "Free when the Knode Mana sponsor can pay; if it can't, your wallet asks to use your own Mana.";
     pickModal("busy", W.kind === "guest" || W.kind === "test" ? "Sending your pick…" : `Confirm in ${wallet}`, [what, `Scores ×${fmt(mult, 2)} if right.`, mana]);
     try {
       const { operation } = await picksContract.functions.pick({ player: who, game: G.GAME_ID, round: String(r), producers: [producer], number: "0" }, { onlyOperation: true });
@@ -403,6 +411,17 @@
     name: nameOf,
     unranked: "The Staked board is for wallets holding at least 1 VHP or staking in Knode Games.",
     free: { show: 6, prize: "" },
+    // Audit BX-14: medals follow the prize rule (picks on 3+ days, a point, ties share): last week's from the recorder's
+    // frozen prize list, this week's as they stand now.
+    freeWinners: (part, rows, weekly) => {
+      const m = new Map();
+      if (!weekly) return m;
+      if (part && Array.isArray(part.prizes) && part.final) { for (const p of part.prizes) m.set(p.player, Math.min(2, Number(p.place) || 2)); return m; }
+      const ok = rows.filter((r) => r.days >= 3 && r.pts > 0);
+      let place = 0;
+      ok.forEach((r, i) => { const p = ok[i - 1]; if (!p || p.pts !== r.pts || p.correct !== r.correct || p.lastCorrect !== r.lastCorrect) place = i + 1; if (place <= 2) m.set(r.a, place); });
+      return m;
+    },
   }) : null;
   /** The recorder's rows carry points in hundredths (pts); the board shows them as points. */
   const withPoints = (b) => {
@@ -450,7 +469,7 @@
   function renderMults() {
     const ps = producers();
     $("mult-sub").textContent = card
-      ? `Share of blocks each producer should sign, from the handicap card of ${dayTime(card.at || cardAt)}, and what a right pick on it scores.`
+      ? `Share of blocks each producer should sign, from the handicap card of ${dayTime(card.at || cardAt)}, and what a right pick on it scores now. Each target is scored with the card taken at or before its lock.`
       : `Waiting for the ${NET.cards === "self" ? "recorder's first handicap card (it takes one within the hour)" : "race recorder's card"}.`;
     const top = Math.max(0.0001, ...ps.map((p) => p.share));
     $("mult-rows").replaceChildren(...(card ? ps : []).map((p) => {

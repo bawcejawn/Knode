@@ -286,3 +286,19 @@ test("workflow: the recorder holds no secret and no write token; only the publis
 });
 
 test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+
+test("audit BX-4: the handicap card is taken only when both nodes agree on the producers' VHP (within 0.5%)", async () => {
+  const at = U("2026-11-02T05:37Z"), log = console.log;
+  const off = (f) => async (who) => Object.fromEntries(who.map((a) => [a, String(Math.round(VHP[P.indexOf(a)] * 1e8 * (a === P[1] ? f : 1)))]));
+  const go = async (f) => {
+    const out = tmp(); let r; console.log = () => {};
+    try { r = await run({ p: node(at), check: node(at), prev: "", out, vhpOf, vhpCheckOf: off(f), raceContract: null }); } finally { console.log = log; }
+    return { r, out };
+  };
+  const bad = await go(1.02);
+  const none = !fs.existsSync(path.join(bad.out, "W002.json")) || !race(bad.out, "2026-11-02T06").cards[0];
+  assert.ok(none, "2% apart: no card this run (with no card yet, no week file at all)");
+  assert.ok(bad.r.problems.some((x) => /disagree on .*VHP/.test(x)));
+  const ok = await go(1.001);
+  assert.ok(race(ok.out, "2026-11-02T06").cards[0], "0.1% apart (block rewards between the reads): the card is taken");
+});

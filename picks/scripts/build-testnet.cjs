@@ -38,9 +38,20 @@ function patches(owner, timelockMin, expiryHours) {
       to: `export const EXPIRY_MS: u64 = ${expiryHours * 3600000};   // TESTNET build: ${expiryHours} hours (mainnet: 7 days)` },
   ];
 }
+/** Audit BX-29: a real Koinos address (base58, version 0, 20-byte hash, double-sha256 checksum), not just its pattern. */
+function isAddress(a) {
+  const ABC = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  if (typeof a !== "string" || !/^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a)) return false;
+  let n = 0n; for (const c of a) n = n * 58n + BigInt(ABC.indexOf(c));
+  let hex = n.toString(16); if (hex.length % 2) hex = "0" + hex;
+  let bytes = Buffer.from(hex, "hex"); for (const c of a) { if (c !== "1") break; bytes = Buffer.concat([Buffer.from([0]), bytes]); }
+  if (bytes.length !== 25 || bytes[0] !== 0) return false;
+  const d = (b) => crypto.createHash("sha256").update(b).digest();
+  return d(d(bytes.subarray(0, 21))).subarray(0, 4).equals(bytes.subarray(21));
+}
 /** Apply the patches to the source text; throws unless each matches exactly once and nothing else changes. */
 function patchSource(src, owner, timelockMin, expiryHours) {
-  if (!/^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(owner)) throw new Error("--owner must be a Koinos address");
+  if (!isAddress(owner)) throw new Error("--owner must be a Koinos address (checksum included)");
   if (owner === "1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717") throw new Error("--owner is the mainnet owner: use a test wallet (.env.testnet OWNER_WIF)");
   if (!Number.isInteger(timelockMin) || timelockMin < 1 || timelockMin > 2880) throw new Error("--timelock-min must be 1 to 2880");
   if (!Number.isInteger(expiryHours) || expiryHours < 1 || expiryHours > 168) throw new Error("--expiry-hours must be 1 to 168");
@@ -76,20 +87,28 @@ function main() {
   const release = path.join(ROOT, "build/release/contract.wasm");
   if (!fs.existsSync(release) || !fs.existsSync(path.join(ROOT, "assembly/index.ts"))) fail("Build the contract first: npm test (in the picks folder)");
   // 1. The audited build.
-  if (sha(release) !== AUDITED) fail(`build/release/contract.wasm is not the audited build (sha256 ${sha(release)}, expected ${AUDITED}). Rebuild: npm ci, npm test.`);
+  if (sha(release) !== AUDITED) fail(`build/release/contract.wasm is not the audited build (sha256 ${sha(release)}, expected ${AUDITED}). Rebuild: npm ci --ignore-scripts, npm test.`);
   const work = path.join(ROOT, "build/testnet-work");
+  // Audit BX-29: assembly/ is read once, into a snapshot; both compiles and the patch use that snapshot.
+  copyAssembly(path.join(work, "snap"));
+  const snap = path.join(work, "snap");
   // 2. The same compile of an untouched copy reproduces the audited sha256.
-  copyAssembly(path.join(work, "same"));
+  fs.cpSync(snap, path.join(work, "same"), { recursive: true });
   const same = compile(path.join(work, "same"), path.join(work, "same-out"));
   if (same !== AUDITED) fail(`compiling an untouched copy gave ${same}, not the audited ${AUDITED}: the compile here differs from npm run build. Nothing was built.`);
   // 3. The three changes, and nothing else.
   let p;
-  try { p = patchSource(fs.readFileSync(path.join(ROOT, "assembly/Picks.ts"), "utf8"), owner, timelockMin, expiryHours); } catch (e) { fail(e.message); }
-  copyAssembly(path.join(work, "testnet"));
+  try { p = patchSource(fs.readFileSync(path.join(snap, "Picks.ts"), "utf8"), owner, timelockMin, expiryHours); } catch (e) { fail(e.message); }
+  fs.cpSync(snap, path.join(work, "testnet"), { recursive: true });
   fs.writeFileSync(path.join(work, "testnet/Picks.ts"), p.out);
   const out = path.join(ROOT, "build/testnet");
   const tsha = compile(path.join(work, "testnet"), out);
   if (tsha === AUDITED) fail("the testnet build came out identical to the mainnet build: the changes did not apply");
+  // Audit BX-29: the same static checks as npm run check, on the testnet source and its compiled .wat.
+  try {
+    execFileSync(process.execPath, [path.join(__dirname, "check.cjs")], { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"],
+      env: { ...process.env, PICKS_SRC: path.join(work, "testnet/Picks.ts"), PICKS_WAT: path.join(out, "contract.wat") } });
+  } catch { fail("npm run check fails on the testnet build. Nothing should be uploaded."); }
   // 4. The manifest.
   const manifest = { network: "koinos-foundation-testnet", sha256: tsha, bytes: fs.statSync(path.join(out, "contract.wasm")).size, auditedSha256: AUDITED,
     owner, timelockMs: timelockMin * 60000, expiryMs: expiryHours * 3600000, changedLines: p.lines, changes: p.changed, builtAt: new Date().toISOString() };
@@ -102,5 +121,5 @@ function main() {
   console.log("  build/testnet/manifest.json  (the admin tool uploads only this build on testnet)");
 }
 
-module.exports = { AUDITED, patchSource };
+module.exports = { AUDITED, patchSource, isAddress };
 if (require.main === module) main();

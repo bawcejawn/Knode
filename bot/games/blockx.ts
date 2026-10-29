@@ -82,6 +82,7 @@ function readJson(dir: string | undefined, name: string): any {
   try { if (fs.lstatSync(f).isSymbolicLink()) return null; return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; }
 }
 const wName = (w: number) => `W${String(w).padStart(3, "0")}.json`;
+const pName = (w: number) => `P${String(w).padStart(3, "0")}.json`;   // a final week's prizes, written once
 function loadWeek(dir: string | undefined, w: number, G: any): WeekFile {
   const fresh: WeekFile = { v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), game: G.GAME_ID, targets: [] };
   const old = readJson(dir, wName(w));
@@ -133,7 +134,8 @@ async function readPicks(node: any, contract: string, game: number, round: numbe
       const ps = x.pick?.producers;
       if (isAddr(x.player) && Array.isArray(ps) && ps.length === 1 && isAddr(ps[0])) out.push({ player: x.player, producer: ps[0], time: Number(x.pick.time || 0) });
     }
-    if (rows.length < 100) break;
+    // Audit BX-18: keep going until an empty page (not "a page shorter than 100", which assumes the contract's page size).
+    if (!rows.length) break;
     after = rows[rows.length - 1].player;
   }
   return out;
@@ -148,12 +150,11 @@ async function readRanked(node: any, vhpContract: string, knodeGame: string | nu
   for (const a of who) {
     if (BigInt(vhp[a] || "0") >= ONE_VHP) { out.add(a); continue; }
     if (!knodeGame) continue;
-    try {
-      const c = new Contract({ id: knodeGame, abi: GAME_ABI(), provider: node });
-      const r: any = await withRetry(`Knode player ${a}`, () => (c.functions as any).get_player({ player: a, week: "0" }));
-      const p = r?.result?.player ?? {};
-      if (BigInt(p.stake || "0") + BigInt(p.pending || "0") + BigInt(p.stake_other || "0") > 0n) out.add(a);
-    } catch { /* Free play */ }
+    // Audit BX-15: a failed read is an error (the target waits for the next run), never "Free play".
+    const c = new Contract({ id: knodeGame, abi: GAME_ABI(), provider: node });
+    const r: any = await withRetry(`Knode player ${a}`, () => (c.functions as any).get_player({ player: a, week: "0" }));
+    const p = r?.result?.player ?? {};
+    if (BigInt(p.stake || "0") + BigInt(p.pending || "0") + BigInt(p.stake_other || "0") > 0n) out.add(a);
   }
   return out;
 }
@@ -203,7 +204,20 @@ export async function run(o: Opts) {
   let blockC: ((h: number) => Promise<{ signer: string; time: number }>) | null = null;
   if (o.check) {
     if (o.blockOf) blockC = (h: number) => o.blockOf!(o.check, h);
-    else { const ch = await headOf(o.check); blockC = blockReader(o.check, ch.id); }
+    else {
+      const ch = await headOf(o.check); blockC = blockReader(o.check, ch.id);
+      // Audit BX-17: a block is irreversible only when both nodes say so.
+      if (ch.lib < head.lib) head.lib = ch.lib;
+    }
+  }
+  // Audit BX-33: the game's lock settings on chain must be the ones this recorder scores with.
+  if (!o.picksOf && contract && !o.head) {
+    try {
+      const gc: any = (await (new Contract({ id: contract, abi: PICKS_ABI(), provider: o.p }).functions as any).get_game({ game: G.GAME_ID })).result?.game;
+      if (gc && (Number(gc.round_size) !== G.ROUND || Number(gc.round_offset ?? 0) !== G.OFFSET || Number(gc.lead) !== G.LEAD)) {
+        throw new Error(`game ${G.GAME_ID} on chain has round ${gc.round_size}, offset ${gc.round_offset ?? 0}, lead ${gc.lead}; this recorder scores ${G.ROUND}/${G.OFFSET}/${G.LEAD}. Nothing recorded: update the game settings in the recorder first.`);
+      }
+    } catch (e) { if (/on chain has/.test((e as Error).message)) throw e; }
   }
   const picksRead = o.picksOf ?? (contract ? (node: any, r: number) => readPicks(node, contract, G.GAME_ID, r) : null);
   const rankedRead = o.rankedOf ?? ((who: string[], node: any) => readRanked(node, VHP, KNODE, who));
@@ -240,6 +254,15 @@ export async function run(o: Opts) {
   const nowW = M.weekOf(head.time);
   for (const w of [nowW - 1, nowW]) if (w >= 0) for (const t of weekFor(w).targets) done.add(t.round);
 
+  /** A void row (no points) for a target that couldn't be recorded before it left the 3-day window (audit BX-16). */
+  const voidAt = (r: number, h: number, time: number, lockTime: number, why: string) => {
+    const t = time || (head.time - (head.height - h) * X.BLOCK_MS);
+    const wf = weekFor(M.weekOf(t));
+    if (wf.targets.some((x) => x.round === r)) return;
+    wf.targets = wf.targets.concat([{ round: r, height: h, final: true, checked: 0, signer: null, time: Math.round(t), lockTime: Math.round(lockTime || t - G.LEAD * X.BLOCK_MS), card: null, void: why.replace(/[\r\n]+/g, " "), picks: [] }]).sort((x, y) => x.round - y.round);
+    done.add(r);
+  };
+
   // ── 1–3. targets ──
   let firstRound = Math.max(1, Math.ceil((head.lib - LOOKBACK_BLOCKS - G.OFFSET) / G.ROUND));
   // CARDS=self: only targets whose lock comes at most ~an hour (1,200 blocks) before the first run; earlier ones could
@@ -259,7 +282,7 @@ export async function run(o: Opts) {
       let checked = 1;
       if (blockC) {
         const b2 = await blockC(h), l2 = await blockC(h - G.LEAD);
-        if (b2.signer !== b.signer || b2.time !== b.time || l2.time !== lock.time) { problems.push(`block ${h}: the two nodes disagree; not recorded this run`); continue; }
+        if (b2.signer !== b.signer || b2.time !== b.time || l2.time !== lock.time) { problems.push(`block ${h}: the two nodes disagree; not recorded this run`); if (old) voidAt(r, h, b.time, lock.time, "the two nodes disagreed about this block until it left the 3-day window"); continue; }
         checked = 2;
       }
       let raw: RawPick[] = [];
@@ -268,7 +291,7 @@ export async function run(o: Opts) {
         if (o.check) {
           const other = await picksRead(o.check, r);
           const key = (x: RawPick[]) => JSON.stringify([...x].sort((u, v) => (u.player < v.player ? -1 : 1)));
-          if (key(raw) !== key(other)) { problems.push(`block ${h}: the two nodes disagree about the picks; not recorded this run`); continue; }
+          if (key(raw) !== key(other)) { problems.push(`block ${h}: the two nodes disagree about the picks; not recorded this run`); if (old) voidAt(r, h, b.time, lock.time, "the two nodes disagreed about its picks until it left the 3-day window"); continue; }
         }
       }
       const card = cardAt(lock.time);
@@ -281,7 +304,7 @@ export async function run(o: Opts) {
       const ranked = await rankedRead(players, o.p);
       if (o.check) {
         const other = await rankedRead(players, o.check);
-        if (ranked.size !== other.size || [...ranked].some((a) => !other.has(a))) { problems.push(`block ${h}: the two nodes disagree about which players are Staked; not recorded this run`); continue; }
+        if (ranked.size !== other.size || [...ranked].some((a) => !other.has(a))) { problems.push(`block ${h}: the two nodes disagree about which players are Staked; not recorded this run`); if (old) voidAt(r, h, b.time, lock.time, "the two nodes disagreed about Staked status until it left the 3-day window"); continue; }
       }
       const { m, top } = card ? X.vhpOf(card) : { m: new Map(), top: 0 };
       const picks: Pick[] = raw.map((x) => [x.player, x.producer, x.time, card ? X.pointsOf(card, x.producer, b.signer) : 0, ranked.has(x.player) ? 1 : 0]);
@@ -294,7 +317,12 @@ export async function run(o: Opts) {
       wf.targets = wf.targets.filter((x) => x.round !== r).concat([t]).sort((x, y) => x.round - y.round);
       done.add(r);
       console.log(`block ${h}: signed by ${b.signer}, ${picks.length} picks, ${picks.filter((x) => x[3] > 0).length} right, checked on ${checked} node(s)`);
-    } catch (e) { problems.push(`block ${h}: ${(e as Error).message} (tried again next run)`); }
+    } catch (e) {
+      problems.push(`block ${h}: ${(e as Error).message} (tried again next run)`);
+      // Audit BX-16: a target that keeps failing is voided, with its reason, when it reaches the edge of the window, so
+      // the week can still become final.
+      if (old) voidAt(r, h, 0, 0, `could not be recorded within 3 days: ${String((e as Error).message).slice(0, 120)}`);
+    }
   }
 
   // ── 4. leaderboards ──
@@ -304,16 +332,29 @@ export async function run(o: Opts) {
     const rows: any[] = [];
     for (const wf of all.values()) for (const t of wf.targets) {
       if (t.time < from || t.time >= to || t.void) continue;
-      for (const [player, producer, pickTime, pts, ranked] of t.picks) rows.push({ player, height: t.height, time: t.time, pickTime, correct: pts > 0 && producer === t.signer, pts, ranked: !!ranked });
+      // Audit BX-33: only pick days inside the period count toward the 3-day prize rule.
+      for (const [player, producer, pickTime, pts, ranked] of t.picks) rows.push({ player, height: t.height, time: t.time, pickTime: pickTime >= from && pickTime < to ? pickTime : NaN, correct: pts > 0 && producer === t.signer, pts, ranked: !!ranked });
     }
     return rows;
   };
-  // A wallet is Staked for a period when any of its picks in that period was recorded as Staked.
-  const rankedSet = (rows: any[]) => new Set(rows.filter((x) => x.ranked).map((x) => x.player));
-  const view = (rows: any[]) => { const rk = rankedSet(rows); return X.places(X.board(rows)).map((x: any) => ({ a: x.player, place: x.place, pts: x.pts, correct: x.correct, picks: x.picks, days: x.days, lastCorrect: x.lastCorrect, ranked: rk.has(x.player) })); };
+  // Audit BX-15: a wallet's board for a period is the one its FIRST recorded pick of that period had, so nobody can push
+  // a Free play leader onto the Staked board later by sending them 1 VHP.
+  const rankedSet = (rows: any[]) => {
+    const first = new Map<string, any>();
+    for (const x of rows) { const f = first.get(x.player); if (!f || x.height < f.height) first.set(x.player, x); }
+    return new Set([...first.values()].filter((x) => x.ranked).map((x) => x.player));
+  };
+  // Audit BX-14: each row also carries its place on its own board (Staked or Free play), ties included, so the page
+  // never ranks a player against the other board.
+  const view = (rows: any[]) => {
+    const rk = rankedSet(rows), own = new Map<string, number>();
+    for (const side of [true, false]) for (const x of X.places(X.board(rows.filter((r: any) => rk.has(r.player) === side)))) own.set(x.player, x.place);
+    return X.places(X.board(rows)).map((x: any) => ({ a: x.player, place: x.place, boardPlace: own.get(x.player) || x.place, pts: x.pts, correct: x.correct, picks: x.picks, days: x.days, lastCorrect: x.lastCorrect, ranked: rk.has(x.player) }));
+  };
   const day0 = Math.floor(head.time / M.DAY) * M.DAY;
   const lw = nowW - 1;
   let lastWeek: any = null;
+  let freeze: any = null;
   if (lw >= 0) {
     const rows = rowsOf(M.weekStart(lw), M.weekStart(nowW));
     // Final: 12 hours after the week ended, with every target of the week recorded.
@@ -324,6 +365,14 @@ export async function run(o: Opts) {
     const rk = rankedSet(rows);
     const prizeWeek = PRIZES_FROM !== null && lw >= PRIZES_FROM;
     lastWeek = { week: lw, start: M.weekStart(lw), final, rows: view(rows), prizes: final && prizeWeek ? X.prizes(rows.filter((x) => !rk.has(x.player))) : [] };
+    // Audit BX-5: a final week's prizes are written once (P<week>.json) and never recomputed: later runs, and the page,
+    // use that file, so a target recorded late can't change a prize list that was already final.
+    const frozen = readJson(PREV, pName(lw));
+    if (frozen && frozen.v === 1 && frozen.week === lw && frozen.game === G.GAME_ID && Array.isArray(frozen.prizes)) {
+      lastWeek.final = true; lastWeek.prizes = frozen.prizes; lastWeek.frozenAt = frozen.at;
+    } else if (final) {
+      freeze = { v: 1, week: lw, game: G.GAME_ID, at: new Date(head.time).toISOString(), prizes: lastWeek.prizes };
+    }
   }
   const board = {
     v: 1, updated: new Date(head.time).toISOString(),
@@ -342,6 +391,7 @@ export async function run(o: Opts) {
   }
   fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), weeks: [...known].sort((a, b) => a - b), contract: contract || null, game: G.GAME_ID, prizesFromWeek: PRIZES_FROM }) + "\n");
   fs.writeFileSync(path.join(OUT, "board.json"), JSON.stringify(board) + "\n");
+  if (freeze) fs.writeFileSync(path.join(OUT, pName(freeze.week)), JSON.stringify(freeze) + "\n");
   if (CARDS === "self") fs.writeFileSync(path.join(OUT, "cards.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), startHeight, cards }) + "\n");
   for (const pr of problems) console.log(`::warning::${pr.replace(/[\r\n]+/g, " ").replace(/::/g, ": ")}`);
   return { problems, weeks, board, cards };
@@ -403,5 +453,6 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((e) => { console.error(e); process.exit(1); });
+  // Audit BX-34: one line, no workflow commands (a node's error text could hold "::").
+main().catch((e) => { console.error(`error: ${String((e && (e as Error).message) || e).replace(/[\r\n]+/g, " ").replace(/::/g, ": ").slice(0, 500)}`); process.exit(1); });
 }

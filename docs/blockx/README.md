@@ -59,10 +59,20 @@ Two boards, as in every Knode Games game:
 - **Staked:** wallets holding at least 1 VHP or with a Knode stake.
 - **Free play:** everyone else, guest wallets included.
 
+Your place on the page is your place on your own board (Staked or Free play). Medals on the Free play board follow
+the prize rule below (picks on 3 days, ties share), and last week's come from the recorder's frozen prize list
+(audit BX-14). The "×N if right" next to a producer is from the current card; the card taken at or before the lock
+decides the score.
+
 **Prizes:** the top 2 of the Free play board each week win 2 VHP and 1 VHP. To win, a wallet needs at least one point
 and picks on **3 different days** that week (so one visit can't win). Ties share the prizes of the places they cover.
 A week becomes final 12 hours after it ends. Prizes are listed only from the week the Knode Games vault (v6) goes live.
 Nothing is owed for earlier weeks.
+
+**Sponsored games (audit BX-27).** Sponsor v3 pays the Mana for `pick` on the Picks contract for any game on it. A new
+game the owner adds with `announce_game` is sponsored too, within the same caps (50 Mana per wallet per day, 2,000 for
+all free play, 5,000 in total, and the per-action Mana limit). That is intended; a future sponsor version could list
+game ids if a game ever needs its own budget.
 
 ## Why your funds are safe
 
@@ -70,7 +80,14 @@ Nothing is owed for earlier weeks.
 - It is uploaded with all three authority overrides **on**, and its `authorize` always refuses `contract_call` (moving
   anything out of its account) and `transaction_application` (paying Mana). The key it was uploaded with has no power
   left afterwards.
-- New code needs the owner's signature, the announced sha256 and a 48-hour wait.
+- New code needs the owner's signature, the announced sha256 and a 48-hour wait. Be clear about what that means
+  (audit BX-8): the wait gives everyone 48 hours to see the change coming, but **the hash alone doesn't show what new
+  code would do**. An upgrade that keeps the overrides on could, in principle, add a way to move tokens (the account
+  holds none) or rewrite stored picks. So before any `schedule_upgrade`, the new source and a reproducible build are
+  published, the upgrade event is watched, and rounds already scored are frozen in the published week files.
+- Only the player can pick for their wallet (audit BX-28): the contract checks the caller is the player or the
+  player's own wallet contract (a smart wallet). A smart wallet's `authorize` is told only that its owner is calling
+  Picks, not which producer was picked.
 - Picking never asks you to send tokens. On mainnet the Knode Mana sponsor pays the Mana. On the testnet, your own
   test wallet pays a little test Mana.
 

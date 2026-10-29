@@ -52,15 +52,24 @@ function faucetKey(root = ROOT) {
   } catch { return null; }
 }
 /** Only the page served by this server may ask (exported for the tests). */
+/** Audit BX-31: every request must name this server as its Host (blocks DNS-rebinding pages from reading it). */
+export function hostAllowed(req, port) { return [`127.0.0.1:${port}`, `localhost:${port}`].includes(req.headers.host); }
 export function fundAllowed(req, port) {
   const own = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
-  return req.method === "POST" && req.headers["x-kg-testnet"] === "fund" && own.includes(req.headers.origin) && [`127.0.0.1:${port}`, `localhost:${port}`].includes(req.headers.host);
+  return req.method === "POST" && req.headers["x-kg-testnet"] === "fund" && own.includes(req.headers.origin) && hostAllowed(req, port);
 }
-async function fund(address, key) {
+// Audit BX-11: an address is reserved before the first await, so two requests at once can't both send to it, and the
+// 50-wallet limit counts the ones still sending.
+const sending = new Set();
+export async function fund(address, key, send = fundNow) {
   if (!/^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(address || "")) return [400, { error: "Not a Koinos address." }];
   if (!key) return [503, { error: "No faucet key: add FAUCET_WIF (or OWNER_WIF) to .env.testnet." }];
-  if (funded.has(address)) return [409, { error: "This wallet already got its test KOIN." }];
-  if (funded.size >= MAX_FUNDS) return [429, { error: "This server has funded 50 wallets; restart it to fund more." }];
+  if (funded.has(address) || sending.has(address)) return [409, { error: "This wallet already got its test KOIN." }];
+  if (funded.size + sending.size >= MAX_FUNDS) return [429, { error: "This server has funded 50 wallets; restart it to fund more." }];
+  sending.add(address);
+  try { return await send(address, key); } finally { sending.delete(address); }
+}
+async function fundNow(address, key) {
   const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, "testnet/blockx.json"), "utf8"));
   const p = new koilib.Provider([cfg.rpc]);
   const chainId = await p.getChainId();
@@ -86,6 +95,7 @@ async function fund(address, key) {
 export function serve(port = PORT) {
   const server = http.createServer((req, res) => {
     const listen = server.address() && server.address().port;
+    if (!hostAllowed(req, listen)) { res.writeHead(421, { "Content-Type": "text/plain" }).end("Open this page at 127.0.0.1 or localhost."); return; }
     if (req.method === "POST" && (req.url || "") === "/api/fund") {
       if (!fundAllowed(req, listen)) { res.writeHead(403, { "Content-Type": "application/json" }).end('{"error":"Only this computer\'s test page may ask."}'); return; }
       let body = "";

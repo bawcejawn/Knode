@@ -1,28 +1,68 @@
 # Repo Lens audit of Block X (2026-10-28, commit 611f63d): findings and fixes
 
-Source: the auditor's failing tests and their README (`blockx-failing-tests.zip`). The written report (with BX-7 to
-BX-18, severities and the verdict, and any Part B sponsor findings) was not in that package; this table covers the
-findings that came with tests. The auditor's tests are kept in `tests/audit/repolens-*.test.*`.
+Source: the full Repo Lens report ("Who Signs Block X — Audit", verdict **fix first**: 0 Critical, 4 High, 3 Medium,
+17 Low, 10 Info) and its failing tests (`blockx-failing-tests.zip`, kept in `tests/audit/repolens-*.test.*`).
+The report found the Picks contract sound (no Critical, High or Medium) and the release build reproducible. The
+problems were around it. **No contract code changed in these fixes**: Picks `700c296a…` and sponsor v3 `21bec825…`
+are the same, and the testnet build still reproduces `39cc5e00…`.
 
-| ID | Finding (from the tests) | Status |
+Sponsor v3 (Part B of the audit prompt) was **not** audited in this round; it goes into the fix-check.
+
+## High and Medium
+
+| ID | Finding | Status |
 |---|---|---|
-| BX-1 / BXW-1 | Guest keys live in browser storage on the shared `bawcejawn.github.io` origin while guest play is on | **Owner decision** (todo test): a custom domain (tracker k01), or guest play off while on github.io. Already true for Daily Questions today. |
-| BXW-2 | The mainnet Kondor path doesn't pin the chain id or re-check the signed transaction | **Fixed**: chain id named in the transaction; the signed chain, Mana limit and operations are checked before sending (`checkSigned`) |
-| BX-2 / BXS-1 | With Mana sponsored, one person's many free wallets get extra chances at the Free play prize | **Owner decision** (todo test): guests may win (S3-4); options below |
-| BX-3 / BXS-2 | A signer missing from the card scored the ×3 cap | **Fixed**: scores ×1 |
-| BX-3 / BXS-2 | A card taken after the lock could score that lock (race cards are taken ~37 min into each hour) | **Fixed**: the latest card taken at or before the lock, at most 3 h old, mainnet and testnet |
-| BX-4 / BXS-3 | Staked / Free play was read on one node only | **Fixed**: read on both nodes; a disagreement holds the target |
-| BX-5 / BXS-4 | A week could be final (prizes listed) while its last target was unrecorded | **Fixed**: final only when the rounds are contiguous AND the next week's first target and the previous week's last are recorded |
-| BX-6 / BXO-1 | The contract builds fetched 5 protobufjs helpers unpinned (with install scripts) and the newest protoc from GitHub with no checksum, on the PC holding the keys; runbooks ran `npm ci` with install scripts on | **Fixed**: all 10 helpers pinned by lockfile; protoc 21.12 pinned and checked by sha256 (`tools/protoc-pin.cjs`, every contract folder); every runbook uses `npm ci --ignore-scripts`. Proven: fresh installs with scripts off and the npm registry blocked rebuild Picks `700c296a…` (46/46) and the sponsor `21bec825…` (153/153) exactly |
-| BX-19 / BXO-2 | announce/apply/pause signed with the owner key for whatever address the settings named | **Fixed**: `assertAuditedContract` checks the code hash and the three overrides on chain first |
+| BX-1 | Guest keys in browser storage on the shared `bawcejawn.github.io` origin while guest play is on | **Code fixed**: guest play refuses any `*.github.io` page (`sharedOrigin()` in `site/wallet.js`), so it is off there whatever the setting says; it comes back on knodegames.com. **Owner**: also set `sponsor.guest` to false now (one setting) |
+| BX-2 | Many free wallets (paid by the sponsor) get extra chances at the Free play prize | **Owner decision** before the first prize week (options below; todo test kept) |
+| BX-3 | (a) a signer missing from the card scored ×3; (c) a card taken after the lock could score it | **Fixed**: ×1; only the latest card taken at or before the lock, at most 3 h old |
+| BX-3 (b) | Card VHP is raw VHP read once an hour, so a producer can briefly look small | **Owner decision**: read `effective_balance_of` instead (changes the live Producer Race too) |
+| BX-4 | Card VHP and Staked status read on one node | **Fixed**: Staked status on both nodes (a disagreement holds the target); the race card's VHP on both nodes (more than 0.5% apart holds the card to the next run) |
+| BX-5 | A week could be final while its last target was unrecorded; prize lists recomputed every run | **Fixed**: final only when the rounds are contiguous and the targets either side are recorded; a final week's prizes are written once to `P<week>.json` and never recomputed |
+| BX-6 | Build tools fetched unpinned, with install scripts, beside the keys | **Fixed**: all 10 protobufjs helpers pinned; protoc 21.12 pinned by sha256; `npm ci --ignore-scripts` everywhere; MAINNET-LAUNCH builds in a clean copy with no `.env`. Proven: fresh installs with the registry blocked reproduce both hashes |
+| BX-7 | Sponsor free allowance can be used up by throwaway wallets | **Watch** (sponsor side). Sponsor v3: per-action Mana limits (a pick asks about 0.15, not 1 Mana), free play 2,000 of 5,000 a day, 50 per wallet. Alerting on usage is a follow-up |
 
-No contract code changed: the Picks and sponsor fingerprints are the same.
+## Low
+
+| ID | Finding | Status |
+|---|---|---|
+| BX-8 | README overstated "can never move tokens" across upgrades | **Fixed** (wording in both READMEs and WHATS-CHANGING; publish source and build before any `schedule_upgrade`) |
+| BX-9 | Everything rests on the three overrides being on | **Fixed**: `assertAuditedContract` (code hash + 3 overrides, two nodes on mainnet) before announce, apply, pause, after upload and in status; the runbook records it and retires `PICKS_WIF` |
+| BX-10 | Mainnet Kondor path: node chooses the chain id; own Mana limit = all of it | **Fixed**: chain id named; explicit limit (1 Mana for picks/answers, 10 otherwise, never above the account's); signed transaction re-checked |
+| BX-11 | Testnet funding race | **Fixed**: address reserved before the first await |
+| BX-12 | Page says the sponsor pays, but Picks wasn't covered | **Fixed**: wording per payment path; runbook step 6 (`payer sponsor`, `site-limits`, `config`) |
+| BX-13 | Sibling pages share Knode's Kondor permission | **Domain move** (knodegames.com, Sunday 1 Nov) |
+| BX-14 | Page vs recorder: preview card, combined place, medals | **Fixed**: preview labelled "about ×N, by the current card"; rows carry `boardPlace`; Free-play medals follow the 3-day rule and ties, last week's from the frozen prize list |
+| BX-15 | Stake read errors counted as Free; status on one node | **Fixed**: errors throw (the run holds), both nodes, first pick by height |
+| BX-16 | A failing target fell out of the window with no void | **Fixed**: voided at the window edge with its reason |
+| BX-17 | Irreversibility from one node | **Fixed**: the lower of the two nodes |
+| BX-18 | Paging relied on the page size | **Fixed**: until an empty page |
+| BX-19 | Owner-signed sends to whatever address the JSON named | **Fixed** (BX-9's check) |
+| BX-20 | Post-upload check on one node | **Fixed** (two nodes) |
+| BX-21 | ABI not pinned | **Fixed**: sha256 pinned and checked |
+| BX-22 | Picks wallet could hold KOIN; runbook said to fund it | **Fixed**: upload refuses KOIN or a used nonce; runbooks fund the payer |
+| BX-23 | Publish shape check left keys free-form | **Fixed**: exact key sets and types for every file |
+| BX-24 | Producer chips from one node's recent blocks | **Fixed**: on mainnet only from the card (no card, no chips) |
+
+## Info
+
+| ID | Status |
+|---|---|
+| BX-25 lock vs head | Already handled: the page stops offering a round 20 blocks before its lock |
+| BX-26 list_picks paging | Noted; the recorder reads each round after its lock at an irreversible height |
+| BX-27 new games sponsored automatically | Documented (README "Sponsored games"); within the same caps |
+| BX-28 smart-wallet wording | **Fixed** wording |
+| BX-29 testnet build check gaps | **Fixed**: one snapshot of `assembly/`, owner checked with its checksum, `check.cjs` run on the testnet source and `.wat` |
+| BX-30 CSP by meta tag | Domain move (real headers need our own host); the frame-buster stays |
+| BX-31 testnet wallet entry point; Host only on /api/fund | **Fixed**: `pick` entry point only (before and after signing); Host checked on every request |
+| BX-32 testnet config not committed | **Fixed**: `picks` and `picksSha256` committed |
+| BX-33 game settings not read from chain | **Fixed**: `get_game` checked; picks outside the week don't count toward days |
+| BX-34 upload nonce, error print, CI loops, persist-credentials | **Fixed**: nonce tip in the tool and runbook; error print sanitized; loops safe; `persist-credentials: false` |
 
 ## Options for BX-2 (sybil wallets and the Free play prize)
 
-The prize is 3 VHP a week. Ideas, from lightest to strongest:
+The prize is 3 VHP a week. From lightest to strongest:
 1. Accept and monitor (today's decision, S3-4): the free Mana total (2,000 a day) caps the cost; watch the winners.
-2. Free play winners must hold a small amount of VHP when the prize is paid (e.g. 1 VHP, or any KOIN), so each extra
-   wallet costs something.
-3. Prize only to wallets at least N weeks old with picks on N days (raises the cost of fresh wallets).
-4. Prize only on the Staked board (guests play for the board, not VHP).
+2. Free play winners must hold a small balance when the prize is paid (for example 1 KOIN), so each extra wallet
+   costs something.
+3. Prize only to wallets at least N weeks old with picks on N days.
+4. Prize only on the Staked board (Free play plays for the board, not VHP).

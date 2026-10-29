@@ -244,7 +244,9 @@ test("BX-4: Staked status is read on both nodes, and a disagreement holds the ta
     head: { height: lib, time: T(lib), lib } }));
   assert.ok(asked.includes("main") && asked.includes("check"), "both nodes asked");
   assert.ok(r.problems.some((p) => /disagree about which players are Staked/.test(p)));
-  assert.equal([...r.weeks.values()].flatMap((w) => w.targets).length, 0, "nothing recorded while they disagree");
+  const ts = [...r.weeks.values()].flatMap((w) => w.targets);
+  assert.ok(ts.every((t) => t.void && !t.picks.length), "nothing scored while they disagree (targets past the 3-day window are voided, BX-16)");
+  assert.ok(ts.every((t) => /disagreed about Staked/.test(t.void)));
 });
 test("BX-3: a card taken after the lock is never used for it; a signer missing from the card scores ×1", async () => {
   const lib = H0 + 4 * X.ROUND + 50;
@@ -285,4 +287,76 @@ test("BX-5: the week-final check catches a missing last target in the phase the 
   assert.equal(targetsCover(full, from, to, all(full, [])), false, "the next week's first target not recorded yet");
   const gap = week(rounds.filter((r) => r !== 40));
   assert.equal(targetsCover(gap, from, to, all(gap, nextFirst)), false, "a gap");
+});
+
+test("BX-16: a target that keeps failing is voided with its reason at the edge of the 3-day window", async () => {
+  const lib = H0 + 2 * X.ROUND + 50;
+  const r = await quiet(() => run({ p: "main", check: null, out: tmp(), raceDir: raceDir(), picksContract: "1P", blockOf: async () => { throw new Error("node keeps failing"); },
+    picksOf: picksOf(), rankedOf, head: { height: lib, time: T(lib), lib } }));
+  const ts = [...r.weeks.values()].flatMap((w) => w.targets);
+  assert.ok(ts.length > 0 && ts.every((t) => /could not be recorded within 3 days: node keeps failing/.test(t.void)));
+  assert.ok(ts.every((t) => t.height < lib - 3 * 28800 + X.ROUND), "only targets at the edge of the window, not recent ones");
+});
+test("BX-15: a wallet's board is fixed by its first pick of the period (a later 1 VHP can't push it onto Staked)", async () => {
+  // Alice picks Free play at first; later targets record her as Staked (someone sent her 1 VHP).
+  const lib = H0 + 4 * X.ROUND + 50;
+  let current = 0;
+  const lastTwo = Math.floor(lib / X.ROUND) - 1;
+  const flip = async (who) => (current >= lastTwo ? new Set(who) : new Set());   // only the newest targets see her as Staked
+  const r = await quiet(() => run({ p: "main", check: null, out: tmp(), raceDir: raceDir(), picksContract: "1P", blockOf: blockOf(),
+    picksOf: async (node, rd) => { current = rd; return [{ player: ALICE, producer: MID, time: T(rd * X.ROUND) - 3600000 }]; }, rankedOf: flip, head: { height: lib, time: T(lib), lib } }));
+  const ts = [...r.weeks.values()].flatMap((w) => w.targets).filter((t) => !t.void);
+  assert.ok(ts.some((t) => t.picks[0][4] === 1) && ts.some((t) => t.picks[0][4] === 0), "both kinds of rows were recorded");
+  const all = r.board.allTime.rows.find((x) => x.a === ALICE);
+  assert.equal(all.ranked, false, "still on the Free play board");
+});
+test("BX-18 / BX-17 / BX-33: picks are read until an empty page; final needs both nodes; pick days outside the week don't count", () => {
+  const src = fs.readFileSync(path.resolve(APP, "bot/games/blockx.ts"), "utf8");
+  assert.match(src, /if \(!rows\.length\) break;/);
+  assert.ok(!/rows\.length < 100\) break/.test(src));
+  assert.match(src, /if \(ch\.lib < head\.lib\) head\.lib = ch\.lib;/);
+  assert.match(src, /pickTime >= from && pickTime < to \? pickTime : NaN/);
+  assert.match(src, /on chain has round/);
+});
+test("BX-5 / BX-23: a final week's prizes are frozen once (P###.json); the mainnet publish check takes the real output, exact shapes only", async () => {
+  const runs = JSON.parse(execFileSync("python3", ["-c", "import yaml,json,sys; w=yaml.safe_load(open(sys.argv[1])); print(json.dumps([s.get('run','') for j in w['jobs'].values() for s in j['steps']]))", path.resolve(APP, ".github/workflows/games.yml")], { encoding: "utf8" }));
+  const sh = runs.find((r) => r.includes("<<'PY'"));
+  const py = sh.slice(sh.indexOf("<<'PY'\n") + 7, sh.indexOf("\nPY\n") + 1);
+  const check = (dir) => spawnSync("python3", ["-I", "-", dir, "2"], { input: py, encoding: "utf8" });
+  const VALID = "1" + "P".repeat(33);
+  const rd = raceDir();
+  const startH = H0 - Math.floor(3600000 / 3000), endH = startH + 7 * 28800;
+  let prev;
+  for (let lib = startH + 12 * X.ROUND; lib <= endH + 4 * X.ROUND; lib += 12 * X.ROUND) {
+    const o = tmp();
+    await quiet(() => run({ p: "main", check: null, prev, out: o, raceDir: rd, picksContract: VALID, blockOf: blockOf(), picksOf: picksGuest, rankedOf, prizesFromWeek: 0, head: { height: lib, time: T(lib), lib } }));
+    prev = o;
+  }
+  const at = endH + 13 * 1200, out = tmp();
+  const r = await quiet(() => run({ p: "main", check: null, prev, out, raceDir: rd, picksContract: VALID, blockOf: blockOf(), picksOf: picksGuest, rankedOf, prizesFromWeek: 0, head: { height: at, time: T(at), lib: at - 60 } }));
+  assert.equal(r.board.lastWeek.final, true);
+  assert.ok(fs.existsSync(path.join(out, "P003.json")), "the final week's prizes are frozen");
+  const frozen = JSON.parse(fs.readFileSync(path.join(out, "P003.json"), "utf8"));
+  assert.deepEqual(frozen.prizes, r.board.lastWeek.prizes);
+  const ok = check(out);
+  assert.equal(ok.status, 0, ok.stderr);
+  // A later run uses the frozen list and doesn't write it again.
+  const out2 = tmp();
+  fs.copyFileSync(path.join(out, "P003.json"), path.join(out2, "P003.json"));
+  for (const f of fs.readdirSync(out)) if (!fs.existsSync(path.join(out2, f))) fs.copyFileSync(path.join(out, f), path.join(out2, f));
+  const changed = { ...frozen, prizes: frozen.prizes.slice(0, 1) };
+  fs.writeFileSync(path.join(out2, "P003.json"), JSON.stringify(changed));
+  const out3 = tmp();
+  const r3 = await quiet(() => run({ p: "main", check: null, prev: out2, out: out3, raceDir: rd, picksContract: VALID, blockOf: blockOf(), picksOf: picksGuest, rankedOf, prizesFromWeek: 0, head: { height: at + 200, time: T(at + 200), lib: at + 140 } }));
+  assert.deepEqual(r3.board.lastWeek.prizes, changed.prizes, "later runs use the frozen list");
+  assert.ok(!fs.existsSync(path.join(out3, "P003.json")), "and never write it again");
+  // Exact shapes: an extra key anywhere is refused.
+  const bad = tmp(); for (const f of fs.readdirSync(out)) fs.copyFileSync(path.join(out, f), path.join(bad, f));
+  const b = JSON.parse(fs.readFileSync(path.join(bad, "board.json"), "utf8")); b.today.extra = "x".repeat(1000); fs.writeFileSync(path.join(bad, "board.json"), JSON.stringify(b));
+  assert.notEqual(check(bad).status, 0);
+  const bad2 = tmp(); for (const f of fs.readdirSync(out)) fs.copyFileSync(path.join(out, f), path.join(bad2, f));
+  const i = JSON.parse(fs.readFileSync(path.join(bad2, "index.json"), "utf8")); i.updated = "<script>"; fs.writeFileSync(path.join(bad2, "index.json"), JSON.stringify(i));
+  assert.notEqual(check(bad2).status, 0);
+  const wf = fs.readFileSync(path.resolve(APP, ".github/workflows/games.yml"), "utf8");
+  assert.match(wf, /P\[0-9\]\{3\}\\\.json\$ \]\] && git cat-file -e/, "the publish step never replaces a published prize file");
 });
