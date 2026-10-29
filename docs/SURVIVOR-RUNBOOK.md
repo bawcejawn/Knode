@@ -1,7 +1,7 @@
 # Survivor runbook (owner)
 
 Survivor runs itself: the hourly KnodeGames workflow (`.github/workflows/games.yml`) records each UTC day, publishes
-the handicaps and plays the season with `site/survivor-math.js`. This page covers launch and the few things that need
+the handicaps and plays the season with `survivor-math.js`. This page covers launch and the few things that need
 you.
 
 ## Launch
@@ -25,7 +25,7 @@ you.
    | max_changes | 5 |
    | enabled | true (a closed game would make every player miss a pick) |
 
-3. Pick the launch Monday. In `site/survivor-math.js`, set `FIRST_DAY` to that Monday's UTC day number. In PowerShell:
+3. Pick the launch Monday. In `survivor-math.js`, set `FIRST_DAY` to that Monday's UTC day number. In PowerShell:
 
    ```powershell
    [math]::Floor(([datetimeoffset]'2026-11-16T00:00:00Z').ToUnixTimeMilliseconds() / 86400000)

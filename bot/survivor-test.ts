@@ -27,7 +27,7 @@ import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Signer, Provider, Contract } from "koilib";
 import { tokenAbi } from "./token-abi.ts";
-await import("../site/survivor-math.js");
+await import("../survivor-math.js");
 const KS: any = (globalThis as any).KSurvivor;
 
 // ── the testnet (from SwarmTales' deploy/lib.js, which the owner has used on it since October 2026) ──
@@ -280,11 +280,17 @@ async function picksBuild() {
   fs.rmSync(dst, { recursive: true, force: true });
   fs.cpSync(src, dst, { recursive: true, filter: (f) => !/[\\/](node_modules|build|abi)([\\/]|$)/.test(f.slice(src.length)) });
   fs.symlinkSync(path.join(src, "node_modules"), path.join(dst, "node_modules"), "junction");
-  // The build's helper script sits at the repo root; point the copy at it.
-  const pre = path.join(dst, "scripts", "prebuild.cjs"), rel = 'require("../../tools/pbjs-helpers/install.cjs");';
-  const preSrc = fs.readFileSync(pre, "utf8");
-  if (!preSrc.includes(rel)) throw new Error("picks/scripts/prebuild.cjs changed: the testnet build needs updating");
-  fs.writeFileSync(pre, preSrc.replace(rel, `require(${JSON.stringify(path.join(ROOT, "tools", "pbjs-helpers", "install.cjs"))});`));
+  // The build's helper scripts sit at the repo root (the pinned protobuf helpers and the checked protoc 21.12, Repo
+  // Lense S2-8); point the copy at them. Each must be there exactly once.
+  const pre = path.join(dst, "scripts", "prebuild.cjs");
+  let preSrc = fs.readFileSync(pre, "utf8");
+  for (const helper of ["pbjs-helpers/install.cjs", "protoc-pin.cjs"]) {
+    const rel = `require("../../tools/${helper}")`;
+    if (preSrc.split(rel).length !== 2) throw new Error(`picks/scripts/prebuild.cjs changed (${helper}): the testnet build needs updating`);
+    preSrc = preSrc.replace(rel, `require(${JSON.stringify(path.join(ROOT, "tools", ...helper.split("/")))})`);
+  }
+  if (/\.\.\/\.\.\//.test(preSrc)) throw new Error("picks/scripts/prebuild.cjs reaches outside the folder in a way the testnet build doesn't know");
+  fs.writeFileSync(pre, preSrc);
   const file = path.join(dst, "assembly", "Picks.ts");
   fs.writeFileSync(file, patchPicksSource(fs.readFileSync(file, "utf8"), addressOf(keys, "owner")));
   log("Building the testnet Picks contract (a minute or two)…");
@@ -490,6 +496,7 @@ export async function startSite(opts: { port?: number } = {}) {
   let origin = `http://127.0.0.1:${port}`;
   const p = new Provider([c.rpc]);
   const abi = PICKS_ABI();
+  const PAGE_FILES = new Set([...fs.readFileSync(path.join(ROOT, "survivor.html"), "utf8").matchAll(/(?:src|href)="([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.(?:js|css|webmanifest))"/g)].map((m) => m[1]));
   const types: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
   const sendFile = (res: http.ServerResponse, file: string) => {
     fs.readFile(file, (err, buf) => {
@@ -548,8 +555,8 @@ export async function startSite(opts: { port?: number } = {}) {
         res.writeHead(404); res.end(); return;
       }
       if (req.method !== "GET") { res.writeHead(405); res.end(); return; }
-      if (u === "/" || u === "/site/" || u === "/site/survivor.html") { res.writeHead(302, { location: "/site/survivor-testnet.html" }); res.end(); return; }
-      if (u === "/site/survivor-testnet.html") { res.writeHead(200, { "content-type": types[".html"], "cache-control": "no-store" }); res.end(testPage(fs.readFileSync(path.join(ROOT, "site", "survivor.html"), "utf8"))); return; }
+      if (u === "/" || u === "/survivor.html") { res.writeHead(302, { location: "/survivor-testnet.html" }); res.end(); return; }
+      if (u === "/survivor-testnet.html") { res.writeHead(200, { "content-type": types[".html"], "cache-control": "no-store" }); res.end(testPage(fs.readFileSync(path.join(ROOT, "survivor.html"), "utf8"))); return; }
       if (u === "/testnet/survivor-net.js") {
         // Loaded by the test page only (audit SV-A23): not as a script on another site. It holds no keys either way.
         const sfs = req.headers["sec-fetch-site"];
@@ -564,10 +571,11 @@ export async function startSite(opts: { port?: number } = {}) {
       const m = /^\/testnet-data\/survivor\/(index|days|fields|S\d{3})\.json$/.exec(u);
       if (m) { sendFile(res, path.join(DATA(), `${m[1]}.json`)); return; }
       if (u === "/picks/abi/picks.koilib.json") { sendFile(res, path.join(ROOT, "picks", "abi", "picks.koilib.json")); return; }
-      // The site's own files only (no dot files, nothing outside site/), and no other page: the only page here is the
-      // TESTNET one (review TN-7: the real pages would read mainnet without the TESTNET bar).
-      const sm = /^\/site\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.(?:js|css|json|svg|png|webmanifest))$/.exec(u);
-      if (sm) { sendFile(res, path.join(ROOT, "site", ...sm[1].split("/"))); return; }
+      // The site sits at the repository root, next to the keys' folder and the code, so only the files the Survivor
+      // page itself loads are served (its scripts, styles and icons, read from survivor.html), plus images under
+      // media/. No other page: the only page here is the TESTNET one (review TN-7).
+      const sm = /^\/((?:media\/)?[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.(?:js|css|svg|png|webmanifest))$/.exec(u);
+      if (sm && (PAGE_FILES.has(sm[1]) || (sm[1].startsWith("media/") && /\.(svg|png)$/.test(sm[1])))) { sendFile(res, path.join(ROOT, ...sm[1].split("/"))); return; }
       res.writeHead(404); res.end("not found");
     } catch (e) { json(res, 500, { error: String((e as Error).message).slice(0, 200) }); }
   });
@@ -582,7 +590,7 @@ export async function startSite(opts: { port?: number } = {}) {
     if (err.code !== "EADDRINUSE" || opts.port !== undefined || i >= 4) throw err;
     port = await freePort(port + 1); origin = `http://127.0.0.1:${port}`;
   }
-  log(`Test page: ${origin}/site/survivor-testnet.html  (only this PC can open it)`);
+  log(`Test page: ${origin}/survivor-testnet.html  (only this PC can open it)`);
   return server;
 }
 

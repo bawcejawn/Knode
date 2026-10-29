@@ -9,7 +9,7 @@ import vm from "node:vm";
 const APP = process.env.APP || ".";
 const read = (p) => fs.readFileSync(`${APP}/${p}`, "utf8");
 const exists = (p) => fs.existsSync(`${APP}/${p}`);
-const pages = fs.readdirSync(`${APP}/site`).filter((f) => f.endsWith(".html"));
+const pages = fs.readdirSync(`${APP}`).filter((f) => f.endsWith(".html"));
 const cspOf = (html) => { const m = html.match(/http-equiv="Content-Security-Policy"\s+content="([^"]*)"/i); const d = {}; if (m) for (const part of m[1].split(";")) { const [n, ...v] = part.trim().split(/\s+/); if (n) d[n] = v; } return d; };
 
 /** wallet.js in a stub window that is framed by another site. */
@@ -26,32 +26,32 @@ function framed({ topNavigable }) {
   };
   win.window = win; win.self = win; win.top = top;
   vm.createContext(win);
-  vm.runInContext(read("site/wallet.js"), win);
+  vm.runInContext(read("wallet.js"), win);
   return { win, docEl, log };
 }
 
 // S1: README says hashRule 2 makes relabelling impossible, but the page shows the file's wording/options and answers q.chainId without checking params_hash.
 test("S1 the game page checks a question file against the on-chain params_hash before offering its answer buttons", () => {
-  const app = read("site/app.js");
+  const app = read("app.js");
   assert.match(read("README.md"), /hashRule: 2[\s\S]{0,200}cannot be relabelled/, "precondition: README makes the wording claim");
   const checks = /params_hash/.test(app) && /crypto\.subtle\.digest|sha256/i.test(app);
   assert.ok(checks, "S1: site/app.js renders title/text/options from game-data/questions/*.json and sends answer(chainId, option) without comparing the file to get_question().params_hash: a tampered or swapped file (option labels reversed, chainId of another question) is shown to players as genuine");
 });
 
 // S2: GitHub Pages without a custom domain = origin shared with every other bawcejawn.github.io site (scripts, storage, Kondor's per-origin grant).
-// todo: needs a custom domain (the owner's action, not a code change); it still runs and reports until a CNAME exists.
-test("S2 the wallet pages are served from an origin of their own (CNAME), not the shared <user>.github.io origin", { todo: "needs a custom domain (owner action)" }, () => {
+// Closed 2026-10-28: the site is served from its own domain, knodegames.com (CNAME at the repository root).
+test("S2 the wallet pages are served from an origin of their own (CNAME), not the shared <user>.github.io origin", () => {
   const cname = exists("CNAME") || exists("site/CNAME");
   assert.ok(cname, "S2: no CNAME: any other Pages site of bawcejawn (same origin) can window.open a Knode page, read/patch its JS (fetch hook -> KOIN Vault secret, swapped ops) and reuse the Kondor site permission; the frame-buster does not stop same-origin windows");
 });
 
 // S3: the new frame-src 'none' silently breaks the network (iframe) ads that ads.json and LAUNCH.md tell the owner to use.
 test("S3 an ad type documented to the owner (iframe network ads) is allowed by index.html's CSP or the docs say what to change", () => {
-  const documented = /"type\\?":\s*\\?"iframe/.test(read("site/ads.json")) || /Ad network/.test(read("LAUNCH.md"));
+  const documented = /"type\\?":\s*\\?"iframe/.test(read("ads.json")) || /Ad network/.test(read("LAUNCH.md"));
   if (!documented) return;
-  const fsrc = cspOf(read("site/index.html"))["frame-src"] || [];
+  const fsrc = cspOf(read("index.html"))["frame-src"] || [];
   const allowed = fsrc.some((s) => s === "https:" || /^https:\/\/[^']/.test(s));
-  const told = /frame-src/.test(read("LAUNCH.md")) || /frame-src/.test(read("site/ads.json"));
+  const told = /frame-src/.test(read("LAUNCH.md")) || /frame-src/.test(read("ads.json"));
   assert.ok(allowed || told, "S3: index.html has frame-src 'none'; an owner following LAUNCH.md/ads.json for a network ad gets an empty slot (only a code comment in app.js mentions frame-src)");
 });
 
@@ -74,13 +74,14 @@ test("(guard) wallet.js inside a frame navigates the top window to itself", () =
 test("(guard) wallet pages load wallet.js before their page script", () => {
   const bad = [];
   for (const p of pages) {
-    const html = read(`site/${p}`);
+    const html = read(`${p}`);
     const own = [...html.matchAll(/<script\b[^>]*\bsrc="([^":]+\.js)"/g)].map((m) => m[1]);
-    const signs = own.some((f) => /KWallet|kondor/.test(read(`site/${f}`)) && f !== "wallet.js");
+    const signs = own.some((f) => /KWallet|kondor/.test(read(`${f}`)) && f !== "wallet.js");
     if (!signs) continue;
-    const wi = own.indexOf("wallet.js");
+    // The testnet page signs with testnet-wallet.js (its own frame-buster, never the mainnet wallet).
+    const wi = /<meta name="kg-network" content="testnet">/.test(html) ? own.indexOf("testnet-wallet.js") : own.indexOf("wallet.js");
     if (wi < 0) { bad.push(`${p}: signs without wallet.js`); continue; }
-    for (const f of own.slice(0, wi)) if (/addEventListener|onclick|KWallet|kondor|fetch\(/.test(read(`site/${f}`))) bad.push(`${p}: ${f} runs before the frame-buster`);
+    for (const f of own.slice(0, wi)) if (/addEventListener|onclick|KWallet|kondor|fetch\(/.test(read(`${f}`))) bad.push(`${p}: ${f} runs before the frame-buster`);
   }
   assert.deepEqual(bad, []);
 });
@@ -88,9 +89,9 @@ test("(guard) wallet pages load wallet.js before their page script", () => {
 // (guard) exact-file script-src: every CDN entry is a full, versioned file path and each one is really loaded with SRI.
 test("(guard) script-src CDN entries are exact versioned files, each loaded with SRI by the page or wallet.js", () => {
   const bad = [];
-  const wallet = read("site/wallet.js");
+  const wallet = read("wallet.js");
   for (const p of pages) {
-    const html = read(`site/${p}`), s = cspOf(html)["script-src"] || [];
+    const html = read(`${p}`), s = cspOf(html)["script-src"] || [];
     for (const v of s.filter((x) => /^https:/.test(x))) {
       if (v.endsWith("/") || !/@\d+\.\d+\.\d+\/|\/\d+\.\d+\.\d+\//.test(v) || /%|\.\.|\?|#/.test(v)) bad.push(`${p}: ${v}`);
       const inPage = new RegExp(`<script\\b[^>]*src="${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"[^>]*integrity=`).test(html);
@@ -103,8 +104,8 @@ test("(guard) script-src CDN entries are exact versioned files, each loaded with
 
 // (guard) a crafted subject in a question file only ever reaches node.html as ?a=…, which node-page.js validates.
 test("(guard) node.html ignores a non-address ?a= coming from a question file's subjects", () => {
-  const np = read("site/node-page.js");
+  const np = read("node-page.js");
   assert.match(np, /const isAddr = \(a\) => \/\^1\[1-9A-HJ-NP-Za-km-z\]\{25,34\}\$\/\.test\(a\)/);
   assert.match(np, /if \(!isAddr\(a\)\) return say\(/);
-  assert.doesNotMatch(read("site/app.js"), /innerHTML|insertAdjacentHTML|outerHTML/);
+  assert.doesNotMatch(read("app.js"), /innerHTML|insertAdjacentHTML|outerHTML/);
 });

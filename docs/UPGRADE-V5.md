@@ -70,8 +70,8 @@ whose entries are all written by v5 code.
 2. On your PC, in the merged `main`:
    ```
    git pull
-   cd game && npm ci && npm test && npm run check && cd ..
-   cd desk && npm ci && npm test && npm run check && cd ..
+   cd game && npm ci --ignore-scripts && npm test && npm run check && cd ..
+   cd desk && npm ci --ignore-scripts && npm test && npm run check && cd ..
    cd desk && npm run build:sim && cd ..
    node --import tsx --test game/scripts/storage-compat.test.ts desk/scripts/storage-compat.test.ts
    certutil -hashfile game\build\release\contract.wasm SHA256

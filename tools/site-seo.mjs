@@ -1,11 +1,11 @@
 // Writes each page's search and share tags (title, description, canonical link, Open Graph, Twitter, and JSON-LD on the
 // game page), plus robots.txt and sitemap.xml at the site root. Run after changing SITE (for example when the custom
 // domain is live) or a page's text:   node tools/site-seo.mjs
-// SITE is the address of the site/ folder. With a custom domain whose root serves this repository, it becomes
-// "https://your-domain/site/"; robots.txt and sitemap.xml are written to the repository root, which is the domain root.
+// SITE is the site's address. The pages sit at the repository root, which GitHub Pages serves as the domain root, so
+// robots.txt and sitemap.xml are written there too.
 import fs from "node:fs";
 
-export const SITE = "https://bawcejawn.github.io/Knode/site/";
+export const SITE = "https://knodegames.com/";
 const ROOT = new URL("../", import.meta.url).pathname;
 
 export const PAGES = [
@@ -28,7 +28,7 @@ export const PAGES = [
   { file: "blockx.html", path: "blockx.html", title: "Who Signs Block X · Pick the Koinos producer of the next big blocks", short: "Who Signs Block X",
     desc: "Every 2,400 Koinos blocks is a target. Pick the producer you think signs it; smaller producers score more, up to 3×. Free, with weekly VHP prizes.", image: "og-knode.png", priority: "0.6" },
   { file: "survivor.html", path: "survivor.html", title: "Survivor · Pick a Koinos producer a day and outlast everyone", short: "Koinos Survivor",
-    desc: "One Koinos producer a day that stays out of the bottom of the handicapped block count. Two lives, two-week seasons, 4 VHP and 2 VHP prizes. Free.", image: "og-knode.png", priority: "0.6" },
+    desc: "One Koinos producer a day that stays out of the bottom of the handicapped block count. Two lives, two-week seasons, a free board and a staked board.", image: "og-knode.png", priority: "0.6" },
   { file: "pulse.html", path: "pulse.html", title: "Koinos network pulse · Blocks, transactions and producers, live", short: "Koinos network pulse",
     desc: "The Koinos chain right now: block time, transactions per hour, who is producing blocks, and how much KOIN is burned into VHP.", image: "og-knode.png", priority: "0.6" },
   { file: "mana.html", path: "mana.html", title: "Mana levels · Check any Koinos wallet's Mana", short: "Koinos Mana levels",
@@ -87,11 +87,11 @@ export function apply(html, p) {
 
 if (process.argv[1] && process.argv[1].endsWith("site-seo.mjs")) {
   for (const p of PAGES) {
-    const f = ROOT + "site/" + p.file;
+    const f = ROOT + p.file;
     fs.writeFileSync(f, apply(fs.readFileSync(f, "utf8"), p));
   }
   const today = new Date().toISOString().slice(0, 10);
   fs.writeFileSync(ROOT + "sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${PAGES.map((p) => `  <url><loc>${SITE + p.path}</loc><lastmod>${today}</lastmod><priority>${p.priority}</priority></url>`).join("\n")}\n</urlset>\n`);
-  fs.writeFileSync(ROOT + "robots.txt", `# Served from the domain root once Knode Games has its own domain (until then search engines read it at the github.io root).\nUser-agent: *\nAllow: /\nDisallow: /site/producer.html\nSitemap: ${SITE.replace(/site\/$/, "")}sitemap.xml\n`);
+  fs.writeFileSync(ROOT + "robots.txt", `# Knode Games, https://knodegames.com\nUser-agent: *\nAllow: /\nDisallow: /producer.html\nSitemap: ${SITE}sitemap.xml\n`);
   console.log(`Wrote tags for ${PAGES.length} pages, sitemap.xml and robots.txt (site: ${SITE}).`);
 }

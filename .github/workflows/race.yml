@@ -43,10 +43,14 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/prev"
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
-            for f in $(git ls-tree --name-only FETCH_HEAD); do
+            git ls-tree --name-only FETCH_HEAD | while IFS= read -r f; do
               if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; fi
             done
           else echo "No race-data branch yet."; fi
+          # The VHP samples (race-samples.yml): each producer's card VHP is the highest of the last 6 hours.
+          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-samples 2>/dev/null && git cat-file -e "FETCH_HEAD:vhp-samples.json" 2>/dev/null; then
+            git show "FETCH_HEAD:vhp-samples.json" > "$RUNNER_TEMP/prev/vhp-samples.json"
+          else echo "No VHP samples yet: the card uses the read at card time."; fi
       - name: Record the race
         run: npm run race
         env:
@@ -86,16 +90,32 @@ jobs:
           big=$(find "$IN" -type f -size +2048k -print)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
           # The content must be the recorder's own shape, not only parse as JSON.
-          /usr/bin/python3 - "$IN" <<'PY'
+          # The published files, to check that a card once published is never changed (audit BX-44).
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git init -q work
+          parent=""
+          mkdir -p "$RUNNER_TEMP/published"
+          if git -C work fetch -q --depth 1 "$remote" race-data 2>/dev/null; then
+            parent=$(git -C work rev-parse FETCH_HEAD)
+            git -C work ls-tree --name-only FETCH_HEAD | while IFS= read -r f; do
+              if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git -C work show "FETCH_HEAD:$f" > "$RUNNER_TEMP/published/$f"; fi
+            done
+          fi
+          /usr/bin/python3 - "$IN" "$RUNNER_TEMP/published" <<'PY'
           import json, os, re, sys
-          d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          d = sys.argv[1]; pub = sys.argv[2] if len(sys.argv) > 2 else ""; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
           isaddr = lambda v: type(v) is str and addr.fullmatch(v) is not None
           num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
           def card_ok(c):
+              # Audit BX-44: exact keys (cards feed Block X's scores). "samples" (how many VHP samples it used) is new.
               if c is None: return True
-              if type(c) is not dict or not num(c.get("at")) or not num(c.get("c")) or not num(c.get("blocksPerRace")): return False
-              if type(c.get("field")) is not list or type(c.get("paddock")) is not list or len(c["field"]) + len(c["paddock"]) > 500: return False
-              return all(type(r) is dict and isaddr(r.get("a")) and num(r.get("vhp")) and num(r.get("k")) and ("h" not in r or num(r["h"])) for r in c["field"] + c["paddock"]) and all(num(r.get("h")) and r["h"] > 0 for r in c["field"])
+              if type(c) is not dict or set(c) - {"samples"} != {"at", "blocksPerRace", "c", "fairness", "field", "paddock"}: return False
+              if "samples" in c and not (type(c["samples"]) is int and 0 <= c["samples"] <= 1000): return False
+              if not num(c["at"]) or not num(c["c"]) or not num(c["blocksPerRace"]): return False
+              if not (c["fairness"] is None or (type(c["fairness"]) is list and len(c["fairness"]) == 2 and all(num(v) for v in c["fairness"]))): return False
+              if type(c["field"]) is not list or type(c["paddock"]) is not list or len(c["field"]) + len(c["paddock"]) > 500: return False
+              return all(type(r) is dict and set(r) == {"a", "vhp", "k", "h"} and isaddr(r["a"]) and num(r["vhp"]) and 0 <= r["vhp"] < 1e12 and num(r["k"]) and num(r["h"]) and r["h"] > 0 for r in c["field"]) and \
+                  all(type(r) is dict and set(r) == {"a", "vhp", "k"} and isaddr(r["a"]) and num(r["vhp"]) and 0 <= r["vhp"] < 1e12 and num(r["k"]) for r in c["paddock"])
           def result_ok(r):
               if r is None: return True
               if type(r) is not dict or r.get("final") is not True: return False
@@ -106,7 +126,7 @@ jobs:
               if type(st) is not list or len(st) > 500 or not all(type(x) is dict and type(x.get("a")) is str and addr.fullmatch(x["a"]) and num(x.get("steps"))
                   and type(x.get("blocks")) is int for x in st): return False
               if len({x["a"] for x in st}) != len(st) or any(st[i]["steps"] < st[i + 1]["steps"] for i in range(len(st) - 1)): return False
-              # The winner and the win and show flags must follow from the standings (site/race-math.js: winners, shows).
+              # The winner and the win and show flags must follow from the standings (race-math.js: winners, shows).
               won = bool(st) and st[0]["steps"] > 0
               if r.get("winner") != (st[0]["a"] if won else None): return False
               shows = {x.get("a") for x in st[1:3] if num(x.get("steps")) and x["steps"] > 0} if won else set()
@@ -135,15 +155,17 @@ jobs:
               for r in j["races"]:
                   assert set(r) == {"id", "start", "end", "cards", "result"} and re.fullmatch(r"\d{4}-\d{2}-\d{2}T(00|06|12|18)", r["id"]), f
                   assert type(r["cards"]) is list and len(r["cards"]) in (3, 6) and all(card_ok(c) for c in r["cards"]) and result_ok(r["result"]), f + " " + r["id"]
+              if pub and os.path.exists(os.path.join(pub, f)):
+                  old = {r["id"]: r for r in json.load(open(os.path.join(pub, f), encoding="utf-8")).get("races", []) if type(r) is dict and "id" in r}
+                  for r in j["races"]:
+                      o = old.get(r["id"])
+                      if o and type(o.get("cards")) is list and len(o["cards"]) == len(r["cards"]):
+                          for i, c in enumerate(o["cards"]):
+                              assert c is None or c == r["cards"][i], f"{f} {r['id']}: a published card would change"
           print("race files ok")
           PY
-          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git init -q work && cd work
-          parent=""
-          if git fetch -q --depth 1 "$remote" race-data 2>/dev/null; then
-            parent=$(git rev-parse FETCH_HEAD)
-            git read-tree FETCH_HEAD
-          else git read-tree --empty; fi
+          cd work
+          if [ -n "$parent" ]; then git read-tree "$parent"; else git read-tree --empty; fi
           for f in "$IN"/*.json; do
             blob=$(git hash-object -w "$f")
             git update-index --add --cacheinfo 100644 "$blob" "$(basename "$f")"

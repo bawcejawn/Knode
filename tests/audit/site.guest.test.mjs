@@ -9,9 +9,9 @@ import { webcrypto } from "node:crypto";
 import * as koilib from "koilib";
 
 const APP = process.env.APP || ".";
-const guestSrc = fs.readFileSync(`${APP}/site/guest.js`, "utf8");
-const walletSrc = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
-const indexHtml = fs.readFileSync(`${APP}/site/index.html`, "utf8");
+const guestSrc = fs.readFileSync(`${APP}/guest.js`, "utf8");
+const walletSrc = fs.readFileSync(`${APP}/wallet.js`, "utf8");
+const indexHtml = fs.readFileSync(`${APP}/index.html`, "utf8");
 const MAINNET = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";
 const GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", DESK = "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR";
 const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK";
@@ -48,7 +48,7 @@ function memStorage(broken = false) {
 }
 
 /** Loads guest.js and wallet.js in a fresh vm. The fake node records everything it is sent. */
-function world({ payer = "sponsor", brokenStorage = false, yes = true, nodeChain = MAINNET, guest = true } = {}) {
+function world({ payer = "sponsor", brokenStorage = false, yes = true, nodeChain = MAINNET, guest = true, host = "knodegames.com", protocol = "https:" } = {}) {
   const { document, all } = fakeDom();
   const net = [];   // every call that leaves the page: [method, payload]
   const provider = {
@@ -60,7 +60,7 @@ function world({ payer = "sponsor", brokenStorage = false, yes = true, nodeChain
     wait: async () => ({}),
   };
   const toasts = [];
-  const win = { koilib, crypto: webcrypto, localStorage: memStorage(brokenStorage), confirm: () => true, navigator: {} };
+  const win = { location: { protocol, hostname: host }, koilib, crypto: webcrypto, localStorage: memStorage(brokenStorage), confirm: () => true, navigator: {} };
   win.top = win; win.self = win;
   const ctx = {
     window: win, document, localStorage: win.localStorage, sessionStorage: memStorage(), navigator: { userAgent: "test", maxTouchPoints: 0, platform: "x" },
@@ -223,7 +223,7 @@ test("guests pick only on the pinned Knode race contract (mainnet)", () => {
 });
 
 test("race.html offers guest play too: it loads guest.js before wallet.js, from this site only", () => {
-  const h = fs.readFileSync(`${APP}/site/race.html`, "utf8");
+  const h = fs.readFileSync(`${APP}/race.html`, "utf8");
   const g = h.indexOf('<script src="guest.js"></script>'), wlt = h.indexOf('<script src="wallet.js"></script>');
   assert.ok(g > 0 && wlt > g);
 });
@@ -244,8 +244,8 @@ test("guests make KnodeGames picks only on the pinned Picks contract (empty unti
 });
 
 test("every page with the wallet button offers guest play: guest.js before wallet.js, koilib allowed and loaded", () => {
-  for (const p of fs.readdirSync(`${APP}/site`).filter((f) => f.endsWith(".html"))) {
-    const h = fs.readFileSync(`${APP}/site/${p}`, "utf8");
+  for (const p of fs.readdirSync(`${APP}`).filter((f) => f.endsWith(".html"))) {
+    const h = fs.readFileSync(`${APP}/${p}`, "utf8");
     if (!/<script src="header-wallet\.js"><\/script>/.test(h)) continue;
     const g = h.indexOf('<script src="guest.js"></script>'), wlt = h.indexOf('<script src="wallet.js"></script>');
     assert.ok(g > 0 && g < wlt, `${p}: guest.js before wallet.js`);
@@ -277,4 +277,34 @@ test("the header's guest switch stays off while deployment.json says the player 
   w.KW.connect();
   const btn = w.find(/Play as a guest/)[0];
   assert.ok(btn && "disabled" in btn.attrs);
+});
+
+test("guests make KnodeGames picks only on the pinned Picks contract (empty until it is on mainnet)", () => {
+  assert.match(walletSrc, /const PINNED_PICKS = "";/, "not pinned before the Picks contract is live");
+  assert.match(walletSrc, /const guestPicks = \(\) => \(W\.chainId === MAINNET_CHAIN_ID \? \(PINNED_PICKS \|\| null\)/);
+  const start = walletSrc.indexOf("  function checkGuestTx("), end = walletSrc.indexOf("\n  }\n", start) + 4;
+  const ctx = { BigInt, Number, Error, ANSWER };
+  vm.createContext(ctx);
+  vm.runInContext(walletSrc.slice(start, end) + "\nthis.check = checkGuestTx;", ctx);
+  const PICKS = "1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW", PICK = 0x8ce33c6c;
+  const want = { sponsor: SPONSOR, payee: "1Guest", chainId: MAINNET, game: GAME, rcLimit: "100000000" };
+  const tx = (contract, entry) => ({ header: { payer: SPONSOR, payee: "1Guest", chain_id: MAINNET, rc_limit: "100000000" }, operations: [{ call_contract: { contract_id: contract, entry_point: entry } }] });
+  assert.throws(() => ctx.check(tx(PICKS, PICK), want), /only game answers/, "no Picks contract pinned: no picks");
+  ctx.check(tx(PICKS, PICK), { ...want, picks: PICKS });
+  assert.throws(() => ctx.check(tx(PICKS, 0x94871b42), { ...want, picks: PICKS }), /only game answers/, "only pick, never apply_game");
+});
+
+test("audit BX-40 / BX-51: off knodegames.com (and this computer) every guest path is closed: no option, no reconnect, no backup, no signing", async () => {
+  for (const [host, protocol] of [["bawcejawn.github.io", "https:"], ["bawcejawn.github.io.", "https:"], ["evil.example", "https:"], ["", "file:"], ["knodegames.com.evil.example", "https:"]]) {
+    const w = world({ host, protocol });
+    await w.KG.create();                                                   // a key already stored in this browser
+    w.storage.setItem("kw-kind", "guest");
+    const p = w.KW.connect();
+    assert.equal(w.find(/Play as a guest/).length, 0, `${host || protocol}: no guest option`);
+    assert.equal(w.KW.address || null, null, `${host || protocol}: no reconnect to the stored guest`);
+    w.find(/Cancel|Close|×/).forEach((b) => b.click()); p.catch(() => {});
+    await assert.rejects(w.KW.send("x", [w.op(GAME, 1)]), /./, `${host || protocol}: nothing signed`);
+  }
+  const ok = world();
+  assert.ok((await connectAsGuest(ok)) !== undefined, "knodegames.com: guest play works");
 });

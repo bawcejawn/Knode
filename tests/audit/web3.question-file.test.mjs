@@ -12,7 +12,7 @@ import vm from "node:vm";
 import { webcrypto } from "node:crypto";
 
 const APP = process.env.APP || ".";
-const src = fs.readFileSync(`${APP}/site/app.js`, "utf8");
+const src = fs.readFileSync(`${APP}/app.js`, "utf8");
 const END = /\r?\n  start\(\);\r?\n\}\)\(\);\s*$/;
 assert.match(src, END, "site/app.js ends with start(); })();");
 const patched = src.replace(END, "\n  globalThis.__T = { S, loadQuestions, questionCard, renderResults, paramsHashOf };\n})();\n");

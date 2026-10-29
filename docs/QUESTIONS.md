@@ -3,7 +3,7 @@
 The question generator (`generator.ts`), the scorer (`resolver.ts`) and the backtester (`backtest.ts`). The bot runs
 the generator and scorer for you; you only need this page to change or check the question templates.
 
-Install Node.js 20 or newer, then `npm ci` in the repository folder.
+Install Node.js 20 or newer, then `npm ci --ignore-scripts` in the repository folder.
 
 ## Backtest — are the question templates really unpredictable?
 

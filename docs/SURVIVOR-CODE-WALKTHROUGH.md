@@ -7,10 +7,10 @@ Read it with the file open beside it. In VS Code, Ctrl+G jumps to a line.
 
 | Part | File | Lines | Job |
 |---|---|---|---|
-| 1 | `site/survivor-math.js` | 235 | The rules. Pure arithmetic: no internet, no wallet |
+| 1 | `survivor-math.js` | 235 | The rules. Pure arithmetic: no internet, no wallet |
 | 2 | `bot/games/survivor.ts` | 388 | The recorder: reads the chain every hour and writes the results |
 | 3 | `.github/workflows/games.yml` | (Survivor parts) | Runs the recorder, checks its files, publishes them |
-| 4 | `site/survivor.html` + `site/survivor.js` | 339 | The page players use |
+| 4 | `survivor.html` + `survivor.js` | 339 | The page players use |
 | 5 | `bot/survivor-test.ts` + `tools/survivor-testnet/` | 553 | The testnet kit |
 
 Two words first:
@@ -20,7 +20,7 @@ Two words first:
 
 ---
 
-## 1. `site/survivor-math.js`: the rules
+## 1. `survivor-math.js`: the rules
 
 Both the page and the recorder load this one file, so they can never disagree about who is out. It does no internet
 calls and touches no wallet: it only does arithmetic on data it is given.
@@ -312,7 +312,7 @@ Two jobs, so repository code never runs next to the key that can write to GitHub
 
 ---
 
-## 4. The page: `site/survivor.html` and `site/survivor.js`
+## 4. The page: `survivor.html` and `survivor.js`
 
 ### `survivor.html`
 - **Content-Security-Policy line:** the browser may only run the site's own scripts plus three pinned library

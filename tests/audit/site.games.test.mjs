@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const APP = process.env.APP || ".";
-const read = (p) => fs.readFileSync(`${APP}/site/${p}`, "utf8");
+const read = (p) => fs.readFileSync(`${APP}/${p}`, "utf8");
 const games = JSON.parse(read("games.json")).games;
 
 test("games.json: known kinds and statuses, plain text, live games link to this site's own pages", () => {
@@ -17,7 +17,7 @@ test("games.json: known kinds and statuses, plain text, live games link to this 
     assert.ok(g.status === "live" || g.status === "soon", g.id);
     assert.ok(g.status === "soon" ? g.href === "" : /^[a-z0-9-]+\.html(#[a-z/]+)?$/.test(g.href), `${g.id}: link`);
     assert.doesNotMatch(g.name + g.line, /[<>]/, `${g.id}: plain text`);
-    if (g.status === "live" && g.href.includes(".html")) assert.ok(fs.existsSync(`${APP}/site/${g.href.split("#")[0]}`), `${g.id}: page exists`);
+    if (g.status === "live" && g.href.includes(".html")) assert.ok(fs.existsSync(`${APP}/${g.href.split("#")[0]}`), `${g.id}: page exists`);
   }
   assert.deepEqual(games.filter((g) => g.status === "live").map((g) => g.id).sort(), ["questions", "race"]);
 });

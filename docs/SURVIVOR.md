@@ -10,7 +10,7 @@ season. The last players standing win the season's prize.
 | Season | 14 UTC days, Monday 00:00 to Monday 00:00 |
 | Picks | One a day, on the KnodeGames Picks contract (game 3). Each day locks at 23:55 UTC the night before and opens 7 days ahead |
 | Prizes | 4 VHP for 1st and 2 VHP for 2nd each season, paid by the Knode Games vault once it is live |
-| Page | `site/survivor.html` |
+| Page | `survivor.html` |
 | Status | Built and audited on branch `survivor`. Not launched: waits for the Picks contract (Build 3) and the vault (Build 1) |
 
 Contents: [How to play](#how-to-play) · [The rules in full](#the-rules-in-full) · [How it works](#how-it-works) ·
@@ -123,8 +123,8 @@ field like any other producer and can be picked. The page says so.
  Picks contract, game 3 (picks)  ─────▶    counts each finished UTC day,              days.json  fields.json
                                            two nodes must agree,                       S001.json  index.json
                                            plays the season with                              │
-                                           site/survivor-math.js                              ▼
-                                                                              site/survivor.html + survivor.js
+                                           survivor-math.js                              ▼
+                                                                              survivor.html + survivor.js
  your wallet ◀──── a pick you confirm ─────────────────────────────────────── (same survivor-math.js; live
                                                                                standings from recent blocks)
 ```
@@ -137,21 +137,21 @@ field like any other producer and can be picked. The page says so.
      irreversible and two independent nodes agree on every block.
    - It publishes today's and tomorrow's field and handicaps.
    - It reads each season day's picks from the contract, on both nodes, and checks who holds 1 VHP.
-   - It plays the season with `site/survivor-math.js` and publishes the standings.
+   - It plays the season with `survivor-math.js` and publishes the standings.
 3. **Publishing.** A second job, which runs none of the repository's code, checks every file's shape. It pushes the
    files to the public `games-data` branch, which the website reads.
-4. **The page.** The page and the recorder use the same file, `site/survivor-math.js`, so they always agree. The page
+4. **The page.** The page and the recorder use the same file, `survivor-math.js`, so they always agree. The page
    also counts today's blocks itself, so "Today" is live; the recorded result is the one that counts.
 
 ## Files
 
 | File | What it is |
 |---|---|
-| `site/survivor-math.js` | The rules: the clock, the field and handicaps, the out-zone, a day's score, a whole season, ranking and prizes. Shared by the page and the recorder. No network, no wallet |
+| `survivor-math.js` | The rules: the clock, the field and handicaps, the out-zone, a day's score, a whole season, ranking and prizes. Shared by the page and the recorder. No network, no wallet |
 | `bot/games/survivor.ts` | The recorder (`npm run survivor`). Reads two nodes; writes `days.json`, `fields.json`, `S<season>.json`, `index.json` |
 | `.github/workflows/games.yml` | The hourly job: records Block X and Survivor, then checks and publishes their files |
-| `site/survivor.html`, `site/survivor.js` | The page |
-| `site/chain-blocks.js` | Shared: loads recent blocks for live standings (also used by the Race and Pulse pages) |
+| `survivor.html`, `survivor.js` | The page |
+| `chain-blocks.js` | Shared: loads recent blocks for live standings (also used by the Race and Pulse pages) |
 | `bot/survivor-test.ts` | The testnet tool (`npm run survivor-test`) |
 | `tools/survivor-testnet/` | The test page's wallet and banner, a fake testnet and a full rehearsal |
 | `tests/audit/site.survivor.test.mjs` | Tests of the rules and the page |

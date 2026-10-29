@@ -1,4 +1,4 @@
-// Survivor (site/survivor-math.js, shared by the page and the recorder bot/games/survivor.ts): the lock (the Picks
+// Survivor (survivor-math.js, shared by the page and the recorder bot/games/survivor.ts): the lock (the Picks
 // contract's time rule), the 7-day handicap, the growing out-zone with ties safe, lives, the 1-use limit, the safety
 // net, the season end, the ranking and the season prizes. Offline. Plus the page's static rules.
 import { test } from "node:test";
@@ -7,7 +7,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const read = (f) => fs.readFileSync(`${APP}/site/${f}`, "utf8");
+const read = (f) => fs.readFileSync(`${APP}/${f}`, "utf8");
 const box = { window: {} };
 vm.runInNewContext(read("survivor-math.js"), box);
 const S = box.window.KSurvivor;
@@ -230,8 +230,8 @@ test("the page sends only Picks contract picks for game 3, and shows chain text 
   assert.ok(/Knode's own producers/.test(html) && /1 VHP/.test(html), "disclosures: own producers and the 1 VHP rule");
 });
 test("the page is listed for search and in the sitemap", () => {
-  assert.ok(fs.readFileSync(`${APP}/sitemap.xml`, "utf8").includes("/site/survivor.html"));
-  assert.ok(html.includes('<link rel="canonical" href="https://bawcejawn.github.io/Knode/site/survivor.html">'));
+  assert.ok(fs.readFileSync(`${APP}/sitemap.xml`, "utf8").includes("https://knodegames.com/survivor.html"));
+  assert.ok(html.includes('<link rel="canonical" href="https://knodegames.com/survivor.html">'));
 });
 
 test("fix-check SV-1: wallets that pick on day 1 and never again win nothing, whatever real players there are", () => {

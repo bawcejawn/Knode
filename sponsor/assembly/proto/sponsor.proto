@@ -55,12 +55,15 @@ message config {
   uint64 max_mana_per_account_week = 7 [jstype = JS_STRING];
   // Most Mana everyone together may reserve per UTC day.
   uint64 max_mana_per_day = 8 [jstype = JS_STRING];
-  // Only real Knode players are sponsored (audit 2026-10-26 M-1): the payee must hold at least min_vhp of this VHP
-  // token, or have a stake (active or pending) in the game. Required, and min_vhp > 0, when switched on.
+  // Only real Knode players are sponsored (audit 2026-10-26 M-1). v3 (audit SP-2, owner 2026-10-28): a real player has
+  // at least min_vhp ACTIVE stake in the Knode vault: in the question game, or (for a call whose row names game_arg,
+  // and race picks: game 7) in that game this week. Holding VHP, or a pending stake, no longer counts. vhp is still
+  // required (it is one of the tokens whose approve is paid for).
   bytes vhp = 9 [(koinos.btype) = ADDRESS];
   uint64 min_vhp = 10 [jstype = JS_STRING];
   // Most Mana per UTC day, for everyone together, that may pay for answers by wallets that are not real players
-  // (no VHP and no stake). At most max_mana_per_day. 0 = free wallets are never sponsored.
+  // (no stake). At most max_mana_per_day. 0 = free wallets are never sponsored. v3 (audit SP-3): released by the hour,
+  // 1/24 of it at 00:00 UTC and 1/24 more each hour, so a burst can only use what has been released so far today.
   uint64 max_mana_free_day = 11 [jstype = JS_STRING];
   // The Producer Race picks contract (race/). When set, `pick` calls for the payee are sponsored as free play, like
   // game answers. Empty = picks are not sponsored.
@@ -68,6 +71,21 @@ message config {
   // v3: more Knode player actions, by contract and entry point, so new KnodeGames contracts (the Picks contract first)
   // are sponsored without new sponsor code. At most 8. See allowed_call.
   repeated allowed_call allowed = 13;
+  // v3 (owner, 2026-10-28): the most Mana each kind of action may ask for, so a transaction's limit fits what it
+  // really uses. The caps count a transaction's Mana LIMIT (the sponsor can't know what it will use when it approves
+  // it), so a loose limit used up players' allowances and everyone's daily totals far faster than the Mana really spent.
+  // A transaction's rc_limit must be at most the sum, over its operations, of each operation's row here (an operation
+  // with no row counts as max_mana_per_tx), and at most max_mana_per_tx. At most 16 rows. The tool sets each row from
+  // measured use with a safety margin (npm run sponsor -- mana-report).
+  repeated mana_cap mana_caps = 14;
+}
+
+// v3: one kind of action and the most Mana it may ask for (see config.mana_caps).
+message mana_cap {
+  bytes contract = 1 [(koinos.btype) = ADDRESS];
+  uint32 entry_point = 2;
+  // At most max_mana_per_tx, above 0.
+  uint64 max_mana = 3 [jstype = JS_STRING];
 }
 
 // v3: one more player action the sponsor pays for. The call is paid only when its arguments are exactly what the
@@ -84,8 +102,12 @@ message allowed_call {
   // max_mana_free_day). Otherwise: real players only.
   bool free_play = 3;
   // One byte per field number from 1: the field's protobuf wire type + 1 (1 = varint, 2 = 64-bit, 3 = bytes or a
-  // message, 6 = 32-bit), or 0 = the field may not appear. arg_types[0] must be 3 (the player). 1 to 16 bytes.
+  // message, 6 = 32-bit), or 0 = the field may not appear; plus 0x10 for a REPEATED field (audit SP-16: only a
+  // repeated field may appear more than once). arg_types[0] must be 3 (the player, once). 1 to 16 bytes.
   bytes arg_types = 4 [(koinos.btype) = HEX];
+  // The argument field holding the Knode vault game id (a varint), or 0. When set, a payee with at least min_vhp
+  // staked in THAT game this week counts as a real player for this call (owner, 2026-10-28: every game takes stakes).
+  uint32 game_arg = 5;
 }
 
 message usage {
@@ -173,6 +195,15 @@ message race_pick_args {
 message game_get_player_args {
   bytes player = 1 [(koinos.btype) = ADDRESS];
   uint64 week = 2 [jstype = JS_STRING];
+}
+// The Knode vault (game v6) get_game_player: only week_stake is read (the stake counted for that week).
+message game_get_game_player_args {
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  uint32 game = 2;
+  uint64 week = 3 [jstype = JS_STRING];
+}
+message game_get_game_player_result {
+  uint64 week_stake = 4 [jstype = JS_STRING];
 }
 message game_player {
   uint64 stake = 1 [jstype = JS_STRING];

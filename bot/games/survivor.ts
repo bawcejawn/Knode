@@ -6,14 +6,14 @@
  *     (signer and time) matches on two independent nodes (RPC and RPC_CHECK). It keeps each producer's block count.
  *     Up to 3 days a run, so a long outage (or the first run, which needs the 8 days behind today) catches up over a
  *     few runs.
- *  2. Fields. From the recorded days: today's and tomorrow's field and handicap (site/survivor-math.js: each
+ *  2. Fields. From the recorded days: today's and tomorrow's field and handicap (survivor-math.js: each
  *     producer's blocks over days d−8 … d−2), so the page can show them before the 23:55 UTC lock.
  *  3. Seasons (once FIRST_DAY is set and the Picks contract is live, picks-data/deployment.json): for each recorded
  *     season day, the picks for that day from the Picks contract (game 3), read on both nodes (they must agree; the
  *     chain locked them at 23:55 UTC the night before), and which players still in hold 1 VHP or a Knode stake at
  *     this check (on both nodes: both must say so). Only the picks of players still in are kept (from day 2 on), so a
  *     season file stays small (audit SV-2). Game 3's settings on the chain are checked first (audit SV-9). A season
- *     stays on the list until it is final, and the days it still needs are recorded even after a long outage (SV-4). The season is played by site/survivor-math.js, the same file the page runs. A season is final 12
+ *     stays on the list until it is final, and the days it still needs are recorded even after a long outage (SV-4). The season is played by survivor-math.js, the same file the page runs. A season is final 12
  *     hours after its last day (the correction window); its prizes appear then.
  *  4. Writes games-data/survivor/index.json, days.json, fields.json and S<season>.json; the publish job puts them on
  *     the games-data branch for the website.
@@ -27,7 +27,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { pathToFileURL } from "node:url";
 import { readVhp, MAINNET_VHP, withRetry } from "../../common.ts";
-await import("../../site/survivor-math.js");
+await import("../../survivor-math.js");
 /** The mainnet game. A testnet run passes its own clock (o.math, from KSurvivor.withConfig); every helper below reads S. */
 const MAINNET_S: any = (globalThis as any).KSurvivor;
 let S: any = MAINNET_S;
@@ -207,7 +207,7 @@ async function readPicks(node: any, contract: string, day: number): Promise<RawP
   }
   throw new Error(`more than 100,000 picks for day ${day}: not read in full (audit SV-9)`);
 }
-/** Game 3's settings must be exactly what site/survivor-math.js assumes (audit SV-9). Returns a problem, or "". */
+/** Game 3's settings must be exactly what survivor-math.js assumes (audit SV-9). Returns a problem, or "". */
 export function gameProblem(g: any): string {
   if (!g) return "game 3 isn't registered on the Picks contract";
   // Repo Lense SV-A14: enabled and max_picks_per_day too (a closed game would make every player miss a pick).

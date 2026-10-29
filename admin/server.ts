@@ -7,7 +7,7 @@
  * your network or the internet: the server listens on 127.0.0.1 (this computer only).
  *
  * Safety:
- *   - Every button runs an existing command (npm run bot / npm run desk) with checked values; keys stay in .env and
+ *   - Every button runs an existing command (npm run bot / desk / sponsor / picks / racepicks) with checked values; keys stay in .env and
  *     never reach the page. Mainnet sends still need CONFIRM_MAINNET=yes in .env, as on the command line.
  *   - Anything that sends a transaction is previewed first (a dry run). "Send" is only accepted for the exact action
  *     and values just previewed, within 10 minutes.
@@ -21,7 +21,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, exec } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { ACTIONS, commandFor } from "./actions.ts";
+import { ACTIONS, AREAS, KINDS, commandFor } from "./actions.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.ADMIN_PORT ?? 8787);
@@ -32,13 +32,20 @@ const previews = new Map<string, number>();   // action + values → time of its
 let busy = false;
 
 const page = fs.readFileSync(path.join(ROOT, "admin", "index.html"), "utf8");
-const catalog = JSON.stringify(ACTIONS.map(({ id, group, label, help, params, sends }) => ({
-  id, group, label, help, sends, params: (params ?? []).map(({ name, label, hint, choices }) => ({ name, label, hint, choices })),
-})));
+// What the page shows: every area of the platform, the kinds of control, and each action with its plain-words fields
+// and the command it runs (with {placeholders} for the values). The patterns stay on the server, which checks them.
+const catalog = JSON.stringify({
+  areas: AREAS, kinds: KINDS,
+  actions: ACTIONS.map(({ id, area, kind, label, what, when, signer, effect, timing, step, tool, params, sends, args }) => ({
+    id, area, kind, label, what, when, signer, effect, timing, step, sends,
+    testnet: args.includes("--testnet"), command: `npm run ${tool} -- ${args.join(" ")}`,
+    params: (params ?? []).map(({ name, label, hint, choices, value }) => ({ name, label, hint, choices, value })),
+  })),
+});
 
 function run(tool: string, argv: string[]): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
-    const script = tool === "desk" ? "bot/desk.ts" : tool === "sponsor" ? "bot/sponsor.ts" : "bot/bot.ts";
+    const script = tool === "desk" ? "bot/desk.ts" : tool === "sponsor" ? "bot/sponsor.ts" : tool === "picks" ? "bot/picks.ts" : tool === "racepicks" ? "bot/race-picks.ts" : "bot/bot.ts";
     const child = spawn(process.execPath, ["--import", "tsx", script, ...argv], { cwd: ROOT, env: process.env });
     let out = "";
     const add = (b: Buffer) => { out += b.toString(); if (out.length > 400_000) out = out.slice(-400_000); };

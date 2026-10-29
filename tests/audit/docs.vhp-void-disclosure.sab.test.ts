@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-const html = fs.readFileSync("site/index.html", "utf8");
+const html = fs.readFileSync("index.html", "utf8");
 const readme = fs.readFileSync("README.md", "utf8");
 const text = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 

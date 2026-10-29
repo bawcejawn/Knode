@@ -1,5 +1,5 @@
-# Served from the domain root once Knode Games has its own domain (until then search engines read it at the github.io root).
+# Knode Games, https://knodegames.com
 User-agent: *
 Allow: /
-Disallow: /site/producer.html
-Sitemap: https://bawcejawn.github.io/Knode/sitemap.xml
+Disallow: /producer.html
+Sitemap: https://knodegames.com/sitemap.xml

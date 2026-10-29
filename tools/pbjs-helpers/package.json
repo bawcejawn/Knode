@@ -1,12 +1,17 @@
 {
   "name": "pbjs-helpers",
   "private": true,
-  "description": "The helper packages protobufjs's command line installs on first use (unpinned, from the network). Pinned here by the lockfile; the contract builds' prebuild step puts them in place so nothing is fetched at build time.",
+  "description": "Every helper package protobufjs's command line would otherwise install on first use (unpinned, from the network, with install scripts): all 10 of its cliDependencies, pinned by the lockfile. The contract builds' prebuild step puts them in place so nothing is fetched at build time (audit BX-6).",
   "dependencies": {
     "chalk": "4.1.2",
+    "escodegen": "1.14.3",
+    "espree": "7.3.1",
     "estraverse": "5.3.0",
+    "glob": "7.2.3",
+    "jsdoc": "3.6.11",
     "minimist": "1.2.8",
     "semver": "7.7.2",
+    "tmp": "0.2.4",
     "uglify-js": "3.19.3"
   }
 }

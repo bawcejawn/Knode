@@ -101,7 +101,7 @@ test("robot players and the first round a season can start on", () => {
 });
 
 test("the test page: survivor.html with the banner, the test settings and the test wallet; same CSP", () => {
-  const html = fs.readFileSync(path.join(APP, "site/survivor.html"), "utf8"), out = T.testPage(html);
+  const html = fs.readFileSync(path.join(APP, "survivor.html"), "utf8"), out = T.testPage(html);
   const csp = (h) => /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(h)[1];
   assert.equal(csp(out), csp(html));
   assert.match(out, /<title>TESTNET · /);
@@ -111,7 +111,7 @@ test("the test page: survivor.html with the banner, the test settings and the te
   assert.ok(!/\son[a-z]+=/i.test(out.replace(html, "")), "no inline handlers added");
   // The real page never loads the test files.
   assert.ok(!html.includes("/testnet/"));
-  assert.ok(!fs.readFileSync(path.join(APP, "site/survivor.js"), "utf8").includes("KSurvivorNet =") );
+  assert.ok(!fs.readFileSync(path.join(APP, "survivor.js"), "utf8").includes("KSurvivorNet =") );
 });
 
 // ── the local test server ──
@@ -132,11 +132,11 @@ const quiet = async (f) => { const l = console.log; console.log = () => {}; try 
 
 test("the test server: this PC only, the site's files and the recorder's data, never a key file", async () => quiet(() => withServer(async (base, port) => {
   const get = (p, headers = {}) => fetch(base + p, { headers, redirect: "manual" });
-  assert.equal((await get("/site/survivor-testnet.html")).status, 200);
-  const page = await get("/site/survivor-testnet.html");
+  assert.equal((await get("/survivor-testnet.html")).status, 200);
+  const page = await get("/survivor-testnet.html");
   assert.equal(page.headers.get("x-frame-options"), "DENY", "no framing (review TN-3)");
   assert.match(page.headers.get("content-security-policy") || "", /frame-ancestors 'none'/);
-  for (const p of ["/site/index.html", "/site/race.html", "/site/blockx.html"]) assert.equal((await get(p)).status, 404, `${p}: only the TESTNET page is served (review TN-7)`);
+  for (const p of ["/index.html", "/race.html", "/blockx.html", "/site/survivor-testnet.html", "/common.ts", "/package.json", "/bot/survivor-test.ts", "/games.json", "/sw.js"]) assert.equal((await get(p)).status, 404, `${p}: only the TESTNET page is served (review TN-7)`);
   assert.equal((await get("/testnet-data/survivor/fields.json")).status, 200);
   for (const p of ["/testnet-data/survivor/keys.env", "/testnet-data/survivor/config.json", "/testnet-data/survivor/../keys.env", "/.env", "/site/../.env", "/site/..%2f.env",
     "/site/.env", "/bot/survivor-test.ts", "/testnet-data/survivor/data/../keys.env", "/site/%2e%2e/testnet-data/survivor/keys.env"]) {
@@ -146,7 +146,7 @@ test("the test server: this PC only, the site's files and the recorder's data, n
   }
   // Another host name (DNS rebinding) is refused.
   const http = await import("node:http");
-  const status = await new Promise((ok) => http.get({ host: "127.0.0.1", port, path: "/site/survivor-testnet.html", headers: { host: "evil.example" } }, (r) => ok(r.statusCode)));
+  const status = await new Promise((ok) => http.get({ host: "127.0.0.1", port, path: "/survivor-testnet.html", headers: { host: "evil.example" } }, (r) => ok(r.statusCode)));
   assert.equal(status, 403);
   // The settings script names addresses, never keys.
   const net = await (await get("/testnet/survivor-net.js")).text();

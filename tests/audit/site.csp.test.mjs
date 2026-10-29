@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const APP = process.env.APP || ".";
-const dir = `${APP}/site`;
+const dir = `${APP}`;
 const pages = fs.readdirSync(dir).filter((f) => f.endsWith(".html"));
 const scripts = fs.readdirSync(dir).filter((f) => f.endsWith(".js"));
 const read = (f) => fs.readFileSync(`${dir}/${f}`, "utf8");
@@ -90,6 +90,16 @@ test("(guard) every origin the pages fetch or load from is allowed (connect-src 
   for (const p of pages) {
     const html = read(p), c = cspOf(html);
     const conn = srcList(c, "connect-src");
+    // The testnet page reaches only the testnet node and its own data branch: never mainnet, never KOIN Vault.
+    if (/<meta name="kg-network" content="testnet">/.test(html)) {
+      const tn = json("testnet/blockx.json");
+      if (!allows(conn, tn.rpc + "/")) missing.push(`${p}: connect-src lacks the testnet node ${tn.rpc}`);
+      if (!allows(conn, tn.data + "blockx-2/board.json")) missing.push(`${p}: connect-src lacks the testnet data branch`);
+      for (const bad of ["https://api.koinos.io/", "https://koinos.armana.io/", "https://koinvault.app/api/dapp/status", "https://raw.githubusercontent.com/bawcejawn/Knode/games-data/x"])
+        if (allows(conn, bad)) missing.push(`${p}: the testnet page may reach ${bad}`);
+      for (const m of html.matchAll(/<script\b[^>]*\bsrc="(https:[^"]+)"/g)) if (!allows(srcList(c, "script-src"), m[1])) missing.push(`${p}: script-src blocks ${m[1]}`);
+      continue;
+    }
     const usesChain = /koilib@/.test(html), usesWallet = /wallet\.js/.test(html);
     if (usesChain) for (const r of rpcs) if (!allows(conn, r)) missing.push(`${p}: connect-src lacks rpc ${r}`);
     if (usesWallet && !allows(conn, "https://koinvault.app/api/dapp/status")) missing.push(`${p}: connect-src lacks KOIN Vault`);

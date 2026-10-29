@@ -5,7 +5,7 @@ multiple-choice questions about what Koinos block producers will do next ("How m
 the next 8 hours?"). Every right answer is a point. Each week the best players share what the game's block-producing
 pool earned. It is free to play, and staking VHP lets you share the rewards.
 
-Play: <https://bawcejawn.github.io/Knode/site/> (works in any browser; on a phone you can also "Add to Home Screen" to
+Play: <https://knodegames.com> (works in any browser; on a phone you can also "Add to Home Screen" to
 install it like an app).
 
 Everything that matters runs on chain: stakes, answers, scores, the leaderboard line and the payouts are all in the
@@ -192,9 +192,9 @@ admin page on the owner's PC: `npm run admin` (127.0.0.1 only; every action show
 Anyone can rebuild the contracts and compare their fingerprints with the code on chain:
 
 ```
-npm ci
-cd game && npm ci && npm test && npm run check && cd ..
-cd desk && npm ci && npm test && npm run check && cd ..
+npm ci --ignore-scripts
+cd game && npm ci --ignore-scripts && npm test && npm run check && cd ..
+cd desk && npm ci --ignore-scripts && npm test && npm run check && cd ..
 sha256sum game/build/release/contract.wasm desk/build/release/contract.wasm
 npm run bot -- chain-check
 ```
@@ -264,7 +264,7 @@ before the start, the override is set aside and the node starts on its old folde
 | `desk/` | Knode Swap contract and tests ([`desk/README.md`](desk/README.md)) |
 | `bot/` | The hourly operator bot, the Desk and upgrade tools, the rehearsal ([`bot/README.md`](bot/README.md)) |
 | `admin/` | The local admin page (`npm run admin`) |
-| `site/` | The website (GitHub Pages) |
+| `*.html`, `*.js`, `*.css`, `media/` | The website (GitHub Pages, https://knodegames.com) · `site/` only redirects old links |
 | `generator.ts`, `resolver.ts`, `common.ts` | Build and score the questions ([`docs/QUESTIONS.md`](docs/QUESTIONS.md)) |
 | `backtest.ts`, `export-blocks.ts`, `data/` | Tune the question templates on real history |
 | `game-data/`, `desk-data/` | The live, public game files (questions, results, deployment details) |
@@ -276,9 +276,9 @@ before the start, the override is set aside and the node starts on its old folde
 ## Running the tests
 
 ```
-npm ci
-cd game && npm ci && npm test && cd ..
-cd desk && npm ci && npm test && cd ..
+npm ci --ignore-scripts
+cd game && npm ci --ignore-scripts && npm test && cd ..
+cd desk && npm ci --ignore-scripts && npm test && cd ..
 npm run test:resolver
 node --import tsx --test bot/*.test.ts
 node --import tsx --test --test-concurrency=1 tests/audit/*.test.ts tests/audit/*.test.mjs

@@ -10,8 +10,8 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const wallet = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
-const app = fs.readFileSync(`${APP}/site/app.js`, "utf8");
+const wallet = fs.readFileSync(`${APP}/wallet.js`, "utf8");
+const app = fs.readFileSync(`${APP}/app.js`, "utf8");
 const PLAYER = "1PlayerXXXXXXXXXXXXXXXXXXXXXXXXXXX", CONTRACT = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr";
 
 const s0 = wallet.indexOf("  async function send(label"), s1 = wallet.indexOf("  function init(");
