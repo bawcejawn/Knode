@@ -1,8 +1,8 @@
 {
   "network": "mainnet",
-  "rpc": "https://koinos.armana.io",
+  "rpc": "https://api.koinos.io",
   "address": "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8",
-  "wasmSha256": "fa4659e65c6156da3dde34238e0545a489a8b7f00cdf51df9bf79517a0019f33",
-  "uploadTx": "0x122018609d1637d59f2c1832c736d53dc8c33b3d1f046d91f38f640d21a269a28ead",
-  "uploadedAt": "2026-10-27T15:11:05.299Z"
+  "wasmSha256": "b61ac238da27c4a71c01127f39a7b95f19fabf15e35df9f9715546d221e256e4",
+  "uploadTx": "0x122040b76312d2855ca5cf9842c1377e0ca996261b39bb753181c72bcf3ab22daf72",
+  "uploadedAt": "2026-10-30T20:23:19.027Z"
 }

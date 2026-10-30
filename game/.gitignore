@@ -2,6 +2,7 @@ node_modules/
 build/
 abi/*
 !abi/kpred.koilib.json
+!abi/kpred-v6.koilib.json
 .env
 deploy-state.json
 assembly/index.ts

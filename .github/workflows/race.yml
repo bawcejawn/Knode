@@ -89,6 +89,12 @@ jobs:
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           big=$(find "$IN" -type f -size +2048k -print)
           if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
+          # Round 8 (BX-122) and the class behind BX-95 / BX-112 / BX-113: every incoming file must be EXACTLY what the
+          # JavaScript recorder writes for its own content (JSON.stringify of its parse, plus a newline). Then the next
+          # recorder run reads back the same values and writes the same bytes, whatever Python thinks of them: no 5.0, no
+          # -0, no 1e2, no big integer, no spacing or escaping a recorder never writes.
+          command -v node >/dev/null || { echo "::error::node is missing on this runner; nothing published"; exit 1; }
+          node -e 'const fs=require("fs"),p=require("path"),bad=[];(function w(d){for(const f of fs.readdirSync(d)){const q=p.join(d,f),s=fs.lstatSync(q);if(s.isDirectory()){w(q);continue}if(!f.endsWith(".json"))continue;if(!s.isFile()){bad.push(p.relative(process.argv[1],q));continue}const raw=fs.readFileSync(q);let ok=false;try{ok=Buffer.compare(Buffer.from(JSON.stringify(JSON.parse(raw.toString("utf8")))+"\n","utf8"),raw)===0}catch(e){}if(!ok)bad.push(p.relative(process.argv[1],q))}})(process.argv[1]);if(bad.length){console.log("::error::not in the recorders own JSON form (JSON.stringify of its parse), nothing published: "+bad.join(", "));process.exit(1)}' -- "$IN"
           # The content must be the recorder's own shape, not only parse as JSON.
           # The published files, to check that a card once published is never changed (audit BX-44).
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
@@ -98,19 +104,47 @@ jobs:
           if git -C work fetch -q --depth 1 "$remote" race-data 2>/dev/null; then
             parent=$(git -C work rev-parse FETCH_HEAD)
             git -C work ls-tree --name-only FETCH_HEAD | while IFS= read -r f; do
-              if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git -C work show "FETCH_HEAD:$f" > "$RUNNER_TEMP/published/$f"; fi
+              if [[ "$f" =~ ^(W[0-9]{3}|index)\.json$ ]]; then git -C work show "FETCH_HEAD:$f" > "$RUNNER_TEMP/published/$f"; fi
             done
           fi
           /usr/bin/python3 - "$IN" "$RUNNER_TEMP/published" <<'PY'
           import json, os, re, sys
           d = sys.argv[1]; pub = sys.argv[2] if len(sys.argv) > 2 else ""; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
           isaddr = lambda v: type(v) is str and addr.fullmatch(v) is not None
-          num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
+          # Round-7 blind review: JavaScript compares with ===, Python's == says True == 1 and 3.0 == 3. So every check of
+          # a file's header is type-strict (v, week, game), and published content is compared with same() (types too).
+          def same(a, b):
+              if type(a) is not type(b): return False
+              if type(a) is dict: return a.keys() == b.keys() and all(same(a[k], b[k]) for k in a)
+              if type(a) is list: return len(a) == len(b) and all(same(x, y) for x, y in zip(a, b))
+              return a == b
+          one = lambda x: type(x) is int and x == 1
+          num = lambda x: type(x) in (int, float) and x == x and abs(x) <= 2**53 - 1   # audit BX-113: JavaScript's exact range
+          # Audit BX-95 / BX-112 / BX-113 (rounds 6-7), the root cause: the recorders are JavaScript. Every value of every
+          # incoming file must be one JavaScript reads back exactly (integers and numbers within 2^53 - 1, finite), so a
+          # bad run can never publish a value that makes every honest run after it look like a rewrite.
+          def js_safe(o, depth=0):
+              if depth > 64: return False
+              if o is None or type(o) in (bool, str): return True
+              if type(o) is int: return abs(o) <= 2**53 - 1
+              if type(o) is float: return o == o and abs(o) <= 2**53 - 1 and not o.is_integer()   # BX-122: JSON.stringify never writes 5.0
+              if type(o) is list: return all(js_safe(x, depth + 1) for x in o)
+              if type(o) is dict: return all(type(k) is str and js_safe(v, depth + 1) for k, v in o.items())
+              return False
+          for _root, _dirs, _files in os.walk(d):
+              for _f in _files:
+                  if _f.endswith(".json"):
+                      assert js_safe(json.load(open(os.path.join(_root, _f), encoding="utf-8"))), "a value the recorder (JavaScript) can't read back exactly: " + _f
           def card_ok(c):
               # Audit BX-44: exact keys (cards feed Block X's scores). "samples" (how many VHP samples it used) is new.
               if c is None: return True
-              if type(c) is not dict or set(c) - {"samples"} != {"at", "blocksPerRace", "c", "fairness", "field", "paddock"}: return False
+              # Audit BX-55: "flagged", the producers whose VHP the two nodes read differently (Block X holds their targets).
+              # Round 4: "topInDoubt" (BX-73: the nodes disagreed at the top; Block X holds every target on it), "height" (BX-77).
+              if type(c) is not dict or set(c) - {"samples", "flagged", "topInDoubt", "height"} != {"at", "blocksPerRace", "c", "fairness", "field", "paddock"}: return False
+              if "topInDoubt" in c and c["topInDoubt"] is not True: return False
+              if "height" in c and not (type(c["height"]) is int and 0 < c["height"] < 10**12): return False
               if "samples" in c and not (type(c["samples"]) is int and 0 <= c["samples"] <= 1000): return False
+              if "flagged" in c and not (type(c["flagged"]) is list and 0 < len(c["flagged"]) <= 500 and all(isaddr(a) for a in c["flagged"]) and len(set(c["flagged"])) == len(c["flagged"])): return False
               if not num(c["at"]) or not num(c["c"]) or not num(c["blocksPerRace"]): return False
               if not (c["fairness"] is None or (type(c["fairness"]) is list and len(c["fairness"]) == 2 and all(num(v) for v in c["fairness"]))): return False
               if type(c["field"]) is not list or type(c["paddock"]) is not list or len(c["field"]) + len(c["paddock"]) > 500: return False
@@ -144,24 +178,48 @@ jobs:
           for f in os.listdir(d):
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "board.json":
-                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1, f
+                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and one(j["v"]), f
                   assert all(rows_ok(j[k]) for k in ("today", "week", "allTime")) and (j["lastWeek"] is None or rows_ok(j["lastWeek"])), f
                   continue
               if f == "index.json":
-                  assert set(j) == {"v", "updated", "weeks"} and j["v"] == 1 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
+                  assert set(j) == {"v", "updated", "weeks"} and one(j["v"]) and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
+                  # Audit BX-111 (round 6, as BX-96): the week list never loses a published week.
+                  pi = os.path.join(pub, "index.json") if pub else ""
+                  if pi and os.path.isfile(pi):
+                      pw = json.load(open(pi, encoding="utf-8")).get("weeks", [])
+                      assert type(pw) is not list or all(w in j["weeks"] for w in pw), f + ": a published week would be dropped"
+                      # Audit BX-119 (round 7): a new week only around now (the recorder keeps last week, this week and,
+                      # near the end of a week, next week's first card).
+                      import time
+                      cw = (int(os.environ.get("CHECK_NOW_MS") or time.time() * 1000) - 1792368000000) // (7 * 86400000)
+                      assert type(pw) is not list or all(w in pw or cw - 1 <= w <= cw + 1 for w in j["weeks"]), f + ": a new week that isn't around this one"
                   continue
-              assert set(j) == {"v", "week", "start", "end", "races"} and j["v"] == 1 and f == "W%03d.json" % j["week"], f
+              assert set(j) == {"v", "week", "start", "end", "races"} and one(j["v"]) and type(j["week"]) is int and 0 <= j["week"] < 10000 and f == "W%03d.json" % j["week"], f
               assert type(j["races"]) is list and len(j["races"]) == 28, f
+              # Round-7 blind review: race i is the week's race i (start, end and id), every id once: race.ts finds races
+              # by id and keeps the first.
+              import datetime
+              assert j["start"] == 1792368000000 + j["week"] * 7 * 86400000 and j["end"] == j["start"] + 7 * 86400000, f
+              for i, r in enumerate(j["races"]):
+                  st = j["start"] + i * 21600000
+                  assert type(r) is dict and r.get("start") == st and type(r.get("start")) is int and r.get("end") == st + 21600000 and type(r.get("end")) is int and \
+                      r.get("id") == datetime.datetime.fromtimestamp(st / 1000, datetime.timezone.utc).strftime("%Y-%m-%dT%H"), f + ": race " + str(i) + " isn't the week's race " + str(i)
               for r in j["races"]:
                   assert set(r) == {"id", "start", "end", "cards", "result"} and re.fullmatch(r"\d{4}-\d{2}-\d{2}T(00|06|12|18)", r["id"]), f
                   assert type(r["cards"]) is list and len(r["cards"]) in (3, 6) and all(card_ok(c) for c in r["cards"]) and result_ok(r["result"]), f + " " + r["id"]
+                  # Audit BX-54: a card's time fits its leg: taken at most 2 hours before the leg starts and before it ends.
+                  leg = (r["end"] - r["start"]) // len(r["cards"]) if type(r.get("start")) is int and type(r.get("end")) is int else 0
+                  for i, c in enumerate(r["cards"]):
+                      if c is not None:
+                          s0 = r["start"] + i * leg
+                          assert leg > 0 and s0 - 2 * 3600000 <= c["at"] < s0 + leg, f + " " + r["id"] + ": a card dated outside its leg"
               if pub and os.path.exists(os.path.join(pub, f)):
                   old = {r["id"]: r for r in json.load(open(os.path.join(pub, f), encoding="utf-8")).get("races", []) if type(r) is dict and "id" in r}
                   for r in j["races"]:
                       o = old.get(r["id"])
                       if o and type(o.get("cards")) is list and len(o["cards"]) == len(r["cards"]):
                           for i, c in enumerate(o["cards"]):
-                              assert c is None or c == r["cards"][i], f"{f} {r['id']}: a published card would change"
+                              assert c is None or same(c, r["cards"][i]), f"{f} {r['id']}: a published card would change"
           print("race files ok")
           PY
           cd work

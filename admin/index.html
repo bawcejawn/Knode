@@ -4,60 +4,125 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>Knode Admin</title>
+<title>Knode Games Admin</title>
 <style>
-  :root { --bg: #f6f7f9; --panel: #fff; --ink: #14181f; --muted: #5b6573; --line: #dde1e7; --accent: #2457d6; --ok: #127a43; --warn: #a35a00; --bad: #b42318; --code: #0f1420; --codeink: #dfe6f2; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #0f1218; --panel: #171b23; --ink: #e8ecf2; --muted: #9aa5b4; --line: #2a303b; --accent: #7aa2ff; --ok: #4cc38a; --warn: #f0a540; --bad: #ff7b72; --code: #0a0d12; --codeink: #d6deea; } }
+  :root { --bg: #f5f6f8; --panel: #fff; --ink: #14181f; --muted: #5b6573; --line: #dde1e7; --soft: #eef1f5; --accent: #2457d6; --ok: #127a43; --warn: #9a5800; --bad: #b42318; --code: #0f1420; --codeink: #dfe6f2; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0f1218; --panel: #171b23; --ink: #e8ecf2; --muted: #9aa5b4; --line: #2a303b; --soft: #1e232d; --accent: #7aa2ff; --ok: #4cc38a; --warn: #f0a540; --bad: #ff7b72; --code: #0a0d12; --codeink: #d6deea; } }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { padding: 20px 24px 8px; max-width: 1200px; margin: 0 auto; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  .sub { color: var(--muted); margin: 0; }
-  .banner { margin: 12px 0 0; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); }
+  header { padding: 18px 24px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { font-size: 21px; margin: 0; }
+  .sub { color: var(--muted); margin: 2px 0 8px; font-size: 14px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted); align-items: center; }
+  .banner { margin: 10px 0 0; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); }
   .banner.bad { border-color: var(--bad); color: var(--bad); }
-  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; padding: 16px 24px 40px; max-width: 1200px; margin: 0 auto; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-  nav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
-  nav button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 6px 12px; border-radius: 999px; cursor: pointer; font: inherit; }
-  nav button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
-  .card h3 { margin: 0 0 2px; font-size: 16px; }
-  .card p { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+  .layout { display: grid; grid-template-columns: 250px minmax(0, 1fr) minmax(0, 440px); gap: 20px; padding: 18px 24px 48px; max-width: 1560px; margin: 0 auto; }
+  @media (max-width: 1250px) { .layout { grid-template-columns: 240px minmax(0, 1fr); } .out { grid-column: 1 / -1; position: static !important; } }
+  @media (max-width: 760px) { .layout { grid-template-columns: 1fr; padding: 12px 16px 40px; } }
+
+  /* sidebar */
+  aside { position: sticky; top: 12px; align-self: start; max-height: calc(100vh - 24px); overflow: auto; }
+  @media (max-width: 760px) { aside { position: static; max-height: none; } }
+  .search { width: 100%; margin: 0 0 12px; }
+  .side-sec { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 14px 4px 4px; }
+  .area-btn { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; text-align: left; border: 1px solid transparent; background: transparent; color: var(--ink); padding: 7px 10px; border-radius: 8px; cursor: pointer; font: inherit; }
+  .area-btn:hover { background: var(--soft); }
+  .area-btn[aria-current="true"] { background: var(--panel); border-color: var(--accent); }
+  .area-btn .n { font-size: 12px; color: var(--muted); }
+  .area-btn.planned { color: var(--muted); }
+
+  /* pills and tags */
+  .pill { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .pill.live { border-color: var(--ok); color: var(--ok); }
+  .pill.launching { border-color: var(--accent); color: var(--accent); }
+  .pill.testnet { border-color: var(--warn); color: var(--warn); }
+  .tag { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .tag.chain { border-color: var(--bad); color: var(--bad); }
+  .tag.files { border-color: var(--warn); color: var(--warn); }
+  .tag.testnet { background: var(--warn); border-color: var(--warn); color: #fff; }
+  .tag.mainnet { border-color: var(--ink); color: var(--ink); }
+  .tag.step { background: var(--soft); }
+
+  /* area header */
+  .area-head { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+  .area-head h2 { margin: 0; font-size: 20px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .area-head p { margin: 6px 0 0; }
+  .facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 10px 0 0; font-size: 14px; }
+  .facts dt { color: var(--muted); }
+  .facts dd { margin: 0; }
+  .later { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--soft); color: var(--muted); }
+  code { font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* kind sections and cards */
+  .kind { margin: 22px 0 8px; }
+  .kind h3 { margin: 0; font-size: 16px; }
+  .kind p { margin: 0; color: var(--muted); font-size: 14px; }
+  .kind.emergency h3 { color: var(--bad); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 10px 0; }
+  .card.emergency { border-left: 4px solid var(--bad); }
+  .card-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .card-top h4 { margin: 0 6px 0 0; font-size: 15.5px; }
+  .where { font-size: 12.5px; color: var(--muted); margin: -2px 0 6px; }
+  .info { display: grid; grid-template-columns: 110px 1fr; gap: 3px 10px; font-size: 14px; margin: 0 0 10px; }
+  .info dt { color: var(--muted); }
+  .info dd { margin: 0; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
-  label { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); flex: 1 1 160px; }
+  label { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); flex: 1 1 200px; }
+  label small { font-size: 12px; }
   input, select { font: inherit; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
   .btn { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; }
   .btn.primary { background: var(--accent); color: #fff; }
   .btn.send { border-color: var(--bad); background: var(--bad); color: #fff; }
   .btn:disabled { opacity: .45; cursor: not-allowed; }
-  .tag { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); margin-left: 6px; vertical-align: 2px; }
-  .out { position: sticky; top: 12px; }
-  .out .card { padding: 0; overflow: hidden; }
-  .out .head { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-  .out .cmd { font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--muted); word-break: break-all; }
-  pre { margin: 0; padding: 14px; background: var(--code); color: var(--codeink); font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; min-height: 360px; max-height: 75vh; overflow: auto; }
+  .cmdline { margin-top: 8px; font-size: 12.5px; color: var(--muted); word-break: break-all; }
+  .empty { color: var(--muted); padding: 20px 4px; }
+
+  /* output */
+  .out { position: sticky; top: 12px; align-self: start; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
+  .panel .head { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .panel .cmd { font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--muted); word-break: break-all; }
+  pre { margin: 0; padding: 14px; background: var(--code); color: var(--codeink); font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; min-height: 300px; max-height: 60vh; overflow: auto; }
   .status-ok { color: var(--ok); } .status-bad { color: var(--bad); } .status-run { color: var(--warn); }
+  .hist { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: auto; }
+  .hist li button { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); font: 13px/1.4 inherit; padding: 7px 14px; cursor: pointer; }
+  .hist li button:hover { background: var(--soft); }
+  .hist .t { color: var(--muted); }
 </style>
 </head>
 <body>
 <header>
-  <h1>Knode Admin</h1>
-  <p class="sub">Runs on this computer only. Every button runs the same command you would type; anything that sends is previewed first.</p>
+  <h1>Knode Games Admin</h1>
+  <p class="sub">The control room for the whole platform. It runs on this computer only. Every button runs the same command you would type in PowerShell, and anything that changes something is previewed (a dry run) before you can send it.</p>
+  <p class="sub" id="ver"></p>
+  <div class="legend" aria-label="What the labels mean">
+    <span><span class="tag">Read-only</span> looks only</span>
+    <span><span class="tag files">Edits files on this PC</span> nothing on chain</span>
+    <span><span class="tag chain">Changes the blockchain</span> signed with a key from .env</span>
+    <span><span class="tag mainnet">Mainnet</span> real KOIN</span>
+    <span><span class="tag testnet">Testnet</span> test KOIN only</span>
+  </div>
   <div id="banner" class="banner" hidden></div>
 </header>
-<main>
-  <section>
-    <nav id="tabs" aria-label="Sections"></nav>
-    <div id="cards"></div>
-  </section>
-  <section class="out" aria-live="polite">
-    <div class="card">
+<div class="layout">
+  <aside aria-label="Platform areas">
+    <input id="search" class="search" type="search" placeholder="Search: pause, fee, limits…" autocomplete="off" spellcheck="false" aria-label="Search all controls">
+    <nav id="areas"></nav>
+  </aside>
+  <main id="main" aria-live="polite"></main>
+  <section class="out" aria-label="Result">
+    <div class="panel">
       <div class="head"><span id="state">Ready.</span><button class="btn" id="clear" type="button">Clear</button></div>
-      <div class="head"><span class="cmd" id="cmd">Pick an action on the left.</span></div>
+      <div class="head"><span class="cmd" id="cmd">Pick a control and press Run or Preview.</span></div>
       <pre id="output"></pre>
     </div>
+    <div class="panel">
+      <div class="head"><b>This session</b><span class="cmd">click one to see it again</span></div>
+      <ul class="hist" id="hist"><li class="empty" style="padding:10px 14px">Nothing run yet.</li></ul>
+    </div>
   </section>
-</main>
+</div>
 <script>
 (() => {
   // The one-time key comes in the link's #fragment (never sent to any server, never in history after this).
@@ -67,7 +132,7 @@
   const el = (tag, attrs = {}, ...kids) => {
     const e = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) { if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : String(v)); }
-    for (const k of kids) e.append(k);
+    for (const k of kids) if (k != null && k !== false) e.append(k);
     return e;
   };
   const banner = (text, bad) => { const b = $("#banner"); b.hidden = !text; b.textContent = text || ""; b.className = "banner" + (bad ? " bad" : ""); };
@@ -77,53 +142,138 @@
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
     return j;
   };
-  let running = false;
-  const show = (state, cls, cmd, out) => { $("#state").textContent = state; $("#state").className = cls; if (cmd !== undefined) $("#cmd").textContent = cmd; if (out !== undefined) $("#output").textContent = out; };
-  $("#clear").addEventListener("click", () => show("Ready.", "", "Pick an action on the left.", ""));
+  const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 
-  function card(a) {
+  const STATUS = { live: "Live", launching: "Launching", planned: "Not live yet", testnet: "Testnet" };
+  const EFFECT = { none: ["Read-only", ""], files: ["Edits files on this PC", "files"], chain: ["Changes the blockchain", "chain"] };
+  let CAT = null, running = false;
+  const history_ = [];
+
+  const show = (state, cls, cmd, out) => { $("#state").textContent = state; $("#state").className = cls; if (cmd !== undefined) $("#cmd").textContent = cmd; if (out !== undefined) $("#output").textContent = out; };
+  $("#clear").addEventListener("click", () => show("Ready.", "", "Pick a control and press Run or Preview.", ""));
+  function remember(entry) {
+    history_.unshift(entry); if (history_.length > 30) history_.pop();
+    $("#hist").replaceChildren(...history_.map((h) => el("li", {}, el("button", { type: "button", onclick: () => show(h.state, h.cls, h.command, h.output) },
+      el("span", { class: "t" }, h.time + "  "), `${h.areaName} · ${h.label} — `, el("b", { class: h.cls }, h.kindOf)))));
+  }
+
+  function card(a, withWhere) {
+    const area = CAT.areas.find((x) => x.id === a.area);
     const inputs = (a.params || []).map((p) => {
-      const input = p.choices ? el("select", { name: p.name }, ...p.choices.map((c) => el("option", { value: c }, c))) : el("input", { name: p.name, placeholder: p.hint, autocomplete: "off", spellcheck: "false" });
-      return el("label", {}, p.label, input);
+      const input = p.choices ? el("select", { name: p.name }, ...p.choices.map((c) => el("option", { value: c }, c))) : el("input", { name: p.name, placeholder: p.hint, autocomplete: "off", spellcheck: "false", value: p.value ?? null });
+      return el("label", {}, p.label, input, el("small", {}, p.hint));
     });
     const values = () => Object.fromEntries(inputs.map((l) => { const i = l.querySelector("input,select"); return [i.name, i.value.trim()]; }));
-    const preview = el("button", { class: "btn primary", type: "button" }, a.sends ? "Preview (dry run)" : "Run");
-    const sendBtn = a.sends ? el("button", { class: "btn send", type: "button", disabled: true }, "Send for real") : null;
+    const runBtn = el("button", { class: "btn primary", type: "button" }, a.sends ? "Preview (dry run, sends nothing)" : "Run");
+    const sendBtn = a.sends ? el("button", { class: "btn send", type: "button", disabled: true, title: "Preview first: Send unlocks after a successful preview with these exact values" }, a.effect === "files" ? "Write the files" : "Send for real") : null;
     let previewed = "";
     for (const l of inputs) l.querySelector("input,select").addEventListener("input", () => { if (sendBtn) { sendBtn.disabled = true; previewed = ""; } });
     const go = async (doSend) => {
-      if (running) return;
+      if (running) return banner("Another control is still running: wait for it to finish.", true);
       const v = values();
       if (doSend && JSON.stringify(v) !== previewed) return banner("The values changed since the preview: preview again.", true);
-      if (doSend && !confirm(`Send “${a.label}” to the chain for real?\n\nThis signs with the key in your .env file.`)) return;
+      if (doSend && !confirm(`${a.testnet ? "TESTNET" : "MAINNET"}: ${area.name}\n\n“${a.label}”\n\nSigned by: ${a.signer}\nTakes effect: ${a.timing || "at once"}\n\nSend it for real?`)) return;
       running = true; banner("");
       show(doSend ? "Sending…" : "Running…", "status-run", "", "");
+      const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
       try {
         const r = await api("/api/run", { action: a.id, values: v, send: doSend });
-        show(r.code === 0 ? (doSend ? "Sent. Read the result below." : a.sends ? "Preview done: nothing was sent. Check it, then Send." : "Done.") : "Finished with an error.", r.code === 0 ? "status-ok" : "status-bad", r.command, r.output || "(no output)");
-        if (sendBtn) { sendBtn.disabled = !(r.previewed); previewed = r.previewed ? JSON.stringify(v) : ""; }
+        const ok = r.code === 0;
+        const state = ok ? (doSend ? "Sent. Read the result below." : a.sends ? "Preview done: nothing was changed. Check it, then press the red button." : "Done.") : "Finished with an error: read the output.";
+        const cls = ok ? "status-ok" : "status-bad";
+        show(state, cls, r.command, r.output || "(no output)");
+        remember({ time, areaName: area.name, label: a.label, kindOf: !ok ? "error" : doSend ? "SENT" : a.sends ? "preview" : "ran", state, cls, command: r.command, output: r.output || "(no output)" });
+        if (sendBtn) { sendBtn.disabled = !r.previewed; previewed = r.previewed ? JSON.stringify(v) : ""; }
       } catch (e) { show("Not run.", "status-bad", "", String(e.message || e)); }
       finally { running = false; }
     };
-    preview.addEventListener("click", () => go(false));
+    runBtn.addEventListener("click", () => go(false));
     if (sendBtn) sendBtn.addEventListener("click", () => go(true));
-    return el("div", { class: "card" },
-      el("h3", {}, a.label, a.sends ? el("span", { class: "tag" }, "sends") : el("span", { class: "tag" }, "read-only")),
-      el("p", {}, a.help),
-      el("div", { class: "row" }, ...inputs, preview, ...(sendBtn ? [sendBtn] : [])));
+    const [effText, effCls] = EFFECT[a.effect];
+    return el("div", { class: "card" + (a.kind === "emergency" ? " emergency" : "") },
+      el("div", { class: "card-top" },
+        el("h4", {}, a.label),
+        a.step ? el("span", { class: "tag step" }, `Step ${a.step}`) : null,
+        el("span", { class: "tag " + effCls }, effText),
+        a.effect !== "chain" ? null : el("span", { class: "tag " + (a.testnet ? "testnet" : "mainnet") }, a.testnet ? "Testnet" : "Mainnet")),
+      withWhere ? el("div", { class: "where" }, `${area.name} · ${CAT.kinds[a.kind].title}`) : null,
+      el("dl", { class: "info" },
+        el("dt", {}, "What it does"), el("dd", {}, a.what),
+        a.when ? el("dt", {}, "When to use") : null, a.when ? el("dd", {}, a.when) : null,
+        el("dt", {}, "Signed by"), el("dd", {}, a.signer),
+        a.effect === "chain" ? el("dt", {}, "Takes effect") : null, a.effect === "chain" ? el("dd", {}, a.timing || "At once") : null),
+      inputs.length ? el("div", { class: "row" }, ...inputs) : null,
+      el("div", { class: "btns" }, runBtn, sendBtn),
+      el("div", { class: "cmdline" }, "Runs: ", el("code", {}, a.command)));
   }
 
+  function byKind(list) {
+    const out = [];
+    for (const k of Object.keys(CAT.kinds)) {
+      const items = list.filter((a) => a.kind === k).sort((x, y) => (x.step || 0) - (y.step || 0));
+      if (!items.length) continue;
+      out.push(el("div", { class: "kind " + k }, el("h3", {}, CAT.kinds[k].title), el("p", {}, CAT.kinds[k].blurb)), ...items.map((a) => card(a, false)));
+    }
+    return out;
+  }
+
+  function openArea(id) {
+    const area = CAT.areas.find((x) => x.id === id) || CAT.areas[0];
+    store.set("kg-admin-area", area.id);
+    $("#search").value = "";
+    for (const b of document.querySelectorAll(".area-btn")) b.setAttribute("aria-current", String(b.dataset.id === area.id));
+    const list = CAT.actions.filter((a) => a.area === area.id);
+    const facts = [];
+    if (area.gameId) facts.push(el("dt", {}, "Game id"), el("dd", {}, String(area.gameId)));
+    if (area.contract) facts.push(el("dt", {}, "Runs on"), el("dd", {}, area.contract));
+    if (area.docs) facts.push(el("dt", {}, "Runbook"), el("dd", {}, el("code", {}, area.docs)));
+    $("#main").replaceChildren(
+      el("div", { class: "area-head" },
+        el("h2", {}, area.name, el("span", { class: "pill " + area.status }, STATUS[area.status])),
+        el("p", {}, area.what),
+        facts.length ? el("dl", { class: "facts" }, ...facts) : null,
+        area.later ? el("div", { class: "later" }, area.later) : null,
+        !list.length && !area.later ? el("div", { class: "later" }, "No controls here yet.") : null),
+      ...byKind(list));
+    window.scrollTo({ top: 0 });
+  }
+
+  function sidebar() {
+    const nav = $("#areas");
+    const sections = [...new Set(CAT.areas.map((a) => a.section))];
+    for (const s of sections) {
+      nav.append(el("div", { class: "side-sec" }, s));
+      for (const a of CAT.areas.filter((x) => x.section === s)) {
+        const n = CAT.actions.filter((x) => x.area === a.id).length;
+        const b = el("button", { type: "button", class: "area-btn" + (a.status === "planned" ? " planned" : ""), onclick: () => openArea(a.id) },
+          el("span", {}, a.name, el("br"), el("span", { class: "n" }, a.status === "planned" ? "no controls yet" : `${n} control${n === 1 ? "" : "s"}`)),
+          el("span", { class: "pill " + a.status }, STATUS[a.status]));
+        b.dataset.id = a.id;
+        nav.append(b);
+      }
+    }
+  }
+
+  $("#search").addEventListener("input", () => {
+    const q = $("#search").value.trim().toLowerCase();
+    if (!q) return openArea(store.get("kg-admin-area"));
+    for (const b of document.querySelectorAll(".area-btn")) b.setAttribute("aria-current", "false");
+    const hits = CAT.actions.filter((a) => {
+      const area = CAT.areas.find((x) => x.id === a.area);
+      return [a.label, a.what, a.when, a.signer, area.name, CAT.kinds[a.kind].title, a.command].join(" ").toLowerCase().includes(q);
+    });
+    $("#main").replaceChildren(el("div", { class: "area-head" }, el("h2", {}, `Search: “${$("#search").value.trim()}”`), el("p", {}, `${hits.length} control${hits.length === 1 ? "" : "s"} across the platform.`)),
+      ...(hits.length ? hits.map((a) => card(a, true)) : [el("p", { class: "empty" }, "Nothing matches. Try another word.")]));
+  });
+
   (async () => {
-    if (!KEY) return banner("Open the link printed in the terminal window (it carries this session's key).", true);
-    let actions;
-    try { actions = await api("/api/actions"); } catch (e) { return banner(String(e.message || e), true); }
-    const groups = [...new Set(actions.map((a) => a.group))];
-    const pick = (g) => {
-      for (const b of $("#tabs").children) b.setAttribute("aria-pressed", String(b.dataset.g === g));
-      $("#cards").replaceChildren(...actions.filter((a) => a.group === g).map(card));
-    };
-    for (const g of groups) { const b = el("button", { type: "button", "aria-pressed": "false" }, g); b.dataset.g = g; b.addEventListener("click", () => pick(g)); $("#tabs").append(b); }
-    pick(groups[0]);
+    if (!KEY) return banner("Open the link printed in the PowerShell window (it carries this session's key).", true);
+    try { CAT = await api("/api/actions"); } catch (e) { return banner(String(e.message || e), true); }
+    const v = CAT.version || {};
+    $("#ver").textContent = `Version ${v.commit || "?"} on branch ${v.branch || "?"}${v.date ? ` (${v.date})` : ""}.`;
+    if (v.branch && v.branch !== "picks" && v.branch !== "main") banner(`This copy is on branch “${v.branch}”. The admin page is kept on picks: run git checkout picks, git pull, then npm run admin again.`, true);
+    sidebar();
+    openArea(store.get("kg-admin-area") || "overview");
   })();
 })();
 </script>

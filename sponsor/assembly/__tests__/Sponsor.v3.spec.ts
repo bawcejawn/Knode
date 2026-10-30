@@ -5,7 +5,7 @@
 // =====================================================================
 
 import { Arrays, Base58, MockVM, Protobuf, authority, chain, protocol, system_calls } from "@koinos/sdk-as";
-import { Sponsor, argsPlayer, NOT_A_PLAYER, FREE_USED_UP, GAME_ANSWER, GAME_CLAIM } from "../Sponsor";
+import { Sponsor, argsPlayer, NOT_A_PLAYER, FREE_USED_UP, GAME_ANSWER, GAME_CLAIM, VAULT_NOT_LIVE } from "../Sponsor";
 import { sponsor } from "../proto/sponsor";
 import { picks } from "./picks_proto";
 import { F } from "./fixtures";
@@ -71,7 +71,7 @@ function vhpBalance(v: u64): system_calls.exit_arguments {
   return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.balance_of_result(v), sponsor.balance_of_result.encode)));
 }
 function gamePlayer(stake: u64, pending: u64): system_calls.exit_arguments {
-  const r = new sponsor.game_get_player_result(new sponsor.game_player(stake, pending));
+  const r = new sponsor.game_get_player_result(new sponsor.game_player(stake, pending), stake);
   return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(r, sponsor.game_get_player_result.encode)));
 }
 let READS: system_calls.exit_arguments[] = [];
@@ -81,6 +81,13 @@ function pays(): bool {
   apply();
   MockVM.setCallContractResults(padReads(READS));
   return new Sponsor().authorize(new authority.authorize_arguments(authority.authorization_type.transaction_application)).value;
+}
+
+/** v3 (owner, 2026-10-28): a wallet that isn't a real player is paid from the free pool for ANY covered call. */
+function paidFromFree(): void {
+  expect(pays()).toBe(true);
+  expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day > 0).toBe(true);
+  MockVM.rollbackTransaction();
 }
 function doPays(): void { pays(); }
 function refused(message: string): void {
@@ -96,6 +103,7 @@ function stakedRow(): sponsor.allowed_call { return new sponsor.allowed_call(STA
 function v3Config(): sponsor.config {
   const c = new sponsor.config(true, GAME, DESK, [VHP, KOIN], MANA, 5 * MANA, 30 * MANA, 100 * MANA, VHP, MANA, 50 * MANA, RACE);
   c.allowed = [picksRow(), stakedRow()];
+  c.game_has_vault = true;   // these tests model the vault (v6) game; round 4's SP-37 tests switch it off
   return c;
 }
 let CFG: sponsor.config = new sponsor.config();
@@ -137,14 +145,14 @@ describe("v3 allowlist: Picks contract picks are free play for the payee's own w
     OPS = [call(PICKS, 0x94871b42, pickArgs(USER))];                 // apply_game
     refused("SPONSOR: only Knode calls are sponsored");
   });
-  it("a pick mixed with a real-players-only action is no longer free play", () => {
+  it("a pick mixed with a real-players-only action is no longer free play [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     start();
     emptyWallet();
     OPS = [call(PICKS, PICK, pickArgs(USER)), call(STAKED, STAKED_ENTRY, Protobuf.encode(new picks.get_usage_arguments(0, null), picks.get_usage_arguments.encode))];
     // STAKED takes (player, varint); build its args by hand: player first.
     const a = new Uint8Array(27 + 2); a[0] = 0x0a; a[1] = 25; a.set(USER, 2); a[27] = 0x10; a[28] = 7;
     OPS[1] = call(STAKED, STAKED_ENTRY, a);
-    refused(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     holder();
     expect(pays()).toBe(true);
   });
@@ -289,7 +297,7 @@ function claimArgs(player: Uint8Array, week: u64): Uint8Array {
 }
 
 describe("v3: a free player collects their own free-game prize; L-3: a stake counts from min_vhp up", () => {
-  it("an empty wallet's own claim is free play; a claim for someone else or with odd arguments is not", () => {
+  it("an empty wallet's own claim is free play; a claim for someone else or with odd arguments is not [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     start();
     emptyWallet();
     OPS = [call(GAME, GAME_CLAIM, claimArgs(USER, 3))];
@@ -297,24 +305,24 @@ describe("v3: a free player collects their own free-game prize; L-3: a stake cou
     MockVM.commitTransaction();
     emptyWallet();
     OPS = [call(GAME, GAME_CLAIM, claimArgs(OTHER, 3))];
-    refused(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     emptyWallet();
     const odd = claimArgs(USER, 3); const padded = new Uint8Array(odd.length + 2); padded.set(odd, 0); padded[odd.length] = 0x18; padded[odd.length + 1] = 1;
     OPS = [call(GAME, GAME_CLAIM, padded)];
-    refused(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     // answers are still free play next to a free claim
     emptyWallet();
     OPS = [call(GAME, GAME_ANSWER, NONE), call(GAME, GAME_CLAIM, claimArgs(USER, 3))];
     expect(pays()).toBe(true);
   });
-  it("a stake below min_vhp is not a real player; at min_vhp it is", () => {
+  it("a stake below min_vhp is not a real player; at min_vhp it is [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     start();
     OPS = [call(STAKED, STAKED_ENTRY, claimArgs(USER, 1))];
     READS = [gamePlayer(MANA / 2, 0)];
-    refused(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     // v3 (audit SP-2): a pending stake doesn't count, so half active + half pending is not a real player either.
     READS = [gamePlayer(MANA / 2, MANA / 2)];
-    refused(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     READS = [gamePlayer(MANA, 0)];
     expect(pays()).toBe(true);
   });
@@ -415,12 +423,12 @@ function gameWeekStake(v: u64): system_calls.exit_arguments {
 function claimish(): Uint8Array { const a = new Uint8Array(27 + 2); a[0] = 0x0a; a[1] = 25; a.set(USER, 2); a[27] = 0x10; a[28] = 7; return a; }
 
 describe("v3 SP-2: only a stake makes a real player (holding VHP, or a pending stake, does not)", () => {
-  it("1 VHP in the wallet (passed from wallet to wallet) is not a stake: refused for real-players-only actions", () => {
+  it("1 VHP in the wallet (passed from wallet to wallet) is not a stake: refused for real-players-only actions [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     start();
     READS = [gamePlayer(0, 0)];                  // holds VHP, staked nowhere: v3 never even asks the VHP token
     OPS = [call(STAKED, STAKED_ENTRY, claimish())];
-    expect(() => { doPays(); }).toThrow();
-    expect(MockVM.getErrorMessage()).toBe(NOT_A_PLAYER);
+    expect(pays()).toBe(true);                   // paid, but from the free pool: not a real player
+    expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day).toBe(MANA);
     const asked = MockVM.getCallContractArguments();
     for (let i = 0; i < asked.length; i++) expect(Arrays.equal(asked[i].contract_id!, VHP)).toBe(false);
     MockVM.rollbackTransaction();
@@ -500,5 +508,272 @@ describe("v3 SP-16 and Combo Card: repeated fields only where marked; up to 640 
     badConfig("SPONSOR: arg_types must be 1 to 16 bytes, field 1 the player (3)");
     CFG = v3Config(); CFG.allowed = [new sponsor.allowed_call(PICKS, PICK, true, bytes([3, 0x10]), 0)];
     badConfig("SPONSOR: arg_types bytes must be 0, 1, 2, 3 or 6, plus 0x10 for a repeated field (not the player)");
+  });
+});
+
+// ── v3: the Knode vault (game v6) calls, covered for the payee's own wallet (owner, 2026-10-28) ──
+const DEPOSIT_TO: u32 = 0x7bb5c436, WITHDRAW_FROM: u32 = 0x5b0aaef8, MOVE_STAKE: u32 = 0x7c268e69, CLAIM_GAME: u32 = 0x4107e3ab, FINALIZE_GAME_WEEK: u32 = 0xec300c11;
+/** player (field 1), then varints: fields 2.. (game, amount, ...). */
+function vaultArgs(player: Uint8Array, nums: u64[]): Uint8Array {
+  const a: u8[] = [0x0a, 25]; for (let i = 0; i < 25; i++) a.push(player[i]);
+  for (let i = 0; i < nums.length; i++) { a.push(<u8>(((i + 2) << 3) | 0)); let v = nums[i]; do { let b = <u8>(v & 0x7f); v >>= 7; if (v) b |= 0x80; a.push(b); } while (v); }
+  return bytes(a);
+}
+describe("v3: vault calls (deposit_to, withdraw_from, move_stake, claim_game, finalize_game_week)", () => {
+  it("each player call is paid for the payee's own wallet, and refused for another wallet in field 1", () => {
+    const calls: u32[] = [DEPOSIT_TO, WITHDRAW_FROM, MOVE_STAKE, CLAIM_GAME];
+    for (let i = 0; i < calls.length; i++) {
+      const n: u64[] = calls[i] == DEPOSIT_TO || calls[i] == MOVE_STAKE ? [2, 3 * MANA, 0] : [2, 4];
+      start(); holder();
+      OPS = [call(GAME, calls[i], vaultArgs(USER, n))];
+      expect(pays()).toBe(true);
+      MockVM.rollbackTransaction();
+      start(); holder();
+      OPS = [call(GAME, calls[i], vaultArgs(OTHER, n))];
+      refused("SPONSOR: a vault call must be the payee's own, with arguments in the vault's shape");
+    }
+  });
+  it("a non-canonical shape (a field twice, an unknown field) is refused", () => {
+    start(); holder();
+    const twice = vaultArgs(USER, [2, 4]); const t: u8[] = []; for (let i = 0; i < twice.length; i++) t.push(twice[i]); t.push(0x10); t.push(5);
+    OPS = [call(GAME, CLAIM_GAME, bytes(t))];
+    refused("SPONSOR: a vault call must be the payee's own, with arguments in the vault's shape");
+    OPS = [call(GAME, WITHDRAW_FROM, vaultArgs(USER, [2, 4, 9]))];   // field 4 isn't in withdraw_from
+    refused("SPONSOR: a vault call must be the payee's own, with arguments in the vault's shape");
+  });
+  it("a guest's own claim_game is paid from the free pool; a wallet staked in THAT game is a real player", () => {
+    start(); emptyWallet();
+    OPS = [call(GAME, CLAIM_GAME, vaultArgs(USER, [2, 4]))];
+    paidFromFree();
+    start();
+    READS = [gamePlayer(0, 0), gameWeekStake(5 * MANA)];             // staked in game 2 this week
+    OPS = [call(GAME, WITHDRAW_FROM, vaultArgs(USER, [2, MANA]))];
+    expect(pays()).toBe(true);
+    expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day).toBe(0);
+    const asked = MockVM.getCallContractArguments();
+    const g = Protobuf.decode<sponsor.game_get_game_player_args>(asked[asked.length - 1].args!, sponsor.game_get_game_player_args.decode);
+    expect(g.game).toBe(2);
+  });
+  it("finalize_game_week (no player) is covered; a non-player pays from the free pool", () => {
+    start(); emptyWallet();
+    const a: u8[] = [0x08, 2, 0x10, 4];
+    OPS = [call(GAME, FINALIZE_GAME_WEEK, bytes(a))];
+    paidFromFree();
+  });
+  it("owner decision: a wallet that isn't a real player may spend the free pool on any covered call, within the pool", () => {
+    start();
+    CFG = v3Config(); CFG.max_mana_free_day = 0; setConfig(); MockVM.commitTransaction();
+    emptyWallet();
+    OPS = [call(STAKED, STAKED_ENTRY, claimish())];
+    refused(FREE_USED_UP);
+  });
+});
+
+// ── Round 3 (Repo Lens fix-check of 2026-10-29) ──
+function activePlayer(stake: u64, pending: u64, active: u64): system_calls.exit_arguments {
+  const r = new sponsor.game_get_player_result(new sponsor.game_player(stake, pending), active);
+  return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(r, sponsor.game_get_player_result.encode)));
+}
+function gameStake(weekStake: u64): system_calls.exit_arguments {
+  return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.game_get_game_player_result(weekStake), sponsor.game_get_game_player_result.encode)));
+}
+function freeUsed(): u64 { return new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day; }
+
+describe("v3 SP-28: the question game's ACTIVE stake this week decides, not the raw stake field", () => {
+  it("deposited once and only answered since (stake 0, pending now active): a real player, not the free pool", () => {
+    start();
+    READS = [activePlayer(0, 5 * MANA, 5 * MANA)];
+    OPS = [call(GAME, GAME_ANSWER, NONE)];
+    expect(pays()).toBe(true);
+    MockVM.commitTransaction();
+    expect(freeUsed()).toBe(0);
+  });
+  it("a raw stake with no active stake this week (e.g. withdrawn) is a free wallet", () => {
+    start();
+    READS = [activePlayer(10 * MANA, 0, 0)];
+    OPS = [call(GAME, GAME_ANSWER, NONE)];
+    expect(pays()).toBe(true);
+    MockVM.commitTransaction();
+    expect(freeUsed()).toBe(MANA);
+  });
+  it("a pending deposit that isn't active yet (next week) is not a stake yet", () => {
+    start();
+    READS = [activePlayer(0, 5 * MANA, 0)];
+    OPS = [call(GAME, GAME_ANSWER, NONE)];
+    expect(pays()).toBe(true);
+    MockVM.commitTransaction();
+    expect(freeUsed()).toBe(MANA);
+  });
+});
+
+describe("v3 SP-22: would_pay reads the call's game, as authorize does", () => {
+  it("free pool used up: a wallet staked only in Block X (game 2) is still told yes for its pick", () => {
+    start();
+    CFG = v3Config(); CFG.max_mana_free_day = 0; setConfig(); MockVM.commitTransaction();
+    MockVM.setCallContractResults(padReads([activePlayer(0, 0, 0), gameStake(5 * MANA)]));
+    const yes = new Sponsor().would_pay(new sponsor.would_pay_arguments(USER, MANA, false, 2));
+    expect(yes.ok).toBe(true);
+    expect(yes.free).toBe(false);
+    MockVM.setCallContractResults(padReads([activePlayer(0, 0, 0)]));
+    const no = new Sponsor().would_pay(new sponsor.would_pay_arguments(USER, MANA, false, 0));
+    expect(no.ok).toBe(false);
+    expect(no.reason).toBe("today's free-player Mana is used up (more is released on the hour)");
+  });
+  it("and authorize agrees: the same wallet's pick is paid as a real player's", () => {
+    start();
+    CFG = v3Config(); CFG.max_mana_free_day = 0; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 0), gameStake(5 * MANA)];
+    OPS = [call(PICKS, PICK, pickArgs(USER))];
+    expect(pays()).toBe(true);
+  });
+});
+
+// The auditor's round-3 test for SP-22 (Sponsor.repolens-r3.spec-append.ts), adapted: would_pay now takes the call's
+// game (field 4), which the page reads from the operations, so the test passes game 2 as the page does.
+describe("Repo Lens round 3 (auditor's tests): SP-22", () => {
+  it("SP-22: would_pay agrees with authorize for a wallet staked in Block X (game 2) only, when the free pool is used", () => {
+    start();
+    const s = new Sponsor();
+    const d: u64 = T0 / 86400000;
+    s.freeUsage.put(new sponsor.usage(d, 50 * MANA, 0, 0));
+    s.totalUsage.put(new sponsor.usage(d, 50 * MANA, 0, 0));
+    MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 0), gameStake(2 * MANA)];
+    OPS = [call(PICKS, PICK, pickArgs(USER))];
+    const paid = pays();
+    MockVM.rollbackTransaction();
+    expect(paid).toBe(true);
+    MockVM.setCallContractResults(padReads([activePlayer(0, 0, 0), gameStake(2 * MANA)]));
+    const r = new Sponsor().would_pay(new sponsor.would_pay_arguments(USER, MANA, true, 2));
+    expect(r.ok).toBe(paid);
+  });
+});
+
+// ── Round 4: the auditor's tests (Sponsor.repolens-r4.spec-append.ts), with the switch the fix added ──
+// Repo Lens round 4, reviewer F5-S1. NOT RUN HERE (static review). Append to sponsor/assembly/__tests__/Sponsor.v3.spec.ts
+// (reuses its helpers: start, v3Config, setConfig, READS, OPS, call, pays, activePlayer, pickArgs, RACE, PICKS, GAME,
+// USER, MANA, padReads). activePlayer / gameWeekStake are defined further up in that file.
+
+// SP-37: on the live game (v5) get_game_player does not exist. A System.call to it runs v5's dispatcher default
+// (`System.exit(1)`, sdk-as-cli index template), i.e. a REVERSION; in a user-mode caller (the sponsor) koinos rethrows it
+// (host_api.cpp invoke_system_call: `user_mode && code >= reversion -> throw`), so the whole authorize aborts. The MockVM
+// can't model that propagation, so this test states the required design: while the configured game has no vault
+// (a config switch to be added, e.g. `game_has_vault`, default false), the sponsor must not call get_game_player.
+// Today it fails: the sponsor asks get_game_player(USER, 7, week) for an empty wallet's race pick.
+function raceArgs(player: Uint8Array): Uint8Array {
+  // race pick_arguments: player = 1 (bytes), then the producer fields as in the existing race tests; the player alone is
+  // canonical for the shape check used here.
+  const a = new Uint8Array(27); a[0] = 0x0a; a[1] = 25; a.set(player, 2); return a;
+}
+describe("Repo Lens round 4 (F5-S1): SP-37 no vault reads against a game without a vault (live v5)", () => {
+  it("an empty wallet's race pick on a v5 game reads only get_player (never get_game_player)", () => {
+    start();
+    CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();   // v5 live: no vault
+    READS = [activePlayer(0, 0, 0)];
+    OPS = [call(RACE, PICK, raceArgs(USER))];
+    pays();
+    const asked = MockVM.getCallContractArguments();
+    for (let i = 0; i < asked.length; i++) expect(asked[i].entry_point).not.toBe(0x0feb472b);   // get_game_player
+    MockVM.rollbackTransaction();
+  });
+  it("an empty wallet's Block X pick on a v5 game reads only get_player", () => {
+    start();
+    CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 0)];
+    OPS = [call(PICKS, PICK, pickArgs(USER))];
+    pays();
+    const asked = MockVM.getCallContractArguments();
+    for (let i = 0; i < asked.length; i++) expect(asked[i].entry_point).not.toBe(0x0feb472b);
+    MockVM.rollbackTransaction();
+  });
+});
+
+// SP-28 (coverage the owner's tests lack): the week sent to get_player is the vault week of the head block time.
+// T0 in the suite is in 2023 (before VAULT_GENESIS_MS), so every existing test sends week 0. Expected to PASS at cc524eb;
+// it pins the week arithmetic so a regression to week 0 (the round-3 bug) is caught.
+describe("Repo Lens round 4 (F5-S1): SP-28 get_player is asked for the current vault week", () => {
+  it("Wed 2026-10-28 12:00 UTC is vault week 1; Mon 2026-10-26 00:00:00.000 is week 1; Sun 23:59:59.999 is week 0", () => {
+    const cases: u64[] = [1792368000000 + 604800000 + 2 * 86400000 + 43200000, 1792368000000 + 604800000, 1792368000000 + 604800000 - 1];
+    const want: u64[] = [1, 1, 0];
+    for (let k = 0; k < cases.length; k++) {
+      start();
+      MockVM.setHeadInfo(new chain.head_info(null, cases[k], 0));
+      READS = [activePlayer(0, 0, MANA)];
+      OPS = [call(GAME, 0x0db52f40, new Uint8Array(0))];   // answer
+      expect(pays()).toBe(true);
+      const asked = MockVM.getCallContractArguments();
+      const a = Protobuf.decode<sponsor.game_get_player_args>(asked[0].args!, sponsor.game_get_player_args.decode);
+      expect(a.week).toBe(want[k]);
+      MockVM.rollbackTransaction();
+    }
+  });
+});
+
+describe("Round 4 SP-37: the vault's own calls only once the game is the vault", () => {
+  it("deposit_to on a v5 game (game_has_vault off) is refused; on the vault it is paid", () => {
+    start();
+    CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 5 * MANA)];
+    const args = vaultArgs(USER, [2, 3 * MANA, 0]);
+    OPS = [call(GAME, 0x7bb5c436, args)];
+    refused(VAULT_NOT_LIVE);
+    start();
+    READS = [activePlayer(0, 0, 5 * MANA)];
+    OPS = [call(GAME, 0x7bb5c436, args)];
+    expect(pays()).toBe(true);
+  });
+});
+
+describe("Round 4 SP-38: would_pay reads every game of a batch", () => {
+  it("staked only in game 7, asked about a batch of games 2 and 7: yes, as authorize would", () => {
+    start();
+    CFG = v3Config(); CFG.max_mana_free_day = 0; setConfig(); MockVM.commitTransaction();
+    MockVM.setCallContractResults(padReads([activePlayer(0, 0, 0), gameStake(0), gameStake(5 * MANA)]));
+    const a = new sponsor.would_pay_arguments(USER, MANA, true, 0); a.games = [2, 7];
+    expect(new Sponsor().would_pay(a).ok).toBe(true);
+  });
+});
+
+// ── Repo Lens round 5 (reviewer F6-S1), appended 2026-10-30 ──
+// F6-S1-1 (SP-45, Low): would_pay.games sent PACKED (as koilib with the published ABI encodes it) is misread. Accepted for
+// launch by the owner (the contract is frozen at b61ac238 for this release): the site sends games unpacked
+// (wallet.js sponsorAnswer), and a misread only changes would_pay's advisory answer, never what authorize pays.
+// SP-51 (Info): the auditor's specs below pin the vault switch for every entry point, would_pay and v5 legit use.
+// Test gaps behind SP-37 (pass today; they pin the gate for every vault entry point, would_pay and v5 legit use).
+describe("F6-S1-3: the vault switch, every entry point", () => {
+  it("withdraw_from, move_stake, claim_game, finalize_game_week are refused while off", () => {
+    const eps: u32[] = [0x5b0aaef8, 0x7c268e69, 0x4107e3ab];
+    for (let i = 0; i < eps.length; i++) {
+      start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+      READS = [activePlayer(0, 0, 5 * MANA)];
+      OPS = [call(GAME, eps[i], vaultArgs(USER, eps[i] == 0x7c268e69 ? [2, 3, MANA] : [2, MANA]))];
+      refused(VAULT_NOT_LIVE);
+    }
+    start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 5 * MANA)];
+    OPS = [call(GAME, 0xec300c11, new Uint8Array(0))];
+    refused(VAULT_NOT_LIVE);
+  });
+  it("while off, an empty wallet's race pick IS paid (from the free pool) and asks only get_player", () => {
+    start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 0)];
+    OPS = [call(RACE, PICK, raceArgs(USER))];
+    expect(pays()).toBe(true);
+    const asked = MockVM.getCallContractArguments();
+    expect(asked.length).toBe(1);
+    MockVM.rollbackTransaction();
+  });
+  it("while off, would_pay with games asks only get_player", () => {
+    start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    MockVM.setCallContractResults(padReads([activePlayer(0, 0, 0)]));
+    const a = new sponsor.would_pay_arguments(USER, MANA, false, 7); a.games = [2, 7];
+    new Sponsor().would_pay(a);
+    expect(MockVM.getCallContractArguments().length).toBe(1);
+  });
+  it("while off, a v5 answer is still paid", () => {   // (audit SP-58: the auditor's name also said deposit_vhp, which it doesn't test)
+    start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 5 * MANA)];
+    OPS = [call(GAME, 0x0db52f40, new Uint8Array(0))];
+    expect(pays()).toBe(true);
   });
 });

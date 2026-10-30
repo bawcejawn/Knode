@@ -39,8 +39,8 @@ test("S1 the game page checks a question file against the on-chain params_hash b
 });
 
 // S2: GitHub Pages without a custom domain = origin shared with every other bawcejawn.github.io site (scripts, storage, Kondor's per-origin grant).
-// todo: needs a custom domain (the owner's action, not a code change); it still runs and reports until a CNAME exists.
-test("S2 the wallet pages are served from an origin of their own (CNAME), not the shared <user>.github.io origin", { todo: "needs a custom domain (owner action)" }, () => {
+// Closed 2026-10-28: the site is served from its own domain, knodegames.com (CNAME at the repository root).
+test("S2 the wallet pages are served from an origin of their own (CNAME), not the shared <user>.github.io origin", () => {
   const cname = exists("CNAME") || exists("site/CNAME");
   assert.ok(cname, "S2: no CNAME: any other Pages site of bawcejawn (same origin) can window.open a Knode page, read/patch its JS (fetch hook -> KOIN Vault secret, swapped ops) and reuse the Kondor site permission; the frame-buster does not stop same-origin windows");
 });

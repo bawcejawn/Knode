@@ -48,14 +48,14 @@ function memStorage(broken = false) {
 }
 
 /** Loads guest.js and wallet.js in a fresh vm. The fake node records everything it is sent. */
-function world({ payer = "sponsor", brokenStorage = false, yes = true, nodeChain = MAINNET, guest = true, host = "knodegames.com", protocol = "https:" } = {}) {
+function world({ reason = "no", payer = "sponsor", brokenStorage = false, yes = true, nodeChain = MAINNET, guest = true, host = "knodegames.com", protocol = "https:" } = {}) {
   const { document, all } = fakeDom();
   const net = [];   // every call that leaves the page: [method, payload]
   const provider = {
     getChainId: async () => { net.push(["getChainId", null]); return nodeChain; },
     getNextNonce: async (a) => { net.push(["getNextNonce", a]); return "KAE"; },
     getAccountRc: async (a) => { net.push(["getAccountRc", a]); return "100000000"; },
-    readContract: async (q) => { net.push(["readContract", q]); return { result: koilib.utils.encodeBase64url(new Uint8Array(yes ? [0x08, 0x01] : [0x12, 0x02, 0x6e, 0x6f])) }; },
+    readContract: async (q) => { net.push(["readContract", q]); return { result: koilib.utils.encodeBase64url(new Uint8Array(yes ? [0x08, 0x01] : [0x12, reason.length, ...new TextEncoder().encode(reason)])) }; },
     sendTransaction: async (tx) => { net.push(["sendTransaction", JSON.parse(JSON.stringify(tx))]); return { transaction: { ...tx, wait: async () => ({}) }, receipt: {} }; },
     wait: async () => ({}),
   };
@@ -147,10 +147,14 @@ test("a guest's answer: the sponsor pays, the guest is payee, mainnet, signed lo
   assert.equal(String(tx.header.rc_limit), "100000000");
   assert.equal(tx.signatures.length, 1);
   assert.equal(tx.operations.length, 1);
-  // would_pay was asked with answer_only = true
+  // would_pay was asked for this guest and this Mana limit, marked free play (answer_only, kept for a v2 rollback:
+  // audit SP-40); an answer names no game
   const ask = w.net.find(([m, q]) => m === "readContract" && q.contract_id === SPONSOR)[1];
   const bytes = koilib.utils.decodeBase64url(ask.args);
-  assert.deepEqual([...bytes.slice(-2)], [0x18, 0x01]);
+  assert.equal(bytes[0], 0x0a);
+  assert.equal(bytes[27], 0x10, "field 2: the Mana limit");
+  assert.deepEqual([...bytes.slice(-2)], [0x18, 0x01], "answer_only = true");
+  assert.equal(bytes.length, 34, "no game for an answer");
   // the key is nowhere in what left the page
   const out = JSON.stringify(w.net);
   assert.ok(!out.includes(wif));
@@ -292,4 +296,11 @@ test("audit BX-40 / BX-51: off knodegames.com (and this computer) every guest pa
   }
   const ok = world();
   assert.ok((await connectAsGuest(ok)) !== undefined, "knodegames.com: guest play works");
+});
+
+test("audit SP-34: the sponsor's own reason reaches the guest (the free pool reopens on the hour, not at 00:00 UTC)", async () => {
+  const w = world({ yes: false, reason: "today's free-player Mana is used up (more is released on the hour)" });
+  await connectAsGuest(w);
+  await assert.rejects(w.KW.send("answer A", [w.op(GAME, ANSWER)]), /more opens on the hour/);
+  assert.equal(w.net.filter(([m]) => m === "sendTransaction").length, 0);
 });

@@ -1,7 +1,7 @@
 // Audit Bot attack tests for the Knode Mana sponsor. Each asserts the SAFE behaviour.
 // Copy into sponsor/assembly/__tests__/ next to fixtures.ts to run.
 import { Arrays, Base58, MockVM, Protobuf, authority, chain, protocol, system_calls } from "@koinos/sdk-as";
-import { Sponsor, APPROVE_ENTRY, GAME_ANSWER, GAME_DEPOSIT_VHP, CAP_LIMIT, NOT_A_PLAYER } from "../Sponsor";
+import { Sponsor, APPROVE_ENTRY, GAME_ANSWER, GAME_DEPOSIT_VHP, CAP_LIMIT, NOT_A_PLAYER, FREE_USED_UP } from "../Sponsor";
 import { sponsor } from "../proto/sponsor";
 import { F } from "./fixtures";
 
@@ -54,7 +54,7 @@ function vhpBalance(v: u64): system_calls.exit_arguments {
   return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.balance_of_result(v), sponsor.balance_of_result.encode)));
 }
 function gamePlayer(stake: u64, pending: u64): system_calls.exit_arguments {
-  return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.game_get_player_result(new sponsor.game_player(stake, pending)), sponsor.game_get_player_result.encode)));
+  return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.game_get_player_result(new sponsor.game_player(stake, pending), stake), sponsor.game_get_player_result.encode)));
 }
 let READS: system_calls.exit_arguments[] = [];
 function queueReads(): void { MockVM.setCallContractResults(padReads(READS.length ? READS : [gamePlayer(10 * MANA, 0)])); }
@@ -62,6 +62,13 @@ function pays(): bool {
   apply();
   queueReads();
   return new Sponsor().authorize(new authority.authorize_arguments(authority.authorization_type.transaction_application)).value;
+}
+
+/** v3 (owner, 2026-10-28): a wallet that isn't a real player is paid from the free pool for ANY covered call. */
+function paidFromFree(): void {
+  expect(pays()).toBe(true);
+  expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day > 0).toBe(true);
+  MockVM.rollbackTransaction();
 }
 function setTime(ms: u64): void { MockVM.setHeadInfo(new chain.head_info(null, ms, 0)); }
 function configure(perTx: u64, day: u64, week: u64, all: u64): void {
@@ -148,7 +155,7 @@ describe("AB operations: odd shapes", () => {
     asUser(MANA);
     OPS = [call(VHP, APPROVE_ENTRY, NONE)];
     expect(() => { pays(); }).toThrow();
-    expect(MockVM.getErrorMessage()).toBe("SPONSOR: approve must name the game or Knode Swap as spender");
+    expect(MockVM.getErrorMessage()).toBe("SPONSOR: approve must name the game as spender (Knode Swap is not sponsored)");
     MockVM.rollbackTransaction();
   });
 
@@ -175,14 +182,14 @@ describe("AB operations: odd shapes", () => {
 describe("AB-001 budget exhaustion by fresh wallets (fixed: only real players are sponsored, except answers within the free sub-cap)", () => {
   beforeEach(() => { start(); configure(1 * MANA, 5 * MANA, 20 * MANA, 100 * MANA); });
 
-  it("a wallet with no stake, no VHP and no history is not sponsored", () => {
+  it("a wallet with no stake, no VHP and no history is not sponsored [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     // OTHER has never deposited, holds nothing (the mock has no balances) and is not a Knode player.
     // Twenty such wallets x 5 Mana use up everyone's 100 Mana for the day at no cost to their creator.
     asOther(MANA);
     OPS = [call(VHP, APPROVE_ENTRY, Protobuf.encode(new sponsor.approve_args(OTHER, GAME, 1), sponsor.approve_args.encode))];
     READS = [gamePlayer(0, 0)];
     expect(() => { pays(); }).toThrow();
-    expect(MockVM.getErrorMessage()).toBe(NOT_A_PLAYER);
+    expect(MockVM.getErrorMessage()).toBe(FREE_USED_UP);   // v3: a non-player spends the free pool, 0 here
     MockVM.rollbackTransaction();
   });
 

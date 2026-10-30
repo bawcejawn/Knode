@@ -59,7 +59,7 @@
     if (id === MAINNET_CHAIN_ID || (NET.chainId && id !== NET.chainId)) throw new Error("The node isn't the testnet in this page's settings.");
     NET.chainId = NET.chainId || id;
     W = window.KTestWallet || null;
-    if (W) W.init({ provider, chainId: NET.chainId, picks: NET.picks });
+    if (W) W.init({ provider, chainId: NET.chainId, picks: NET.picks, sponsor: isAddr(cfg.sponsor) ? cfg.sponsor : null });   // sponsor v3 trial
     // The page's fixed wording, for this game's own settings (the fast game has a target every 300 blocks).
     const mins = Math.round(G.ROUND * X.BLOCK_MS / 60000), about = mins >= 90 ? `about every ${Math.round(mins / 60)} hours` : `about every ${mins} minutes`;
     const words = { every: `Every ${G.ROUND.toLocaleString("en-US")} blocks (${about})`, round: G.ROUND.toLocaleString("en-US"), about, perday: String(G.PICKS_PER_DAY), changes: String(G.MAX_CHANGES) };
@@ -308,6 +308,11 @@
     }
     let who;
     try { who = W.quick(); } catch (e) { pickModal("bad", "Couldn't make a wallet", [String((e && e.message) || e), "Try Kondor instead."], [el("button", { class: "btn", type: "button", onclick: () => { closeModal(); W.connect(); } }, "Use Kondor"), okBtn("OK")]); return; }
+    // The sponsor v3 trial: a new Test wallet needs no test KOIN, the test sponsor pays (docs/blockx/SPONSOR-TESTNET.md).
+    if (W.sponsor) {
+      pickModal("ok", "You're in", ["Your Test wallet is ready. It has no test KOIN on purpose: the test Mana sponsor pays for your picks."], [el("button", { class: "btn", type: "button", onclick: () => { closeModal(); goPick(); } }, "Pick now")]);
+      return;
+    }
     if (!isLocal) { fundHelp(who); return; }
     pickModal("busy", "Adding test KOIN…", ["Your wallet is ready. The test server is sending it 5 test KOIN (enough for about 100 picks)."]);
     try {
@@ -382,7 +387,7 @@
       }
       drafts.delete(r);
       if (onChain) pickModal("ok", "Pick confirmed", [el("p", {}, "Your pick: ", el("b", { text: nameOf(producer) }), ` for block ${fmt(h)}.`),
-        `It locks ${G.LEAD} blocks (about ${Math.round(G.LEAD * 3 / 60)} minutes) before the block. Until then you can change it (up to ${G.MAX_CHANGES} times; changes count toward today's ${G.PICKS_PER_DAY}).`,
+        `It locks ${G.LEAD} blocks (about ${Math.round(G.LEAD * 3 / 60)} minutes) before the block. Until then you can change it ${G.MAX_CHANGES === 1 ? "once" : `up to ${G.MAX_CHANGES} times`} (a change counts toward today's ${G.PICKS_PER_DAY}).`,
         id ? el("p", { class: "ago mono", text: `Transaction ${String(id).slice(0, 18)}…` }) : null].filter(Boolean), [okBtn()]);
       else pickModal("info", "Sent, not seen on the chain yet", ["Your wallet sent it. It usually shows within a minute; this list updates by itself."], [okBtn("OK")]);
     } catch (e) {
@@ -390,7 +395,7 @@
       const why = /locked/i.test(m) ? `That block is locked: picks close ${G.LEAD} blocks before it.`
         : /not open yet/i.test(m) ? "That block isn't open yet."
         : /used up/i.test(m) ? "Today's picks are used up (changes count). More after 00:00 UTC."
-        : /changed again/i.test(m) ? `That pick has been changed ${G.MAX_CHANGES} times already.`
+        : /changed again/i.test(m) ? `That pick has been changed ${G.MAX_CHANGES === 1 ? "once" : `${G.MAX_CHANGES} times`} already: it can't be changed again.`
         : /already your pick/i.test(m) ? "That is already your pick."
         : /closed/i.test(m) ? "This game is switched off right now."
         : /pending account resources|insufficient.*(rc|mana|resources)/i.test(m) ? "Your Mana is still held by your last pick. It frees up within a few minutes of each pick; try again in a minute."
@@ -469,18 +474,37 @@
   // ── your stake in Block X (the Knode Games vault, v6; owner 2026-10-28: every game takes stakes) ──
   // Read-only here. The Stake / Withdraw / Move buttons are the site's shared stake panel (window.KStake, from the hub),
   // mounted below the boards for game 2 once the vault is live; nothing here signs a stake.
-  let vault = null;
+  let vault = null, vaultCfg = null;
+  // Audit BX-61: just enough of the vault's get_state (same entry point in v5 and v6) to see whether v6 is live and its
+  // minimum stake, so the v6 ABI file is only fetched once v6 is live (the recorder does the same).
+  const U64 = (id) => ({ type: "uint64", id, options: { jstype: "JS_STRING" } });
+  const STATE_ABI = {
+    methods: { get_state: { entry_point: 1023583049, argument: "kpred.get_state_arguments", return: "kpred.get_state_result", read_only: true } },
+    koilib_types: { nested: { kpred: { nested: {
+      get_state_arguments: { fields: {} },
+      get_state_result: { fields: { config: { type: "config_object", id: 1 } } },
+      config_object: { fields: { min_stake: U64(9), min_stake_next: U64(13), min_stake_next_week: U64(14), v6_rule_week_plus_one: U64(21) } },
+    } } } },
+  };
+  /** The vault's minimum stake for a week (bot/games/blockx.ts minStakeFor; 1 VHP when unset). */
+  function minStakeFor(cfg, week) {
+    const next = BigInt((cfg && cfg.min_stake_next) || "0"), from = Number((cfg && cfg.min_stake_next_week) || 0);
+    const m = next > 0n && week >= from ? next : BigInt((cfg && cfg.min_stake) || "0");
+    return m > 0n ? m : 100000000n;
+  }
   async function setupStake() {
     if (TESTNET) return;
+    // The site's shared stake panel (stake-panel.js, Hub chat): Stake / Withdraw / Move / Claim for game 2. It stays
+    // hidden until the vault (v6) is live and Block X has a stake bucket.
+    if (window.KStake && typeof window.KStake.mount === "function" && $("blockx-stake")) window.KStake.mount($("blockx-stake"), { game: G.GAME_ID });
     try {
       const dep = await fetchJson(new URL("game-data/deployment.json", ROOT));
       if (!dep || !isAddr(dep.contract)) return;
-      const abi = await fetchJson(new URL("game/abi/kpred-v6.koilib.json", ROOT));
-      const c = new lib.Contract({ id: dep.contract, abi, provider });
-      const st = await c.functions.get_state({});
+      const st = await new lib.Contract({ id: dep.contract, abi: STATE_ABI, provider }).functions.get_state({});
       if (!(Number(st?.result?.config?.v6_rule_week_plus_one || 0) > 0)) return;   // the vault isn't live yet
-      vault = c;
-      if (window.KStake && typeof window.KStake.mount === "function") { $("stake-panel").hidden = false; window.KStake.mount($("stake-panel"), { game: G.GAME_ID, name: "Who Signs Block X" }); }
+      const abi = await fetchJson(new URL("game/abi/kpred-v6.koilib.json", ROOT));
+      vault = new lib.Contract({ id: dep.contract, abi, provider });
+      vaultCfg = st.result.config;
       readStake();
     } catch { /* no vault: the boards still work */ }
   }
@@ -490,9 +514,15 @@
     const who = me();
     if (!vault || !who) { box.hidden = true; return; }
     try {
-      const r = (await vault.functions.get_game_player({ player: who, game: G.GAME_ID, week: String(M.weekOf(Date.now())) })).result || {};
+      const week = M.weekOf(Date.now());
+      const r = (await vault.functions.get_game_player({ player: who, game: G.GAME_ID, week: String(week) })).result || {};
       const now = Number(r.week_stake || 0) / 1e8, pend = Number(r.player?.pending || 0) / 1e8;
-      box.textContent = `Your stake in Block X: ${fmt(now, 2)} VHP this week${pend ? `, plus ${fmt(pend, 2)} VHP from next week` : ""}. ${now >= 1 ? "You're on the Staked board." : "You play on the Free play board."}`;
+      // Audit BX-64: the recorder's rule (bot/games/blockx.ts vaultView/stakedSet): the most staked here this week (the
+      // entry's peak_stake, else the active stake) at least the vault's minimum for the week.
+      const e = r.entry, big = (x) => BigInt(x || "0");
+      const peak = e ? [big(e.peak_stake), big(e.stake)].reduce((x, y) => (y > x ? y : x)) : big(r.active_stake);
+      const staked = peak >= minStakeFor(vaultCfg, week);
+      box.textContent = `Your stake in Block X: ${fmt(now, 2)} VHP this week${pend ? `, plus ${fmt(pend, 2)} VHP from next week` : ""}. ${staked ? "You're on the Staked board." : "You play on the Free play board."}`;
       box.hidden = false;
     } catch { box.hidden = true; }
   }
@@ -515,7 +545,7 @@
   (async () => {
     try { await setupNet(); }
     catch (e) { say(TESTNET ? `Testnet settings problem: ${String((e && e.message) || e)}` : "Couldn't load the game settings."); return; }
-    $("game-rules").textContent = `A target every ${fmt(G.ROUND)} blocks (${(() => { const m = Math.round(G.ROUND * X.BLOCK_MS / 60000); return m >= 90 ? `about ${Math.round(m / 60)} hours` : `about ${m} minutes`; })()}). Picks lock ${G.LEAD} blocks before it. ${G.PICKS_PER_DAY} picks a day, ${G.MAX_CHANGES} changes per pick.`;
+    $("game-rules").textContent = `A target every ${fmt(G.ROUND)} blocks (${(() => { const m = Math.round(G.ROUND * X.BLOCK_MS / 60000); return m >= 90 ? `about ${Math.round(m / 60)} hours` : `about ${m} minutes`; })()}). Picks lock ${G.LEAD} blocks before it. ${G.PICKS_PER_DAY} picks a day, ${G.MAX_CHANGES === 1 ? "1 change" : `${G.MAX_CHANGES} changes`} per pick.`;
     if (W && W.subscribe) W.subscribe(onWallet);
     if ($("wallet-btn")) $("wallet-btn").addEventListener("click", walletMenu);
     if ($("cta")) $("cta").addEventListener("click", () => (me() ? goPick() : startPlaying()));

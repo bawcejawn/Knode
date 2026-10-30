@@ -7,7 +7,7 @@
  * your network or the internet: the server listens on 127.0.0.1 (this computer only).
  *
  * Safety:
- *   - Every button runs an existing command (npm run bot / npm run desk) with checked values; keys stay in .env and
+ *   - Every button runs an existing command (npm run bot / desk / sponsor / picks / racepicks) with checked values; keys stay in .env and
  *     never reach the page. Mainnet sends still need CONFIRM_MAINNET=yes in .env, as on the command line.
  *   - Anything that sends a transaction is previewed first (a dry run). "Send" is only accepted for the exact action
  *     and values just previewed, within 10 minutes.
@@ -19,9 +19,9 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { spawn, exec } from "node:child_process";
+import { spawn, exec, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { ACTIONS, commandFor } from "./actions.ts";
+import { ACTIONS, AREAS, KINDS, commandFor } from "./actions.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.ADMIN_PORT ?? 8787);
@@ -32,13 +32,25 @@ const previews = new Map<string, number>();   // action + values → time of its
 let busy = false;
 
 const page = fs.readFileSync(path.join(ROOT, "admin", "index.html"), "utf8");
-const catalog = JSON.stringify(ACTIONS.map(({ id, group, label, help, params, sends }) => ({
-  id, group, label, help, sends, params: (params ?? []).map(({ name, label, hint, choices }) => ({ name, label, hint, choices })),
-})));
+// What the page shows: every area of the platform, the kinds of control, and each action with its plain-words fields
+// and the command it runs (with {placeholders} for the values). The patterns stay on the server, which checks them.
+// Which version of the page this is (shown at the top), so it's easy to tell an old copy from a new one.
+const VERSION = (() => {
+  const git = (...a: string[]) => { try { return execFileSync("git", a, { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return ""; } };
+  return { branch: git("rev-parse", "--abbrev-ref", "HEAD") || "unknown", commit: git("rev-parse", "--short", "HEAD") || "unknown", date: git("log", "-1", "--format=%cd", "--date=format:%d %b %Y %H:%M") };
+})();
+const catalog = JSON.stringify({
+  version: VERSION, areas: AREAS, kinds: KINDS,
+  actions: ACTIONS.map(({ id, area, kind, label, what, when, signer, effect, timing, step, tool, params, sends, args }) => ({
+    id, area, kind, label, what, when, signer, effect, timing, step, sends,
+    testnet: args.includes("--testnet"), command: `npm run ${tool} -- ${args.join(" ")}`,
+    params: (params ?? []).map(({ name, label, hint, choices, value }) => ({ name, label, hint, choices, value })),
+  })),
+});
 
 function run(tool: string, argv: string[]): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
-    const script = tool === "desk" ? "bot/desk.ts" : tool === "sponsor" ? "bot/sponsor.ts" : "bot/bot.ts";
+    const script = tool === "desk" ? "bot/desk.ts" : tool === "sponsor" ? "bot/sponsor.ts" : tool === "picks" ? "bot/picks.ts" : tool === "racepicks" ? "bot/race-picks.ts" : "bot/bot.ts";
     const child = spawn(process.execPath, ["--import", "tsx", script, ...argv], { cwd: ROOT, env: process.env });
     let out = "";
     const add = (b: Buffer) => { out += b.toString(); if (out.length > 400_000) out = out.slice(-400_000); };
@@ -99,9 +111,14 @@ const server = http.createServer((req, res) => {
   });
 });
 
+server.on("error", (e: any) => {
+  if (e?.code === "EADDRINUSE") console.error(`\nAn admin page is ALREADY running on this computer (port ${PORT}), probably an older one in another PowerShell window.\nClose that window (or press Ctrl+C in it), close the old browser tab, then run npm run admin again.\n`);
+  else console.error(`\nThe admin page couldn't start: ${e?.message ?? e}\n`);
+  process.exit(1);
+});
 server.listen(PORT, "127.0.0.1", () => {
   const link = `http://127.0.0.1:${PORT}/#${KEY}`;
-  console.log(`\nKnode admin is running on this computer only.\n\n  Open: ${link}\n\nKeep this window open while you use it; close it (Ctrl+C) when you're done. The key changes every start.\n`);
+  console.log(`\nKnode Games Admin is running on this computer only (branch ${VERSION.branch}, version ${VERSION.commit}${VERSION.date ? `, ${VERSION.date}` : ""}).\n\n  Open: ${link}\n\nKeep this window open while you use it; close it (Ctrl+C) when you're done. The key changes every start.\n`);
   if (process.env.ADMIN_NO_BROWSER !== "1") {
     const opener = process.platform === "win32" ? `start "" "${link}"` : process.platform === "darwin" ? `open "${link}"` : `xdg-open "${link}"`;
     exec(opener, () => {});

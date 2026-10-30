@@ -1,0 +1,2949 @@
+{
+  "methods": {
+    "get_state": {
+      "entry_point": 1023583049,
+      "argument": "kpred.get_state_arguments",
+      "return": "kpred.get_state_result",
+      "read_only": true,
+      "description": "Everything about the game at once: settings, totals, current week and balances."
+    },
+    "authorize": {
+      "entry_point": 1244511632,
+      "argument": "koinos.chain.authorize_arguments",
+      "return": "koinos.chain.authorize_result",
+      "read_only": false,
+      "description": "Check if authorized"
+    },
+    "get_player": {
+      "entry_point": 936259717,
+      "argument": "kpred.get_player_arguments",
+      "return": "kpred.get_player_result",
+      "read_only": true,
+      "description": "A player's stake and their entry for a week."
+    },
+    "get_question": {
+      "entry_point": 2316285465,
+      "argument": "kpred.get_question_arguments",
+      "return": "kpred.get_question_result",
+      "read_only": true,
+      "description": "One question."
+    },
+    "get_week": {
+      "entry_point": 326025281,
+      "argument": "kpred.get_week_arguments",
+      "return": "kpred.get_week_result",
+      "read_only": true,
+      "description": "One week's results."
+    },
+    "list_players": {
+      "entry_point": 1154979652,
+      "argument": "kpred.list_players_arguments",
+      "return": "kpred.list_players_result",
+      "read_only": true,
+      "description": "Page through all players, each with their entry for a week (up to 50 per page, after address `start`)."
+    },
+    "init": {
+      "entry_point": 3142846090,
+      "argument": "kpred.init_arguments",
+      "return": "kpred.init_result",
+      "read_only": false,
+      "description": "One-time setup. Must be signed by the contract's own key."
+    },
+    "deposit_vhp": {
+      "entry_point": 2396116866,
+      "argument": "kpred.deposit_vhp_arguments",
+      "return": "kpred.deposit_vhp_result",
+      "read_only": false,
+      "description": "Stake VHP (approve this contract for `amount` VHP in the same transaction). Counts from next week."
+    },
+    "deposit_koin": {
+      "entry_point": 533371977,
+      "argument": "kpred.deposit_koin_arguments",
+      "return": "kpred.deposit_koin_result",
+      "read_only": false,
+      "description": "Stake KOIN: burned 1:1 into VHP (approve this contract for `amount` KOIN first). Counts from next week."
+    },
+    "withdraw": {
+      "entry_point": 3262063323,
+      "argument": "kpred.withdraw_arguments",
+      "return": "kpred.withdraw_result",
+      "read_only": false,
+      "description": "Withdraw staked VHP at any time. Withdrawing voids this week's answers."
+    },
+    "answer": {
+      "entry_point": 229977920,
+      "argument": "kpred.answer_arguments",
+      "return": "kpred.answer_result",
+      "read_only": false,
+      "description": "Answer a question (free: the contract pays the Mana). Needs an active stake of at least min_stake."
+    },
+    "settle": {
+      "entry_point": 1751705661,
+      "argument": "kpred.settle_arguments",
+      "return": "kpred.settle_result",
+      "read_only": false,
+      "description": "Count a player's points for a closed week (anyone can call it; free)."
+    },
+    "claim": {
+      "entry_point": 3709549617,
+      "argument": "kpred.claim_arguments",
+      "return": "kpred.claim_result",
+      "read_only": false,
+      "description": "Claim a week's reward in VHP (free). Sent to the player's wallet."
+    },
+    "compound": {
+      "entry_point": 3993893244,
+      "argument": "kpred.compound_arguments",
+      "return": "kpred.compound_result",
+      "read_only": false,
+      "description": "Burn the contract's spare KOIN (above the Mana reserve and unpaid fees) into VHP."
+    },
+    "close_week": {
+      "entry_point": 621611198,
+      "argument": "kpred.close_week_arguments",
+      "return": "kpred.close_week_result",
+      "read_only": false,
+      "description": "Close a finished week: measure the gain, take fees, open settlement. Weeks close in order. Also happens automatically on any game action."
+    },
+    "finalize_week": {
+      "entry_point": 2354145685,
+      "argument": "kpred.finalize_week_arguments",
+      "return": "kpred.finalize_week_result",
+      "read_only": false,
+      "description": "After settlement ends: find the winners (top 30% of eligible players with points, ties included). Weeks finalize in order, a page of places per call. Also happens automatically."
+    },
+    "post_question": {
+      "entry_point": 1179668153,
+      "argument": "kpred.post_question_arguments",
+      "return": "kpred.post_question_result",
+      "read_only": false,
+      "description": "Publish a question (operator only)."
+    },
+    "resolve_question": {
+      "entry_point": 3017869156,
+      "argument": "kpred.resolve_question_arguments",
+      "return": "kpred.resolve_question_result",
+      "read_only": false,
+      "description": "Resolve a question after its window (operator only). outcome = winning option (0-based) or 1000 for void."
+    },
+    "correct_question": {
+      "entry_point": 1086330229,
+      "argument": "kpred.correct_question_arguments",
+      "return": "kpred.correct_question_result",
+      "read_only": false,
+      "description": "Correct a resolution, or VOID a question still open, before its week closes (owner only)."
+    },
+    "set_operator": {
+      "entry_point": 1114516503,
+      "argument": "kpred.set_operator_arguments",
+      "return": "kpred.set_operator_result",
+      "read_only": false,
+      "description": "Change the operator (owner only)."
+    },
+    "set_paused": {
+      "entry_point": 905688855,
+      "argument": "kpred.set_paused_arguments",
+      "return": "kpred.set_paused_result",
+      "read_only": false,
+      "description": "Pause or resume NEW deposits (owner only). Withdrawals and claims always work."
+    },
+    "propose_owner": {
+      "entry_point": 198312784,
+      "argument": "kpred.propose_owner_arguments",
+      "return": "kpred.propose_owner_result",
+      "read_only": false,
+      "description": "Step 1 of handing over ownership (owner only). The new owner must accept."
+    },
+    "accept_owner": {
+      "entry_point": 3668871220,
+      "argument": "kpred.accept_owner_arguments",
+      "return": "kpred.accept_owner_result",
+      "read_only": false,
+      "description": "Step 2: the proposed owner accepts, at least 28,800 blocks (about a day) after step 1."
+    },
+    "propose_seed_owner": {
+      "entry_point": 3381904782,
+      "argument": "kpred.propose_seed_owner_arguments",
+      "return": "kpred.propose_seed_owner_result",
+      "read_only": false,
+      "description": "Step 1 of handing over the seed (seed owner only). The new seed owner must accept. (v5)"
+    },
+    "accept_seed_owner": {
+      "entry_point": 2146087014,
+      "argument": "kpred.accept_seed_owner_arguments",
+      "return": "kpred.accept_seed_owner_result",
+      "read_only": false,
+      "description": "Step 2: the proposed seed owner accepts, at least 28,800 blocks (about a day) after step 1. (v5)"
+    },
+    "register_key": {
+      "entry_point": 2765249345,
+      "argument": "kpred.register_key_arguments",
+      "return": "kpred.register_key_result",
+      "read_only": false,
+      "description": "Register the block-producer key for this contract's node (owner only)."
+    },
+    "schedule_upgrade": {
+      "entry_point": 2777493725,
+      "argument": "kpred.schedule_upgrade_arguments",
+      "return": "kpred.schedule_upgrade_result",
+      "read_only": false,
+      "description": "Announce a code upgrade by the sha256 of its bytecode; it can be uploaded after the timelock (owner only)."
+    },
+    "cancel_upgrade": {
+      "entry_point": 187647932,
+      "argument": "kpred.cancel_upgrade_arguments",
+      "return": "kpred.cancel_upgrade_result",
+      "read_only": false,
+      "description": "Cancel an announced code upgrade (owner only)."
+    },
+    "set_sponsor_limit": {
+      "entry_point": 1906813279,
+      "argument": "kpred.set_sponsor_limit_arguments",
+      "return": "kpred.set_sponsor_limit_result",
+      "read_only": false,
+      "description": "Set the most (and least) Mana the contract pays for one free transaction; 0 turns free transactions off (owner only, at most 10 KOIN)."
+    },
+    "set_min_stake": {
+      "entry_point": 4249409239,
+      "argument": "kpred.set_min_stake_arguments",
+      "return": "kpred.set_min_stake_result",
+      "read_only": false,
+      "description": "Change the minimum stake to be eligible for rewards (owner only, never 0). It applies from next week."
+    },
+    "claim_creator_fee": {
+      "entry_point": 1525726320,
+      "argument": "kpred.claim_creator_fee_arguments",
+      "return": "kpred.claim_creator_fee_result",
+      "read_only": false,
+      "description": "Claim the 5% producer fee in KOIN (owner only; limited by the contract's Mana)."
+    },
+    "claim_owner_share": {
+      "entry_point": 930930124,
+      "argument": "kpred.claim_owner_share_arguments",
+      "return": "kpred.claim_owner_share_result",
+      "read_only": false,
+      "description": "Retired: the 2% owner share no longer exists (kept so old calls fail cleanly)."
+    },
+    "seed_deposit_vhp": {
+      "entry_point": 1909552177,
+      "argument": "kpred.seed_deposit_vhp_arguments",
+      "return": "kpred.seed_deposit_vhp_result",
+      "read_only": false,
+      "description": "Add seed VHP (seed owner; approve first). Produces for the pool, never plays."
+    },
+    "seed_deposit_koin": {
+      "entry_point": 332839423,
+      "argument": "kpred.seed_deposit_koin_arguments",
+      "return": "kpred.seed_deposit_koin_result",
+      "read_only": false,
+      "description": "Add seed KOIN (seed owner; approve first). Kept as KOIN: the Mana reserve."
+    },
+    "request_seed_withdrawal": {
+      "entry_point": 779668479,
+      "argument": "kpred.request_seed_withdrawal_arguments",
+      "return": "kpred.request_seed_withdrawal_result",
+      "read_only": false,
+      "description": "Announce a seed withdrawal; it can be executed after the timelock (seed owner)."
+    },
+    "execute_seed_withdrawal": {
+      "entry_point": 856342810,
+      "argument": "kpred.execute_seed_withdrawal_arguments",
+      "return": "kpred.execute_seed_withdrawal_result",
+      "read_only": false,
+      "description": "Execute an announced seed withdrawal after the timelock (seed owner). KOIN moves as far as Mana allows."
+    },
+    "get_game": {
+      "entry_point": 1871540943,
+      "argument": "kpred.get_game_arguments",
+      "return": "kpred.get_game_result",
+      "read_only": true,
+      "description": "One game (with one of its weeks)."
+    },
+    "list_games": {
+      "entry_point": 49260435,
+      "argument": "kpred.list_games_arguments",
+      "return": "kpred.list_games_result",
+      "read_only": true,
+      "description": "Every game in the vault, the question game first."
+    },
+    "get_game_player": {
+      "entry_point": 267077419,
+      "argument": "kpred.get_game_player_arguments",
+      "return": "kpred.get_game_player_result",
+      "read_only": true,
+      "description": "A player's stake and week in a game other than the question game."
+    },
+    "propose_game": {
+      "entry_point": 2677987532,
+      "argument": "kpred.propose_game_arguments",
+      "return": "kpred.propose_game_result",
+      "read_only": false,
+      "description": "Announce a new game, or a change to one (owner). It can be applied 48 hours later."
+    },
+    "apply_game": {
+      "entry_point": 1543470019,
+      "argument": "kpred.apply_game_arguments",
+      "return": "kpred.apply_game_result",
+      "read_only": false,
+      "description": "Apply an announced game after its timelock (owner). It earns from the next week."
+    },
+    "deactivate_game": {
+      "entry_point": 2132499889,
+      "argument": "kpred.deactivate_game_arguments",
+      "return": "kpred.deactivate_game_result",
+      "read_only": false,
+      "description": "Stop a game at once (owner): no new deposits or moves; it stops earning after this week. Withdrawals stay open."
+    },
+    "deposit_to": {
+      "entry_point": 2075509814,
+      "argument": "kpred.deposit_to_arguments",
+      "return": "kpred.deposit_to_result",
+      "read_only": false,
+      "description": "Stake VHP in a game other than the question game (whole numbers; counts from next week)."
+    },
+    "withdraw_from": {
+      "entry_point": 1527426808,
+      "argument": "kpred.withdraw_from_arguments",
+      "return": "kpred.withdraw_from_result",
+      "read_only": false,
+      "description": "Withdraw from a game other than the question game. Any amount, at any time."
+    },
+    "move_stake": {
+      "entry_point": 2082901609,
+      "argument": "kpred.move_stake_arguments",
+      "return": "kpred.move_stake_result",
+      "read_only": false,
+      "description": "Move stake from one game to another (no tokens move). It counts in the new game from next week."
+    },
+    "post_results": {
+      "entry_point": 4276772602,
+      "argument": "kpred.post_results_arguments",
+      "return": "kpred.post_results_result",
+      "read_only": false,
+      "description": "Post a game's weekly points (operator), up to 50 players per call."
+    },
+    "post_prize_winners": {
+      "entry_point": 1450970958,
+      "argument": "kpred.post_prize_winners_arguments",
+      "return": "kpred.post_prize_winners_result",
+      "read_only": false,
+      "description": "Post a game's free-prize winners (operator): place 1 or 2, up to 10 wallets per place."
+    },
+    "seal_results": {
+      "entry_point": 3885664692,
+      "argument": "kpred.seal_results_arguments",
+      "return": "kpred.seal_results_result",
+      "read_only": false,
+      "description": "Mark a game's weekly results complete (operator). The owner can correct them for 24 hours."
+    },
+    "correct_result": {
+      "entry_point": 710524366,
+      "argument": "kpred.correct_result_arguments",
+      "return": "kpred.correct_result_result",
+      "read_only": false,
+      "description": "Correct one player's points (0 removes them), or take away a free-prize place (owner)."
+    },
+    "void_game_week": {
+      "entry_point": 3322987694,
+      "argument": "kpred.void_game_week_arguments",
+      "return": "kpred.void_game_week_result",
+      "read_only": false,
+      "description": "Void a game's week (owner): its bucket rolls over within the game and its prize returns to the pool."
+    },
+    "finalize_game_week": {
+      "entry_point": 3962571793,
+      "argument": "kpred.finalize_game_week_arguments",
+      "return": "kpred.finalize_game_week_result",
+      "read_only": false,
+      "description": "Find a game week's winners (anyone), in pages like finalize_week."
+    },
+    "claim_game": {
+      "entry_point": 1091036075,
+      "argument": "kpred.claim_game_arguments",
+      "return": "kpred.claim_game_result",
+      "read_only": false,
+      "description": "Claim a game week's reward or free prize."
+    },
+    "claim_fee_vhp": {
+      "entry_point": 3721930473,
+      "argument": "kpred.claim_fee_vhp_arguments",
+      "return": "kpred.claim_fee_vhp_result",
+      "read_only": false,
+      "description": "Claim the 5% fee in VHP (owner)."
+    }
+  },
+  "koilib_types": {
+    "nested": {
+      "kpred": {
+        "nested": {
+          "config_object": {
+            "fields": {
+              "owner": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "operator": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "seed_owner": {
+                "type": "bytes",
+                "id": 3,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "genesis_time": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "week_length": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "close_delay": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "settle_length": {
+                "type": "uint64",
+                "id": 7,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "timelock_length": {
+                "type": "uint64",
+                "id": 8,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "min_stake": {
+                "type": "uint64",
+                "id": 9,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "max_sponsor_rc": {
+                "type": "uint64",
+                "id": 10,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "paused": {
+                "type": "bool",
+                "id": 11
+              },
+              "pending_owner": {
+                "type": "bytes",
+                "id": 12,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "min_stake_next": {
+                "type": "uint64",
+                "id": 13,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "min_stake_next_week": {
+                "type": "uint64",
+                "id": 14,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pending_owner_height": {
+                "type": "uint64",
+                "id": 15,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "min_sponsor_rc": {
+                "type": "uint64",
+                "id": 16,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "scorer_rule_week_plus_one": {
+                "type": "uint64",
+                "id": 17,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pending_seed_owner": {
+                "type": "bytes",
+                "id": 18,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "pending_seed_owner_height": {
+                "type": "uint64",
+                "id": 19,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "reward_rule_week_plus_one": {
+                "type": "uint64",
+                "id": 20,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "v6_rule_week_plus_one": {
+                "type": "uint64",
+                "id": 21,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "game_count": {
+                "type": "uint32",
+                "id": 22
+              }
+            }
+          },
+          "totals_object": {
+            "fields": {
+              "total_stake": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "seed_vhp": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "seed_koin": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "owner_share": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "creator_fee": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pots_outstanding": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "weeks_closed": {
+                "type": "uint64",
+                "id": 7,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "next_question_id": {
+                "type": "uint32",
+                "id": 8
+              },
+              "total_gain": {
+                "type": "uint64",
+                "id": 9,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "weeks_finalized": {
+                "type": "uint64",
+                "id": 10,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "rolled_over": {
+                "type": "uint64",
+                "id": 11,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "acc_player_hi": {
+                "type": "uint64",
+                "id": 12,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "acc_player_lo": {
+                "type": "uint64",
+                "id": 13,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "acc_house_hi": {
+                "type": "uint64",
+                "id": 14,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "acc_house_lo": {
+                "type": "uint64",
+                "id": 15,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "acc_time": {
+                "type": "uint64",
+                "id": 16,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "fee_vhp": {
+                "type": "uint64",
+                "id": 17,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "games_rolled": {
+                "type": "uint64",
+                "id": 18,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "stake_other": {
+                "type": "uint64",
+                "id": 19,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "acc_seed_hi": {
+                "type": "uint64",
+                "id": 20,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "acc_seed_lo": {
+                "type": "uint64",
+                "id": 21,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "player_object": {
+            "fields": {
+              "stake": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pending": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pending_week": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "void_week_plus_one": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "last_week_plus_one": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "stake_other": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "answer_record": {
+            "fields": {
+              "question_id": {
+                "type": "uint32",
+                "id": 1
+              },
+              "option": {
+                "type": "uint32",
+                "id": 2
+              }
+            }
+          },
+          "entry_object": {
+            "fields": {
+              "stake": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "answers": {
+                "rule": "repeated",
+                "type": "answer_record",
+                "id": 2
+              },
+              "voided": {
+                "type": "bool",
+                "id": 3
+              },
+              "settled": {
+                "type": "bool",
+                "id": 4
+              },
+              "points": {
+                "type": "uint32",
+                "id": 5
+              },
+              "counted": {
+                "type": "uint32",
+                "id": 6
+              },
+              "eligible": {
+                "type": "bool",
+                "id": 7
+              },
+              "claimed": {
+                "type": "bool",
+                "id": 8
+              },
+              "reward": {
+                "type": "uint64",
+                "id": 9,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "peak_stake": {
+                "type": "uint64",
+                "id": 10,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "free_player": {
+                "type": "bool",
+                "id": 11
+              }
+            }
+          },
+          "question_object": {
+            "fields": {
+              "week": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "k": {
+                "type": "uint32",
+                "id": 2
+              },
+              "lock_time": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "window_start": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "window_end": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "params_hash": {
+                "type": "bytes",
+                "id": 6,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              },
+              "outcome": {
+                "type": "uint32",
+                "id": 7
+              },
+              "data_hash": {
+                "type": "bytes",
+                "id": 8,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              },
+              "released_height": {
+                "type": "uint64",
+                "id": 9,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "resolved_height": {
+                "type": "uint64",
+                "id": 10,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "week_object": {
+            "fields": {
+              "questions": {
+                "type": "uint32",
+                "id": 1
+              },
+              "resolved": {
+                "type": "uint32",
+                "id": 2
+              },
+              "closed": {
+                "type": "bool",
+                "id": 3
+              },
+              "gain": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "fee": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "retained": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pot": {
+                "type": "uint64",
+                "id": 7,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "settle_start": {
+                "type": "uint64",
+                "id": 8,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "settle_end": {
+                "type": "uint64",
+                "id": 9,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "finalized": {
+                "type": "bool",
+                "id": 10
+              },
+              "eligible_stake": {
+                "type": "uint64",
+                "id": 11,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "eligible_players": {
+                "type": "uint32",
+                "id": 12
+              },
+              "cutoff": {
+                "type": "uint32",
+                "id": 13
+              },
+              "weight_hi": {
+                "type": "uint64",
+                "id": 14,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "weight_lo": {
+                "type": "uint64",
+                "id": 15,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "claimed": {
+                "type": "uint64",
+                "id": 16,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "winners": {
+                "type": "uint32",
+                "id": 17
+              },
+              "rolled_over": {
+                "type": "bool",
+                "id": 18
+              },
+              "max_points": {
+                "type": "uint32",
+                "id": 19
+              },
+              "pot_a": {
+                "type": "uint64",
+                "id": 20,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pot_b": {
+                "type": "uint64",
+                "id": 21,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "house_ppm": {
+                "type": "uint64",
+                "id": 22,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "sum_w": {
+                "type": "uint64",
+                "id": 23,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "bw_hi": {
+                "type": "uint64",
+                "id": 24,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "bw_lo": {
+                "type": "uint64",
+                "id": 25,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "last_resolved_time": {
+                "type": "uint64",
+                "id": 26,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "fin_started": {
+                "type": "bool",
+                "id": 27
+              },
+              "fin_points": {
+                "type": "uint32",
+                "id": 28
+              },
+              "fin_index": {
+                "type": "uint32",
+                "id": 29
+              },
+              "fin_rank": {
+                "type": "uint64",
+                "id": 30,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "fin_gw": {
+                "type": "uint64",
+                "id": 31,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "last_result_time": {
+                "type": "uint64",
+                "id": 32,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "aw_hi": {
+                "type": "uint64",
+                "id": 33,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "aw_lo": {
+                "type": "uint64",
+                "id": 34,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "reward_rule": {
+                "type": "bool",
+                "id": 35
+              },
+              "pot_free": {
+                "type": "uint64",
+                "id": 36,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "free_best": {
+                "type": "uint32",
+                "id": 37
+              },
+              "free_best_n": {
+                "type": "uint32",
+                "id": 38
+              },
+              "free_second": {
+                "type": "uint32",
+                "id": 39
+              },
+              "free_second_n": {
+                "type": "uint32",
+                "id": 40
+              },
+              "prize_v6": {
+                "type": "bool",
+                "id": 41
+              },
+              "fee_vhp": {
+                "type": "uint64",
+                "id": 42,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "prizes": {
+                "type": "uint64",
+                "id": 43,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "split": {
+                "type": "uint64",
+                "id": 44,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "seed_part": {
+                "type": "uint64",
+                "id": 45,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "bucket_object": {
+            "fields": {
+              "stake": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "players": {
+                "type": "uint32",
+                "id": 2
+              },
+              "sum_w": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "capped": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "timelock_object": {
+            "fields": {
+              "hash": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              },
+              "eta": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "vhp": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "koin": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "get_state_arguments": {
+            "fields": {}
+          },
+          "get_state_result": {
+            "fields": {
+              "config": {
+                "type": "config_object",
+                "id": 1
+              },
+              "totals": {
+                "type": "totals_object",
+                "id": 2
+              },
+              "height": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "week": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "week_end": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "vhp_balance": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "koin_balance": {
+                "type": "uint64",
+                "id": 7,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "mana": {
+                "type": "uint64",
+                "id": 8,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "upgrade": {
+                "type": "timelock_object",
+                "id": 9
+              },
+              "seed_withdrawal": {
+                "type": "timelock_object",
+                "id": 10
+              },
+              "time": {
+                "type": "uint64",
+                "id": 11,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "safe_mode": {
+                "type": "bool",
+                "id": 12
+              }
+            }
+          },
+          "get_player_arguments": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "week": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "get_player_result": {
+            "fields": {
+              "player": {
+                "type": "player_object",
+                "id": 1
+              },
+              "entry": {
+                "type": "entry_object",
+                "id": 2
+              },
+              "active_stake": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "get_question_arguments": {
+            "fields": {
+              "id": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "get_question_result": {
+            "fields": {
+              "question": {
+                "type": "question_object",
+                "id": 1
+              }
+            }
+          },
+          "get_week_arguments": {
+            "fields": {
+              "week": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "get_week_result": {
+            "fields": {
+              "week": {
+                "type": "week_object",
+                "id": 1
+              },
+              "buckets": {
+                "rule": "repeated",
+                "type": "bucket_object",
+                "id": 2
+              }
+            }
+          },
+          "list_players_arguments": {
+            "fields": {
+              "start": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "limit": {
+                "type": "uint32",
+                "id": 2
+              },
+              "week": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "player_row": {
+            "fields": {
+              "address": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "player": {
+                "type": "player_object",
+                "id": 2
+              },
+              "entry": {
+                "type": "entry_object",
+                "id": 3
+              },
+              "active_stake": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "list_players_result": {
+            "fields": {
+              "rows": {
+                "rule": "repeated",
+                "type": "player_row",
+                "id": 1
+              }
+            }
+          },
+          "init_arguments": {
+            "fields": {
+              "owner": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "operator": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "seed_owner": {
+                "type": "bytes",
+                "id": 3,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "genesis_time": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "week_length": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "close_delay": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "settle_length": {
+                "type": "uint64",
+                "id": 7,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "timelock_length": {
+                "type": "uint64",
+                "id": 8,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "min_stake": {
+                "type": "uint64",
+                "id": 9,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "max_sponsor_rc": {
+                "type": "uint64",
+                "id": 10,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "init_result": {
+            "fields": {}
+          },
+          "deposit_vhp_arguments": {
+            "fields": {
+              "from": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "amount": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "deposit_vhp_result": {
+            "fields": {}
+          },
+          "deposit_koin_arguments": {
+            "fields": {
+              "from": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "amount": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "deposit_koin_result": {
+            "fields": {}
+          },
+          "withdraw_arguments": {
+            "fields": {
+              "to": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "amount": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "withdraw_result": {
+            "fields": {}
+          },
+          "answer_arguments": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "question_id": {
+                "type": "uint32",
+                "id": 2
+              },
+              "option": {
+                "type": "uint32",
+                "id": 3
+              }
+            }
+          },
+          "answer_result": {
+            "fields": {}
+          },
+          "settle_arguments": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "week": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "settle_result": {
+            "fields": {
+              "points": {
+                "type": "uint32",
+                "id": 1
+              },
+              "eligible": {
+                "type": "bool",
+                "id": 2
+              }
+            }
+          },
+          "claim_arguments": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "week": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "claim_result": {
+            "fields": {
+              "reward": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "compound_arguments": {
+            "fields": {}
+          },
+          "compound_result": {
+            "fields": {
+              "burned": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "close_week_arguments": {
+            "fields": {
+              "week": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "close_week_result": {
+            "fields": {
+              "gain": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pot": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "finalize_week_arguments": {
+            "fields": {
+              "week": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "finalize_week_result": {
+            "fields": {
+              "cutoff": {
+                "type": "uint32",
+                "id": 1
+              },
+              "winners": {
+                "type": "uint32",
+                "id": 2
+              },
+              "done": {
+                "type": "bool",
+                "id": 3
+              }
+            }
+          },
+          "post_question_arguments": {
+            "fields": {
+              "k": {
+                "type": "uint32",
+                "id": 1
+              },
+              "lock_time": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "window_start": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "window_end": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "params_hash": {
+                "type": "bytes",
+                "id": 5,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              }
+            }
+          },
+          "post_question_result": {
+            "fields": {
+              "id": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "resolve_question_arguments": {
+            "fields": {
+              "id": {
+                "type": "uint32",
+                "id": 1
+              },
+              "outcome": {
+                "type": "uint32",
+                "id": 2
+              },
+              "data_hash": {
+                "type": "bytes",
+                "id": 3,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              }
+            }
+          },
+          "resolve_question_result": {
+            "fields": {}
+          },
+          "correct_question_arguments": {
+            "fields": {
+              "id": {
+                "type": "uint32",
+                "id": 1
+              },
+              "outcome": {
+                "type": "uint32",
+                "id": 2
+              },
+              "data_hash": {
+                "type": "bytes",
+                "id": 3,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              }
+            }
+          },
+          "correct_question_result": {
+            "fields": {}
+          },
+          "set_operator_arguments": {
+            "fields": {
+              "operator": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "set_operator_result": {
+            "fields": {}
+          },
+          "set_paused_arguments": {
+            "fields": {
+              "paused": {
+                "type": "bool",
+                "id": 1
+              }
+            }
+          },
+          "set_paused_result": {
+            "fields": {}
+          },
+          "propose_owner_arguments": {
+            "fields": {
+              "new_owner": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "propose_owner_result": {
+            "fields": {}
+          },
+          "accept_owner_arguments": {
+            "fields": {}
+          },
+          "accept_owner_result": {
+            "fields": {}
+          },
+          "propose_seed_owner_arguments": {
+            "fields": {
+              "new_seed_owner": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "propose_seed_owner_result": {
+            "fields": {}
+          },
+          "accept_seed_owner_arguments": {
+            "fields": {}
+          },
+          "accept_seed_owner_result": {
+            "fields": {}
+          },
+          "register_key_arguments": {
+            "fields": {
+              "public_key": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "BASE64"
+                }
+              }
+            }
+          },
+          "register_key_result": {
+            "fields": {}
+          },
+          "schedule_upgrade_arguments": {
+            "fields": {
+              "hash": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              }
+            }
+          },
+          "schedule_upgrade_result": {
+            "fields": {
+              "eta": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "cancel_upgrade_arguments": {
+            "fields": {}
+          },
+          "cancel_upgrade_result": {
+            "fields": {}
+          },
+          "set_sponsor_limit_arguments": {
+            "fields": {
+              "max_sponsor_rc": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "min_sponsor_rc": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "set_sponsor_limit_result": {
+            "fields": {}
+          },
+          "set_min_stake_arguments": {
+            "fields": {
+              "min_stake": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "set_min_stake_result": {
+            "fields": {
+              "from_week": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "claim_creator_fee_arguments": {
+            "fields": {
+              "to": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "claim_creator_fee_result": {
+            "fields": {
+              "amount": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "claim_owner_share_arguments": {
+            "fields": {
+              "to": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "amount": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "claim_owner_share_result": {
+            "fields": {}
+          },
+          "seed_deposit_vhp_arguments": {
+            "fields": {
+              "amount": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "seed_deposit_vhp_result": {
+            "fields": {}
+          },
+          "seed_deposit_koin_arguments": {
+            "fields": {
+              "amount": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "seed_deposit_koin_result": {
+            "fields": {}
+          },
+          "request_seed_withdrawal_arguments": {
+            "fields": {
+              "vhp": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "koin": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "request_seed_withdrawal_result": {
+            "fields": {
+              "eta": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "execute_seed_withdrawal_arguments": {
+            "fields": {}
+          },
+          "execute_seed_withdrawal_result": {
+            "fields": {
+              "vhp": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "koin": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "game_object": {
+            "fields": {
+              "id": {
+                "type": "uint32",
+                "id": 1
+              },
+              "name": {
+                "type": "string",
+                "id": 2
+              },
+              "staked": {
+                "type": "bool",
+                "id": 3
+              },
+              "free_prize": {
+                "type": "bool",
+                "id": 4
+              },
+              "active": {
+                "type": "bool",
+                "id": 5
+              },
+              "from_week": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "last_week_plus_one": {
+                "type": "uint64",
+                "id": 7,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "rolled": {
+                "type": "uint64",
+                "id": 8,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "stake": {
+                "type": "uint64",
+                "id": 10,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "week_stake": {
+                "type": "uint64",
+                "id": 11,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "week": {
+                "type": "uint64",
+                "id": 12,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "next_stake": {
+                "type": "uint64",
+                "id": 13,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "next_week": {
+                "type": "uint64",
+                "id": 14,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "season_weeks": {
+                "type": "uint32",
+                "id": 15
+              },
+              "prize_held": {
+                "type": "uint64",
+                "id": 16,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "game_proposal_object": {
+            "fields": {
+              "game": {
+                "type": "game_object",
+                "id": 1
+              },
+              "eta": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "gplayer_object": {
+            "fields": {
+              "stake": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pending": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pending_week": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "void_week_plus_one": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "gentry_object": {
+            "fields": {
+              "stake": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "voided": {
+                "type": "bool",
+                "id": 2
+              },
+              "points": {
+                "type": "uint32",
+                "id": 3
+              },
+              "claimed": {
+                "type": "bool",
+                "id": 4
+              },
+              "reward": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "prize_place": {
+                "type": "uint32",
+                "id": 6
+              },
+              "peak_stake": {
+                "type": "uint64",
+                "id": 7,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "gweek_object": {
+            "fields": {
+              "closed": {
+                "type": "bool",
+                "id": 1
+              },
+              "bucket": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "prize": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "sealed": {
+                "type": "bool",
+                "id": 4
+              },
+              "seal_time": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "last_change_time": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "voided": {
+                "type": "bool",
+                "id": 7
+              },
+              "finalized": {
+                "type": "bool",
+                "id": 8
+              },
+              "rolled_over": {
+                "type": "bool",
+                "id": 9
+              },
+              "eligible_players": {
+                "type": "uint32",
+                "id": 10
+              },
+              "max_points": {
+                "type": "uint32",
+                "id": 11
+              },
+              "cutoff": {
+                "type": "uint32",
+                "id": 12
+              },
+              "winners": {
+                "type": "uint32",
+                "id": 13
+              },
+              "pot_a": {
+                "type": "uint64",
+                "id": 14,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "pot_b": {
+                "type": "uint64",
+                "id": 15,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "sum_w": {
+                "type": "uint64",
+                "id": 16,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "bw_hi": {
+                "type": "uint64",
+                "id": 17,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "bw_lo": {
+                "type": "uint64",
+                "id": 18,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "aw_hi": {
+                "type": "uint64",
+                "id": 19,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "aw_lo": {
+                "type": "uint64",
+                "id": 20,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "fin_started": {
+                "type": "bool",
+                "id": 21
+              },
+              "fin_points": {
+                "type": "uint32",
+                "id": 22
+              },
+              "fin_index": {
+                "type": "uint32",
+                "id": 23
+              },
+              "fin_rank": {
+                "type": "uint64",
+                "id": 24,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "fin_gw": {
+                "type": "uint64",
+                "id": 25,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "first_n": {
+                "type": "uint32",
+                "id": 26
+              },
+              "second_n": {
+                "type": "uint32",
+                "id": 27
+              },
+              "prize_first": {
+                "type": "uint64",
+                "id": 28,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "prize_second": {
+                "type": "uint64",
+                "id": 29,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "claimed": {
+                "type": "uint64",
+                "id": 30,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "weight": {
+                "type": "uint64",
+                "id": 31,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "weight_set": {
+                "type": "bool",
+                "id": 32
+              }
+            }
+          },
+          "get_game_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              },
+              "week": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "get_game_result": {
+            "fields": {
+              "game": {
+                "type": "game_object",
+                "id": 1
+              },
+              "week": {
+                "type": "gweek_object",
+                "id": 2
+              },
+              "buckets": {
+                "rule": "repeated",
+                "type": "bucket_object",
+                "id": 3
+              },
+              "proposal": {
+                "type": "game_proposal_object",
+                "id": 4
+              }
+            }
+          },
+          "list_games_arguments": {
+            "fields": {}
+          },
+          "list_games_result": {
+            "fields": {
+              "games": {
+                "rule": "repeated",
+                "type": "game_object",
+                "id": 1
+              },
+              "proposals": {
+                "rule": "repeated",
+                "type": "game_proposal_object",
+                "id": 2
+              }
+            }
+          },
+          "get_game_player_arguments": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "game": {
+                "type": "uint32",
+                "id": 2
+              },
+              "week": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "get_game_player_result": {
+            "fields": {
+              "player": {
+                "type": "gplayer_object",
+                "id": 1
+              },
+              "entry": {
+                "type": "gentry_object",
+                "id": 2
+              },
+              "active_stake": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "week_stake": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "propose_game_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              },
+              "name": {
+                "type": "string",
+                "id": 2
+              },
+              "staked": {
+                "type": "bool",
+                "id": 3
+              },
+              "free_prize": {
+                "type": "bool",
+                "id": 4
+              },
+              "season_weeks": {
+                "type": "uint32",
+                "id": 5
+              }
+            }
+          },
+          "propose_game_result": {
+            "fields": {
+              "eta": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "apply_game_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "apply_game_result": {
+            "fields": {
+              "from_week": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "deactivate_game_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "deactivate_game_result": {
+            "fields": {}
+          },
+          "deposit_to_arguments": {
+            "fields": {
+              "from": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "game": {
+                "type": "uint32",
+                "id": 2
+              },
+              "amount": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "koin": {
+                "type": "bool",
+                "id": 4
+              }
+            }
+          },
+          "deposit_to_result": {
+            "fields": {}
+          },
+          "withdraw_from_arguments": {
+            "fields": {
+              "to": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "game": {
+                "type": "uint32",
+                "id": 2
+              },
+              "amount": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "withdraw_from_result": {
+            "fields": {}
+          },
+          "move_stake_arguments": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "from_game": {
+                "type": "uint32",
+                "id": 2
+              },
+              "to_game": {
+                "type": "uint32",
+                "id": 3
+              },
+              "amount": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "move_stake_result": {
+            "fields": {}
+          },
+          "result_row": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "points": {
+                "type": "uint32",
+                "id": 2
+              }
+            }
+          },
+          "post_results_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              },
+              "week": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "rows": {
+                "rule": "repeated",
+                "type": "result_row",
+                "id": 3
+              }
+            }
+          },
+          "post_results_result": {
+            "fields": {}
+          },
+          "post_prize_winners_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              },
+              "week": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "place": {
+                "type": "uint32",
+                "id": 3
+              },
+              "players": {
+                "rule": "repeated",
+                "type": "bytes",
+                "id": 4,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "post_prize_winners_result": {
+            "fields": {}
+          },
+          "seal_results_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              },
+              "week": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "seal_results_result": {
+            "fields": {}
+          },
+          "correct_result_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              },
+              "week": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "player": {
+                "type": "bytes",
+                "id": 3,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "points": {
+                "type": "uint32",
+                "id": 4
+              },
+              "remove_prize": {
+                "type": "bool",
+                "id": 5
+              }
+            }
+          },
+          "correct_result_result": {
+            "fields": {}
+          },
+          "void_game_week_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              },
+              "week": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "void_game_week_result": {
+            "fields": {}
+          },
+          "finalize_game_week_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              },
+              "week": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "finalize_game_week_result": {
+            "fields": {
+              "cutoff": {
+                "type": "uint32",
+                "id": 1
+              },
+              "winners": {
+                "type": "uint32",
+                "id": 2
+              },
+              "done": {
+                "type": "bool",
+                "id": 3
+              }
+            }
+          },
+          "claim_game_arguments": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "game": {
+                "type": "uint32",
+                "id": 2
+              },
+              "week": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "claim_game_result": {
+            "fields": {
+              "reward": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "claim_fee_vhp_arguments": {
+            "fields": {
+              "to": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "amount": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "claim_fee_vhp_result": {
+            "fields": {}
+          }
+        }
+      },
+      "koinos": {
+        "nested": {
+          "chain": {
+            "options": {
+              "go_package": "github.com/koinos/koinos-proto-golang/koinos/chain"
+            },
+            "nested": {
+              "authorization_type": {
+                "values": {
+                  "contract_call": 0,
+                  "transaction_application": 1,
+                  "contract_upload": 2
+                }
+              },
+              "call_target": {
+                "fields": {
+                  "contract_id": {
+                    "type": "bytes",
+                    "id": 1,
+                    "options": {
+                      "(btype)": "ADDRESS"
+                    }
+                  },
+                  "entry_point": {
+                    "type": "uint32",
+                    "id": 2
+                  }
+                }
+              },
+              "authorize_arguments": {
+                "oneofs": {
+                  "_call": {
+                    "oneof": [
+                      "call"
+                    ]
+                  }
+                },
+                "fields": {
+                  "type": {
+                    "type": "authorization_type",
+                    "id": 1
+                  },
+                  "call": {
+                    "type": "call_target",
+                    "id": 2,
+                    "options": {
+                      "proto3_optional": true
+                    }
+                  }
+                }
+              },
+              "authorize_result": {
+                "fields": {
+                  "value": {
+                    "type": "bool",
+                    "id": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

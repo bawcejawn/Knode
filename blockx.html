@@ -214,7 +214,8 @@
         <p class="note" id="prize-line"></p>
         <p class="note" id="stake-line">Staked players (at least 1 VHP staked in Block X that week) share this game's weekly bucket; free players play for the 2 + 1 VHP prize.</p>
         <p class="note" id="stake-mine" hidden></p>
-        <div id="stake-panel" hidden></div>
+      </section>
+      <section class="card" id="blockx-stake" hidden>
       </section>
     </div>
 
@@ -228,7 +229,7 @@
       <summary>How it works</summary>
       <div class="explain">
         <p><b>The targets.</b> Every block whose number is a multiple of 2,400 is a target, about every 2 hours. The next 12 are always open, about a day ahead. Nobody chooses them.</p>
-        <p><b>The lock.</b> The Picks contract refuses a pick once the chain reaches 100 blocks before the target, so every pick is in before anyone can know who signs it. You can change a pick up to 5 times, and make up to 30 picks a day (changes count).</p>
+        <p><b>The lock.</b> The Picks contract refuses a pick once the chain reaches 100 blocks before the target, so every pick is in before anyone can know who signs it. You can change a pick once, and make up to 30 picks a day (a change counts).</p>
         <p><b>The score.</b> Koinos picks who signs each block in proportion to VHP, so big producers sign more often. A right pick scores</p>
         <p><span class="formula">min(3, top producer's VHP ÷ your producer's VHP)</span></p>
         <p>with the VHP from the Producer Race's hourly handicap card at the lock. A wrong pick scores 0. Ties on the board go to more right picks, then the earlier last right pick.</p>
@@ -282,6 +283,7 @@
   <script src="wallet.js"></script>
   <script src="header-wallet.js"></script>
   <script src="nav.js"></script>
+  <script src="stake-panel.js"></script>
   <script src="race-math.js"></script>
   <script src="blockx-math.js"></script>
   <script src="board.js"></script>

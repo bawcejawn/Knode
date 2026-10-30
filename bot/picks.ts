@@ -228,11 +228,14 @@ async function upload(send: boolean) {
   const payer = signerOf(payerKey, p), PA = payer.getAddress();
   if (PA === A) throw new Error(`${payerKey} is the Picks wallet itself; use another wallet to pay the Mana.`);
   const have = BigInt(await p.getAccountRc(PA));
-  const needRc = toSat(Math.ceil(b.wasm.length / 1024 * 0.35 + 5));   // testnet upload of 31.9 KB used 2.8 Mana
+  // Mainnet storage costs far more Mana than the testnet's (2026-10-30: two mainnet sends with a 17-Mana limit were
+  // refused "insufficient rc" with 103 Mana in the payer wallet; nothing was charged). The same estimate as the sponsor
+  // upload on mainnet: 1.2 Mana per KB + 10 (about 49 for 31.9 KB). The testnet upload of 31.9 KB used 2.8.
+  const needRc = toSat(Math.ceil(b.wasm.length / 1024 * (net.testnet ? 0.35 : 1.2) + (net.testnet ? 5 : 10)));
   log(`Picks wallet       ${A}${net.testnet ? "  (testnet)" : "   ⚠ MAINNET"}  (send it no KOIN)`);
   log(`Code               ${b.what}, ${(b.wasm.length / 1024).toFixed(1)} KB, sha256 ${b.sha256}`);
   log(`Overrides          all three ON: it refuses to move anything or pay Mana; new code only by the owner after the wait`);
-  log(`Mana paid by       ${PA} (${payerKey}): has ${showKoin(have)}, the upload may use up to ${showKoin(needRc)} (the testnet upload used 2.8)`);
+  log(`Mana paid by       ${PA} (${payerKey}): has ${showKoin(have)}, the upload may use up to ${showKoin(needRc)} (Mana not used is not charged)`);
   // Audit BX-34: the transaction uses the payer's nonce. If the payer is the hourly bot's wallet (OPERATOR_WIF), a bot
   // transaction at the same moment can take that nonce and this upload is refused (nothing happens; run it again).
   if (payerKey === "OPERATOR_WIF") log(`                   (tip: set PAYER_WIF to a wallet the hourly bot doesn't use, so their nonces can't collide)`);
