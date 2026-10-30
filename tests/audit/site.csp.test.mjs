@@ -90,6 +90,14 @@ test("(guard) every origin the pages fetch or load from is allowed (connect-src 
   for (const p of pages) {
     const html = read(p), c = cspOf(html);
     const conn = srcList(c, "connect-src");
+    // The testnet staking page reaches only the testnet node: never mainnet, never KOIN Vault.
+    if (/<meta name="kg-network" content="testnet">/.test(html)) {
+      const tn = json("testnet/vault.json");
+      if (!allows(conn, tn.rpc + "/")) missing.push(`${p}: connect-src lacks the testnet node ${tn.rpc}`);
+      for (const bad of [...rpcs, "https://koinvault.app/api/dapp/status"]) if (allows(conn, bad)) missing.push(`${p}: the testnet page may reach ${bad}`);
+      if (/<script\b[^>]*\bsrc="(guest|wallet|header-wallet)\.js"/.test(html)) missing.push(`${p}: the testnet page loads a mainnet wallet script`);
+      continue;
+    }
     const usesChain = /koilib@/.test(html), usesWallet = /wallet\.js/.test(html);
     if (usesChain) for (const r of rpcs) if (!allows(conn, r)) missing.push(`${p}: connect-src lacks rpc ${r}`);
     if (usesWallet && !allows(conn, "https://koinvault.app/api/dapp/status")) missing.push(`${p}: connect-src lacks KOIN Vault`);

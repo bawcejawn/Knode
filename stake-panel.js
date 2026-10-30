@@ -12,7 +12,11 @@
   const UNIT = 100000000n;                 // 1 VHP / 1 KOIN = 10^8 units
   const CAP_A = 10n * UNIT;                // basket A counts a stake up to 10 VHP (the vault's V5_CAP_A)
   const RPC = "https://koinos.armana.io";
-  const DEPLOYMENT = "./game-data/deployment.json";
+  // The testnet staking page (stake-testnet.html) names its own settings and wallet; every other page uses the vault's
+  // mainnet deployment and wallet.js. Only that one settings file is accepted, so a page can't point the panel anywhere else.
+  const TESTNET = typeof document !== "undefined" && !!(document.querySelector && document.querySelector('meta[name="kg-network"][content="testnet"]'));
+  const DEPLOYMENT = TESTNET ? "./testnet/vault.json" : "./game-data/deployment.json";
+  const Wallet = () => (TESTNET ? window.KTestStakeWallet : window.KWallet);
   const Q_GAME = 1;
   const CLAIM_WEEKS = 52;                  // finished weeks checked for something to claim (the vault never expires a claim)
   const lib = window.koilib || window.koinos || window;
@@ -108,6 +112,8 @@
   function weekDate(config, w) {
     const len = big(config && config.week_length) || 604800000n;
     const ms = Number(big(config && config.genesis_time) + big(w) * len);
+    // The testnet vault runs 10-minute weeks: show the time instead.
+    if (len < 86400000n) return new Date(ms).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC";
     return new Date(ms).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).replace(",", "");
   }
   /** Last week's rewards per 100 VHP staked in a game: its bucket ÷ the stake counted for it (null = not known). */
@@ -206,7 +212,7 @@
         if (!g.game || !g.game.staked) { root.hidden = true; return; }
         P.state = state; P.game = g.game;
         P.games = ((await read("list_games", {})).games || []).filter((x) => x.active && x.staked && Number(x.id) !== game);
-        const who = window.KWallet && window.KWallet.address;
+        const who = Wallet() && Wallet().address;
         P.me = null; P.claims = [];
         if (who) {
           P.me = await read("get_game_player", { player: who, game, week: week.toString() });
@@ -237,7 +243,7 @@
 
     async function act(label, action, a) {
       if (P.busy) return;
-      const W = window.KWallet;
+      const W = Wallet();
       if (!W) return;
       if (!W.address) { await W.connect(); return; }
       P.busy = true; P.note = `Confirm “${label}” in ${W.label()}…`; render();
@@ -254,7 +260,7 @@
     }
 
     function dialog(mode) {
-      const W = window.KWallet;
+      const W = Wallet();
       if (W && W.kind === "guest") return W.guestInfo();
       if (W && !W.address) return W.connect();
       const st = P.me && P.me.player ? big(P.me.player.stake) + big(P.me.player.pending) : 0n;
@@ -309,7 +315,7 @@
     function render() {
       const g = P.game, cfg = P.state.config, week = big(P.state.week);
       const min = minStakeFor(cfg, week);
-      const W = window.KWallet, who = W && W.address;
+      const W = Wallet(), who = W && W.address;
       const p = P.me && P.me.player;
       const mine = p ? big(p.stake) + big(p.pending) : 0n;
       const counted = P.me ? big(P.me.week_stake) : 0n;
@@ -341,7 +347,7 @@
       root.hidden = false;
     }
 
-    if (window.KWallet && window.KWallet.subscribe) window.KWallet.subscribe(() => { P.note = ""; refresh(); });
+    if (Wallet() && Wallet().subscribe) Wallet().subscribe(() => { P.note = ""; refresh(); });
     refresh();
     return { refresh };
   }
@@ -362,7 +368,7 @@
         const week = big(state.week), cfg = state.config;
         const games = ((await read("list_games", {})).games || []).filter((g) => g.staked && (g.active || big(g.stake) > 0n));
         if (!games.length) { root.hidden = true; return; }
-        const who = window.KWallet && window.KWallet.address;
+        const who = Wallet() && Wallet().address;
         const rows = [];
         for (const g of games) {
           const id = Number(g.id);
@@ -391,7 +397,7 @@
         if (!root.children || !root.children.length) root.hidden = true;
       }
     }
-    if (window.KWallet && window.KWallet.subscribe) window.KWallet.subscribe(() => refresh());
+    if (Wallet() && Wallet().subscribe) Wallet().subscribe(() => refresh());
     refresh();
     return { refresh };
   }
@@ -437,7 +443,7 @@
     const href = opts.href || `stake.html#g${game}`;
     root.classList.add("kbadge");
     async function refresh() {
-      const W = window.KWallet, who = W && W.address;
+      const W = Wallet(), who = W && W.address;
       let st = { open: false, staked: false, amount: 0n, counted: 0n, pending: 0n, pendingFrom: "", min: UNIT };
       try { if (who && W.kind !== "guest") st = await status(game, who); else if (!who) st = await status(game, null); } catch { /* chain unreachable: show "free" without amounts */ }
       const t = badgeText(st, !!who, !!(W && W.kind === "guest"));
@@ -449,7 +455,7 @@
         el("a", { class: "kb-link", href }, `${t.link} →`));
       root.hidden = false;
     }
-    if (window.KWallet && window.KWallet.subscribe) window.KWallet.subscribe(() => refresh());
+    if (Wallet() && Wallet().subscribe) Wallet().subscribe(() => refresh());
     refresh();
     setInterval(() => { if (!document.hidden) refresh(); }, 120000);
     return { refresh };
