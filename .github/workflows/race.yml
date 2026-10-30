@@ -98,7 +98,7 @@ jobs:
           if git -C work fetch -q --depth 1 "$remote" race-data 2>/dev/null; then
             parent=$(git -C work rev-parse FETCH_HEAD)
             git -C work ls-tree --name-only FETCH_HEAD | while IFS= read -r f; do
-              if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git -C work show "FETCH_HEAD:$f" > "$RUNNER_TEMP/published/$f"; fi
+              if [[ "$f" =~ ^(W[0-9]{3}|index)\.json$ ]]; then git -C work show "FETCH_HEAD:$f" > "$RUNNER_TEMP/published/$f"; fi
             done
           fi
           /usr/bin/python3 - "$IN" "$RUNNER_TEMP/published" <<'PY'
@@ -154,6 +154,11 @@ jobs:
                   continue
               if f == "index.json":
                   assert set(j) == {"v", "updated", "weeks"} and j["v"] == 1 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
+                  # Audit BX-111 (round 6, as BX-96): the week list never loses a published week.
+                  pi = os.path.join(pub, "index.json") if pub else ""
+                  if pi and os.path.isfile(pi):
+                      pw = json.load(open(pi, encoding="utf-8")).get("weeks", [])
+                      assert type(pw) is not list or all(w in j["weeks"] for w in pw), f + ": a published week would be dropped"
                   continue
               assert set(j) == {"v", "week", "start", "end", "races"} and j["v"] == 1 and f == "W%03d.json" % j["week"], f
               assert type(j["races"]) is list and len(j["races"]) == 28, f

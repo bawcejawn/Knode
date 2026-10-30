@@ -43,9 +43,9 @@ test("upload only accepts the audited build, and that is the build in the repo's
   assert.match(SPONSOR_SHA256, /^[0-9a-f]{64}$/);
   assert.ok(fs.readFileSync("sponsor/README.md", "utf8").includes(SPONSOR_SHA256), "README Build line = the pinned build");
   const src = fs.readFileSync("bot/sponsor.ts", "utf8");
-  // Mainnet takes only the audited build; the v3 candidate may go only on the testnet until it is audited.
+  // Mainnet takes the audited builds: v3 (Repo Lens round 6 "GO", 2026-10-30) and v2 as the rollback (SP-13).
   assert.match(src, /allowedBuilds\(mainnet\)/);
-  assert.deepEqual(allowedBuilds(true), [SPONSOR_SHA256]);
+  assert.deepEqual(allowedBuilds(true), [SPONSOR_V3_CANDIDATE, SPONSOR_SHA256]);
   assert.ok(allowedBuilds(false).includes(SPONSOR_V3_CANDIDATE));
   assert.notEqual(SPONSOR_V3_CANDIDATE, SPONSOR_SHA256);
   assert.match(src, /call override is ON/);

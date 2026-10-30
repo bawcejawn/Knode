@@ -54,5 +54,5 @@ Played from a brand-new Test wallet (`1B8C5TZf…`) holding **no test KOIN**: 4 
 - Found and fixed during the trial: the testnet sponsor's `game` was a placeholder address with no contract, and a call
   to a missing contract makes the whole sponsor refuse ("contract does not exist"). It now names the Vault v6 test copy.
   On mainnet the game is the live question game, which exists.
-- Until per-action limits are set (launch step 10), each pick counts as the Mana limit the page asks for (1 Mana on
-  mainnet), so a wallet gets 25 sponsored picks a day at launch; with a measured limit (about 2 × a pick) it is far more.
+- From launch step 6 each pick counts its 0.2 Mana row (owner, 2026-10-30; audit SP-58), so a wallet gets about 125
+  sponsored picks a day within its 25 Mana (Block X allows 30 picks a day); other actions count 1 Mana until step 10.

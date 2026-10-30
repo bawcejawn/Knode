@@ -346,6 +346,8 @@ test("BX-5 / BX-23: a final week's prizes are frozen once (P###.json); the mainn
   const frozen = JSON.parse(fs.readFileSync(path.join(out, "P003.json"), "utf8"));
   assert.deepEqual(frozen.prizes, r.board.lastWeek.prizes);
   pubDir = tmp(); fs.copyFileSync(path.join(out, "board.json"), path.join(pubDir, "board.json")); fs.copyFileSync(path.join(out, "P003.json"), path.join(pubDir, "P003.json"));
+  // (Round 6, BX-98: the published branch also holds the week files the run before published.)
+  for (const f of fs.readdirSync(out)) if (/^(W\d{3}|index)\.json$/.test(f)) fs.copyFileSync(path.join(out, f), path.join(pubDir, f));
   nowMs = T(at);
   const ok = check(out);
   assert.equal(ok.status, 0, ok.stderr);

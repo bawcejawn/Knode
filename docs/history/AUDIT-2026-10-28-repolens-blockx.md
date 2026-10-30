@@ -326,3 +326,46 @@ recorder and publish step. Its findings and what was done:
 | 8 (Low, testnet) | Held rounds beyond 48 a run could stall a fast testnet week | **Fixed** with #3 |
 | 9 (Info) | 0.2 Mana for picks is 2.2 × a testnet number | Runbook: re-measure (step 10) a day after the v6 switch-on too |
 | 10 (Info) | `--rebuilt` adds a command when the second node is down | Accepted (separate admin card) |
+
+## Round 6 (Repo Lens fix-check @ b0abc79, 2026-10-30): uploads GO; Block X prize-free after BX-95 / BX-96
+
+Report: the owner's doc "Block X + Sponsor v3: Round-6 Fix-Check (Knode picks @ b0abc79)". Verdicts: **sponsor v3 +
+Picks uploads: GO** (contracts unchanged, fingerprints match, SP-44 fixed); **Block X live prize-free: no-go until
+BX-95 and BX-96**; Vault v6 prizes: not yet. All items below were fixed in one change (`c47b4ac`), before prizes ones
+included. The auditor's failing tests are in the repository and pass (`tests/audit/repolens-r6-publish/`,
+`repolens-r6-race.test.mjs`, `repolens-r6-sponsor-tool.test.mjs`); two had setups that could never reach the state
+they test (G-K-3: the week was never final; G-A-1: the lying node's blocks differed too, so no card was made), and
+the owner's copies say so in a comment. Launch step 2 is done: the tool allows v3 on mainnet, with v2 kept as the
+rollback.
+
+| ID | Finding | Status |
+|---|---|---|
+| BX-95 | A number above 2^53 − 1 could freeze publishing (~2 weeks) | **Fixed**: every integer in both publish checks is at most 2^53 − 1 (the recorder's JavaScript limit) |
+| BX-96 | One run could drop weeks from index.json for good | **Fixed**: the published week list is append-only (held, with an alert) |
+| BX-97 | A future round given a past time passed | **Fixed**: a new round's time must lie between its published neighbours' and, after the newest published target, no sooner than 2.25 s a block (3/4 of the usual 3 s). Full fix before prizes: the re-read at the week's end |
+| BX-98 | New rounds could be added to a final week | **Fixed**: new rounds only for the current week or the one just ended, and never once its P file is published |
+| BX-99 | One node moved unflagged multipliers through the production floor | **Fixed**: the card takes the lower read of every disagreement; it is rebuilt with every disputed producer at its higher read (now and in the samples), and `topInDoubt` is set when the top or any undisputed producer's value differs |
+| BX-100 | One node's non-canonical report voided a target for good | **Fixed**: voided at once only when both nodes report it; otherwise held, and voided at the 3-day edge as a disagreement |
+| BX-101 | Samples had no lag bound | **Fixed**: the card's bounds (10 min behind, 15 s ahead, 200 blocks): no sample this time |
+| BX-102 | One lying sample's high held 6 h of cards | **Fixed**: a disputed producer's higher read is capped at the network supply |
+| BX-103 | Old samples count for 6 h after a deploy | Runbook note |
+| BX-104 | Test comment wording | **Fixed** |
+| BX-105 | board.json is not write-once | **Before prizes** (freeze the week's board with its P file) |
+| BX-106 | A crafted W file crashed the check | **Fixed**: validated before comparing |
+| BX-107 | Reordered target list passes | Accepted (compared by round) |
+| BX-108 | No honest correction path | Runbook: a manual, reviewed edit of `games-data` |
+| BX-109 | Round size literals in the publish call | Guarded by a test against `blockx-math.js` |
+| BX-110 | BX-65 wording | **Fixed** |
+| BX-111 | race-data index week list | **Fixed**: append-only in `race.yml` |
+| BX-94 | r4 tests passed on "not yet" | **Fixed**: F5-K-1 and F5-K-3 now publish board and P first and check the reason |
+| SP-53 | Stop fails right after a v2 rollback upload | **Fixed**: runbook switches off before uploading v2; the fallback also fits v2's limits (1,000 a day, 7,000 a week) when v2 is on chain |
+| SP-54 | 0.2 Mana checked against an unsponsored figure | **Fixed**: step 6 uses the sponsored testnet pick (0.116; 0.2 is 1.7 ×); measure a sponsored 10-leg card before Combo cards go live (0.25 if above 0.16) |
+| SP-55 | `--limit` checked against the typed number | **Fixed**: against the row's observed maximum, then `checkRows` |
+| SP-56 | enable could drop an on-chain row silently | **Fixed**: the preview names every row it would drop |
+| SP-57 | Second node down: a lying primary's caps, clamped to the defaults | Accepted (bounded by the defaults; nothing is paid while off) |
+| SP-58, SP-23, SP-13 | Wording; v2 in the mainnet build list | **Fixed** |
+
+**Before prizes (the list now):**
+- the week-end re-read of every target on both nodes, comparing whole targets (points, void, card), rounds added after P included (BX-88, BX-97, BX-98);
+- the VHP contract's own decoder for which transfers void a round (BX-72 griefing: about 84 transactions void a week, and can be selective);
+- freeze the week's board with its P file (BX-105).
