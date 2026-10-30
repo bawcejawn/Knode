@@ -85,16 +85,16 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
+          bad=$(find "$IN" -mindepth 1 \( -type l -o -type d -o \( -type f ! -regex "$IN/\(index\|board\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
+          if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
+          big=$(find "$IN" -type f -size +2048k -print)
+          if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
           # Round 8 (BX-122) and the class behind BX-95 / BX-112 / BX-113: every incoming file must be EXACTLY what the
           # JavaScript recorder writes for its own content (JSON.stringify of its parse, plus a newline). Then the next
           # recorder run reads back the same values and writes the same bytes, whatever Python thinks of them: no 5.0, no
           # -0, no 1e2, no big integer, no spacing or escaping a recorder never writes.
           command -v node >/dev/null || { echo "::error::node is missing on this runner; nothing published"; exit 1; }
-          node -e 'const fs=require("fs"),p=require("path"),bad=[];(function w(d){for(const f of fs.readdirSync(d)){const q=p.join(d,f),s=fs.lstatSync(q);if(s.isDirectory())w(q);else if(f.endsWith(".json")){const t=fs.readFileSync(q,"utf8");let ok=false;try{ok=JSON.stringify(JSON.parse(t))+"\n"===t}catch(e){}if(!ok)bad.push(p.relative(process.argv[1],q))}}})(process.argv[1]);if(bad.length){console.log("::error::not in the recorders own JSON form (JSON.stringify of its parse), nothing published: "+bad.join(", "));process.exit(1)}' "$IN"
-          bad=$(find "$IN" -mindepth 1 \( -type l -o -type d -o \( -type f ! -regex "$IN/\(index\|board\|W[0-9][0-9][0-9]\)\.json" \) \) -print)
-          if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
-          big=$(find "$IN" -type f -size +2048k -print)
-          if [ -n "$big" ]; then echo "::error::Refusing to publish files over 2 MB: $big"; exit 1; fi
+          node -e 'const fs=require("fs"),p=require("path"),bad=[];(function w(d){for(const f of fs.readdirSync(d)){const q=p.join(d,f),s=fs.lstatSync(q);if(s.isDirectory()){w(q);continue}if(!f.endsWith(".json"))continue;if(!s.isFile()){bad.push(p.relative(process.argv[1],q));continue}const raw=fs.readFileSync(q);let ok=false;try{ok=Buffer.compare(Buffer.from(JSON.stringify(JSON.parse(raw.toString("utf8")))+"\n","utf8"),raw)===0}catch(e){}if(!ok)bad.push(p.relative(process.argv[1],q))}})(process.argv[1]);if(bad.length){console.log("::error::not in the recorders own JSON form (JSON.stringify of its parse), nothing published: "+bad.join(", "));process.exit(1)}' -- "$IN"
           # The content must be the recorder's own shape, not only parse as JSON.
           # The published files, to check that a card once published is never changed (audit BX-44).
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"

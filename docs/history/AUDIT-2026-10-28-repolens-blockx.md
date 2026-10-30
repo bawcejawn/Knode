@@ -416,3 +416,14 @@ them. `js_safe` also refuses integer-valued floats (belt and braces). The test f
 | BX-127 | Record job red until game 2 is registered | Runbook: publish (step 9) only after game 2 is applied |
 | BX-128, BX-129, BX-130 | Info | Noted |
 | BX-118 | No clock rule for new race cards (future races) | **Before prizes** |
+
+**Blind review of the round-8 fix (2026-10-30).** "The node check closes the same-value-different-text class." Its
+findings, all fixed:
+- the samples job took a sample up to 10 min ahead, but `loadSamples` drops anything more than 60 s ahead, a
+  self-healing stall of 1–2 runs. Both bounds are now 60 s;
+- the node check runs after the symlink and file-type refusals, refuses any `.json` that isn't a regular file,
+  compares raw bytes (so invalid UTF-8 is refused, not just crashed on), and takes its path after `--`.
+
+Tested directly: `tests/audit/repolens-r8-canonical.test.mjs` runs the exact line from each of the four workflows
+against honest and crafted files. Testnet only, accepted: a bad run could set testnet `cards.json` `startHeight` high
+and quietly stop that testnet game recording (it doesn't stall publishing).

@@ -113,7 +113,7 @@ jobs:
           # recorder run reads back the same values and writes the same bytes, whatever Python thinks of them: no 5.0, no
           # -0, no 1e2, no big integer, no spacing or escaping a recorder never writes.
           command -v node >/dev/null || { echo "::error::node is missing on this runner; nothing published"; exit 1; }
-          node -e 'const fs=require("fs"),p=require("path"),bad=[];(function w(d){for(const f of fs.readdirSync(d)){const q=p.join(d,f),s=fs.lstatSync(q);if(s.isDirectory())w(q);else if(f.endsWith(".json")){const t=fs.readFileSync(q,"utf8");let ok=false;try{ok=JSON.stringify(JSON.parse(t))+"\n"===t}catch(e){}if(!ok)bad.push(p.relative(process.argv[1],q))}}})(process.argv[1]);if(bad.length){console.log("::error::not in the recorders own JSON form (JSON.stringify of its parse), nothing published: "+bad.join(", "));process.exit(1)}' "$IN"
+          node -e 'const fs=require("fs"),p=require("path"),bad=[];(function w(d){for(const f of fs.readdirSync(d)){const q=p.join(d,f),s=fs.lstatSync(q);if(s.isDirectory()){w(q);continue}if(!f.endsWith(".json"))continue;if(!s.isFile()){bad.push(p.relative(process.argv[1],q));continue}const raw=fs.readFileSync(q);let ok=false;try{ok=Buffer.compare(Buffer.from(JSON.stringify(JSON.parse(raw.toString("utf8")))+"\n","utf8"),raw)===0}catch(e){}if(!ok)bad.push(p.relative(process.argv[1],q))}})(process.argv[1]);if(bad.length){console.log("::error::not in the recorders own JSON form (JSON.stringify of its parse), nothing published: "+bad.join(", "));process.exit(1)}' -- "$IN"
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           PUB=$(mktemp -d); HELD="$PUB/held"; : > "$HELD"
           git init -q work && cd work
