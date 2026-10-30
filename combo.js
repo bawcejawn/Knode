@@ -244,7 +244,10 @@
   function cardStats() {
     // Repo Lens RL-13: one order for the same legs (lock time, code, round, producer), so re-sending never spends a change.
     const sorted = C.sortLegs(legs);
-    const pot = card ? C.potential(card, sorted) : { pts: 0, prices: sorted.map(() => null), unpriced: true };
+    // Fix-check 2 FC2-8: each leg priced as the recorder will: the latest usable card that doesn't flag its producer.
+    const now = Date.now(), pc = (l) => (fresh ? C.priceCard(races, now, l.producer) : card);
+    const prices = sorted.map((l) => { const c = pc(l); return c ? C.priceLeg(c, l) : null; });
+    const pot = card ? { pts: prices.some((p) => !p) ? 0 : C.pointsFor(prices.map((p) => p.f100)), prices, unpriced: prices.some((p) => !p) } : { pts: 0, prices: sorted.map(() => null), unpriced: true };
     const chances = pot.prices.map((p) => (p ? p.chance : null));
     const chance = chances.length && chances.every((c) => c != null) ? chances.reduce((s, c) => s * c, 1) : null;
     return { sorted, pot, chance };

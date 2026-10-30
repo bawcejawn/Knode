@@ -61,8 +61,9 @@ test("C-R-1: one node's head time can't trigger the deadline (a lying primary mu
   const cardsOf = async (_n, r) => (r === C.slotRound(D3, 0) ? [{ player: ALICE, legs, time: sent, height: heightAt(sent), changes: 0 }] : []);
   const now = (D3 + 1) * M.DAY + 3 * 3600000, lie = M.weekStart(4) + 2 * M.DAY + 60000, out = tmp();
   // NOTE: no `head:` option, so run() reads both nodes through headOf() (the real path the owner's tests never take).
-  // (Fix-check FC-25: this machine's clock is set past the lie, so only the two-node rule can protect the leg.)
-  await quiet(() => run({ p: node(now, lie), check: node(now), out, raceDir: raceDir({ noResult: new Set([tue00]) }), blockxDir: blockxDir(), picksContract: "1P", cardsOf, stakedOf: staked, now: lie + 3600000 }));
+  // (Fix-check 2: this machine's clock is the true time. A clock set past the lie, as round 1 tried, now makes the honest
+  // node "days behind" and the run is refused (FC2-4), which protects the leg too; the slower-node rule is in the code.)
+  await quiet(() => run({ p: node(now, lie), check: node(now), out, raceDir: raceDir({ noResult: new Set([tue00]) }), blockxDir: blockxDir(), picksContract: "1P", cardsOf, stakedOf: staked, now }));
   const c = slot0(out)[0];
   assert.equal(c.legs[2][4], "pending", "the Tue 00:00 race isn't over: its leg must not be voided because one node claims a later time");
   assert.equal(c.state, "pending");

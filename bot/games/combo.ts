@@ -5,10 +5,11 @@
  *  1. Settings. Game 8 on the Picks contract (both nodes) must be a card game whose leg types have exactly the locks
  *     this recorder and the page use (combo-math.js). Otherwise nothing is recorded (Repo Lens RL-25, as Block X BX-33).
  *  2. Cards. A wallet has 3 card slots a UTC day (round = day × 3 + slot). EVERY slot of last week and this week is read
- *     from the Picks contract on two independent nodes (RPC and RPC_CHECK) each run, and they must agree. Nothing from
- *     an earlier run's files is trusted for those two weeks (Repo Lens RL-7): a slot whose read fails this run keeps
- *     the earlier copy only for display, and its week can't turn final. A slot is FIXED once the last irreversible
- *     block on BOTH nodes is past the end of its day (the contract allows changes only on that day).
+ *     from the Picks contract on two independent nodes (RPC and RPC_CHECK) each run, and they must agree. A slot is
+ *     FIXED once the last irreversible block on BOTH nodes is past the end of its day (the contract allows changes only
+ *     on that day). A published fixed slot stays fixed, and its published final cards are kept (never re-priced),
+ *     while the chain holds exactly those cards; when its read fails it is kept as published (fix-check FC-5, FC-9,
+ *     FC-11). Every kept final card is re-checked each run against the race-data and Block X files (FC2-1).
  *  3. Prices (combo-math.js, the same file the page runs). Each leg is priced with the usable race card in force when
  *     the card was last sent: taken at most 3 hours before, from at least 12 VHP samples, nothing flagged (Repo Lens
  *     RL-8, Block X's rule). A card is priced only once race-data holds a card taken AFTER it was sent (CC-B2). No usable
@@ -93,7 +94,10 @@ function readJson(dir: string | undefined, name: string): any {
   return v;
 }
 const wName = (w: number) => `W${String(w).padStart(3, "0")}.json`;
-export const dName = (day: number) => `D${String(day).padStart(5, "0")}.json`;
+export const dName = (day: number, part = 0) => `D${String(day).padStart(5, "0")}${part ? `-${part}` : ""}.json`;
+/** Fix-check 2 FC2-5: a day's cards are split into parts of at most 1,000 cards (D<day>.json, then D<day>-1.json, ...),
+ *  so no file nears the publish job's 2 MB limit however busy the day. */
+export const PART_CARDS = 1000;
 const legOk = (l: any) => Array.isArray(l) && l.length === 5 && C.CODES.includes(l[0]) && Number.isSafeInteger(l[1]) && isAddr(l[2]) && Number.isSafeInteger(l[3]) && typeof l[4] === "string";
 function cardOk(c: any): boolean {
   return !!c && isAddr(c.player) && Number.isSafeInteger(c.round) && Number.isSafeInteger(c.time) && Array.isArray(c.legs) && c.legs.length >= C.MIN_LEGS &&
@@ -103,16 +107,24 @@ function cardOk(c: any): boolean {
  *  card recounted from its legs. Used only for days before last week (the all-time board) and, for display only, for a
  *  slot whose chain read failed this run (never fixed then: Repo Lens RL-7). */
 function loadDay(dir: string | undefined, day: number): Slot[] {
-  const old = readJson(dir, dName(day));
-  if (!old || old.v !== 2 || old.day !== day || !Array.isArray(old.slots)) return [];
-  const out: Slot[] = [], seen = new Set<number>();
-  for (const sl of old.slots) {
-    if (!(sl && Number.isSafeInteger(sl.round) && C.dayOfRound(sl.round) === day && !seen.has(sl.round) && Array.isArray(sl.cards) &&
-      sl.cards.every((c: any) => cardOk(c) && c.round === sl.round))) continue;
+  // Every part of the day, merged by slot (part 0 lists every slot; later parts only the slots their cards belong to).
+  const parts: any[] = [];
+  for (let k = 0; k < 1000; k++) { const f = readJson(dir, dName(day, k)); if (!f) break; parts.push(f); }
+  const merged = new Map<number, { fixed: boolean; cards: any[] }>();
+  for (const old of parts) {
+    if (!old || old.v !== 2 || old.day !== day || !Array.isArray(old.slots)) return [];
+    for (const sl of old.slots) {
+      if (!(sl && Number.isSafeInteger(sl.round) && C.dayOfRound(sl.round) === day && Array.isArray(sl.cards))) continue;
+      const m = merged.get(sl.round);
+      if (m) { m.cards.push(...sl.cards); m.fixed = m.fixed && sl.fixed === true; } else merged.set(sl.round, { fixed: sl.fixed === true, cards: [...sl.cards] });
+    }
+  }
+  const out: Slot[] = [];
+  for (const [round, sl] of merged) {
+    if (!sl.cards.every((c: any) => cardOk(c) && c.round === round)) continue;
     if (new Set(sl.cards.map((c: any) => c.player)).size !== sl.cards.length) continue;
-    seen.add(sl.round);
     for (const c of sl.cards) if (c.state === "final") { const r = c.priceAt === null ? { outcome: "void", pts: 0 } : recount(c.legs); c.outcome = r.outcome; c.pts = r.pts; }
-    out.push({ round: sl.round, fixed: sl.fixed === true, cards: sl.cards });
+    out.push({ round, fixed: sl.fixed, cards: sl.cards });
   }
   return out.sort((a, b) => a.round - b.round);
 }
@@ -228,6 +240,7 @@ export async function run(o: Opts) {
   const BX = o.blockxDir ?? E.BLOCKX_DATA ?? "";
   const KNODE = o.knodeGame === undefined ? MAINNET_KNODE_GAME || null : o.knodeGame;
   const problems: string[] = [], errors: string[] = [];
+  const problemsAll = problems, errorsAll = errors;
   const contract = o.picksContract === undefined ? defaultPicksContract() : o.picksContract;
   memo.clear(); cleaned.clear();
 
@@ -252,6 +265,10 @@ export async function run(o: Opts) {
     } else problems.push("one node only: no slot fixed and nothing voided this run");
     if (!o.check) head.libTime = 0;
     const now = o.now ?? Date.now();
+    // Fix-check 2 FC2-4: a node whose head is far behind this machine's clock would rewind the whole recorder (an old
+    // week on the board, a lost Vault file). Refuse to record: nothing is written, the run fails.
+    const behind = [a.time, ...(agreed ? [head.time] : [])].map((t) => now - t).reduce((x, y) => Math.max(x, y), 0);
+    if (behind > 30 * 60000) throw new Error(`a node's head is ${Math.round(behind / 60000)} minutes behind this machine's clock; nothing recorded this run`);
     if (head.time > now + CLOCK_SLACK_MS) {
       errors.push(`the nodes' time (${new Date(head.time).toISOString()}) is ahead of this machine's clock (${new Date(now).toISOString()}); nothing fixed or voided this run`);
       agreed = false; head.libTime = 0;
@@ -356,8 +373,10 @@ export async function run(o: Opts) {
     return p;
   };
   const EDGE_MS = 3 * M.DAY;                                          // Block X's own 3-day window
-  for (const [day, slots] of days) for (const sl of slots) for (const c of sl.cards) {
-    if (kept.has(c)) continue;                                        // published final: kept as published
+  /** Prices and scores one card in place. verify: a dry re-check of a kept card (no chain reads, VHP moved counted as
+   *  0, so its Block X worths are an upper bound; nothing logged). */
+  async function score(c: Card, fixed: boolean, day: number, verify = false): Promise<void> {
+    const problems: string[] = verify ? [] : problemsAll, errors: string[] = verify ? [] : errorsAll;
     const deadline = M.weekStart(M.weekOf(day * M.DAY) + 1) + DEADLINE_MS;
     const late = agreed && head.time >= deadline;
     const legs = c.legs.map((l) => ({ code: l[0], round: l[1], producer: l[2] }));
@@ -366,14 +385,14 @@ export async function run(o: Opts) {
       // An outage (no race-data, or none after the send time) never voids: wait, and alert at the deadline (FC-1, RL-9).
       (late ? errors : problems).push(`slot ${c.round}: race-data doesn't reach ${new Date(c.time).toISOString()} yet; ${c.player}'s card waits`);
       c.state = "pending"; c.pts = 0;
-      continue;
+      return;
     }
     const send = C.priceCard(racesNear(RACE, c.time), c.time);
     if (!send) {
       // No usable race card in the 3 hours before it was sent (RL-8): it can't be priced. Void.
       c.priceAt = null; c.outcome = "void"; c.pts = 0; c.legs.forEach((l) => { l[4] = "void"; });
-      if (sl.fixed) { c.state = "final"; c.settled = c.time; }
-      continue;
+      if (fixed) { c.state = "final"; c.settled = c.time; }
+      return;
     }
     c.priceAt = send.at;
     let ready = true, decided = 0;
@@ -384,7 +403,7 @@ export async function run(o: Opts) {
       const l = c.legs[i], leg = legs[i], isRace = C.FAMILY[l[0]] === "race", t = isRace ? null : targets.get(l[1]) ?? null;
       let r = isRace ? C.legResult(leg, raceRecord(RACE, l[1]), null) : C.legResult(leg, null, t);
       l[4] = r;
-      if (r === "unresolved") { unresolved(l, `Block X never decided who signed block ${X.target(l[1])}`); continue; }
+      if (r === "unresolved") { unresolved(l, isRace ? `race ${M.raceId(l[1])} was never decided (no card, or not checked on two nodes)` : `Block X never decided who signed block ${X.target(l[1])}`); continue; }
       if (r === "pending" && late) {
         // At the deadline: unresolved if the leg's source has published past it (it gave up on it), else its recorder
         // stopped and the card waits (RL-9). Both are errors: someone should look.
@@ -414,23 +433,45 @@ export async function run(o: Opts) {
       if (!after && !raceDataPast(RACE, t.time + C.CARD_MAX_AGE_MS)) { ready = false; if (late) errors.push(`slot ${c.round}: race-data doesn't reach 3 hours after block ${t.height} yet; ${c.player}'s card waits`); continue; }
       if (!lock || !after) { unresolved(l, `no usable race card ${!lock ? "at the lock of" : "within 3 hours after"} block ${t.height} for ${l[2]}`); continue; }
       const cardH = Number.isInteger(lock.height) && lock.height > 0 && lock.height <= t.height ? lock.height : t.height - Math.ceil(Math.max(0, t.time - Number(lock.at)) / X.BLOCK_MS);
-      const mv = await movedInto(l[2], Math.max(1, cardH - MOVE_MARGIN), t.height);
+      const mv: Moves = verify ? { moved: 0n } : await movedInto(l[2], Math.max(1, cardH - MOVE_MARGIN), t.height);
       if (mv.nonCanonical) { unresolved(l, `${mv.nonCanonical} (both nodes)`); continue; }
       if (mv.hold) {
         // One node's word never decides (BX-100); a read that keeps failing ends unresolved at Block X's 3-day edge,
         // and is an error while it holds a week's Vault file (FC-7).
-        if (head.time > t.time + EDGE_MS && agreed) { unresolved(l, `${mv.hold}, still after 3 days`, true); continue; }
+        // Fix-check 2 FC2-3: the hold also ends 6 hours before the card's week's Vault window closes.
+        const edge = Math.min(t.time + EDGE_MS, M.weekStart(M.weekOf(day * M.DAY) + 1) + VAULT_WINDOW_MS - 6 * 3600000);
+        if (head.time > edge && agreed) { unresolved(l, `${mv.hold}, still at the edge of the hold`, true); continue; }
         ready = false; problems.push(`slot ${c.round}: ${mv.hold} (held; tried again next run)`); continue;
       }
       const add = Number(mv.moved) / 1e8;
       l[3] = C.finalWorth(sendCard, C.withMoved(lock, l[2], add), leg, C.withMoved(after, l[2], add));
     }
     const pending = c.legs.some((l) => l[4] === "pending");
+    const missed = c.legs.some((l) => l[4] === "miss" || (l[4] === "hit" && !(l[3] > 0)));
     const r = recount(c.legs);
-    c.outcome = pending ? (c.legs.some((l) => l[4] === "miss" || (l[4] === "hit" && !(l[3] > 0))) ? "miss" : null) : r.outcome;
-    // Final once the slot is fixed (no more changes), every leg is known and every worth is settled.
-    if (sl.fixed && !pending && ready) { c.state = "final"; c.outcome = r.outcome; c.pts = r.pts; c.settled = decided || c.time; }
+    c.outcome = pending ? (missed ? "miss" : null) : r.outcome;
+    // Final once the slot is fixed (no more changes), every leg is known and every worth is settled; or, with a leg
+    // that missed, as soon as the slot is fixed (a miss always decides: fix-check 2 FC2-3).
+    if (fixed && ((!pending && ready) || missed)) { c.state = "final"; c.outcome = missed ? "miss" : r.outcome; c.pts = missed ? 0 : r.pts; c.settled = decided || c.time; }
     else { c.state = "pending"; c.pts = 0; }
+  }
+  // Fix-check 2 FC2-1: a kept (published final) card is re-checked every run against the race-data and Block X files
+  // (no chain reads): its leg results must be the same, a race leg's worth the same, and a Block X leg's worth at most
+  // the worth without moved VHP. One that doesn't match is an error: it stays as published (immutable), but it is kept
+  // out of the boards and no Vault file is written for its week.
+  const forged = new Set<Card>(), badWeeks = new Set<number>();
+  for (const [day, slots] of days) for (const sl of slots) for (const c of sl.cards) {
+    if (!kept.has(c)) { await score(c, sl.fixed, day); continue; }
+    const fresh: Card = JSON.parse(JSON.stringify(c));
+    fresh.legs.forEach((l) => { l[3] = 0; l[4] = "pending"; });
+    await score(fresh, true, day, true);
+    const ok = fresh.state === "final" && fresh.outcome === c.outcome && c.legs.every((l, k) => {
+      const f = fresh.legs[k];
+      if (f[4] !== l[4]) return false;
+      if (l[4] !== "hit") return true;
+      return C.FAMILY[l[0]] === "race" ? f[3] === l[3] : l[3] <= f[3];
+    });
+    if (!ok) { forged.add(c); badWeeks.add(M.weekOf(day * M.DAY)); errorsAll.push(`slot ${c.round}: the published final card of ${c.player} doesn't match the race-data and Block X files; it is left out of the boards and week ${M.weekOf(day * M.DAY)} gets no Vault file (check it)`); }
   }
   // FC-7: last week's cards still pending a day after it ended put its Vault file at risk.
   if (nowW >= 1 && head.time >= M.weekStart(nowW) + M.DAY) {
@@ -446,7 +487,7 @@ export async function run(o: Opts) {
     for (const [d, slots] of all) {
       const t = d * M.DAY;
       if (by === "slot" && (t < from || t >= to)) continue;
-      for (const sl of slots) for (const c of sl.cards) if (c.state === "final" && c.outcome !== "void" && (by === "slot" || (c.settled >= from && c.settled < to))) rows.push({ player: c.player, round: c.round, pts: c.pts, hit: c.outcome === "hit", lastLegTime: c.settled });
+      for (const sl of slots) for (const c of sl.cards) if (c.state === "final" && c.outcome !== "void" && !forged.has(c) && (by === "slot" || (c.settled >= from && c.settled < to))) rows.push({ player: c.player, round: c.round, pts: c.pts, hit: c.outcome === "hit", lastLegTime: c.settled });
     }
     return rows;
   };
@@ -462,9 +503,17 @@ export async function run(o: Opts) {
     const a = await vault(o.p, who, w), b = await vault(o.check, who, w);
     if (a.live !== b.live || (a.live && a.min !== b.min)) { problems.push(`stakes for week ${w}: the two nodes disagree about the Vault v6 (live or its minimum)`); return null; }
     if (!a.live) { vaultLive = false; return new Map(who.map((x) => [x, false] as [string, boolean])); }   // before v6 nobody is staked
-    const bad = who.filter((x) => (a.players.get(x)?.week ?? -1n) !== (b.players.get(x)?.week ?? -2n));
+    // Fix-check 2 FC2-12: the nodes must agree on staked or not (as Block X compares its staked sets), not on amounts.
+    const on = (v: any, x: string) => { const s = v.players.get(x)?.week; return s === undefined ? null : s > 0n && s >= v.min; };
+    const bad = who.filter((x) => on(a, x) === null || on(a, x) !== on(b, x));
     if (bad.length) { problems.push(`stakes for week ${w}: the two nodes disagree about ${bad.length} wallet(s), e.g. ${bad[0]}`); return null; }
-    return new Map(who.map((x) => { const v = a.players.get(x)!.week; return [x, v > 0n && v >= a.min] as [string, boolean]; }));
+    return new Map(who.map((x) => [x, on(a, x) === true] as [string, boolean]));
+  }
+  /** FC2-11: whether the Vault v6 is live, on both nodes, even when no row needed a stake read. */
+  async function vaultLiveOnBoth(w: number): Promise<boolean> {
+    if (o.stakedOf) return true;
+    if (!o.check) return false;
+    try { const a = await vault(o.p, [], w), b = await vault(o.check, [], w); return a.live && b.live; } catch { return false; }
   }
   async function stakes(w: number, who: string[]): Promise<Map<string, boolean> | null> {
     if (stakeCache.get(w) === null) return null;
@@ -502,7 +551,8 @@ export async function run(o: Opts) {
   let lastWeek: any = null;
   if (lw >= 0) {
     const final = head.time >= M.weekStart(nowW) + CORRECTION_MS && weekDone(lw);
-    lastWeek = { week: lw, start: M.weekStart(lw), final, rows: await view(cardRows(M.weekStart(lw), M.weekStart(nowW)), lw, 2000, (x) => x.pts >= C.MIN_WEEK_PTS) };
+    // (FC2-5: everyone with 1+ point, up to 10,000 rows: about 1.6 MB.)
+    lastWeek = { week: lw, start: M.weekStart(lw), final, rows: (await view(cardRows(M.weekStart(lw), M.weekStart(nowW)), lw, 2000, (x) => x.pts >= C.MIN_WEEK_PTS)).slice(0, 10000) };
   }
   const board = {
     v: 1, updated: new Date(head.time).toISOString(),
@@ -517,16 +567,35 @@ export async function run(o: Opts) {
   for (const [d, slots] of days) {
     if (!slots.some((s) => s.cards.length || s.fixed)) continue;
     knownDays.add(d);
-    const f: DayFile = { v: 2, day: d, start: d * M.DAY, slots: [...slots].sort((a, b) => a.round - b.round) };
-    fs.writeFileSync(path.join(OUT, dName(d)), JSON.stringify(f) + "\n");
+    // Parts of at most PART_CARDS cards (FC2-5); part 0 lists every slot, so empty fixed slots are known.
+    const sorted = [...slots].sort((a, b) => a.round - b.round).map((sl) => ({ ...sl, cards: [...sl.cards].sort((u, v) => (u.player < v.player ? -1 : u.player > v.player ? 1 : 0)) }));
+    const parts: Slot[][] = [[]];
+    let n = 0;
+    for (const sl of sorted) {
+      if (!sl.cards.length) { parts[0].push({ round: sl.round, fixed: sl.fixed, cards: [] }); continue; }
+      for (let i = 0; i < sl.cards.length; ) {
+        if (n === PART_CARDS) { parts.push([]); n = 0; }
+        const take = sl.cards.slice(i, i + PART_CARDS - n);
+        const cur = parts[parts.length - 1], last = cur[cur.length - 1];
+        if (last && last.round === sl.round) last.cards.push(...take); else cur.push({ round: sl.round, fixed: sl.fixed, cards: take });
+        i += take.length; n += take.length;
+      }
+    }
+    if (!sorted.every((sl) => parts[0].some((x) => x.round === sl.round))) for (const sl of sorted) if (!parts[0].some((x) => x.round === sl.round)) parts[0].push({ round: sl.round, fixed: sl.fixed, cards: [] });
+    parts[0].sort((a, b) => a.round - b.round);
+    parts.forEach((ps, k) => {
+      const f: any = k ? { v: 2, day: d, start: d * M.DAY, part: k, slots: ps } : { v: 2, day: d, start: d * M.DAY, slots: ps };
+      fs.writeFileSync(path.join(OUT, dName(d, k)), JSON.stringify(f) + "\n");
+    });
   }
   // The Vault file for the week just ended: once, when final, within the Vault's 3 days, with every stake known.
   const vaultWritten: number[] = [];
   const vaultEnd = M.weekStart(nowW) + VAULT_WINDOW_MS;
   const published = !!PREV && fs.existsSync(path.join(PREV, "vault", `W${lw}.json`));
   if (lastWeek && lastWeek.final && !published && head.time <= vaultEnd) {
-    if (lastWeek.rows.some((r: any) => r.staked === null)) errors.push(`vault week ${lw}: stakes in the Combo Card couldn't be read on both nodes, or they disagree; no Vault file this run (tried again next run)`);
-    else if (!vaultLive) problems.push(`vault week ${lw}: the Vault v6 isn't live; no Vault file (fix-check FC-21)`);
+    if (badWeeks.has(lw)) errors.push(`vault week ${lw}: a published final card doesn't match its sources (see above); no Vault file`);
+    else if (lastWeek.rows.some((r: any) => r.staked === null)) errors.push(`vault week ${lw}: stakes in the Combo Card couldn't be read on both nodes, or they disagree; no Vault file this run (tried again next run)`);
+    else if (!vaultLive || !(await vaultLiveOnBoth(lw))) problems.push(`vault week ${lw}: the Vault v6 isn't live (or the nodes don't agree it is); no Vault file (fix-check FC-21, FC2-11)`);
     else {
       const rows = lastWeek.rows.map((r: any) => ({ player: r.a, pts: r.pts, place: r.place, staked: r.staked }));
       const vf = C.vaultFile(lw, true, rows);

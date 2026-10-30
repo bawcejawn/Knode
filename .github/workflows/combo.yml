@@ -57,7 +57,7 @@ jobs:
           # Names are read line by line and only expected names are taken (as Block X: BX-34, BX-87).
           if fetch_branch games-data; then
             { git ls-tree --name-only FETCH_HEAD:combo 2>/dev/null || true; } | while IFS= read -r f; do
-              if [[ "$f" =~ ^(index|board|D[0-9]{5})\.json$ ]]; then git show "FETCH_HEAD:combo/$f" > "$RUNNER_TEMP/prev/combo/$f"; fi
+              if [[ "$f" =~ ^(index|board|D[0-9]{5}(-[0-9]{1,3})?)\.json$ ]]; then git show "FETCH_HEAD:combo/$f" > "$RUNNER_TEMP/prev/combo/$f"; fi
             done
             # The published Vault files, so the recorder never writes one again (it is write-once).
             { git ls-tree --name-only FETCH_HEAD:combo/vault 2>/dev/null || true; } | while IFS= read -r f; do
@@ -111,29 +111,42 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN/combo" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/combo" ! -path "$IN/combo/vault" \) -o \( -type f ! -regex "$IN/combo/\(index\|board\|D[0-9][0-9][0-9][0-9][0-9]\)\.json" ! -regex "$IN/combo/vault/W[0-9][0-9]*\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/combo" ! -path "$IN/combo/vault" \) -o \( -type f ! -regex "$IN/combo/\(index\|board\|D[0-9][0-9][0-9][0-9][0-9]\(-[0-9][0-9]*\)?\)\.json" ! -regex "$IN/combo/vault/W[0-9][0-9]*\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           # The published branch first (read only here): write-once and fixed files are judged against what is ALREADY
           # published and this job's own clock, never against this run's own files (as Block X: BX-79/80/81/88).
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          PUB=$(mktemp -d); HELD="$PUB/held"; : > "$HELD"; mkdir -p "$PUB/combo/vault"
+          PUB=$(mktemp -d); HELD="$PUB/held"; : > "$HELD"; mkdir -p "$PUB/combo/vault" "$PUB/blockx" "$PUB/race"
           git init -q work && cd work
           parent=""
           if git fetch -q --depth 1 "$remote" games-data 2>/dev/null; then
             parent=$(git rev-parse FETCH_HEAD)
             git read-tree FETCH_HEAD
+            # (Fix-check 2 FC2-6: index.json too, or its append-only check never runs.)
             { git ls-tree --name-only "$parent:combo" 2>/dev/null || true; } | while IFS= read -r f; do
-              if [[ "$f" =~ ^(board|D[0-9]{5})\.json$ ]]; then git show "$parent:combo/$f" > "$PUB/combo/$f"; fi
+              if [[ "$f" =~ ^(index|board|D[0-9]{5}(-[0-9]{1,3})?)\.json$ ]]; then git show "$parent:combo/$f" > "$PUB/combo/$f"; fi
+            done
+            # The published Block X results, to re-check new final cards' Block X legs (fix-check 2 FC2-1).
+            { git ls-tree --name-only "$parent:blockx" 2>/dev/null || true; } | while IFS= read -r f; do
+              if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git show "$parent:blockx/$f" > "$PUB/blockx/$f"; fi
             done
             { git ls-tree --name-only "$parent:combo/vault" 2>/dev/null || true; } | while IFS= read -r f; do
               if [[ "$f" =~ ^W[0-9]+\.json$ ]]; then git show "$parent:combo/vault/$f" > "$PUB/combo/vault/$f"; fi
             done
           else git read-tree --empty; fi
+          # The race recorder's published results, to re-check new final cards' race legs (FC2-1). Not readable: new
+          # final cards are held (they can't be checked), everything else is published.
+          if git fetch -q --depth 1 "$remote" race-data 2>/dev/null; then
+            { git ls-tree --name-only FETCH_HEAD 2>/dev/null || true; } | while IFS= read -r f; do
+              if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git show "FETCH_HEAD:$f" > "$PUB/race/$f"; fi
+            done
+          fi
           # The content must be the recorder's own shape, consistent with itself and with what is published.
-          /usr/bin/python3 - "$IN/combo" "$PUB/combo" "$HELD" <<'PY'
+          /usr/bin/python3 - "$IN/combo" "$PUB/combo" "$HELD" "$PUB/race" "$PUB/blockx" <<'PY'
           import json, os, re, sys, time
           d, pub, heldf = sys.argv[1], sys.argv[2], sys.argv[3]
-          addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}"); iso = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{3})?Z"); ymd = re.compile(r"\d{4}-\d\d-\d\d")
+          raced = sys.argv[4] if len(sys.argv) > 4 else ""; bxd = sys.argv[5] if len(sys.argv) > 5 else ""
+          addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}"); iso = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{3})?Z"); ymd = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
           SAFE = 2 ** 53 - 1
           nat = lambda x: type(x) is int and 0 <= x <= SAFE
           isaddr = lambda a: type(a) is str and addr.fullmatch(a) is not None
@@ -188,10 +201,18 @@ jobs:
               if len(set(keys)) != len(keys) or len({l[2] for l in legs}) != len(legs): return False   # one leg per slot, a producer once
               if c["state"] not in ("pending", "final") or c["outcome"] not in (None, "hit", "miss", "void") or not nat(c["pts"]) or not nat(c["settled"]): return False
               if c["state"] == "final":
-                  return (c["outcome"], c["pts"]) == recount(c) and all(l[4] != "pending" for l in legs)
+                  # (A miss decides as soon as the slot is fixed: its other legs may still be pending. FC2-3.)
+                  return (c["outcome"], c["pts"]) == recount(c) and (c["outcome"] == "miss" or all(l[4] != "pending" for l in legs))
               return c["pts"] == 0                                                         # not final: no points yet
+          def part_of(f):
+              m = re.fullmatch(r"D([0-9]{5})(?:-([0-9]{1,3}))?\.json", f)
+              return (int(m.group(1)), int(m.group(2) or 0)) if m else None
           def day_ok(j, f):
-              if type(j) is not dict or set(j) != {"v", "day", "start", "slots"} or not same(j["v"], 2) or not nat(j["day"]) or f != "D%05d.json" % j["day"]: return False
+              # A day file or one of its parts (fix-check 2 FC2-5: at most 1,000 cards each; part 0 has no "part" key).
+              pf = part_of(f)
+              if pf is None or type(j) is not dict or not same(j.get("v"), 2) or not nat(j.get("day")) or j["day"] != pf[0]: return False
+              if set(j) != ({"v", "day", "start", "slots"} if pf[1] == 0 else {"v", "day", "start", "part", "slots"}) or (pf[1] and not same(j["part"], pf[1])): return False
+              if sum(len(s.get("cards") or []) for s in j["slots"] if type(s) is dict) > 1000 if type(j["slots"]) is list else True: return False
               day = j["day"]
               if not same(j["start"], day * DAY) or day > today: return False
               sl = j["slots"]
@@ -216,14 +237,30 @@ jobs:
               if not (type(w) is dict and set(w) == {"week", "start", "rows"} and nat(w["week"]) and same(w["start"], GENESIS + w["week"] * WEEK) and rows_ok(w["rows"])): return False
               if not (type(at) is dict and set(at) == {"rows"} and rows_ok(at["rows"])): return False
               return lw is None or (type(lw) is dict and set(lw) == {"week", "start", "final", "rows"} and nat(lw["week"]) and same(lw["start"], GENESIS + lw["week"] * WEEK) and type(lw["final"]) is bool and rows_ok(lw["rows"]))
+          def day_parts(base, day):
+              """Every part of a day in `base`, merged by slot; None if a part isn't the recorder's shape."""
+              merged = {}; k = 0
+              while True:
+                  f = "D%05d.json" % day if k == 0 else "D%05d-%d.json" % (day, k)
+                  if not os.path.isfile(os.path.join(base, f)): break
+                  j = load(os.path.join(base, f))
+                  if not day_ok(j, f): return None
+                  for s in j["slots"]:
+                      m = merged.setdefault(s["round"], {"round": s["round"], "fixed": s["fixed"], "cards": []})
+                      m["cards"] += s["cards"]; m["fixed"] = m["fixed"] and s["fixed"]
+                  k += 1
+              if k == 0: return []
+              out = sorted(merged.values(), key=lambda s: s["round"])
+              if any(len({c["player"] for c in s["cards"]}) != len(s["cards"]) for s in out): return None
+              return out
           def week_board(w):
               # Fix-check FC-6: last week's board recomputed from the PUBLISHED day files' final cards, as bot/games/combo.ts
               # does (best 10 cards; order: points, hits, the earlier last hit, address; equal on all three: one place).
               by = {}
               for day in range((GENESIS + w * WEEK) // DAY, (GENESIS + (w + 1) * WEEK) // DAY):
-                  j = load(os.path.join(pub, "D%05d.json" % day)) if os.path.isfile(os.path.join(pub, "D%05d.json" % day)) else None
-                  if not day_ok(j, "D%05d.json" % day) if j is not None else False: return None
-                  for s in (j["slots"] if j else []):
+                  slots = day_parts(pub, day)
+                  if slots is None: return None
+                  for s in slots:
                       for c in s["cards"]:
                           if c["state"] != "final" or c["outcome"] == "void": continue
                           b = by.setdefault(c["player"], {"list": [], "hits": 0, "lastHit": 0})
@@ -252,29 +289,87 @@ jobs:
               elif f == "board.json": ok = board_ok(j)
               else: ok = day_ok(j, f)
               if not ok: hold("combo/" + f, "not the recorder's shape (or inconsistent: outcomes, points, days, slots)", True)
-          # 2. Day files against the published ones (Repo Lens RL-7): a NEW day file only for last week or this week; a
-          #    published FIXED slot keeps exactly its cards (who, legs, time, changes); a published FINAL card never
-          #    changes. A file that breaks this is held ALONE, with an alert (fix-check FC-5, FC-9: one bad run must never
-          #    make every honest run after it look like a rewrite; the recorder keeps published fixed slots and final cards).
-          for f in names:
-              if not re.fullmatch(r"D\d{5}\.json", f) or ("combo/" + f) in held: continue
-              new = load(os.path.join(d, f)); old = load(os.path.join(pub, f)) if os.path.isfile(os.path.join(pub, f)) else None
-              if old is None:
-                  if new["day"] < first_day: hold("combo/" + f, "a new file for a day before last week", True)
+          # 2. Days against the published ones (Repo Lens RL-7), all parts of a day together: a NEW day only for last week
+          #    or this week; a published FIXED slot keeps exactly its cards (who, legs, time, changes); a published FINAL
+          #    card never changes; and a NEW final card's leg results must be what the published race-data and Block X
+          #    files show (fix-check 2 FC2-1: one bad record run can't publish a made-up win). A day that breaks this is
+          #    held ALONE (all its parts), with an alert (FC-5, FC-9).
+          def race_record(rnd):
+              start = rnd * 6 * HOUR; w = (start - GENESIS) // WEEK
+              if w not in RACE_FILES: RACE_FILES[w] = load(os.path.join(raced, "W%03d.json" % w)) if raced and os.path.isfile(os.path.join(raced, "W%03d.json" % w)) else None
+              j = RACE_FILES[w]
+              if type(j) is not dict or type(j.get("races")) is not list: return False
+              rid = time.strftime("%Y-%m-%dT%H", time.gmtime(start // 1000))
+              return next((r for r in j["races"] if type(r) is dict and r.get("id") == rid), None)
+          BX_TARGETS = {}
+          for f in (sorted(os.listdir(bxd)) if bxd and os.path.isdir(bxd) else []):
+              j = load(os.path.join(bxd, f))
+              for t in (j.get("targets") or [] if type(j) is dict else []):
+                  if type(t) is dict and type(t.get("round")) is int and t.get("height") == t["round"] * 2400: BX_TARGETS[t["round"]] = t
+          RACE_FILES = {}
+          def target_of(rnd): return BX_TARGETS.get(rnd)
+          def expected(l):
+              # As combo-math.js legResult; False when the source can't be read.
+              if l[0] != 4:
+                  r = race_record(l[1])
+                  if r is False: return False
+                  res = r.get("result") if type(r) is dict else None
+                  if type(res) is not dict or res.get("final") is not True: return "pending"
+                  if res.get("missed") or res.get("void") or type(res.get("standings")) is not list or res.get("checked") != 2: return "unresolved"
+                  st = res["standings"]; i = next((k for k, x in enumerate(st) if type(x) is dict and x.get("a") == l[2]), -1)
+                  if i < 0: return "void"
+                  if not (type(st[i].get("steps")) in (int, float) and st[i]["steps"] > 0): return "miss"
+                  need = 1 if l[0] == 1 else 3 if l[0] == 2 else len(st) // 2
+                  return "hit" if i < need else "miss"
+              if not bxd or not os.path.isdir(bxd): return False
+              t = target_of(l[1])
+              if type(t) is not dict or t.get("final") is not True: return "pending"
+              if t.get("checked") != 2 or not isaddr(t.get("signer")): return "unresolved"
+              return "hit" if t["signer"] == l[2] else "miss"
+          def legs_supported(c):
+              for l in c["legs"]:
+                  e = expected(l)
+                  if e is False: return "its sources (race-data, Block X) can't be read here"
+                  # "unresolved" may also come from the recorder's own checks (no price card, a held read, the deadline):
+                  # it can only void a card, never make one score. "pending" only on a miss, which decides anyway.
+                  if l[4] == e or l[4] == "unresolved" or (l[4] == "pending" and c["outcome"] == "miss"): continue
+                  return "leg %s (round %s) is %s but its source shows %s" % (l[2], l[1], l[4], e)
+              return None
+          new_days = sorted({part_of(f)[0] for f in names if part_of(f)})
+          for day in new_days:
+              files = [f for f in names if part_of(f) and part_of(f)[0] == day]
+              if any(("combo/" + f) in held for f in files): 
+                  for f in files: hold("combo/" + f, "another part of its day is held", True)
                   continue
-              if type(old) is not dict or type(old.get("slots")) is not list: continue    # an older published format: replaced
-              mine = {s["round"]: s for s in new["slots"]}
+              new = day_parts(d, day); old = day_parts(pub, day)
               why = ""
-              for s in old["slots"]:
-                  if type(s) is not dict: continue
-                  n = mine.get(s.get("round"))
-                  if s.get("fixed") is True:
-                      key = lambda cs: sorted(json.dumps([c.get("player"), [l[:3] for l in c.get("legs") or []], c.get("time"), c.get("changes")]) for c in cs)
-                      if n is None or n["fixed"] is not True or key(n["cards"]) != key(s.get("cards") or []): why = "fixed slot %s changed" % s.get("round"); break
-                  nc = {c["player"]: c for c in (n["cards"] if n else [])}
-                  bad = [c.get("player") for c in s.get("cards") or [] if type(c) is dict and c.get("state") == "final" and not same(nc.get(c.get("player")), c)]
-                  if bad: why = "a final card of %s in slot %s changed" % (bad[0], s.get("round")); break
-              if why: hold("combo/" + f, why, True)
+              if new is None: why = "its parts don't fit together (a player twice in a slot)"
+              elif old is None: why = "the published day can't be read"
+              elif not old and day < first_day: why = "a new file for a day before last week"
+              else:
+                  mine = {s["round"]: s for s in new}
+                  for s in old:
+                      n = mine.get(s["round"])
+                      if s["fixed"] is True:
+                          key = lambda cs: sorted(json.dumps([c.get("player"), [l[:3] for l in c.get("legs") or []], c.get("time"), c.get("changes")]) for c in cs)
+                          if n is None or n["fixed"] is not True or key(n["cards"]) != key(s["cards"]): why = "fixed slot %s changed" % s["round"]; break
+                      nc = {c["player"]: c for c in (n["cards"] if n else [])}
+                      bad = [c["player"] for c in s["cards"] if c["state"] == "final" and not same(nc.get(c["player"]), c)]
+                      if bad: why = "a final card of %s in slot %s changed" % (bad[0], s["round"]); break
+                  if not why:
+                      was = {(s["round"], c["player"]) for s in old for c in s["cards"] if c["state"] == "final"}
+                      for s in new:
+                          for c in s["cards"]:
+                              if c["state"] != "final" or (s["round"], c["player"]) in was: continue
+                              w2 = legs_supported(c)
+                              if w2: why = "the new final card of %s in slot %s: %s" % (c["player"], s["round"], w2); break
+                          if why: break
+              if why:
+                  for f in files: hold("combo/" + f, why, True)
+          # Fix-check 2 FC2-4: a board for another week than this job's clock is an old (rewound) board.
+          if "combo/board.json" not in held and os.path.isfile(os.path.join(d, "board.json")):
+              bw = load(os.path.join(d, "board.json"))["week"]["week"]
+              if bw != cw and not (bw == cw - 1 and now - (GENESIS + cw * WEEK) < 2 * HOUR): hold("combo/board.json", "its week (%s) isn't this job's week (%s)" % (bw, cw), True)
           # Fix-check FC-23 (Block X BX-96): index.json's day list is append-only; new days only last week or this week.
           pi = load(os.path.join(pub, "index.json")) if os.path.isfile(os.path.join(pub, "index.json")) else None
           if type(pi) is dict and type(pi.get("days")) is list and os.path.isfile(os.path.join(d, "index.json")) and "combo/index.json" not in held:

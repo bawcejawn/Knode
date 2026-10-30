@@ -261,7 +261,9 @@
     if (isRace(leg.code)) {
       const res = race && race.result;
       if (!res || !res.final) return "pending";
-      if (res.missed || res.void || !Array.isArray(res.standings)) return "void";
+      // A race nobody decided (no handicap card, so "missed"; or results not checked on two nodes) is unresolved, as a
+      // Block X target without an agreed signer (fix-check 2 FC2-2, FC2-9): the card is void unless another leg missed.
+      if (res.missed || res.void || !Array.isArray(res.standings) || res.checked !== 2) return "unresolved";
       const st = res.standings, i = st.findIndex((s) => s && s.a === leg.producer);
       if (i < 0) return "void";                       // not in the race at all: no fault of the player
       if (!(st[i].steps > 0)) return "miss";

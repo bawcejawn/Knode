@@ -148,9 +148,9 @@ test("points: base by legs × factors, exact hundredths, no cap; up to the contr
   assert.equal(C.CAP, null); assert.equal(C.MAX_LEGS, 6); assert.equal(C.HARD_MAX_LEGS, 10);
 });
 
-test("results for every leg type: hit / miss / void / pending", () => {
+test("results for every leg type: hit / miss / void / unresolved / pending", () => {
   const st = (n) => Array.from({ length: n }, (_, i) => ({ a: i === 0 ? TOP : "1" + String(i).padStart(33, "Q"), steps: n - i, blocks: 1 }));
-  const race = (s, extra = {}) => ({ result: { final: true, standings: s, ...extra } });
+  const race = (s, extra = {}) => ({ result: { final: true, checked: 2, standings: s, ...extra } });
   const at = (i, n = 10) => st(n)[i].a;
   // Win
   assert.equal(C.legResult(leg(C.WIN, R, at(0)), race(st(10))), "hit");
@@ -168,7 +168,9 @@ test("results for every leg type: hit / miss / void / pending", () => {
   assert.equal(C.legResult(leg(C.WIN, R, TOP), race(zero)), "miss");
   // Not in the race at all → void; race missed or not final → void / pending
   assert.equal(C.legResult(leg(C.SHOW, R, STRANGER), race(st(10))), "void");
-  assert.equal(C.legResult(leg(C.SHOW, R, TOP), { result: { final: true, missed: true } }), "void");
+  // Fix-check 2 FC2-2, FC2-9: a race nobody decided (missed, or checked on one node) is unresolved, never a dropped leg.
+  assert.equal(C.legResult(leg(C.SHOW, R, TOP), { result: { final: true, missed: true } }), "unresolved");
+  assert.equal(C.legResult(leg(C.SHOW, R, TOP), race(st(10), { checked: 1 })), "unresolved");
   assert.equal(C.legResult(leg(C.SHOW, R, TOP), { result: { final: false } }), "pending");
   assert.equal(C.legResult(leg(C.SHOW, R, TOP), { result: null }), "pending");
   assert.equal(C.legResult(leg(C.SHOW, R, TOP), null), "pending");
