@@ -376,3 +376,13 @@ test("names show on the leaderboards and on your own wallet button", () => {
   assert.match(read("app.js"), /youLabel\(\) : walletName\(s\.address\)/);
   assert.match(read("header-wallet.js"), /window\.KNames\.name\(W\.address\)/);
 });
+
+test("Get a Koinos @name: mints only on the Nicknames contract, to the connected wallet, with its own Mana", () => {
+  const src = fs.readFileSync(`${APP}/names-page.js`, "utf8");
+  assert.match(src, /const NICKNAMES = "1KD9Es7LBBjA1FY3ViCgQJ7e6WH1ipKbhz"/);
+  assert.match(src, /abi: lib\.utils\.nicknamesAbi/);
+  assert.match(src, /mint\(\{ to: who, token_id: nickHex\(n\) \}, \{ payer: who, rcLimit: limit \}\)/);
+  assert.match(src, /NICK_MANA = "1000000000"/);
+  const html = fs.readFileSync(`${APP}/names.html`, "utf8");
+  assert.match(html, /id="nick-mint"/);
+});

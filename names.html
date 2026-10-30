@@ -152,6 +152,13 @@
       <p class="help">On GitHub it is checked automatically within about 15 minutes, and the issue gets a reply. No GitHub account? Send these two lines to the Knode Games owner, who adds them for you. The claim works for 7 days.</p>
     </section>
 
+    <section class="card" id="s-nick">
+      <h2>Or get a Koinos @name</h2>
+      <p class="help">A Koinos nickname lives on the Koinos chain itself (the Nicknames contract), so it shows in other Koinos apps too, and here whenever you have no Knode Games name. Lowercase letters, digits, dots and dashes. Unlike the name above it is a real transaction from your own wallet: you pay the Mana (Kondor may hold up to 10 KOIN of Mana for it; Mana refills by itself, nothing is spent from your KOIN). Connect Kondor in step 1 first.</p>
+      <div class="row"><input type="text" id="nick" maxlength="33" placeholder="@yourname" autocomplete="off" spellcheck="false" autocapitalize="none"><button class="btn btn-primary" type="button" id="nick-mint" disabled>Create my @name</button></div>
+      <p class="msg" id="nick-msg" role="status"></p>
+    </section>
+
     <section class="card">
       <h2>Named wallets</h2>
       <table class="names"><tbody id="list"><tr><td class="help">Loading…</td></tr></tbody></table>

@@ -1,7 +1,8 @@
 /* names.html: a player or producer names their wallet. The page connects Kondor only to read the address and to sign one
    text message (signMessage: no transaction, no Mana). It checks the rules (names.js) and the signature before showing
    the claim, then hands it to GitHub as a prefilled issue (or the wallet's owner copies it to the owner). It never sends
-   anything to the chain and stores nothing. Names are only ever set as textContent. */
+   anything to the chain for the name and stores nothing. The separate "Get a Koinos @name" card mints a Koinos nickname
+   (Nicknames contract mint) from the player's own Kondor wallet, paying their own Mana. Names are only ever set as textContent. */
 (() => {
   "use strict";
   const K = window.KNames, R = K && K.rules;
@@ -164,6 +165,65 @@
   });
   $("copy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("claim").value); $("copy").textContent = "Copied"; } catch { $("claim").select(); }
+  });
+
+  // ── Get a Koinos @name: mint on the Koinos Nicknames contract from the player's own Kondor wallet (own Mana) ──
+  const NICKNAMES = "1KD9Es7LBBjA1FY3ViCgQJ7e6WH1ipKbhz";
+  const NICK_MANA = "1000000000";   // at most 10 KOIN of Mana held for the mint (the Nicknames team's own advice)
+  const nickOf = () => $("nick").value.trim().toLowerCase().replace(/^@/, "");
+  const nickHex = (n) => "0x" + Array.from(new TextEncoder().encode(n), (b) => b.toString(16).padStart(2, "0")).join("");
+  let nickProvider = null;
+  async function nickContract(signer) {
+    if (!nickProvider) {
+      const dep = await fetch("./game-data/deployment.json", { cache: "no-cache" }).then((r) => r.json()).catch(() => ({}));
+      nickProvider = new lib.Provider([dep.rpc || "https://koinos.armana.io"]);
+    }
+    return new lib.Contract({ id: NICKNAMES, abi: lib.utils.nicknamesAbi, provider: nickProvider, ...(signer ? { signer } : {}) });
+  }
+  function nickCheck() {
+    const n = nickOf(), viaKondor = !!(S.address && $("acct").options.length && !$("addr").value.trim());
+    let why = "";
+    if (!n) why = "";
+    else if (!/^[a-z0-9][a-z0-9.-]{1,31}$/.test(n)) why = "2 to 32 characters: lowercase letters, digits, dots and dashes (starting with a letter or digit).";
+    else if (R.reserved(n)) why = "That one is reserved on Knode Games (it would never show here). Choose another.";
+    else if (!viaKondor) why = "Connect Kondor in step 1 first: the @name is minted from that wallet.";
+    say("nick-msg", why, why ? "bad" : "");
+    $("nick-mint").disabled = !n || !!why || !window.kondor;
+    return !why && !!n;
+  }
+  $("nick").addEventListener("input", nickCheck);
+  $("acct").addEventListener("change", nickCheck);
+  $("connect").addEventListener("click", () => setTimeout(nickCheck, 0));
+  $("nick-mint").addEventListener("click", async () => {
+    if (!nickCheck()) return;
+    const n = nickOf(), who = S.address;
+    $("nick-mint").disabled = true;
+    try {
+      say("nick-msg", "Checking the name on chain…");
+      const read = (await nickContract()).functions;
+      try {
+        const v = await read.verify_valid_name({ value: n });
+        const note = v && v.result && v.result.value;
+        if (note && note !== n) { say("nick-msg", `The Nicknames contract says: ${String(note).slice(0, 160)}`, "bad"); return; }
+      } catch (e) { say("nick-msg", `Not available: ${String((e && e.message) || e).replace(/^.*?:\s*/, "").slice(0, 160)}`, "bad"); return; }
+      const mana = BigInt(await nickProvider.getAccountRc(who));
+      if (mana < 50000000n) { say("nick-msg", "This wallet has almost no Mana. Mana comes from KOIN in the wallet; add some KOIN (or wait for it to refill) and try again.", "bad"); return; }
+      const limit = mana < BigInt(NICK_MANA) ? (mana * 9n / 10n).toString() : NICK_MANA;
+      say("nick-msg", `Confirm “Create @${n}” in Kondor…`);
+      const signer = window.kondor.getSigner(who);
+      const nick = await nickContract(signer);
+      const { transaction, receipt } = await nick.functions.mint({ to: who, token_id: nickHex(n) }, { payer: who, rcLimit: limit });
+      if (receipt && receipt.reverted) throw new Error("the Nicknames contract refused it");
+      say("nick-msg", "Sent. Waiting for the next block…");
+      if (transaction && transaction.wait) { try { await transaction.wait("byBlock", 90000); } catch { /* checked below */ } }
+      const main = (await read.get_main_token({ value: who })).result;
+      const ok = main && String(main.token_id || "").toLowerCase() === nickHex(n);
+      say("nick-msg", ok ? `Done: this wallet is @${n} on Koinos. Knode Games pages show it within the hour (until you take a Knode Games name).`
+        : `Created @${n}. If another @name was already your main one, set @${n} as main in a Koinos nickname app. Knode Games shows your main @name within the hour.`, "good");
+    } catch (e) {
+      const m = String((e && e.message) || e);
+      say("nick-msg", /reject|denied|cancel/i.test(m) ? "Cancelled in Kondor." : `Couldn't create it: ${m.slice(0, 160)}`, "bad");
+    } finally { nickCheck(); }
   });
 
   function renderList() {
