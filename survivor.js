@@ -110,6 +110,13 @@
     if (!pdep || !isAddr(pdep.contract)) return;
     const abi = await fetchJson(new URL("picks/abi/picks.koilib.json", ROOT));
     picksContract = new lib.Contract({ id: pdep.contract, abi, provider });
+    // The page times the lock with its own copy of game 3's settings; if the chain's differ (an owner change), picking
+    // pauses with a note rather than show wrong lock times (Repo Lense S3-29).
+    try {
+      const g = ((await picksContract.functions.get_game({ game: S.GAME_ID })).result || {}).game;
+      const want = { lock_mode: 2, round_size: S.DAY, round_offset: 0, lead: S.LEAD_MS, ahead: S.AHEAD_MS };
+      if (g && Object.entries(want).some(([k, v]) => Number(g[k] || 0) !== v)) gameChanged = true;
+    } catch { /* read again with the picks */ }
     if (W) W.init({ provider, chainId: dep && dep.chainId, payer: dep && dep.payer, sponsor: dep && dep.sponsor, onChange: () => loadMine() });
     $("picks-soon").hidden = true;
     loadMine();
@@ -120,7 +127,10 @@
   // pass (fix-check: a busy public node used to switch picking off and on).
   // Repo Lense S2-6: after this page's own pick the grace is dropped (the next read must be clean), and the confirmed
   // pick goes into the list at once. S2-17: only the newest read may write the list.
-  let mineOk = false, mineWho = null, mineAt = 0, mineSeq = 0;
+  let mineOk = false, mineWho = null, mineAt = 0, mineSeq = 0, gameChanged = false;
+  // Picks this page sent: kept in the list until a read shows them or their day locks (Repo Lense S3-14), so a pick the
+  // chain hasn't shown yet still blocks its producer for other days.
+  const sentPicks = new Map();                    // day → { producers, changes }
   const twice = (f) => f().catch(() => new Promise((res) => setTimeout(res, 1500)).then(f));
   async function loadMine() {
     const who = me(), seq = ++mineSeq;
@@ -137,6 +147,11 @@
       if (me() !== who || seq !== mineSeq) return;                // the wallet changed, or a newer read started
       if (got.every((x) => x.status === "fulfilled") && use[0].status === "fulfilled") {
         myPicks = new Map(got.map((x) => x.value).filter(([, p]) => p));
+        for (const [d, p] of sentPicks) {
+          const seen = myPicks.get(d);
+          if ((seen && seen.producers[0] === p.producers[0]) || S.lockTime(d) <= now()) sentPicks.delete(d);
+          else myPicks.set(d, p);
+        }
         usage = use[0].value.result || null;
         mineOk = true; mineAt = Date.now();
       } else mineOk = mineAt > 0 && Date.now() - mineAt < 3 * 60000;   // keep the last good list; Pick waits for a clean read
@@ -144,7 +159,8 @@
         const h = await provider.getHeadInfo();
         const t = Number(h && h.head_block_time);
         // Only ever forward: a lagging node must not make the page offer a day the chain has already locked (S2-5).
-        if (t > 0) skew = t - Date.now() > 30000 ? t - Date.now() : 0;
+        // And never back: the largest difference seen is kept (Repo Lense S3-12: a slow device, then a lagging node).
+        if (t > 0 && t - Date.now() > 30000) skew = Math.max(skew, t - Date.now());
       } catch { /* the viewer's clock */ }
     }
     renderDays(true); renderToday(); renderStandings();
@@ -173,6 +189,8 @@
     const sd = S.seasonOf(d);
     if (!sd) return false;
     if (sd.n === 1) return true;
+    // A season that already ended (2 or fewer left) has no more days to pick (Repo Lense S3-28).
+    if (season && season.season === sd.season && season.result && season.result.over) return false;
     const rec = mySeason(sd.season);
     if (rec) return rec.outN === null;
     // The recorder hasn't recorded day 1 yet: you're in if you picked for it.
@@ -224,6 +242,7 @@
         el("span", { class: "bx-eta", "data-lock": String(S.lockTime(d)), text: `locks ${localTime(S.lockTime(d))} · in ${dur(S.lockTime(d) - t)}` }));
       let cell;
       if (!picksContract) cell = el("div", { class: "bx-now", text: "Picks open soon" });
+      else if (gameChanged) cell = el("div", { class: "bx-now warn", text: "Survivor's settings on the chain changed; picking is paused on this page until it is updated." });
       else if (!sd) cell = el("div", { class: "bx-now", text: "Practice day: no season yet." });
       else if (who && !mineOk && sd.n > 1) cell = el("div", { class: "bx-now", text: "Couldn't read your picks from the chain yet; retrying every minute." });
       else if (!canPickDay(d)) cell = el("div", { class: "bx-now", text: `You're not in season ${sd.season} (or you're out). Join the next one by picking for its day 1.` });
@@ -244,9 +263,16 @@
         const btn = el("button", { class: "btn", type: "button", onclick: () => sendPick(d, sel.value) }, mineP ? "Change" : "Pick");
         if (sending || !mineOk || used >= max || (mine && Number(mine.changes) >= S.MAX_CHANGES)) btn.disabled = true;
         const notes = [];
-        if (mineP) notes.push(el("div", { class: "bx-now", text: `Your pick: ${nameOf(mineP)}${f && f.exact && !f.field.some((x) => x.a === mineP) ? " (not in this day's field: it would cost a life)" : ""}` }));
+        // Your pick's producer already used (recorded) or picked for another day this season: it costs a life, so say so
+        // whenever it is the case, recorded day or not (Repo Lense S3-4).
+        const mineWhy = mineP ? blocked.get(mineP) : null;
+        if (mineP) notes.push(el("div", { class: `bx-now${mineWhy ? " warn" : ""}`, text: `Your pick: ${nameOf(mineP)}${mineWhy ? ` (${mineWhy === "used" ? "already used this season" : mineWhy}: each producer counts once, so this pick costs a life; change it)` : f && f.exact && !f.field.some((x) => x.a === mineP) ? " (not in this day's field: it would cost a life)" : ""}` }));
         // The warning only on the next day to lock: the later ones can wait.
-        else if (sd.n > 1 && d === days[0]) notes.push(el("div", { class: "bx-now warn", text: `No pick yet: a ${S.MAINNET ? "day" : "round"} without a pick costs a life.` }));
+        else if (sd.n > 1 && d === days[0] && opts.length) notes.push(el("div", { class: "bx-now warn", text: `No pick yet: a ${S.MAINNET ? "day" : "round"} without a pick costs a life.` }));
+        // No handicaps published yet: nothing to pick from (Repo Lense S3-13).
+        if (!opts.length) notes.push(el("div", { class: "bx-now", text: `The handicaps aren't out yet, so picking isn't possible right now. They're published the ${S.MAINNET ? "day" : "round"} before; come back then.` }));
+        // Guest picks use the sponsor's shared free pool, which can run out near the lock (Repo Lense S3-16).
+        if (W && W.kind === "guest" && !mineP) notes.push(el("div", { class: "bx-now", text: "Guest picks use the shared free Mana pool, which can run out late in the day: pick early." }));
         if (f && !f.exact) notes.push(el("div", { class: "bx-now", text: `Handicaps for this ${S.MAINNET ? "day" : "round"} aren't out yet; showing the latest. They're published the ${S.MAINNET ? "day" : "round"} before.` }));
         // Repo Lense SV-A11: a pick made early can drop out of that day's field, and that costs a life.
         if (mineP && !(f && f.exact)) notes.push(el("div", { class: "bx-now warn", text: `Check this pick once the ${S.MAINNET ? "day's" : "round's"} field is out: if ${nameOf(mineP)} isn't in it, the pick costs a life (the safety net doesn't cover that).` }));
@@ -303,7 +329,8 @@
         if (!onChain) await new Promise((res) => setTimeout(res, 3000));
       }
       drafts.delete(d);
-      if (onChain) { myPicks.set(d, { producers: [producer], changes: mine ? Number(mine.changes || 0) + 1 : 0 }); mineAt = 0; }
+      // Sent (seen on the chain or not): in the list at once, and kept until a read shows it (S2-6, S3-14).
+      { const p = { producers: [producer], changes: mine ? Number(mine.changes || 0) + 1 : 0 }; myPicks.set(d, p); sentPicks.set(d, p); mineAt = 0; }
       if (onChain) pickModal("ok", "Pick confirmed", [el("p", {}, "Your pick: ", el("b", { text: nameOf(producer) }), ` for ${dayName(d)}.`),
         `It locks ${LOCK_TEXT} (${localTime(S.lockTime(d))} your time). Until then you can change it (up to ${S.MAX_CHANGES} times).`,
         id ? el("p", { class: "ago mono", text: `Transaction ${String(id).slice(0, 18)}…` }) : null].filter(Boolean), [okBtn()]);
@@ -383,6 +410,8 @@
     setInterval(() => { if (!document.hidden) refreshBlocks(); }, 60000);
     setInterval(() => { if (!document.hidden) loadData().then(() => { renderField(); renderStandings(); renderDays(); renderToday(); }); }, 300000);
     setInterval(() => { if (!document.hidden && picksContract) loadMine(); }, 60000);
+    // A tab that comes back after a while reads the picks again before offering Pick (Repo Lense S3-15).
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && picksContract) { if (Date.now() - mineAt > 60000) mineOk = false; loadMine(); } });
     setInterval(() => { if (!document.hidden) renderDays(); }, 15000);
   })();
 })();

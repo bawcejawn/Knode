@@ -9,6 +9,8 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 
 const APP = process.env.APP || ".";
+// The publish check judges files by the job's clock (Repo Lense S3-1): the fixtures' seasons are in Nov-Dec 2026.
+process.env.CHECK_NOW_MS ??= String(Date.parse("2027-06-01T00:00:00Z"));
 const { run } = await import(path.resolve(APP, "bot/games/survivor.ts"));
 const S = globalThis.KSurvivor;
 const A = (c) => "1" + c.repeat(33);
@@ -42,21 +44,26 @@ async function recorded() {
     const log = console.log; console.log = () => {};
     try { await run({ p: "main", check: "check", prev, out, firstDay: FIRST, picksContract: A("P"), blocksOf, timeOf: async (n, h) => T(h), picksOf, rankedOf: async (n, who) => new Set(who), gameOf: async () => GAME3, stakedOf: async () => null, vaultOf: async () => null, head: headAt(t) }); }
     finally { console.log = log; }
+    // As on GitHub: the vault files already published stay on games-data (and come back as PREV/vault next run).
+    if (prev && fs.existsSync(path.join(prev, "vault"))) for (const f of fs.readdirSync(path.join(prev, "vault"))) {
+      fs.mkdirSync(path.join(out, "vault"), { recursive: true });
+      if (!fs.existsSync(path.join(out, "vault", f))) fs.copyFileSync(path.join(prev, "vault", f), path.join(out, "vault", f));
+    }
     prev = out;
   }
   return out;
 }
-function publish(survivorDir, edit = () => {}) {
+function publish(survivorDir, edit = () => {}, remote = null) {
   const IN = fs.mkdtempSync(path.join(os.tmpdir(), "in-"));
   fs.cpSync(survivorDir, path.join(IN, "survivor"), { recursive: true });
   edit(IN);
-  const REMOTE = fs.mkdtempSync(path.join(os.tmpdir(), "remote-"));
-  execFileSync("git", ["init", "-q", "--bare", REMOTE]);
+  const REMOTE = remote ?? fs.mkdtempSync(path.join(os.tmpdir(), "remote-"));
+  if (!remote) execFileSync("git", ["init", "-q", "--bare", REMOTE]);
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "job-"));
   const r = spawnSync("bash", ["-c", script()], { cwd, env: { ...process.env, IN, REMOTE, GH_TOKEN: "x", GITHUB_REPOSITORY: "o/r", GIT_CONFIG_GLOBAL: "/dev/null" }, encoding: "utf8" });
   const pushed = spawnSync("git", ["--git-dir", REMOTE, "ls-tree", "-r", "--name-only", "games-data"], { encoding: "utf8" }).stdout.split("\n").filter(Boolean);
   const files = (d) => (fs.existsSync(d) ? fs.readdirSync(d, { recursive: true }).map(String).sort() : []);
-  return { code: r.status, out: r.stdout + r.stderr, failed: /FAILED=1/.test(r.stdout), files: files(path.join(IN, "survivor")), pushed };
+  return { code: r.status, out: r.stdout + r.stderr, failed: /FAILED=1/.test(r.stdout), files: files(path.join(IN, "survivor")), pushed, REMOTE };
 }
 
 test("the publish shell: good files pass; bad ones are left out one by one, and the run fails", async (t) => {
@@ -84,4 +91,20 @@ test("the publish shell: good files pass; bad ones are left out one by one, and 
   assert.notEqual(odd.code, 0); assert.match(odd.out, /Refusing to publish unexpected files/);
   const neg = publish(out, (IN) => fs.writeFileSync(path.join(IN, "survivor", "vault", "W-1.json"), "{}"));
   assert.notEqual(neg.code, 0, "a negative week's file is refused by name");
+});
+
+test("the publish shell on an existing branch: a changed vault file is held, the season list only grows (Repo Lense S3-25, S3-8)", async (t) => {
+  try { execFileSync("python3", ["--version"]); execFileSync("bash", ["--version"]); } catch { t.skip("python3 or bash missing"); return; }
+  const out = await recorded();
+  const first = publish(out);
+  assert.equal(first.code, 0, first.out);
+  // The same files again: nothing new, no alert.
+  const again = publish(out, () => {}, first.REMOTE);
+  assert.equal(again.code, 0, again.out); assert.match(again.out, /No changes/);
+  // A different vault file for a published week: held, the run fails, the published one stays.
+  const changed = publish(out, (IN) => { const f = path.join(IN, "survivor", "vault", "W4.json"), j = JSON.parse(fs.readFileSync(f, "utf8")); j.rows = []; fs.writeFileSync(f, JSON.stringify(j)); }, first.REMOTE);
+  assert.notEqual(changed.code, 0); assert.match(changed.out, /differs from the published file/);
+  // An index that drops a published season is held.
+  const dropped = publish(out, (IN) => { const f = path.join(IN, "survivor", "index.json"), j = JSON.parse(fs.readFileSync(f, "utf8")); j.seasons = []; fs.writeFileSync(f, JSON.stringify(j)); }, first.REMOTE);
+  assert.notEqual(dropped.code, 0); assert.match(dropped.out, /drops a published season/);
 });

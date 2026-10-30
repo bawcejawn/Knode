@@ -265,6 +265,12 @@ async function readVault(node: any, game: string | null): Promise<{ genesis: num
   const g3 = (await v.games(node)).find((g: any) => Number(g.id) === MAINNET_S.GAME_ID) ?? null;
   return { genesis: Number(st.config?.genesis_time || 0), weekLen: Number(st.config?.week_length || 0), game3: g3 };
 }
+/** The vault settings that decide where Survivor's results go (not the running totals). */
+export function vaultSettings(v: { genesis: number; weekLen: number; game3: any | null } | null): string {
+  if (!v) return "null";
+  const g = v.game3;
+  return JSON.stringify([v.genesis, v.weekLen, g && ["id", "staked", "free_prize", "active", "from_week", "last_week_plus_one", "season_weeks"].map((k) => String(g[k] ?? ""))]);
+}
 /** Does the vault count weeks and Survivor's seasons the way the recorder writes its files? "" when it does (or the
  *  vault isn't v6 yet, or game 3 isn't in it yet); otherwise why not (Repo Lense S2-7, S2-21). */
 export function vaultMismatch(v: { genesis: number; weekLen: number; game3: any | null } | null, firstDay: number | null, math: any = MAINNET_S): string {
@@ -344,12 +350,16 @@ const tally = (signers: string[]): Counts => {
  *  - first / second (free players): only in the season's last week, once the season is final (its result needs both
  *    weeks' stake readings). A place with more than 10 tied wallets is left empty (the vault refuses more), so its
  *    prize returns to the pool; `problems` says so. */
-export function vaultFiles(sf: { startDay: number; days: any[]; result: any; stakes: Stake[] }, math: any, problems: string[] = []): Record<number, any> {
+export function vaultFiles(sf: { startDay: number; days: any[]; result: any; stakes: Stake[] }, math: any, problems: string[] = [], published: Set<number> = new Set()): Record<number, any> {
   const out: Record<number, any> = {};
   const w1 = vaultWeekOf(sf.startDay);
   for (const k of [0, 1]) {
     const w = w1 + k, st = sf.stakes.find((x) => x.week === w);
-    if (!st || !st.final) continue;
+    // Already published: written once, never again (Repo Lense S3-6).
+    if (published.has(w) || !st || !st.final) continue;
+    // A reading taken more than a week after its week ended may show today's stakes, not that week's (S2-9): its file
+    // is held for the owner to check, not published (Repo Lense S3-11).
+    if (st.day >= sf.startDay + math.WEEK_DAYS * (k + 2)) { problems.push(`Survivor: vault week ${w}'s file is held: its stakes were read late (after an outage). Check them, then publish it by hand (docs/SURVIVOR-RUNBOOK.md)`); continue; }
     if (k === 1 && !(sf.result && sf.result.final)) continue;
     const rows = math.weekRows(sf.days, k, new Set(st.staked));
     if (rows === null) continue;
@@ -371,8 +381,10 @@ export function vaultFiles(sf: { startDay: number; days: any[]; result: any; sta
 // the files are copied in instead. The old folder is parked under a fixed name, so a run that died between the two
 // renames is put right by the next one (fix-check of SV-A26: the testnet kit's OUT is also its PREV).
 function sideOf(final: string): { side: string; sameDisk: boolean } {
+  // Next to OUT's parent; when that is a drive or file-system root, next to OUT itself (a local run only: on GitHub OUT
+  // is always deeper), never on another disk, so the swap stays two renames (Repo Lense S3-18).
   const side = path.dirname(path.dirname(final));
-  return side === path.parse(side).root ? { side: os.tmpdir(), sameDisk: false } : { side, sameDisk: true };
+  return { side: side === path.parse(side).root ? path.dirname(final) : side, sameDisk: true };
 }
 const oldOf = (final: string) => path.join(sideOf(final).side, `.survivor-old-${crypto.createHash("sha256").update(final).digest("hex").slice(0, 12)}`);
 function renameRetry(a: string, b: string) {
@@ -388,33 +400,44 @@ function renameRetry(a: string, b: string) {
 /** A run that died between the two renames left OUT missing and the old folder parked: put it back. */
 export function recoverOut(final: string) {
   const old = oldOf(final);
-  if (!fs.existsSync(final) && fs.existsSync(old)) renameRetry(old, final);
+  if (!fs.existsSync(old)) return;
+  // OUT missing, or created empty since (the testnet kit used to make it first: Repo Lense S3-17).
+  if (fs.existsSync(final) && fs.readdirSync(final).length === 0) fs.rmdirSync(final);
+  if (!fs.existsSync(final)) renameRetry(old, final);
+}
+/** Side folders left by a run that crashed more than an hour ago (Repo Lense S3-18). */
+function cleanSide(final: string) {
+  const { side } = sideOf(final);
+  try {
+    for (const f of fs.readdirSync(side)) if (f.startsWith(".survivor-stage-")) {
+      const p = path.join(side, f);
+      if (Date.now() - fs.statSync(p).mtimeMs > 3600000) fs.rmSync(p, { recursive: true, force: true });
+    }
+  } catch { /* nothing to clean */ }
 }
 function stageFor(final: string): string {
-  const { side, sameDisk } = sideOf(final);
-  if (sameDisk) { try { return fs.mkdtempSync(path.join(side, ".survivor-stage-")); } catch { /* not writable: the temp folder */ } }
-  return fs.mkdtempSync(path.join(os.tmpdir(), "survivor-stage-"));
+  cleanSide(final);
+  return fs.mkdtempSync(path.join(sideOf(final).side, ".survivor-stage-"));
 }
 function swapIn(stage: string, final: string) {
+  const old = oldOf(final);
   try {
     // Files of the last run that this run didn't write again (a season skipped this run) are kept.
     if (fs.existsSync(final)) fs.cpSync(final, stage, { recursive: true, force: false, errorOnExist: false });
-    const old = oldOf(final);
-    if (path.dirname(stage) !== sideOf(final).side || !sideOf(final).sameDisk) {
-      fs.mkdirSync(final, { recursive: true });
-      fs.cpSync(stage, final, { recursive: true });           // another disk: copied (not atomic)
-      return;
-    }
     fs.rmSync(old, { recursive: true, force: true });
     if (fs.existsSync(final)) renameRetry(final, old);
     try { renameRetry(stage, final); }
     catch (e) { if (fs.existsSync(old) && !fs.existsSync(final)) renameRetry(old, final); throw e; }
     fs.rmSync(old, { recursive: true, force: true });
-  } finally { fs.rmSync(stage, { recursive: true, force: true }); }
+  } catch (e) {
+    try { fs.rmSync(stage, { recursive: true, force: true }); } catch { /* the error that matters is e */ }
+    throw e;
+  }
 }
 
 /** One run. Exported for the tests, which pass fake nodes. */
 export async function run(o: Opts) {
+  let checkDown = "";
   S = o.math ?? MAINNET_S;
   const OUT = o.out ?? E.SURVIVOR_OUT ?? "games-data/survivor";
   const PREV = o.prev ?? E.SURVIVOR_PREV ?? "";
@@ -430,8 +453,14 @@ export async function run(o: Opts) {
     const h = await headOf(o.p);
     readerP = blockReader(o.p, h.id);
     head = { height: h.height, time: h.time, lib: h.lib, libTime: await readerP.time(h.lib) };
-    if (o.check) { const c = await headOf(o.check); readerC = blockReader(o.check, c.id); }
+    // A check node that is down doesn't stop the run (Repo Lense S3-9): days and handicaps go on from one node, and
+    // seasons wait (they need two nodes on mainnet).
+    if (o.check) {
+      try { const c = await headOf(o.check); readerC = blockReader(o.check, c.id); }
+      catch (e) { checkDown = `the second node (RPC_CHECK) didn't answer: ${(e as Error).message}`; }
+    }
   }
+  if (checkDown) { problems.push(`Survivor: ${checkDown}; this run reads one node`); o = { ...o, check: null }; }
   const timeP = o.timeOf ? (h: number) => o.timeOf!(o.p, h) : (h: number) => readerP.time(h);
   const rangeP = o.blocksOf ? (a: number, b: number) => o.blocksOf!(o.p, a, b) : (a: number, b: number) => readerP.range(a, b);
   const rangeC = !o.check ? null : o.blocksOf ? (a: number, b: number) => o.blocksOf!(o.check, a, b) : (a: number, b: number) => readerC.range(a, b);
@@ -446,6 +475,9 @@ export async function run(o: Opts) {
 
   // ── the seasons this run looks at (loaded first: they decide which older days are still needed) ──
   const days = loadDays(PREV);
+  // The vault files already on games-data (the record step copies them into PREV/vault): never written again (S3-6).
+  const publishedWeeks = new Set<number>();
+  try { for (const f of fs.readdirSync(path.join(PREV || ".", "vault"))) { const m = /^W(0|[1-9]\d{0,4})\.json$/.exec(f); if (PREV && m) publishedWeeks.add(Number(m[1])); } } catch { /* none yet */ }
   const today = S.dayIndex(head.time);
   const lastDone = S.dayIndex(head.libTime) - 1;               // the last day whose next day has an irreversible block
   const idx = readJson(PREV, "index.json");
@@ -475,7 +507,9 @@ export async function run(o: Opts) {
   // node's word (Repo Lense S2-10, S2-11). The testnet kit has one public node.
   if (seasonsOn && S.MAINNET && !o.check) { problems.push("Survivor: seasons wait for a second node (RPC_CHECK)"); seasonsOn = false; }
   // Season work stops in time for the files to be written (Repo Lense S2-3); the rest continues next run.
-  const t0 = Date.now(), budget = o.budgetMs ?? Number(E.SURVIVOR_BUDGET_MS || 12 * 60000);
+  // 8 minutes by default, well inside the 15-minute step: a day that starts within the budget is finished and kept
+  // even if its checks run past it (Repo Lense S3-2). SURVIVOR_BUDGET_MS (a repository variable) changes it.
+  const t0 = Date.now(), budget = o.budgetMs ?? Number(E.SURVIVOR_BUDGET_MS || 8 * 60000);
   let outOfTime = false;
   const timeLeft = () => { if (!outOfTime && Date.now() - t0 > budget) { outOfTime = true; problems.push(`Survivor: out of time for season work this run (${Math.round(budget / 60000)} min); it carries on next run`); } return !outOfTime; };
   // The vault must count weeks and seasons as the files do, or no vault file is written (Repo Lense S2-7, S2-21).
@@ -485,8 +519,10 @@ export async function run(o: Opts) {
       const vaultRead = o.vaultOf ?? ((node: any) => readVault(node, holdGame));
       vault = await vaultRead(o.p);
       // Both nodes must give the same vault settings (fix-check).
-      if (o.check && JSON.stringify(await vaultRead(o.check)) !== JSON.stringify(vault)) throw new Error("the two nodes disagree about the vault's settings");
-      if (vault?.game3 && vault.game3.active === false) problems.push("Survivor: game 3 is stopped in the vault; its weeks earn nothing until it is re-activated");
+      // Only the settings are compared: game 3's running totals (stake, held prize) move with every deposit (Repo Lense S3-5).
+      if (o.check && vaultSettings(await vaultRead(o.check)) !== vaultSettings(vault)) throw new Error("the two nodes disagree about the vault's settings");
+      const last = Number(vault?.game3?.last_week_plus_one || 0);
+      if (vault?.game3 && (vault.game3.active === false || last > 0)) problems.push(`Survivor: game 3 is stopped in the vault${last > 0 ? ` (its last earning week is ${last - 1})` : ""}: weeks after that pay nothing (Repo Lense S3-30)`);
       const why = vaultMismatch(vault, firstDay);
       if (why) { problems.push(`Survivor: ${why}; no vault results files are written until it is fixed (docs/SURVIVOR-RUNBOOK.md)`); vaultOk = false; }
     } catch (e) { problems.push(`Survivor: the vault's settings: ${(e as Error).message}; no vault files this run`); vaultOk = false; }
@@ -581,11 +617,13 @@ export async function run(o: Opts) {
     n++;
     try { await recordDay(d); } catch (e) { problems.push(`${S.dayLabel(d)}: ${(e as Error).message} (tried again next run)`); }
   }
-  // Days saved while only one node was read are checked on the second node once there is one (Repo Lense SV-A16), newest
-  // first, with what is left of this run's budget. A day the second node disagrees with is reported, not changed.
-  if (rangeC) for (const rec of [...days.values()].filter((x) => x.checked === 1).sort((x, y) => y.day - x.day)) {
-    if (n >= MAX_DAYS_PER_RUN) break;
-    n++;
+  // Days saved while only one node was read are checked on the second node once there is one (Repo Lense SV-A16), up to 3
+  // a run of their own, oldest first, so a disputed day can't take every slot for ever (Repo Lense S3-10). A day the second
+  // node disagrees with is reported, not changed.
+  let rechecks = 0;
+  if (rangeC) for (const rec of [...days.values()].filter((x) => x.checked === 1).sort((x, y) => x.day - y.day)) {
+    if (rechecks >= MAX_DAYS_PER_RUN) break;
+    rechecks++;
     try {
       if (await sameOnCheck(rec.day, rec.heights[0], rec.heights[1], rec.counts, null)) { rec.checked = 2; console.log(`${S.dayLabel(rec.day)}: checked again on the second node`); }
       else problems.push(`${S.dayLabel(rec.day)}: saved from one node, and the second node disagrees; it needs the owner (docs/SURVIVOR-RUNBOOK.md)`);
@@ -643,7 +681,6 @@ export async function run(o: Opts) {
       let noVhp: string[];
       try { const h = await heldOf(inNow); noVhp = inNow.filter((a) => !h.has(a)).sort(); }
       catch (e) { problems.push(`season ${s} day ${nDay}: VHP check: ${(e as Error).message} (tried again next run)`); break; }
-      if (!timeLeft()) break;                              // ran past the budget during this day's checks: next run
       sf.days.push({ n: nDay, day: d, field, counts: rec.counts, picks, noVhp });
       played = S.playSeason(sf.days);
       console.log(`season ${s} day ${nDay} (${S.dayLabel(d)}): ${picks.length} picks, ${played.players.filter((x: any) => x.outN === null).length} still in`);
@@ -699,13 +736,18 @@ export async function run(o: Opts) {
     if (Buffer.byteLength(text) > SIZE_WARN) problems.push(`Survivor: ${sName(sf.season)} is ${(Buffer.byteLength(text) / 1048576).toFixed(2)} MB, near or over the 2 MB publish limit; only that file is left out (docs/SURVIVOR-RUNBOOK.md)`);
     fs.writeFileSync(path.join(STAGE, sName(sf.season)), text);
     // The vault's results files (mainnet only: the test clock's rounds aren't vault weeks).
-    if (S.MAINNET && vaultOk) for (const [w, f] of Object.entries(vaultFiles(sf, S, problems))) {
+    if (S.MAINNET && vaultOk) for (const [w, f] of Object.entries(vaultFiles(sf, S, problems, publishedWeeks))) {
       if (Number(w) < 0) continue;                         // before the vault's week 0 (Repo Lense S2-19)
       // A season's last week before game 3's first vault week: its winners can't be paid (fix-check).
       if (vault?.game3 && Number(w) === vaultWeekOf(sf.startDay) + 1 && Number(w) < Number(vault.game3.from_week || 0)) problems.push(`Survivor: season ${sf.season} ends in vault week ${w}, before game 3 starts in the vault (week ${vault.game3.from_week}); its free prize can't be paid`);
       fs.mkdirSync(path.join(STAGE, "vault"), { recursive: true });
       fs.writeFileSync(path.join(STAGE, "vault", `W${w}.json`), JSON.stringify(f) + "\n");
     }
+  }
+  // The published vault files go back out exactly as they are (never rebuilt: Repo Lense S3-6).
+  for (const w of publishedWeeks) {
+    fs.mkdirSync(path.join(STAGE, "vault"), { recursive: true });
+    fs.copyFileSync(path.join(PREV, "vault", `W${w}.json`), path.join(STAGE, "vault", `W${w}.json`));
   }
   fs.writeFileSync(path.join(STAGE, "index.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), firstDay, contract: contract || null, seasons: [...known].sort((a, b) => a - b) }) + "\n");
   swapIn(STAGE, FINAL);

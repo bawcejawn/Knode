@@ -65,6 +65,19 @@ export async function freePort(start: number): Promise<number> {
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 export const DIR = process.env.SURVIVOR_TEST_DIR || path.join(ROOT, "testnet-data", "survivor");
+/** The audited Picks build (Build 3), which this PC's tools must reproduce before the testnet copy is built. */
+export const AUDITED_PICKS_WASM = "700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594";
+/** One run of the recorder at a time on the test data (Repo Lense S3-34): `run` holds the lock while it runs. */
+export function takeLock(dir = DIR) {
+  fs.mkdirSync(dir, { recursive: true });
+  const f = path.join(dir, ".lock");
+  let pid = 0;
+  try { pid = Number(fs.readFileSync(f, "utf8")) || 0; } catch { /* no lock */ }
+  const alive = (n: number) => { try { process.kill(n, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } };
+  if (pid && pid !== process.pid && alive(pid)) throw new Error(`Another survivor-test command (process ${pid}) is using the test data. Stop it first (Ctrl+C in its window).`);
+  fs.writeFileSync(f, String(process.pid));
+  process.on("exit", () => { try { if (Number(fs.readFileSync(f, "utf8")) === process.pid) fs.unlinkSync(f); } catch { /* gone */ } });
+}
 const KEYS = () => path.join(DIR, "keys.env"), CONFIG = () => path.join(DIR, "config.json"), DATA = () => path.join(DIR, "data");
 const PICKS_SRC = () => path.join(DIR, "picks-src");
 const log = (...a: any[]) => console.log(...a);
@@ -291,15 +304,28 @@ async function picksBuild() {
   }
   if (/\.\.\/\.\.\//.test(preSrc)) throw new Error("picks/scripts/prebuild.cjs reaches outside the folder in a way the testnet build doesn't know");
   fs.writeFileSync(pre, preSrc);
+  // The build and its safety check never take their paths from the shell (Repo Lense S3-19).
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (/^PICKS_/.test(k)) delete env[k];
+  const build = () => {
+    let ok = false;
+    for (let i = 0; i < 4 && !ok; i++) {
+      try { execSync("npm run build", { cwd: dst, env, stdio: ["ignore", "ignore", "pipe"] }); ok = true; } catch { log(`  build try ${i + 1} failed (often a temporary EAGAIN), trying again…`); }
+    }
+    if (!ok) throw new Error(`The build failed. Try: cd ${dst}; npm run build — and send Claude the error.`);
+  };
+  // First the audited source as it is: this PC's tools must reproduce the audited contract exactly (S3-19), so the
+  // testnet copy differs from it only by the two changed lines.
+  log("Checking that this PC's tools rebuild the audited Picks contract exactly (a minute or two)…");
+  build();
+  const audited = sha256hex(fs.readFileSync(path.join(dst, "build", "release", "contract.wasm")));
+  if (audited !== AUDITED_PICKS_WASM) throw new Error(`This PC's tools build the audited Picks contract as ${audited.slice(0, 12)}…, not the audited ${AUDITED_PICKS_WASM.slice(0, 12)}…: stopping. Send Claude this message.`);
+  log(`  ✔ audited build reproduced (${AUDITED_PICKS_WASM.slice(0, 12)}…)`);
   const file = path.join(dst, "assembly", "Picks.ts");
   fs.writeFileSync(file, patchPicksSource(fs.readFileSync(file, "utf8"), addressOf(keys, "owner")));
   log("Building the testnet Picks contract (a minute or two)…");
-  let ok = false;
-  for (let i = 0; i < 4 && !ok; i++) {
-    try { execSync("npm run build", { cwd: dst, stdio: ["ignore", "ignore", "pipe"] }); ok = true; } catch { log(`  build try ${i + 1} failed (often a temporary EAGAIN), trying again…`); }
-  }
-  if (!ok) throw new Error(`The build failed. Try: cd ${dst}; npm run build — and send Claude the error.`);
-  execSync("node scripts/check.cjs", { cwd: dst, stdio: "inherit" });
+  build();
+  execSync("node scripts/check.cjs", { cwd: dst, env, stdio: "inherit" });
   const wasm = fs.readFileSync(path.join(dst, "build", "release", "contract.wasm"));
   log(`✔ testnet Picks build ${(wasm.length / 1024).toFixed(1)} KB, sha256 ${sha256hex(wasm)} (owner ${addressOf(keys, "owner")}, admin wait 10 minutes)`);
   log("Next: npm run survivor-test -- picks-upload --send");
@@ -410,7 +436,7 @@ async function record() {
   const c = readConfig();
   const p = await testnetProvider(c);
   const { run } = await import("./games/survivor.ts");
-  fs.mkdirSync(DATA(), { recursive: true });
+  // OUT isn't made here: run() puts back a folder a crashed run left parked first (Repo Lense S3-17).
   const r = await run({ p, check: null, prev: DATA(), out: DATA(), firstDay: c.clock.firstDay, picksContract: c.picks?.contract ?? null,
     math: mathOf(c), holdToken: c.holdToken ?? c.koin, gameContract: null });
   return r;
@@ -499,6 +525,11 @@ export async function startSite(opts: { port?: number } = {}) {
   const PAGE_FILES = new Set([...fs.readFileSync(path.join(ROOT, "survivor.html"), "utf8").matchAll(/(?:src|href)="([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.(?:js|css|webmanifest))"/g)].map((m) => m[1]));
   const types: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
   const sendFile = (res: http.ServerResponse, file: string) => {
+    // Never a Windows device name (con, nul, com1 …) or a link out of the folder (Repo Lense S3-33).
+    const base = path.basename(file).split(".")[0].toLowerCase();
+    let real = "";
+    try { real = fs.realpathSync(file); } catch { /* missing: 404 below */ }
+    if (/^(con|prn|aux|nul|com\d|lpt\d)$/.test(base) || (real && (real !== path.resolve(file) || fs.lstatSync(file).isSymbolicLink()))) { res.writeHead(404); res.end("not found"); return; }
     fs.readFile(file, (err, buf) => {
       if (err) { res.writeHead(404); res.end("not found"); return; }
       res.writeHead(200, { "content-type": types[path.extname(file)] ?? "application/octet-stream", "cache-control": "no-store", "x-content-type-options": "nosniff" });
@@ -619,10 +650,10 @@ async function main() {
     case "game": return game(sendIt);
     case "season": return season(args[0]);
     case "pick": return pick(args[0], args[1], args[2], sendIt);
-    case "record": { const r = await record(); log(r.problems.length ? r.problems.join("\n") : "recorded, no problems"); return; }
+    case "record": { takeLock(); const r = await record(); log(r.problems.length ? r.problems.join("\n") : "recorded, no problems"); return; }
     case "bots": return bots();
     case "site": await startSite(); return;
-    case "run": return runAll(a.includes("--bots"));
+    case "run": takeLock(); return runAll(a.includes("--bots"));
     default: throw new Error(`Unknown command "${cmd}". Commands: setup, status, fund, picks-build, picks-upload, game, season, pick, record, run`);
   }
 }

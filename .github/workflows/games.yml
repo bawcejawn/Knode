@@ -26,7 +26,9 @@ jobs:
   record:
     if: ${{ vars.GAMES_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Setup (5) + Block X's step (25) + Survivor's step (15): a job timeout would cancel the upload and lose both games'
+    # finished files (Repo Lense S3-3); a step timeout only fails that step.
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -58,9 +60,19 @@ jobs:
             { git ls-tree --name-only FETCH_HEAD:blockx/vault 2>/dev/null || true; } | while IFS= read -r f; do
               if [[ "$f" =~ ^W[0-9]+\.json$ ]]; then git show "FETCH_HEAD:blockx/vault/$f" > "$RUNNER_TEMP/prev/blockx/vault/$f"; fi
             done
-            { git ls-tree --name-only FETCH_HEAD:survivor 2>/dev/null || true; } | while IFS= read -r f; do
-              if [[ "$f" =~ ^(index|days|fields|S[0-9]{3,4})\.json$ ]]; then git show "FETCH_HEAD:survivor/$f" > "$RUNNER_TEMP/prev/survivor/$f"; fi
-            done
+            # Survivor: its files, and its published vault files, which the recorder then never writes again (S3-6).
+            # A folder that isn't there yet is skipped; any other git error stops the step (Repo Lense S3-22).
+            if git cat-file -e FETCH_HEAD:survivor 2>/dev/null; then
+              git ls-tree --name-only FETCH_HEAD:survivor | while IFS= read -r f; do
+                if [[ "$f" =~ ^(index|days|fields|S[0-9]{3,4})\.json$ ]]; then git show "FETCH_HEAD:survivor/$f" > "$RUNNER_TEMP/prev/survivor/$f"; fi
+              done
+            fi
+            if git cat-file -e FETCH_HEAD:survivor/vault 2>/dev/null; then
+              mkdir -p "$RUNNER_TEMP/prev/survivor/vault"
+              git ls-tree --name-only FETCH_HEAD:survivor/vault | while IFS= read -r f; do
+                if [[ "$f" =~ ^W(0|[1-9][0-9]{0,4})\.json$ ]]; then git show "FETCH_HEAD:survivor/vault/$f" > "$RUNNER_TEMP/prev/survivor/vault/$f"; fi
+              done
+            fi
           elif [ "$has" = 2 ]; then echo "No games-data branch yet."
           else echo "::error::Couldn't reach the games-data branch; not recording this run"; exit 1; fi
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
@@ -69,6 +81,8 @@ jobs:
             done
           else echo "No race-data branch yet: targets wait for cards."; fi
       - name: Record Who Signs Block X
+        id: blockx
+        timeout-minutes: 25
         run: npm run blockx
         env:
           RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
@@ -78,14 +92,26 @@ jobs:
           RACE_DATA: ${{ runner.temp }}/race
       # Survivor runs even if Block X failed this hour, and the files of whichever recorder worked are published.
       - name: Record Survivor
+        id: survivor
         if: ${{ !cancelled() }}
         timeout-minutes: 15          # a step timeout fails the step, not the job: Block X's files still go out
         run: npm run survivor
         env:
+          SURVIVOR_BUDGET_MS: ${{ vars.SURVIVOR_BUDGET_MS || '480000' }}
           RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
           RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
           SURVIVOR_PREV: ${{ runner.temp }}/prev/survivor
           SURVIVOR_OUT: ${{ runner.temp }}/games-data/survivor
+      # A recorder that failed publishes nothing this run (Repo Lense S3-20); the other one's files still go out.
+      - name: Leave out a failed recorder's files
+        if: ${{ !cancelled() }}
+        env:
+          BX: ${{ steps.blockx.outcome }}
+          SV: ${{ steps.survivor.outcome }}
+          OUT: ${{ runner.temp }}/games-data
+        run: |
+          if [ "$BX" != "success" ]; then rm -rf "$OUT/blockx"; echo "Block X's recorder didn't finish: its files are left out"; fi
+          if [ "$SV" != "success" ]; then rm -rf "$OUT/survivor"; echo "Survivor's recorder didn't finish: its files are left out"; fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
@@ -116,7 +142,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
-          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/blockx/vault" ! -path "$IN/survivor" ! -path "$IN/survivor/vault" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\|P[0-9][0-9][0-9]\)\.json" ! -regex "$IN/blockx/vault/W[0-9][0-9]*\.json" ! -regex "$IN/survivor/\(index\|days\|fields\|S[0-9][0-9][0-9][0-9]?\)\.json" ! -regex "$IN/survivor/vault/W[0-9][0-9]*\.json" \) \) -print)
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/blockx/vault" ! -path "$IN/survivor" ! -path "$IN/survivor/vault" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\|P[0-9][0-9][0-9]\)\.json" ! -regex "$IN/blockx/vault/W[0-9][0-9]*\.json" ! -regex "$IN/survivor/\(index\|days\|fields\|S[0-9][0-9][0-9][0-9]?\)\.json" ! -regex "$IN/survivor/vault/W\(0\|[1-9][0-9]?[0-9]?[0-9]?[0-9]?\)\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           # Block X: a file over 2 MB stops the run. Survivor: that file alone is left out, and the run fails at the end
           # (Repo Lense SV-A5).
@@ -131,7 +157,7 @@ jobs:
           # Audit BX-79 / BX-80: the published branch first (read only here): the vault and prize files are judged against
           # what is ALREADY published and the job's own clock, never against this run's own board.
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          PUB=$(mktemp -d); HELD="$PUB/held"; : > "$HELD"; mkdir -p "$PUB/blockx"
+          PUB=$(mktemp -d); HELD="$PUB/held"; : > "$HELD"; mkdir -p "$PUB/blockx" "$PUB/survivor"
           git init -q work && cd work
           parent=""
           if git fetch -q --depth 1 "$remote" games-data 2>/dev/null; then
@@ -140,6 +166,8 @@ jobs:
             { git ls-tree --name-only "$parent:blockx" 2>/dev/null || true; } | while IFS= read -r f; do
               if [[ "$f" =~ ^(board|index|P[0-9]{3}|W[0-9]{3})\.json$ ]]; then git show "$parent:blockx/$f" > "$PUB/blockx/$f"; fi
             done
+            # Survivor's published index, to keep its season list append-only (Repo Lense S3-8).
+            if git cat-file -e "$parent:survivor/index.json" 2>/dev/null; then git show "$parent:survivor/index.json" > "$PUB/survivor/index.json"; fi
           else git read-tree --empty; fi
           # The content must be the recorder's own shape, not only parse as JSON.
           if [ -d "$IN/blockx" ]; then /usr/bin/python3 - "$IN/blockx" 2 "$PUB/blockx" "$HELD" blockx 2400 0 <<'PY'
@@ -347,13 +375,17 @@ jobs:
           fi
           # Exit 3: everything else checked out, but a season file or a vault file was left out (removed); the run fails.
           rc=0
-          if [ -d "$IN/survivor" ]; then /usr/bin/python3 -I - "$IN/survivor" <<'PY' || rc=$?
+          if [ -d "$IN/survivor" ]; then /usr/bin/python3 -I - "$IN/survivor" "$PUB/survivor" <<'PY' || rc=$?
           # Shape AND meaning (Repo Lense SV-A4, SV-A13): integers are real integers in range, the result agrees with
           # itself, and prizes go only to eligible players in the season, once each, and only when the season is final.
-          import json, os, re, sys
-          d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          import json, os, re, sys, time
+          d = sys.argv[1]; pub = sys.argv[2] if len(sys.argv) > 2 else ""; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
           def bad_constant(c): raise ValueError("not JSON: " + c)
           isaddr = lambda x: type(x) is str and addr.fullmatch(x) is not None
+          # The job's own clock (Repo Lense S3-1): nothing dated after now, with an hour's slack for clock differences.
+          # (CHECK_NOW_MS: the tests' fixed clock; the workflow never sets it.)
+          NOW = int(os.environ.get("CHECK_NOW_MS") or time.time() * 1000); SLACK = 3600000; DAYMS = 86400000
+          past = lambda ms: ms <= NOW + SLACK
           iso = lambda x: type(x) is str and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{3})?Z", x) is not None
           num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e15
           nat = lambda x: type(x) is int and 0 <= x < 2**53
@@ -467,12 +499,14 @@ jobs:
               assert type(who) is list and len(who) <= 100000 and all(isaddr(a) for a in who) and len(set(who)) == len(who), f
               assert type(prods) is list and len(prods) <= 100000 and all(isaddr(a) for a in prods) and len(set(prods)) == len(prods), f
               assert type(j["days"]) is list and len(j["days"]) <= 14, f
+              assert past(j["startDay"] * DAYMS) and all(type(x) is dict and day(x.get("day")) and past((x["day"] + 1) * DAYMS) for x in j["days"]), f + ": days dated after now (S3-1)"
               w1 = week_of(j["startDay"])
               st = j["stakes"]
               assert type(st) is list and len(st) <= 2 and len({x["week"] for x in st if type(x) is dict and "week" in x}) == len(st), f
               for x in st:
                   assert type(x) is dict and set(x) == {"week", "final", "day", "staked"} and type(x["week"]) is int and x["week"] in (w1, w1 + 1), f
                   assert type(x["final"]) is bool and day(x["day"]) and type(x["staked"]) is list and len(x["staked"]) <= 100000, f
+                  assert past(x["day"] * DAYMS) and (not x["final"] or past((j["startDay"] + 7 * (x["week"] - w1 + 1)) * DAYMS)), f + ": a stake reading dated after now (S3-1)"
                   # A reading is final only once taken after its week ended, and only with day 1 recorded (S2-1, S2-18).
                   k = x["week"] - w1
                   assert not x["final"] or x["day"] >= j["startDay"] + 7 * (k + 1), f + ": a stake reading final before its week ended"
@@ -491,6 +525,7 @@ jobs:
               replay_ok(j, r, f)
               assert type(r) is dict and set(r) == {"over", "endN", "final", "players", "prizes"} and type(r["over"]) is bool and type(r["final"]) is bool, f
               assert small(r["endN"], 0, len(j["days"])) and (r["over"] or not r["final"]), f
+              assert not r["final"] or past((j["startDay"] + r["endN"]) * DAYMS + 12 * 3600000), f + ": final before its correction window ended (S3-1)"
               ps = r["players"]
               assert type(ps) is list and len(ps) <= 100000 and all(player_ok(p, r["endN"]) for p in ps), f
               byA = {p["a"]: p for p in ps}
@@ -519,6 +554,13 @@ jobs:
                   assert type(j["seasons"]) is list and all(small(s, 1, 9999) for s in j["seasons"]), f
                   assert j["firstDay"] is None or (j["firstDay"] - 4) % 7 == 0, f + ": Season 1 must start on a Monday"
                   first_day = j["firstDay"]
+                  # Append-only (Repo Lense S3-8): every published season stays listed, under the same Season 1 start.
+                  pi = os.path.join(pub, "index.json")
+                  if os.path.exists(pi):
+                      old = json.load(open(pi, encoding="utf-8"), parse_constant=bad_constant)
+                      if not (set(old.get("seasons") or []) <= set(j["seasons"]) and (old.get("firstDay") is None or old.get("firstDay") == j["firstDay"])):
+                          print("::error::Not publishing survivor/index.json this run: it drops a published season or moves Season 1")
+                          os.remove(os.path.join(d, f)); dropped.append(f)
                   continue
               if f == "days.json":
                   assert set(j) == {"v", "updated", "days"} and j["v"] == 1 and iso(j["updated"]) and type(j["days"]) is list and len(j["days"]) <= 60, f
@@ -526,12 +568,14 @@ jobs:
                       assert type(x) is dict and set(x) == {"day", "heights", "blocks", "checked", "counts"} and day(x["day"]) and small(x["checked"], 1, 2), f
                       assert type(x["heights"]) is list and len(x["heights"]) == 2 and all(nat(h) for h in x["heights"]) and nat(x["blocks"]) and counts_ok(x["counts"]), f
                       assert sum(c for _, c in x["counts"]) == x["blocks"] == x["heights"][1] - x["heights"][0] + 1, f
+                      assert past((x["day"] + 1) * DAYMS), f + ": a day dated after now (S3-1)"
                   continue
               if f == "fields.json":
                   assert set(j) == {"v", "updated", "fields"} and j["v"] == 1 and iso(j["updated"]) and type(j["fields"]) is list and len(j["fields"]) <= 2, f
                   for x in j["fields"]:
                       assert type(x) is dict and set(x) == {"day", "season", "n", "out", "field"} and day(x["day"]) and nat(x["out"]) and field_ok(x["field"]), f
                       assert (x["season"] is None or small(x["season"], 1, 9999)) and (x["n"] is None or small(x["n"], 1, 14)), f
+                      assert past((x["day"] - 1) * DAYMS), f + ": a field more than a day ahead (S3-1)"
                   continue
               # A season file that fails is left out on its own (the published copy stays as it was) and the run fails;
               # the other files still go out (Repo Lense S2-4: one bad season used to stop all of Survivor).
@@ -546,27 +590,26 @@ jobs:
           # exactly the winners of the season file published with it. A file whose season file isn't here (left out for
           # size) can't be checked, so it is left out too, and the run fails (exit 3) so it alerts.
           vd, unchecked = os.path.join(d, "vault"), []
-          for f in (sorted(os.listdir(vd)) if os.path.isdir(vd) else []):
-              m = re.fullmatch(r"W(0|[1-9][0-9]{0,4})\.json", f)
-              assert m, "vault/" + f
-              j = json.load(open(os.path.join(vd, f), encoding="utf-8"), parse_constant=bad_constant)
-              w = int(m.group(1))
+          def vault_ok(f, w, j):
               assert type(j) is dict and set(j) == {"game", "week", "final", "rows", "first", "second"} and j["game"] == 3 and type(j["game"]) is int, f
               assert type(j["week"]) is int and j["week"] == w and j["final"] is True and type(j["rows"]) is list, f
+              # Only for a week that is over by the job's own clock (Repo Lense S3-1).
+              assert past((GENESIS_DAY + 7 * (w + 1)) * DAYMS), f + ": its week isn't over yet"
               assert all(type(x) is dict and set(x) == {"player", "points"} and isaddr(x["player"]) and small(x["points"], 1, 255) for x in j["rows"]), f
               assert all(type(j[k]) is list and len(j[k]) <= 10 and all(isaddr(a) for a in j[k]) and j[k] == sorted(set(j[k])) for k in ("first", "second")), f
               assert not set(j["first"]) & set(j["second"]), f
               mine = [s for s in seasons.values() if week_of(s["startDay"]) in (w, w - 1)]
-              if not mine: unchecked.append(f); continue
+              if not mine: return "unchecked"
               s = mine[0]
               k = w - week_of(s["startDay"])
               st = [x for x in s["stakes"] if x["week"] == w]
               assert st and st[0]["final"], f + ": its week's stakes aren't final"
+              assert st[0]["day"] < s["startDay"] + 7 * (k + 2), f + ": its stakes were read late; the owner publishes it by hand (S3-11)"
               rows = week_rows(decoded(s), k, {s["who"][a] for a in st[0]["staked"]})
               assert rows is not None and j["rows"] == rows, f + ": not the season's staked players' points"
               if k == 0:
                   assert j["first"] == [] and j["second"] == [], f + ": winners only in a season's last week"
-                  continue
+                  return "ok"
               r = s["result"]
               assert r is not None and r["final"] is True, f + ": its season isn't final"
               at = lambda place: sorted(p["player"] for p in r["prizes"] if p["place"] == place)
@@ -574,6 +617,17 @@ jobs:
               if len(first) > 10: first, second = [], []
               if len(second) > 10: second = []
               assert j["first"] == first and j["second"] == second, f + ": not the season's winners"
+              return "ok"
+          for f in (sorted(os.listdir(vd)) if os.path.isdir(vd) else []):
+              m = re.fullmatch(r"W(0|[1-9][0-9]{0,4})\.json", f)
+              assert m, "vault/" + f
+              # A vault file that fails is left out on its own; the rest of Survivor still goes out (Repo Lense S3-7).
+              try:
+                  j = json.load(open(os.path.join(vd, f), encoding="utf-8"), parse_constant=bad_constant)
+                  if vault_ok(f, int(m.group(1)), j) == "unchecked": unchecked.append(f)
+              except (AssertionError, KeyError, TypeError, ValueError, IndexError) as e:
+                  print("::error::Not publishing survivor/vault/%s this run: %s" % (f, e))
+                  os.remove(os.path.join(vd, f)); dropped.append("vault/" + f)
           for f in unchecked:
               print("::error::Not publishing survivor/vault/%s this run: its season file isn't published with it" % f)
               os.remove(os.path.join(vd, f))
@@ -599,6 +653,8 @@ jobs:
           done
           tree=$(git write-tree)
           if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."
+          # Nothing to publish on a repository without games-data yet: no empty commit (Repo Lense S3-24).
+          elif [ -z "$parent" ] && [ "$tree" = "$(git hash-object -t tree /dev/null)" ]; then echo "Nothing to publish."
           else
             export GIT_AUTHOR_NAME=kpred-bot GIT_AUTHOR_EMAIL=kpred-bot@users.noreply.github.com GIT_COMMITTER_NAME=kpred-bot GIT_COMMITTER_EMAIL=kpred-bot@users.noreply.github.com
             commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "games: record")

@@ -255,6 +255,29 @@ Any problem becomes a warning line, which GitHub shows on the run.
 ### Lines 385–388: run it
 When started as a program (`npm run survivor`), it connects to the two nodes from the settings and runs once.
 
+### Changes after the third Repo Lense pass (30 October 2026)
+- **Publish check has a clock** (S3-1): days, stake readings, finals, fields and vault files dated after the job's own
+  time (an hour's slack) are refused; a vault file only for a week that is over; a vault file whose stakes were read late
+  is held (S3-11). A failing vault file is left out on its own (S3-7); the season list in `index.json` only grows
+  (S3-8, checked against the published one).
+- **Recorder:** a day whose checks started within the budget is kept (S3-2; budget 8 min, `SURVIVOR_BUDGET_MS`); the
+  vault comparison between nodes uses settings only (S3-5); published vault files come back from `games-data` and are
+  re-emitted as they are, never rebuilt (S3-6); a down check node no longer stops the run (S3-9); one-node days are
+  re-checked oldest first with their own slots (S3-10); the folder swap stays two renames everywhere (S3-18).
+- **Workflow:** job 45 min, Block X step 25, Survivor 15 (S3-3); a recorder that failed has its files left out
+  (S3-20); Survivor's vault files come into PREV (S3-6); Block X's check runs with `python3 -I` (S3-21); no empty first
+  commit (S3-24).
+- **Page:** your own pick is flagged whenever its producer is already used or picked for another day (S3-4); the clock
+  keeps the largest chain lead seen (S3-12); "handicaps aren't out yet" instead of "costs a life" when there's no field
+  (S3-13); sent picks stay listed until seen (S3-14); a tab that comes back reads again (S3-15); guests are told to pick
+  early (S3-16); no picks offered after a season ended (S3-28); picking pauses if game 3's settings on the chain differ
+  from the page's (S3-29).
+- **Testnet kit:** `record` lets a crashed swap be put back (S3-17); the Picks build first reproduces the audited
+  fingerprint and ignores `PICKS_*` variables from the shell (S3-19); no Windows device names or symlinks served (S3-33);
+  one `run`/`record` at a time (S3-34).
+- **Tests:** Repo Lense's failing tests are in `tests/audit/repolens-s3-*.test.mjs` (the page test runs the real page
+  code in a small fake browser).
+
 ### Changes after the Repo Lense re-audit (29 October 2026)
 - The site moved to the repository root (the `picks` branch merged in): `survivor.html`, `survivor.js`,
   `survivor-math.js`. The testnet page is `/survivor-testnet.html`; the test server only serves the files that page

@@ -92,7 +92,9 @@ This takes a minute or two. It copies the audited Picks contract and changes exa
 - the admin wait becomes 10 minutes instead of 48 hours.
 
 It only starts from the exact audited contract source: if `picks/assembly/Picks.ts` has changed since the audit, it
-stops and says so. Then it builds the copy and runs the contract's safety check. Expect `✔ picks check` and `✔ testnet Picks build …
+stops and says so. First it builds the audited contract as it is and checks that this PC's tools make exactly the audited fingerprint
+(`700c296a…`); if not, it stops and asks you to send Claude the message. Then it builds the copy and runs the contract's
+safety check. (This takes two builds, so a few minutes.) Expect `✔ picks check` and `✔ testnet Picks build …
 sha256 …`. (If the build says EAGAIN it retries by itself; that is a known harmless hiccup.)
 
 ```powershell
@@ -135,7 +137,8 @@ your time zone.
   - p4 picks at random, p5 the smallest;
   - p6 skips every third round, to test missed picks.
 
-Press **Ctrl+C** to stop it. Running it again carries on where it left off.
+Press **Ctrl+C** to stop it. Running it again carries on where it left off. Only one `run` or `record` can use the test
+data at a time: a second one stops with "Another survivor-test command … is using the test data".
 
 **p1 is yours.** Open the test page in your browser:
 

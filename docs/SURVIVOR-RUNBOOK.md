@@ -82,8 +82,17 @@ right settings with the Picks contract's 48-hour notice, then apply them.
   before the season's last week; until then its winners can't be posted.
 - **"out of time for season work this run"**: a very busy season; the run stopped season work in time to save what it
   did, and the next run carries on (Repo Lense S2-3). If it shows every hour for a day, ask Claude.
-- **"vault week N's stakes were read late"**: after an outage, wallets that didn't change their stake that week are read
-  at today's stake (Repo Lense S2-9). Check the staked list before the vault pays that week.
+- **"vault week N's file is held: its stakes were read late"**: after an outage, wallets that didn't change their stake
+  that week are read at today's stake (Repo Lense S2-9, S3-11). That week's vault file is not published. Ask Claude to
+  check the staked list against the chain and, if it is right, add the file to `games-data` by hand before the week's
+  results deadline (3 days after it ends); otherwise the week rolls over.
+- **"out of time for season work this run"**: the default budget is 8 minutes (the repository variable
+  `SURVIVOR_BUDGET_MS`, in milliseconds, changes it; keep it well under the 15-minute step limit). A day whose checks
+  started in time is always kept (Repo Lense S3-2).
+- **"the second node (RPC_CHECK) didn't answer"**: days and handicaps go on from one node; seasons wait (S3-9).
+- **"game 3 is stopped in the vault"**: weeks after its last earning week pay nothing (S3-30).
+- **Not published: "a … dated after now"**: the publish check refuses anything dated after the job's own clock
+  (Repo Lense S3-1). If you see this, a record run went wrong: ask Claude to look before anything else.
 - **"Couldn't reach the games-data branch; not recording this run"**: GitHub didn't answer; the run stops instead of
   starting from nothing (Repo Lense S2-15). It is tried again next hour.
 - **"a change to game 3 is announced"**: someone with the Picks owner key announced new settings. If the warning says

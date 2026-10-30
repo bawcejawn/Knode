@@ -257,7 +257,7 @@ test("Repo Lense SV-A6 / SV-A21 / SV-A5: picking waits for a clean read of my pi
   assert.match(js, /Promise\.allSettled\(days\.map/, "one failed read doesn't empty the list");
   assert.match(js, /if \(sending \|\| !mineOk \|\|/, "Pick and Change are off until the picks are read in full");
   assert.match(js, /if \(!mineOk\) return pickModal/, "and sendPick refuses too");
-  assert.match(js, /skew = t - Date\.now\(\) > 30000/, "the chain's head time sets the page clock (forward only)");
+  assert.match(js, /skew = Math\.max\(skew, t - Date\.now\(\)\)/, "the chain's head time sets the page clock (forward only, never back)");
   assert.ok(!/S\.lockTime\(d\) - Date\.now\(\)/.test(js), "no lock check on the viewer's own clock");
   assert.match(js, /j\.v === 1 \|\| j\.v === 2/);
 });
@@ -277,10 +277,9 @@ test("two boards (owner, 28 Oct): staked players can't win the free prize; the p
 
 test("Repo Lense S2-5, S2-6, S2-16, S2-17: page clock only forward; own pick listed at once; doubles flagged; no stale read wins", () => {
   const js = read("survivor.js");
-  assert.match(js, /skew = t - Date\.now\(\) > 30000 \? t - Date\.now\(\) : 0/, "a lagging node never turns the page clock back");
+  assert.match(js, /if \(t > 0 && t - Date\.now\(\) > 30000\) skew = Math\.max\(skew, t - Date\.now\(\)\)/, "a lagging node never turns the page clock back");
   assert.ok(!/Math\.abs\(t - Date\.now\(\)\)/.test(js));
-  assert.match(js, /if \(onChain\) \{ myPicks\.set\(d, \{ producers: \[producer\]/, "a confirmed pick goes into the list at once");
-  assert.match(js, /mineAt = 0; \}/, "and the grace is dropped after the page's own pick");
+  assert.match(js, /myPicks\.set\(d, p\); sentPicks\.set\(d, p\); mineAt = 0;/, "a sent pick goes into the list at once, stays until seen, and the grace is dropped");
   assert.match(js, /function doubles\(\)/); assert.match(js, /doubles\(\)\.length \? ` Warning: you picked/);
   assert.match(js, /else if \(who && !mineOk && sd\.n > 1\) cell = el\("div", \{ class: "bx-now", text: "Couldn't read your picks/);
   assert.match(js, /if \(me\(\) !== who \|\| seq !== mineSeq\) return;/, "only the newest read writes the list");

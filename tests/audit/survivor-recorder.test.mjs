@@ -10,6 +10,8 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 const APP = process.env.APP || ".";
+// The publish check judges files by the job's clock (Repo Lense S3-1): the fixtures' seasons are in Nov-Dec 2026.
+process.env.CHECK_NOW_MS ??= String(Date.parse("2027-06-01T00:00:00Z"));
 const { run, encodeSeason, readRanked, readStaked, vaultMismatch, pool, vaultFiles, vaultWeekOf } = await import(path.resolve(APP, "bot/games/survivor.ts"));
 const S = globalThis.KSurvivor;
 const A = (c) => "1" + c.repeat(33);
@@ -61,6 +63,11 @@ async function runs(times, opts = {}, prev = "") {
   for (const t of times) {
     out = tmp();
     r = await quiet(() => run({ p: "main", check: "check", prev, out, firstDay: FIRST, picksContract: A("P"), blocksOf: blocksOf(), timeOf, picksOf: picksOf(), rankedOf, gameOf, stakedOf: async () => null, vaultOf: async () => null, head: headAt(t), ...opts }));
+    // As on GitHub: the vault files already published stay on games-data (and come back as PREV/vault next run).
+    if (prev && fs.existsSync(path.join(prev, "vault"))) for (const f of fs.readdirSync(path.join(prev, "vault"))) {
+      fs.mkdirSync(path.join(out, "vault"), { recursive: true });
+      if (!fs.existsSync(path.join(out, "vault", f))) fs.copyFileSync(path.join(prev, "vault", f), path.join(out, "vault", f));
+    }
     prev = out;
   }
   return { out, r, read: (f) => JSON.parse(fs.readFileSync(path.join(out, f), "utf8")) };
@@ -149,7 +156,7 @@ test("no season before the Picks contract is live or FIRST_DAY is set; FIRST_DAY
 
 test("the files pass the publish job's shape check", async (t) => {
   const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
-  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" "\$PUB\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
   assert.ok(m, "the survivor check is in the workflow");
   const indent = /^(\s*)/.exec(m[1])[1].length;
   const py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
@@ -233,7 +240,7 @@ test("fix-check FC-2: a season that can't progress never stops new days and hand
 
 test("audit SV-2 and SV-3: a 1,000-player season fits under 2 MB, and a 1,000-way tie for the prize passes the check (never over 6 VHP)", async (t) => {
   const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
-  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" "\$PUB\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
   const indent = /^(\s*)/.exec(m[1])[1].length;
   const py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
   try { execFileSync("python3", ["--version"]); } catch { t.skip("python3 not installed"); return; }
@@ -268,7 +275,7 @@ const seasonTimes = () => {
 };
 function publishCheck() {
   const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
-  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" "\$PUB\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
   const indent = /^(\s*)/.exec(m[1])[1].length;
   const py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
   return (dir) => { try { execFileSync("python3", ["-I", "-", dir], { input: py, stdio: "pipe" }); return true; } catch { return false; } };
@@ -584,7 +591,7 @@ test("S2-7, S2-21: no vault file while the vault counts weeks or Survivor's seas
 test("S2-4, S2-13, S2-18: a bad season file is left out on its own; seasons sit on the calendar; no early final reading", async (t) => {
   try { execFileSync("python3", ["--version"]); } catch { t.skip("python3 not installed"); return; }
   const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
-  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
+  const m = /if \[ -d "\$IN\/survivor" \]; then \/usr\/bin\/python3 -I - "\$IN\/survivor" "\$PUB\/survivor" <<'PY' \|\| rc=\$\?\n([\s\S]*?)\n\s*PY\n/.exec(yml);
   const indent = /^(\s*)/.exec(m[1])[1].length, py = m[1].split("\n").map((l) => l.slice(indent)).join("\n");
   const code = (dir) => { try { execFileSync("python3", ["-I", "-", dir], { input: py, stdio: "pipe" }); return 0; } catch (e) { return e.status; } };
   const r = await runs(seasonTimes());
