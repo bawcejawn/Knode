@@ -141,6 +141,14 @@ jobs:
           num = lambda x: type(x) in (int, float) and x == x and abs(x) <= SAFE
           nat = lambda x: type(x) is int and 0 <= x <= SAFE
           WEEK = 7 * 86400000
+          # Round-7 blind review: JavaScript compares with ===, Python's == says True == 1 and 3.0 == 3. So every check of
+          # a file's header is type-strict (v, week, game), and published content is compared with same() (types too).
+          def same(a, b):
+              if type(a) is not type(b): return False
+              if type(a) is dict: return a.keys() == b.keys() and all(same(a[k], b[k]) for k in a)
+              if type(a) is list: return len(a) == len(b) and all(same(x, y) for x, y in zip(a, b))
+              return a == b
+          one = lambda x: type(x) is int and x == 1
           # Audit BX-95 / BX-112 / BX-113 (rounds 6-7), the root cause: the recorders are JavaScript. Every value of every
           # incoming file must be one JavaScript reads back exactly (integers and numbers within 2^53 - 1, finite), so a
           # bad run can never publish a value that makes every honest run after it look like a rewrite.
@@ -181,7 +189,7 @@ jobs:
           def vault_ok(j, f):
               # The Vault (v6) results file: staked players' points (1-255) in rows, the free board's 1st and 2nd (at
               # most 10 per place); every wallet once.
-              if type(j) is not dict or set(j) != {"game", "week", "final", "rows", "first", "second"} or j["game"] != gid or j["final"] is not True: return False
+              if type(j) is not dict or set(j) != {"game", "week", "final", "rows", "first", "second"} or not (type(j["game"]) is int and j["game"] == gid) or j["final"] is not True: return False
               if not nat(j["week"]) or f != "W%d.json" % j["week"]: return False
               rows = j["rows"]
               if type(rows) is not list or len(rows) > 100000 or not all(type(x) is dict and set(x) == {"player", "points"} and type(x["player"]) is str and addr.fullmatch(x["player"])
@@ -217,13 +225,13 @@ jobs:
           for f in sorted(os.listdir(d)):
               if not re.fullmatch(r"P\d{3}\.json", f): continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
-              assert set(j) == {"v", "week", "game", "at", "prizes"} and j["v"] == 1 and j["game"] == gid and f == "P%03d.json" % j["week"], f
+              assert set(j) == {"v", "week", "game", "at", "prizes"} and one(j["v"]) and (type(j["game"]) is int and j["game"] == gid) and nat(j["week"]) and f == "P%03d.json" % j["week"], f
               assert iso.fullmatch(str(j["at"])) and prizes_ok(j["prizes"]), f
               w = j["week"]
               # (A week not over yet, or not final on the published board yet: simply not yet. An older week: an alert.)
               if w < cw - 1: hold(pre + "/" + f, "an older week than the one that just ended, by this job's clock", True)
               elif w > cw - 1 or not week_final(w): hold(pre + "/" + f, "its week isn't over and final on the published board yet", False)
-              elif j["prizes"] != plw["prizes"]: hold(pre + "/" + f, "its prizes differ from the published final board", True)
+              elif not same(j["prizes"], plw["prizes"]): hold(pre + "/" + f, "its prizes differ from the published final board", True)
           vdir = os.path.join(d, "vault")
           for f in (sorted(os.listdir(vdir)) if os.path.isdir(vdir) else []):
               name = pre + "/vault/" + f
@@ -302,7 +310,7 @@ jobs:
                   if why: rewrote.append(f + " (" + why + ")"); continue
               if ot is None: continue
               mine = {t["round"]: t for t in nt}
-              changed = [t["round"] for t in ot if mine.get(t["round"]) != t]
+              changed = [t["round"] for t in ot if not same(mine.get(t["round"]), t)]
               if changed: rewrote.append(f + " (rounds " + ", ".join(str(r) for r in changed[:10]) + " differ from the published targets)")
           # Audit BX-96 (round 6): index.json's week list is append-only too (the all-time board is built from it).
           pi = pubjson("index.json")
@@ -324,7 +332,7 @@ jobs:
               if f == "vault" or re.fullmatch(r"P\d{3}\.json", f): continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "board.json":
-                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1 and iso.fullmatch(str(j["updated"])), f
+                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and one(j["v"]) and iso.fullmatch(str(j["updated"])), f
                   assert type(j["today"]) is dict and set(j["today"]) == {"day", "rows"} and ymd.fullmatch(str(j["today"]["day"])) and rows_ok(j["today"]["rows"]), f
                   assert type(j["week"]) is dict and set(j["week"]) == {"week", "start", "rows"} and nat(j["week"]["week"]) and nat(j["week"]["start"]) and rows_ok(j["week"]["rows"]), f
                   assert type(j["allTime"]) is dict and set(j["allTime"]) == {"rows"} and rows_ok(j["allTime"]["rows"]), f
@@ -334,16 +342,16 @@ jobs:
                       and ("frozenAt" not in lw or iso.fullmatch(str(lw["frozenAt"])))), f
                   continue
               if f == "cards.json":
-                  assert set(j) == {"v", "updated", "startHeight", "cards"} and j["v"] == 1 and iso.fullmatch(str(j["updated"])) and nat(j["startHeight"]), f
+                  assert set(j) == {"v", "updated", "startHeight", "cards"} and one(j["v"]) and iso.fullmatch(str(j["updated"])) and nat(j["startHeight"]), f
                   assert type(j["cards"]) is list and len(j["cards"]) <= 500 and all(card_ok(c) for c in j["cards"]), f
                   continue
               if f == "index.json":
-                  assert set(j) == {"v", "updated", "weeks", "contract", "game", "prizesFromWeek"} and j["v"] == 1 and iso.fullmatch(str(j["updated"])), f
+                  assert set(j) == {"v", "updated", "weeks", "contract", "game", "prizesFromWeek"} and one(j["v"]) and iso.fullmatch(str(j["updated"])), f
                   assert type(j["weeks"]) is list and len(j["weeks"]) <= 10000 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
-                  assert j["game"] == gid and (j["prizesFromWeek"] is None or nat(j["prizesFromWeek"])), f
+                  assert (type(j["game"]) is int and j["game"] == gid) and (j["prizesFromWeek"] is None or nat(j["prizesFromWeek"])), f
                   assert j["contract"] is None or isaddr(j["contract"]), f
                   continue
-              assert set(j) == {"v", "week", "start", "end", "game", "targets"} and j["v"] == 1 and j["game"] == gid and f == "W%03d.json" % j["week"], f
+              assert set(j) == {"v", "week", "start", "end", "game", "targets"} and one(j["v"]) and (type(j["game"]) is int and j["game"] == gid) and nat(j["week"]) and f == "W%03d.json" % j["week"], f
               assert nat(j["start"]) and nat(j["end"]) and j["end"] - j["start"] == WEEK, f
               assert type(j["targets"]) is list and len(j["targets"]) <= 1000 and all(target_ok(t) for t in j["targets"]), f
           print("testnet games files ok:", d)

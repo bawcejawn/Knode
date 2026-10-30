@@ -104,3 +104,36 @@ test("H-K-2: the race publish check refuses card numbers the recorder can't roun
   const p = spawnSync("python3", ["-I", chk, inn, pub], { encoding: "utf8" });
   assert.notEqual(p.status, 0, "a card number above 2^53 - 1 must be refused before it is published: " + p.stdout + p.stderr);
 });
+
+// Owner's round-7 blind review: Python's == says True == 1 and 3.0 == 3; the recorders use ===. So a bad run's file
+// header (v, week, game) or a published card typed differently, or races out of order, could make the recorder see
+// "no file" and every honest run after it a rewrite. Each is refused before it is published.
+for (const [what, edit] of [["v: true", (j) => { j.v = true; }], ["week: 3.5", (j) => { j.week = 3.5; }], ["game: true", (j) => { j.game = true; }]]) {
+  test(`review: a Block X week file with ${what} is refused, and the honest run after it publishes`, async () => {
+    const w = world();
+    let r = await w.record(H0 + 6 * X.ROUND + 50);
+    assert.equal(w.publish(r.inn, r.now).status, 0);
+    r = await w.record(H0 + 7 * X.ROUND + 50);
+    const f = path.join(r.out, "W003.json"), j = JSON.parse(fs.readFileSync(f, "utf8")); edit(j); fs.writeFileSync(f, JSON.stringify(j));
+    assert.notEqual(w.publish(r.inn, r.now).status, 0, "refused");
+    r = await w.record(H0 + 8 * X.ROUND + 50);
+    const p = w.publish(r.inn, r.now);
+    assert.equal(p.status, 0, p.stdout + p.stderr);
+  });
+}
+test("review: the race check refuses v: true, a fractional week, swapped or repeated race ids, and a card re-typed (1 -> true)", () => {
+  const chk = raceCheck();
+  const w = 3, mk = () => { const races = []; for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) races.push({ id: M.raceId(M.raceIndex(t)), start: t, end: t + M.RACE, cards: Array(6).fill(null), result: null }); return { v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), races }; };
+  const check = (inFile, pubFile) => { const pub = fs.mkdtempSync(path.join(os.tmpdir(), "rv-p-")), inn = fs.mkdtempSync(path.join(os.tmpdir(), "rv-i-"));
+    if (pubFile) fs.writeFileSync(path.join(pub, "W003.json"), JSON.stringify(pubFile));
+    fs.writeFileSync(path.join(inn, "W003.json"), JSON.stringify(inFile));
+    return spawnSync("python3", ["-I", chk, inn, pub], { encoding: "utf8" }).status; };
+  assert.equal(check(mk(), mk()), 0, "setup: an honest file passes");
+  let f = mk(); f.v = true; assert.notEqual(check(f), 0, "v: true");
+  f = mk(); f.week = 3.0000001; assert.notEqual(check(f), 0, "fractional week");
+  f = mk(); [f.races[0].id, f.races[1].id] = [f.races[1].id, f.races[0].id]; assert.notEqual(check(f), 0, "swapped ids");
+  f = mk(); f.races[1].id = f.races[0].id; assert.notEqual(check(f), 0, "repeated id");
+  const pub = mk(); pub.races[0].cards[0] = { ...CARD, samples: 36, at: pub.races[0].start + 60000 };
+  f = mk(); f.races[0].cards[0] = { ...CARD, samples: 36, at: pub.races[0].start + 60000, c: true };
+  assert.notEqual(check(f, pub), 0, "a published card re-typed");
+});
