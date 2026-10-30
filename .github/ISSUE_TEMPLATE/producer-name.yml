@@ -1,0 +1,21 @@
+name: Producer name
+description: Show your producer's name on every Knode Games page. Make the claim on knodegames.com/names.html first.
+title: "Producer name"
+labels: ["producer-name"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Make your claim on **https://knodegames.com/names.html**: connect your producer wallet, type the name and sign (free, no transaction). That page fills in this form for you.
+        It is checked automatically within a few minutes, and this issue gets a reply. If it passes, the name shows at once on every page, always next to your short address.
+  - type: textarea
+    id: claim
+    attributes:
+      label: Claim
+      description: The two lines from the claim page, unchanged.
+      placeholder: |
+        Knode Games producer name: My Node | 1YourProducerAddress… | 2026-10-30
+        Signature: …
+      render: text
+    validations:
+      required: true

@@ -95,7 +95,7 @@
   const fmtN = (n) => Number(n).toLocaleString();
   /** A producer as a small coloured chip; opens it in Producer lookup (blocks, share, what to expect). */
   const pchip = (a) => el("a", { class: "pchip", href: `node.html?a=${a}&w=28800`, target: "_blank", rel: "noopener", title: `${a}\nOpen in Producer lookup`, style: `--c: hsl(${hue(a)} 65% 52%)` },
-    el("i", { "aria-hidden": "true" }), a === S.dep?.contract ? "Knode Games pool" : short(a));
+    el("i", { "aria-hidden": "true" }), window.KNames ? window.KNames.of(a) : short(a));
   const chipify = (text) => {
     const out = []; let last = 0;
     for (const m of String(text).matchAll(ADDR_RE)) { out.push(text.slice(last, m.index)); out.push(pchip(m[0])); last = m.index + m[0].length; }
@@ -1481,7 +1481,7 @@
     const isNew = (b) => b.h > tickerTop && tickerTop !== 0;
     list.replaceChildren(...blocks.slice(0, 7).map((b) => el("li", {
       class: `blk${b.signer === S.dep?.contract ? " ours" : ""}${isNew(b) ? " new" : ""}`, style: `--c: hsl(${hue(b.signer)} 70% 58%)`,
-    }, el("span", { class: "cube", "aria-hidden": "true" }), el("span", { class: "who" }, b.signer === S.dep?.contract ? "Knode Games pool" : short(b.signer)), el("span", { class: "h" }, `#${b.h.toLocaleString()}`))));
+    }, el("span", { class: "cube", "aria-hidden": "true" }), el("span", { class: "who" }, window.KNames ? window.KNames.of(b.signer) : short(b.signer)), el("span", { class: "h" }, `#${b.h.toLocaleString()}`))));
     tickerTop = blocks[0].h;
   }
 
@@ -1567,6 +1567,8 @@
 
   // ═══════════════ start ═══════════════
   async function start() {
+    // Producer names (names.js): redraw once names.json arrives.
+    if (window.KNames) window.KNames.onChange(() => { try { renderAll(); } catch { /* not ready yet */ } });
     const rs = $("#res-search");
     if (rs) rs.addEventListener("input", () => { RV.q = rs.value || ""; renderResults(); });
     const rm = $("#res-mine");

@@ -26,7 +26,8 @@
   const el = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); for (const c of kids) if (c != null) e.append(c); return e; };
   const fmt = (n, d = 0) => (Number.isFinite(n) ? Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }) : "—");
   const sig = (n) => (!Number.isFinite(n) ? "—" : n >= 100 ? fmt(n, 0) : n >= 10 ? fmt(n, 1) : fmt(n, 2));
-  const short = (a) => NAMES[a] || a.slice(0, 6) + "…" + a.slice(-4);
+  // Producer names (names.js): "Name · 1Abc12…wxyz", or the short address.
+  const short = (a) => (window.KNames ? window.KNames.of(a) : NAMES[a] || a.slice(0, 6) + "…" + a.slice(-4));
   const dur = (ms) => { const s = ms / 1000; return s < 120 ? `${fmt(s, s < 10 ? 1 : 0)} s` : s < 5400 ? `${Math.round(s / 60)} min` : s < 172800 ? `${(s / 3600).toFixed(1)} h` : `${(s / 86400).toFixed(1)} days`; };
   const isAddr = (a) => /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
   const say = (t) => { $("status").textContent = t; };
@@ -249,7 +250,7 @@
       const lastTs = mineTs[mine - 1], since = lastTs ? now - lastTs : NaN, every = share > 0 ? 8.64e7 / (share * perDay) : NaN;
       const late = lastTs ? since > every * 3 : expWin >= 3;
       const winName = $("win").selectedOptions[0].textContent.replace(/^Last /, "");
-      const name = NAMES[addr] ? `${NAMES[addr]} (${addr.slice(0, 6)}…${addr.slice(-4)})` : short(addr);
+      const name = window.KNames ? window.KNames.of(addr) : NAMES[addr] ? `${NAMES[addr]} (${addr.slice(0, 6)}…${addr.slice(-4)})` : short(addr);
 
       $("tiles").replaceChildren(
         tile("Share of active VHP", share > 0 ? `${fmt(share * 100, share < 0.01 ? 3 : 2)}%` : "0%", `${fmt(myVhp, 0)} VHP of ${fmt(activeVhp / 1e6, 1)}M producing`),

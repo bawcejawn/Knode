@@ -31,10 +31,33 @@ test("(guard) every action is pinned to a full commit SHA", () => {
   assert.deepEqual(bad, []);
 });
 
+/** The workflow's on: block (its triggers). */
+const triggers = (y) => { const m = y.replace(/\r/g, "").match(/^on:\s*\n([\s\S]*?)(?=^[A-Za-z_-]+:)/m); return m ? m[1] : ""; };
+
 test("(guard) no privileged triggers or script injection from event data", () => {
   for (const { f, y } of workflows) {
-    assert.ok(!/pull_request_target|workflow_run|issue_comment|\bissues:/.test(y), `${f}: privileged trigger`);
+    assert.ok(!/pull_request_target|workflow_run|issue_comment/.test(y), `${f}: privileged trigger`);
+    // No workflow starts from an issue (anyone can open one). names.yml reads issues on a schedule, as data.
+    assert.ok(!/^\s*(issues|discussion|discussion_comment|pull_request_review|pull_request_review_comment)\s*:/m.test(triggers(y)), `${f}: triggered by issues or comments`);
     assert.ok(!/\$\{\{\s*github\.(event\.(pull_request|issue|comment|review|head_commit|commits|pages|inputs)|head_ref)/.test(y), `${f}: event data expanded in the workflow`);
+  }
+  assert.match(triggers(bot), /schedule:/, "(the trigger parser finds bot.yml's schedule)");
+});
+
+test("(guard) issue permissions only in names.yml: read in its check job, write only in its reply job, which runs no repository code", () => {
+  for (const { f, y } of workflows) {
+    const lines = [...y.matchAll(/^\s*issues:\s*(\S+)/gm)];
+    if (f !== "names.yml") { assert.deepEqual(lines.map((m) => m[0].trim()), [], `${f}: issue permissions`); continue; }
+    const check = job(y, "check"), publish = job(y, "publish"), reply = job(y, "reply");
+    assert.match(check, /permissions:\s*\n\s*contents:\s*read\s*\n\s*issues:\s*read\s*\n/, "names.yml check: contents and issues read-only");
+    assert.doesNotMatch(check, /secrets\.|contents:\s*write|issues:\s*write/, "names.yml check: no secret, no write");
+    assert.match(check, /persist-credentials:\s*false/);
+    assert.match(publish, /permissions:\s*\n\s*contents:\s*write\s*#[^\n]*\n\s*steps:/, "names.yml publish: contents only");
+    assert.match(reply, /permissions:\s*\n\s*issues:\s*write\s*#[^\n]*\n\s*steps:/, "names.yml reply: issues only");
+    for (const [n, j] of [["publish", publish], ["reply", reply]]) {
+      assert.doesNotMatch(j, /actions\/checkout|actions\/setup-node|\bnpm\b|\bnode\b|\bnpx\b|\btsx\b/, `names.yml ${n} runs no repository code`);
+    }
+    assert.equal(lines.filter((m) => /write/.test(m[1])).length, 1, "names.yml: one job writes to issues");
   }
 });
 

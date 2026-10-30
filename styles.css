@@ -776,3 +776,6 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .kstake-list-stats small { font-weight: 400; }
 .kstake-dialog select { width: 100%; padding: 10px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; }
 @media (max-width: 520px) { .kstake-stats { gap: 6px; } .kstake-stats > div { padding: 8px 10px; } .kstake-stats span { font-size: .72rem; } .kstake-stats b { font-size: .95rem; } }
+
+/* ── producer names (names.js): a name is always shown with the short address ── */
+.kn-addr { font-family: ui-monospace, Consolas, monospace; font-size: .85em; color: var(--muted); }

@@ -17,7 +17,8 @@
   const ADDR = /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/;
   const $ = (id) => document.getElementById(id);
   const me = () => (W && W.address) || "";
-  const nameOf = (a) => NAMES[a] || (typeof a === "string" ? a.slice(0, 5) + "…" + a.slice(-4) : "");
+  // Producer names (names.js): "Name · 1Abc12…wxyz", or the short address.
+  const nameOf = (a) => (window.KNames && typeof a === "string" ? window.KNames.of(a) : NAMES[a] || (typeof a === "string" ? a.slice(0, 5) + "…" + a.slice(-4) : ""));
   const fmt = (n, d = 0) => (typeof n === "number" && isFinite(n) ? n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }) : "–");
   const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const utcTime = (t) => new Date(t).toISOString().slice(11, 16) + " UTC";
@@ -173,6 +174,7 @@
     } catch { /* only the question game */ }
     buttons(); route();
   }
+  if (window.KNames) window.KNames.onChange(() => { if (current !== "questions" && ADAPTERS[current]) ADAPTERS[current].open(gPart); });
   window.addEventListener("hashchange", route);
   if (W && W.subscribe) W.subscribe(() => { if (current !== "questions" && race.weeks) race.draw(); });
   load();
