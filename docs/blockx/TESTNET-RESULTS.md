@@ -68,3 +68,6 @@ Played from a brand-new Test wallet (`1B8C5TZf…`) holding **no test KOIN**: 4 
   `1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717` ✔, no games yet. `PICKS_WIF` deleted from `.env` (audit BX-9).
 - **Note:** the Picks tool's first mainnet Mana limit (17, from testnet prices) was refused "insufficient rc" twice,
   and nothing was charged. The tool now uses the mainnet estimate (1.2 Mana per KB + 10, about 49).
+- **Game 2 announced** (2026-10-30, owner `1635QUr…H717`, block 40,659,263, 0.35 Mana). Who Signs Block X: a target
+  every 2,400 blocks, locks 100 before, opens 28,900 ahead, 30 picks a day, **1 change per pick** (owner, 2026-10-30).
+  It can be applied from **2026-11-01 21:23:34 UTC** (Sunday 1:23 pm Pacific).

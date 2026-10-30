@@ -391,3 +391,54 @@ repository and pass (`tests/audit/repolens-r6-publish/repolens-r7-publish.test.m
 | BX-118 | No clock rule for new race cards | **Before prizes** |
 | BX-120 | A void row's estimated time in a week whose P is published | **Before prizes** (check with live block-rate data) |
 | SP-59 | A failed code read skips the v2 clamp | Before prizes (rollback window only; loud, a re-run works) |
+
+## Round 8 (Repo Lens go/no-go @ 572d86c, 2026-10-30): NO-GO, "one line, three files"
+
+Report: "Block X Prize-Free: Round-8 Go/No-Go (Knode picks @ 572d86c)". BX-112, BX-113, BX-114, BX-119 and BX-121 are fixed,
+and honest runs pass every new check. One new High, BX-122: whole numbers written as floats (`5.0`, `-0.0`, `1e2`)
+passed `js_safe`. The recorder rewrites them as `5`, which the round-7 type-strict compare then treats as a rewrite,
+so publishing stalls.
+
+**Fixed at the class level, not one shape at a time.** Every publish step (`games.yml`, `games-testnet.yml`,
+`race.yml`, `race-samples.yml`) first runs an inline `node -e` check. Each incoming JSON file must be **byte for byte**
+`JSON.stringify(JSON.parse(text)) + "\n"`, exactly what the recorders write. A published file is then a fixed point of
+the recorder's own reader and writer: the next honest run reads the same values and writes the same bytes. That rules
+out `5.0`, `-0`, `1e2`, big integers, spacing, key quoting and escapes a recorder never writes, whatever Python makes of
+them. `js_safe` also refuses integer-valued floats (belt and braces). The test fixtures now write the recorders' form.
+
+| ID | Finding | Status |
+|---|---|---|
+| BX-122 | Integer-valued floats stalled publishing | **Fixed** (the canonical-form check, plus `js_safe`) |
+| BX-123 | 0.2 Mana pick row from a testnet number | Runbook: before step 9, `mana-report` on mainnet sponsored transactions; raise the row for launch if mainnet is dearer (at most 1 Mana), then step 10 sets it from real picks |
+| BX-124 | The re-typed card test stopped at the shape check | **Fixed**: the test now reaches the published-card compare |
+| BX-125 | No test for BX-119 | **Added** |
+| BX-126 | A primary node 2 weeks stale: one run refused | Accepted (clears on the next run) |
+| BX-127 | Record job red until game 2 is registered | Runbook: publish (step 9) only after game 2 is applied |
+| BX-128, BX-129, BX-130 | Info | Noted |
+| BX-118 | No clock rule for new race cards (future races) | **Before prizes** |
+
+**Blind review of the round-8 fix (2026-10-30).** "The node check closes the same-value-different-text class." Its
+findings, all fixed:
+- the samples job took a sample up to 10 min ahead, but `loadSamples` drops anything more than 60 s ahead, a
+  self-healing stall of 1–2 runs. Both bounds are now 60 s;
+- the node check runs after the symlink and file-type refusals, refuses any `.json` that isn't a regular file,
+  compares raw bytes (so invalid UTF-8 is refused, not just crashed on), and takes its path after `--`.
+
+Tested directly: `tests/audit/repolens-r8-canonical.test.mjs` runs the exact line from each of the four workflows
+against honest and crafted files. Testnet only, accepted: a bad run could set testnet `cards.json` `startHeight` high
+and quietly stop that testnet game recording (it doesn't stall publishing).
+
+## Round 9 (Repo Lens go/no-go @ 6990323, 2026-10-30): NO-GO, "one fix in one file, then GO"
+
+Report: "Block X Prize-Free: Round-9 Go/No-Go (Knode picks @ 6990323)". The round-8 byte check is confirmed for
+everything it targets, in all four workflows. The blind verifier found no other place where a value Python accepts can
+make an honest run be refused, except this one:
+
+| ID | Finding | Status |
+|---|---|---|
+| BX-128 | Python's `\d` matches every Unicode digit (`٤٠٠`, `４００`); `loadSamples` (JavaScript `\d`, 0–9 only) drops such a sample, so one bad run stalls race-samples for ~7 h 50 min | **Fixed**: every `\d` in the four publish steps' Python is `[0-9]`; the auditor's test passes, and a guard test refuses any `\d` there again |
+| BX-129 | The page says "change it once" before the announced config is applied | Runbook: publish only after step 8's `status` shows 1 change |
+| BX-130 | The other `\d` regexes (iso, ymd, race id) | **Fixed** with BX-128 |
+| BX-131 | Publish jobs used the runner's own Node | **Fixed**: `setup-node` 22 (pinned) in all four publish jobs |
+| BX-132 | Old samples between +60 s and +10 min | One-time transition; none needed |
+| BX-133 | Two commits after the package (announce record, testnet sponsor option) | In the next fix-check's scope |

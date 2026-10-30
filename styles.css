@@ -768,5 +768,11 @@ body[data-view="welcome"] .foot .eco { display: none; }
 .kstake-claims li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px; }
 .kstake-claims .btn { padding: 8px 16px; }
 .kstake-note { margin: 10px 0 0; }
+.kstake-list { list-style: none; padding: 0; margin: 0 0 10px; display: grid; gap: 8px; }
+.kstake-list li { padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; }
+.kstake-list-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.kstake-list-head .btn { padding: 8px 14px; }
+.kstake-list-stats { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; font-weight: 700; font-size: .92rem; }
+.kstake-list-stats small { font-weight: 400; }
 .kstake-dialog select { width: 100%; padding: 10px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; }
 @media (max-width: 520px) { .kstake-stats { gap: 6px; } .kstake-stats > div { padding: 8px 10px; } .kstake-stats span { font-size: .72rem; } .kstake-stats b { font-size: .95rem; } }

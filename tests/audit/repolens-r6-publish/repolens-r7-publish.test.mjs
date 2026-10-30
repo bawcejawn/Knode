@@ -23,7 +23,7 @@ function raceDir() {
   for (const w of [2, 3, 4]) {
     const races = [];
     for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) races.push({ id: M.raceId(M.raceIndex(t)), start: t, end: t + M.RACE, cards: Array.from({ length: 6 }, (_, l) => ({ ...CARD, samples: 36, at: t + l * 3600000 + 37 * 60000 })), result: null });
-    fs.writeFileSync(path.join(d, `W${String(w).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), races }));
+    fs.writeFileSync(path.join(d, `W${String(w).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), races }) + "\n");
   }
   return d;
 }
@@ -73,7 +73,7 @@ for (const where of ["signer", "pick player", "pick producer"]) {
     assert.ok(t, "setup: the run has a new scored round");
     const MARK = "@@NUM@@";
     if (where === "signer") t.signer = MARK; else if (where === "pick player") t.picks[0][0] = MARK; else t.picks[0][1] = MARK;
-    fs.writeFileSync(f, JSON.stringify(j).replace(`"${MARK}"`, "1111111111111111111111111111"));
+    fs.writeFileSync(f, JSON.stringify(j).replace(`"${MARK}"`, "1111111111111111111111111111") + "\n");
     w.publish(r.inn, r.now);                                   // the bad run (published today)
     r = await w.record(H0 + 8 * X.ROUND + 50);
     const p = w.publish(r.inn, r.now);
@@ -98,9 +98,9 @@ test("H-K-2: the race publish check refuses card numbers the recorder can't roun
   const w = 3, races = [];
   for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) races.push({ id: M.raceId(M.raceIndex(t)), start: t, end: t + M.RACE, cards: Array(6).fill(null), result: null });
   const file = { v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), races };
-  fs.writeFileSync(path.join(pub, "W003.json"), JSON.stringify(file));
+  fs.writeFileSync(path.join(pub, "W003.json"), JSON.stringify(file) + "\n");
   races[0].cards[0] = { ...CARD, samples: 36, at: races[0].start + 60000, c: "@@C@@" };
-  fs.writeFileSync(path.join(inn, "W003.json"), JSON.stringify(file).replace('"@@C@@"', "9007199254740993"));
+  fs.writeFileSync(path.join(inn, "W003.json"), JSON.stringify(file).replace('"@@C@@"', "9007199254740993") + "\n");
   const p = spawnSync("python3", ["-I", chk, inn, pub], { encoding: "utf8" });
   assert.notEqual(p.status, 0, "a card number above 2^53 - 1 must be refused before it is published: " + p.stdout + p.stderr);
 });
@@ -114,7 +114,7 @@ for (const [what, edit] of [["v: true", (j) => { j.v = true; }], ["week: 3.5", (
     let r = await w.record(H0 + 6 * X.ROUND + 50);
     assert.equal(w.publish(r.inn, r.now).status, 0);
     r = await w.record(H0 + 7 * X.ROUND + 50);
-    const f = path.join(r.out, "W003.json"), j = JSON.parse(fs.readFileSync(f, "utf8")); edit(j); fs.writeFileSync(f, JSON.stringify(j));
+    const f = path.join(r.out, "W003.json"), j = JSON.parse(fs.readFileSync(f, "utf8")); edit(j); fs.writeFileSync(f, JSON.stringify(j) + "\n");
     assert.notEqual(w.publish(r.inn, r.now).status, 0, "refused");
     r = await w.record(H0 + 8 * X.ROUND + 50);
     const p = w.publish(r.inn, r.now);
@@ -125,15 +125,30 @@ test("review: the race check refuses v: true, a fractional week, swapped or repe
   const chk = raceCheck();
   const w = 3, mk = () => { const races = []; for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) races.push({ id: M.raceId(M.raceIndex(t)), start: t, end: t + M.RACE, cards: Array(6).fill(null), result: null }); return { v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), races }; };
   const check = (inFile, pubFile) => { const pub = fs.mkdtempSync(path.join(os.tmpdir(), "rv-p-")), inn = fs.mkdtempSync(path.join(os.tmpdir(), "rv-i-"));
-    if (pubFile) fs.writeFileSync(path.join(pub, "W003.json"), JSON.stringify(pubFile));
-    fs.writeFileSync(path.join(inn, "W003.json"), JSON.stringify(inFile));
+    if (pubFile) fs.writeFileSync(path.join(pub, "W003.json"), JSON.stringify(pubFile) + "\n");
+    fs.writeFileSync(path.join(inn, "W003.json"), JSON.stringify(inFile) + "\n");
     return spawnSync("python3", ["-I", chk, inn, pub], { encoding: "utf8" }).status; };
   assert.equal(check(mk(), mk()), 0, "setup: an honest file passes");
   let f = mk(); f.v = true; assert.notEqual(check(f), 0, "v: true");
   f = mk(); f.week = 3.0000001; assert.notEqual(check(f), 0, "fractional week");
   f = mk(); [f.races[0].id, f.races[1].id] = [f.races[1].id, f.races[0].id]; assert.notEqual(check(f), 0, "swapped ids");
   f = mk(); f.races[1].id = f.races[0].id; assert.notEqual(check(f), 0, "repeated id");
-  const pub = mk(); pub.races[0].cards[0] = { ...CARD, samples: 36, at: pub.races[0].start + 60000 };
-  f = mk(); f.races[0].cards[0] = { ...CARD, samples: 36, at: pub.races[0].start + 60000, c: true };
-  assert.notEqual(check(f, pub), 0, "a published card re-typed");
+  // (Audit BX-124, round 8: this case now passes every shape check and reaches the published-card compare.)
+  const pub = mk(); pub.races[0].cards[0] = { ...CARD, samples: 36, at: pub.races[0].start + 60000, c: 1.5 };
+  f = mk(); f.races[0].cards[0] = { ...CARD, samples: 36, at: pub.races[0].start + 60000, c: 2 };
+  assert.equal(check(f, mk()), 0, "setup: the same card passes where nothing is published");
+  assert.notEqual(check(f, pub), 0, "a published card changed");
+});
+// Audit BX-119 / BX-125 (rounds 7-8): a new race-data week may only be last, this or next week.
+test("BX-119: the race index takes a new week only around now; published weeks are kept", () => {
+  const chk = raceCheck();
+  const now = M.weekStart(5) + 3 * 86400000, cw = 5;
+  const run = (weeks, pubWeeks) => { const pub = fs.mkdtempSync(path.join(os.tmpdir(), "rw-p-")), inn = fs.mkdtempSync(path.join(os.tmpdir(), "rw-i-"));
+    if (pubWeeks) fs.writeFileSync(path.join(pub, "index.json"), JSON.stringify({ v: 1, updated: "2026-11-20T00:00:00.000Z", weeks: pubWeeks }) + "\n");
+    fs.writeFileSync(path.join(inn, "index.json"), JSON.stringify({ v: 1, updated: "2026-11-20T00:00:00.000Z", weeks }) + "\n");
+    return spawnSync("python3", ["-I", chk, inn, pub], { encoding: "utf8", env: { ...process.env, CHECK_NOW_MS: String(now) } }).status; };
+  assert.equal(run([1, 2, cw - 1, cw, cw + 1], [1, 2]), 0, "last, this and next week may be added");
+  assert.notEqual(run([1, 2, cw + 2], [1, 2]), 0, "a week two ahead is refused");
+  assert.notEqual(run([1, 2, 9000], [1, 2]), 0, "a bogus week is refused");
+  assert.notEqual(run([2], [1, 2]), 0, "a published week can't be dropped");
 });

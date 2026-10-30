@@ -58,9 +58,12 @@ test("the testnet build changes exactly three lines of the audited source, and r
 });
 
 test("the Block X game config: game 2 on mainnet is exactly the plan's settings; limits are checked before sending", () => {
-  const c = buildGameConfig({ id: 2, name: "Who Signs Block X", round: 2400, offset: 0, lead: 100, ahead: 28900, picksPerDay: 30, maxChanges: 5 });
+  // (Owner, 2026-10-30: one change per pick on mainnet.)
+  const M = (globalThis as any).KBlockX.forGame();
+  assert.equal(M.MAX_CHANGES, 1, "mainnet Block X allows one change per pick");
+  const c = buildGameConfig({ id: 2, name: "Who Signs Block X", round: 2400, offset: 0, lead: 100, ahead: 28900, picksPerDay: 30, maxChanges: 1 });
   assert.deepEqual(c, { id: 2, name: "Who Signs Block X", kind: 1, list_size: 1, number_min: "0", number_max: "0", lock_mode: 1, round_size: "2400", round_offset: "0",
-    lead: "100", ahead: "28900", max_picks_per_day: 30, max_changes: 5, enabled: true });
+    lead: "100", ahead: "28900", max_picks_per_day: 30, max_changes: 1, enabled: true });
   const base = { id: 92, name: "fast", round: 300, offset: 0, lead: 100, ahead: 3700, picksPerDay: 50, maxChanges: 5 };
   assert.throws(() => buildGameConfig({ ...base, lead: 99 }), /limits/);
   assert.throws(() => buildGameConfig({ ...base, ahead: 100 }), /limits/);

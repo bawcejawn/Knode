@@ -40,6 +40,8 @@
     const m = Math.round(ms / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
     return d ? `${d} d ${h} h` : h ? `${h} h ${m % 60} m` : `${m} m`;
   };
+  /** Each game's id in the Knode Games vault (claude/knodegames-plan.md, game id registry). */
+  const VAULT_IDS = { questions: 1, blockx: 2, survivor: 3, fantasy: 4, golf: 6, race: 7, combo: 8, bracket: 9, lastnode: 13 };
   async function fetchJson(url) { const r = await fetch(url, { cache: "no-cache" }); if (!r.ok) throw new Error(String(r.status)); return r.json(); }
 
   /** games.json, checked: only known kinds and statuses, plain text, and links to this site's own pages. */
@@ -138,6 +140,14 @@
       $("g-results").hidden = false;
     }
     $("g-soon").replaceChildren(...games.filter((g) => g.status === "soon").map(card));
+    // "Where to stake": every game's stake side by side (stake-panel.js; hidden until the Knode Games vault is live).
+    // Each live game links to its own page's stake panel (#stake); Daily Questions stakes on its play page.
+    const stakeBox = $("stake-list");
+    if (stakeBox && window.KStake) {
+      const links = {};
+      for (const g of games) if (g.status === "live" && VAULT_IDS[g.id]) links[VAULT_IDS[g.id]] = g.id === "questions" ? g.href : `${g.href.split("#")[0]}#stake`;
+      window.KStake.mountList(stakeBox, { links });
+    }
     $("soon-box").hidden = !games.some((g) => g.status === "soon");
     refresh();
     loadRace(); loadQuestions();

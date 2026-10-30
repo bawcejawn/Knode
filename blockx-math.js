@@ -35,7 +35,7 @@
   "use strict";
   // The mainnet game (Picks game 2). Another network can run Block X with other settings (the testnet's fast game):
   // forGame(settings) gives the same functions for those settings, read from the network's config.
-  const MAINNET_GAME = Object.freeze({ id: 2, round: 2400, offset: 0, lead: 100, ahead: 28900, picksPerDay: 30, maxChanges: 5 });
+  const MAINNET_GAME = Object.freeze({ id: 2, round: 2400, offset: 0, lead: 100, ahead: 28900, picksPerDay: 30, maxChanges: 1 });   // owner 2026-10-30: one change per pick
   const CAP = 3, OPEN = 12, MIN_PRIZE_DAYS = 3;
   const BLOCK_MS = 3000;            // ~3 s a block (an estimate for showing times as "about")
   const DAY = 86400000, WEEK = 7 * DAY;

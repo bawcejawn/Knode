@@ -11,11 +11,15 @@
  *     Once the race picks contract is live (race-data/deployment.json on main), each final race also records every
  *     pick (read on both nodes; picks are locked by the chain when a race starts), who picked the winner, and whether
  *     each wallet could be ranked (holds 1 VHP or has a Knode stake) when the race was finalized.
- *  3. Leaderboards (board.json): Today (UTC day), This week (the Knode game's week) and All time, ranked by points:
- *     a pick on the winner is a win (3 points), a pick on the 2nd or 3rd horse a show (1 point). Ties: more wins, then
- *     more picks placed, then more Knode questions answered, then a higher Knode score.
+ *  3. Leaderboards (board.json): Today (UTC day), This week, Last week and All time, ranked by points: a pick on the
+ *     winner is a win (3 points), a pick on the 2nd or 3rd horse a show (1 point). Ties: more wins, then more picks
+ *     placed; wallets still tied share the place (owner, 2026-10-28: the question game no longer breaks Race ties).
+ *     Each row says whether the wallet is staked in the Race in the KnodeGames Vault that week (the Staked board) or
+ *     plays free (the Free play board).
  *  4. Writes race-data/index.json, race-data/W<week>.json and race-data/board.json, which the publish job puts on the
  *     race-data branch for the website.
+ *  5. The KnodeGames Vault's results file for last week, race-data/vault/W<week>.json (see vaultResults below): the
+ *     free prize's 1st and 2nd places, final once every race of the week is final. A final file is never rewritten.
  * The scoring is race-math.js, the same file the website runs.
  *
  *   RPC, RPC_CHECK ("off" to skip the second node), RACE_PREV (the race-data files from the last run), RACE_OUT.
@@ -241,18 +245,16 @@ async function heightAt(p: any, headId: string, t: number, lo: number, hi: numbe
 
 /** One pick as recorded: [player, horse, time of the pick (ms)]. */
 type Pick = [string, string, number];
-/** What the game knows about a wallet: stake, and the week's Knode answers and points. */
-type PlayerInfo = { stake: bigint; answers: number; points: number };
 type Opts = {
   p: any; check: any | null; prev?: string; out?: string; vhpOf?: (who: string[]) => Promise<Record<string, string>>;
   /** The second node's VHP read (tests). Default: the check node; with vhpOf given and this not, the same as vhpOf. */
   vhpCheckOf?: (who: string[]) => Promise<Record<string, string>>;
   raceContract?: string | null;                                       // the picks contract (default: race-data/deployment.json)
   picksOf?: (node: any, race: number) => Promise<Pick[]>;             // for the tests
-  playerOf?: (node: any, who: string, week: number) => Promise<PlayerInfo>;
   /** Audit BX-89 (round 5): this computer's clock; a card is never dated more than FUTURE_MS after it. The command line
    *  passes Date.now; the offline tests (fake chains in the future) leave it out. */
   clock?: () => number;
+  stakedOf?: (node: any, who: string, week: number) => Promise<boolean>;   // staked in the Race in the vault (tests)
 };
 
 // ── the picks contract and the game (read only) ──
@@ -276,38 +278,56 @@ async function readPicks(node: any, contract: string, raceNo: number): Promise<P
   }
   return out;
 }
-async function readPlayer(node: any, who: string, week: number): Promise<PlayerInfo> {
-  if (!GAME) return { stake: 0n, answers: 0, points: 0 };
-  const c = new Contract({ id: GAME, abi: GAME_ABI(), provider: node });
-  const r: any = await withRetry(`Knode player ${who}`, () => (c.functions as any).get_player({ player: who, week: String(week) }));
-  const p = r?.result?.player ?? {}, e = r?.result?.entry ?? {};
-  return { stake: BigInt(p.stake || "0") + BigInt(p.pending || "0"), answers: Array.isArray(e.answers) ? e.answers.length : 0, points: Number(e.points || 0) };
+/** Staked in the Race (game 7) in the KnodeGames Vault for week w (owner, 2026-10-28), by the vault's own test, the one
+ *  its bot applies to free-prize winners: the week's peak stake in the game (entry.peak_stake, or active_stake when the
+ *  player has no entry that week) at least that week's minimum stake. A wallet staked at the start of a week stays
+ *  staked that week even if it withdraws. Before the vault (v6) is live nobody is staked; a failed read throws. */
+const vaultState = new WeakMap<object, Promise<any>>();
+export const NO_V6_ABI = "game/abi/kpred.koilib.json has no get_game_player (still v5): Race stakes can't be read";
+async function readStaked(node: any, who: string, week: number): Promise<Stand> {
+  const abi = GAME_ABI();
+  if (!GAME) throw Object.assign(new Error("game-data/deployment.json gives no contract: Race stakes can't be read"), { once: true });
+  // This repository's contract ABI is still v5: it can't tell whether the vault is live, so it can't say who is free.
+  // Throwing keeps the vault file from being final (the boards show everyone on Free play, with one warning a run).
+  if (!abi.methods?.get_game_player) throw Object.assign(new Error(NO_V6_ABI), { once: true });
+  const c = new Contract({ id: GAME, abi, provider: node });
+  if (!vaultState.has(node)) vaultState.set(node, withRetry("vault state", () => (c.functions as any).get_state({})));
+  const cfg = (await vaultState.get(node))?.result?.config;
+  if (!cfg) { vaultState.delete(node); throw Object.assign(new Error("the vault's get_state came back empty: Race stakes can't be read"), { once: true }); }
+  if (!(Number(cfg.v6_rule_week_plus_one || 0) > 0)) return { staked: false, earning: false };   // the contract on chain isn't v6 yet
+  const r: any = await withRetry(`Race stake of ${who}`, () => (c.functions as any).get_game_player({ player: who, game: VAULT_GAME, week: String(week) }));
+  return { staked: stakedFrom(cfg, r?.result ?? {}, week), earning: earningFrom(cfg, r?.result ?? {}, week) };
+}
+/** staked: on the Staked board (peak stake that week at least the minimum: can't win the free prize). earning: this
+ *  week's counted stake (week_stake, the lowest) at least the minimum, so the vault takes its points; a wallet staked
+ *  but withdrawn below the minimum mid-week is staked and not earning. */
+type Stand = { staked: boolean; earning: boolean };
+const minFor = (cfg: any, week: number) => {
+  const next = BigInt(cfg.min_stake_next || "0");
+  return next > 0n && week >= Number(cfg.min_stake_next_week || 0) ? next : BigInt(cfg.min_stake || "0");
+};
+/** Earning from the Race's bucket that week: the vault's post_results test (week_stake at least the minimum). Exported. */
+export function earningFrom(cfg: any, r: any, week: number): boolean {
+  if (!(Number(cfg?.v6_rule_week_plus_one || 0) > 0)) return false;
+  const min = minFor(cfg, week);
+  return min > 0n && BigInt(r?.week_stake || "0") >= min;
+}
+/** The vault's test, from its config (get_state) and a get_game_player result for the Race and that week. Exported. */
+export function stakedFrom(cfg: any, r: any, week: number): boolean {
+  if (!(Number(cfg?.v6_rule_week_plus_one || 0) > 0)) return false;
+  const min = minFor(cfg, week);
+  const peak = r?.entry ? BigInt(r.entry.peak_stake || "0") : BigInt(r?.active_stake || "0");
+  return min > 0n && peak >= min;
 }
 /** One run. Exported for the tests, which pass fake nodes. */
-export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract, picksOf, playerOf, clock }: Opts) {
+export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract, picksOf, stakedOf, clock }: Opts) {
   if (prev !== undefined) PREV = prev;
   if (out !== undefined) OUT = out;
-  // Cards: effective VHP (audit BX-3 b). Who may be ranked (holds 1 VHP): the plain balance, as before.
+  // Cards: effective VHP (audit BX-3 b). Who is ranked is the vault stake (stakedOf), not a VHP balance.
   const vhpRead = vhpOf || (async (who: string[]) => (await readVhp(p, MAINNET_VHP, who, { effective: true })).values);
   const vhpCheck = !check ? null : vhpCheckOf || vhpOf || (async (who: string[]) => (await readVhp(check, MAINNET_VHP, who, { effective: true })).values);
-  const rawRead = vhpOf || (async (who: string[]) => (await readVhp(p, MAINNET_VHP, who)).values);
   const picksContract = raceContract === undefined ? defaultRaceContract() : raceContract;
   const picksRead = picksOf || (picksContract ? (node: any, r: number) => readPicks(node, picksContract, r) : null);
-  const playerRead = playerOf || readPlayer;
-  // Who may be ranked: at least 1 VHP, or a Knode stake (the Mana sponsor's "real player" rule). Read once per run.
-  const eligibleCache = new Map<string, boolean>();
-  async function eligible(who: string[]) {
-    const todo = who.filter((a) => !eligibleCache.has(a));
-    if (todo.length) {
-      const vhp = await rawRead(todo);
-      for (const a of todo) {
-        let ok = BigInt(vhp[a] || "0") >= 100000000n;
-        if (!ok) { try { ok = (await playerRead(p, a, M.weekOf(Date.now()))).stake > 0n; } catch { ok = false; } }
-        eligibleCache.set(a, ok);
-      }
-    }
-    return (a: string) => eligibleCache.get(a) === true;
-  }
   const head: any = await withRetry("head", () => p.getHeadInfo());
   const headH = Number(head.head_topology.height), headId = head.head_topology.id, now = Number(head.head_block_time);
   const libH = Number(head.last_irreversible_block), libT = await blockTime(p, headId, libH);
@@ -460,9 +480,10 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
           const key = (x: Pick[]) => JSON.stringify([...x].sort((u, v) => (u[0] < v[0] ? -1 : 1)));
           if (key(mine) !== key(theirs)) { problems.push(`${race.id}: the two nodes disagree about the race's picks; not final this run`); continue; }
         }
-        const can = await eligible(mine.map((x) => x[0]));
-        // [player, horse, time, won (1/0), may be ranked (1/0), show: 2nd or 3rd (1/0)]
-        picks = mine.map(([who, horse, at]) => [who, horse, at, horse === winner ? 1 : 0, can(who) ? 1 : 0, horse !== winner && showSet.has(horse) ? 1 : 0]);
+        // [player, horse, time, won (1/0), 0, show: 2nd or 3rd (1/0)]. The 5th field was "may be ranked" (1 VHP or a
+        // question-game stake) until 2026-10-28; the Staked / Free play split now comes from the vault, so it is no longer
+        // read (a race's result depends only on its blocks and picks) and is always 0.
+        picks = mine.map(([who, horse, at]) => [who, horse, at, horse === winner ? 1 : 0, 0, horse !== winner && showSet.has(horse) ? 1 : 0]);
       }
       race.result = {
         final: true, checked, heights: [a, b], blocks: B.ts.length, line: M.finishLine(race.cards),
@@ -475,7 +496,9 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
   }
 
   // ── 3. leaderboards ──
-  const board = await leaderboards(weeks, now, (who, week) => playerRead(p, who, week), problems);
+  const stakedRead = stakedOf || readStaked;
+  const { board, vault } = await leaderboards(weeks, now, problems,
+    (who, week) => stakedRead(p, who, week), check ? (who, week) => stakedRead(check, who, week) : null);
 
   // ── 4. write ──
   fs.mkdirSync(OUT, { recursive: true });
@@ -487,62 +510,214 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
   }
   fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), weeks: [...known].sort((x, y) => x - y) }) + "\n");
   if (board) fs.writeFileSync(path.join(OUT, "board.json"), JSON.stringify(board) + "\n");
+  if (vault) {
+    fs.mkdirSync(path.join(OUT, "vault"), { recursive: true });
+    fs.writeFileSync(path.join(OUT, "vault", `W${vault.week}.json`), JSON.stringify(vault) + "\n");
+  }
   for (const pr of problems) console.log(`::warning::${pr}`);
   return { problems };
 }
 
 // ── leaderboards ──
 /** correct = wins (picks on the winner), shows = picks on the 2nd or 3rd horse, pts = 3 per win + 1 per show. */
-type Row = { a: string; pts: number; correct: number; shows: number; picks: number; answers: number; points: number; ranked: boolean };
-/** Sort: points, then more wins, then more picks placed, then more Knode answers, then a higher Knode score. Exported. */
+/** ranked: on the Staked board, i.e. staked in the Race in the vault that week (owner, 2026-10-28; before then it meant
+ *  "holds 1 VHP or a question-game stake"). boardPlace: the place on its own board (Staked or Free play), tied wallets
+ *  sharing it (1, 1, 3, …), which the site shows (board.js). */
+type Row = { a: string; pts: number; correct: number; shows: number; picks: number; ranked: boolean; boardPlace?: number; earns?: number; earning?: boolean };
+/** Sort: points, then more wins, then more picks placed; the address only orders wallets that share a place. Exported. */
 export function rank(rows: Row[]): Row[] {
-  return [...rows].sort((x, y) => y.pts - x.pts || y.correct - x.correct || y.picks - x.picks || y.answers - x.answers || y.points - x.points || (x.a < y.a ? -1 : 1));
+  return [...rows].sort((x, y) => y.pts - x.pts || y.correct - x.correct || y.picks - x.picks || (x.a < y.a ? -1 : 1));
 }
-/** The picks of final races in [from, to): per wallet, wins, shows and picks placed, and whether it may be ranked. */
+/** The picks of final races in [from, to): per wallet, wins, shows and picks placed. */
 function tally(weeks: Map<number, WeekFile>, from: number, to: number) {
-  const t = new Map<string, { correct: number; shows: number; picks: number; ranked: boolean }>();
+  const t = new Map<string, { correct: number; shows: number; picks: number }>();
   for (const wf of weeks.values()) for (const r of wf.races) {
     if (r.start < from || r.start >= to || !r.result?.final || !Array.isArray(r.result.picks)) continue;
-    for (const [who, , , right, can, show] of r.result.picks) {
-      const x = t.get(who) || { correct: 0, shows: 0, picks: 0, ranked: false };
-      x.picks++; x.correct += right ? 1 : 0; x.shows += !right && show ? 1 : 0; x.ranked = x.ranked || !!can;
+    for (const [who, , , right, , show] of r.result.picks) {
+      const x = t.get(who) || { correct: 0, shows: 0, picks: 0 };
+      x.picks++; x.correct += right ? 1 : 0; x.shows += !right && show ? 1 : 0;
       t.set(who, x);
     }
   }
   return t;
 }
-async function leaderboards(weeks: Map<number, WeekFile>, now: number, player: (who: string, week: number) => Promise<PlayerInfo>, problems: string[]) {
+type StakedOf = (who: string, week: number) => Promise<boolean | Stand>;
+const standOf = (v: boolean | Stand): Stand => (typeof v === "boolean" ? { staked: v, earning: v } : { staked: !!v?.staked, earning: !!v?.earning });
+async function leaderboards(weeks: Map<number, WeekFile>, now: number, problems: string[],
+  stakedOf: StakedOf = async () => false, stakedCheck: StakedOf | null = null) {
   // All time needs every week: load the ones this run didn't (read only).
   const all = new Map(weeks);
   const idx = readPrev("index.json");
   for (const w of Array.isArray(idx?.weeks) ? idx.weeks : []) if (Number.isInteger(w) && !all.has(w)) all.set(w, loadWeek(w));
-  const anyPicks = [...all.values()].some((wf) => wf.races.some((r) => Array.isArray(r.result?.picks)));
-  if (!anyPicks) return null;
   const wNow = M.weekOf(now), day0 = Math.floor(now / M.DAY) * M.DAY;
-  // Knode answers and points: this week's for Today and This week; summed over the weeks with picks for All time.
-  const knode = new Map<string, PlayerInfo>();   // key: who|week
-  const info = async (who: string, week: number) => {
+  const failed = new Set<string>();              // "stake:who|week": stake reads that failed (not staked on the boards)
+  const anyPicks = [...all.values()].some((wf) => wf.races.some((r) => Array.isArray(r.result?.picks)));
+  // Staked in the Race that week (the vault's test): read once per wallet and week; a failed read counts as not staked
+  // on the boards and keeps the vault file from being final.
+  const stakes = new Map<string, Stand>();
+  const staked = async (who: string, week: number) => {
     const k = `${who}|${week}`;
-    if (!knode.has(k)) { try { knode.set(k, await player(who, week)); } catch (e) { problems.push(`Knode record of ${who}: ${(e as Error).message}`); knode.set(k, { stake: 0n, answers: 0, points: 0 }); } }
-    return knode.get(k)!;
+    if (!stakes.has(k)) {
+      try { stakes.set(k, standOf(await stakedOf(who, week))); }
+      catch (e) {
+        // A problem with the whole read (not one wallet) is reported once a run.
+        const m = (e as Error).message, line = (e as any).once ? m : `Race stake of ${who}: ${m}`;
+        if (!problems.includes(line)) problems.push(line);
+        failed.add(`stake:${k}`); stakes.set(k, { staked: false, earning: false });
+      }
+    }
+    return stakes.get(k)!;
   };
-  const build = async (from: number, to: number, weeksFor: (who: string) => number[]) => {
+  if (!anyPicks) return { board: null, vault: await vaultResults(all, wNow - 1, now, [], failed, problems, stakedCheck) };
+  // stakeWeek: the week whose stake decides the board (Today and This week: this week; Last week: that week; All time:
+  // this week, the wallet's standing now).
+  // weekly: Last week and This week also say who earns (owner, 2026-10-29: only they get a medal); This week as if it
+  // ended now.
+  const build = async (from: number, to: number, stakeWeek: number, weekly = false) => {
     const rows: Row[] = [];
     for (const [a, x] of tally(all, from, to)) {
-      let answers = 0, points = 0;
-      for (const w of weeksFor(a)) { const i = await info(a, w); answers += i.answers; points += i.points; }
-      rows.push({ a, pts: x.correct * M.POINTS.win + x.shows * M.POINTS.show, correct: x.correct, shows: x.shows, picks: x.picks, answers, points, ranked: x.ranked });
+      const st = await staked(a, stakeWeek);
+      rows.push({ a, pts: x.correct * M.POINTS.win + x.shows * M.POINTS.show, correct: x.correct, shows: x.shows, picks: x.picks, ranked: st.staked, earning: st.earning });
     }
-    return rank(rows);
+    return withEarns(withPlaces(rank(rows)), weekly ? firstPicks(all, from, to) : null);
   };
-  const weeksOf = (who: string) => [...all.values()].filter((wf) => wf.races.some((r) => Array.isArray(r.result?.picks) && r.result.picks.some((p: any) => p[0] === who))).map((wf) => wf.week);
-  return {
+  const pub = (rows: Row[]) => rows.map(({ earning, ...r }) => r);   // board.json rows: the published fields only
+  const lastRows = wNow > 0 ? await build(M.weekStart(wNow - 1), M.weekStart(wNow), wNow - 1, true) : [];
+  const board = {
     v: 1, updated: new Date(now).toISOString(),
-    today: { day: M.dayOf(now), rows: await build(day0, day0 + M.DAY, () => [wNow]) },
-    week: { week: wNow, start: M.weekStart(wNow), rows: await build(M.weekStart(wNow), M.weekStart(wNow + 1), () => [wNow]) },
-    lastWeek: wNow > 0 ? { week: wNow - 1, start: M.weekStart(wNow - 1), rows: await build(M.weekStart(wNow - 1), M.weekStart(wNow), () => [wNow - 1]) } : null,
-    allTime: { rows: await build(0, Infinity, weeksOf) },
+    today: { day: M.dayOf(now), rows: pub(await build(day0, day0 + M.DAY, wNow)) },
+    week: { week: wNow, start: M.weekStart(wNow), rows: pub(await build(M.weekStart(wNow), M.weekStart(wNow + 1), wNow, true)) },
+    lastWeek: wNow > 0 ? { week: wNow - 1, start: M.weekStart(wNow - 1), rows: pub(lastRows) } : null,
+    allTime: { rows: pub(await build(0, Infinity, wNow)) },
   };
+  return { board, vault: await vaultResults(all, wNow - 1, now, lastRows, failed, problems, stakedCheck) };
+}
+
+// ── the KnodeGames Vault's results file (Vault v6 hand-offs, 2026-10-28) ──
+/** The Producer Race's game number in the KnodeGames Vault, the vault's limit of wallets per prize place, and its
+ *  points range for staked players' rows. */
+export const VAULT_GAME = 7;
+export const MAX_PRIZE_WINNERS = 10;
+export const MAX_ROW_POINTS = 255;
+type VaultRow = { player: string; points: number };
+type VaultFile = { game: number; week: number; final: boolean; rows: VaultRow[]; first: string[]; second: string[]; skipped: string[] };
+
+/** Two rows tie when every ranking measure is equal (rank() sorts by exactly these, so ties sit next to each other). */
+const tied = (x: Row, y: Row) => x.pts === y.pts && x.correct === y.correct && x.picks === y.picks;
+/** Each wallet's {earliest pick time} among the final races in [from, to). */
+function firstPicks(all: Map<number, WeekFile>, from: number, to: number): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const wf of all.values()) for (const r of wf.races) {
+    if (r.start < from || r.start >= to || !r.result?.final || !Array.isArray(r.result.picks)) continue;
+    for (const x of r.result.picks) { const t = Number(x[2]); if (!m.has(x[0]) || t < m.get(x[0])!) m.set(x[0], t); }
+  }
+  return m;
+}
+/** The staked players who share the bucket, by the vault's rule (finalizeGameStep): the top 30% by headcount of the
+ *  earning staked players with at least 1 point, rounded up, a tied group at the line taken whole. Exported. */
+export function stakedWinners(rows: Row[]): Set<string> {
+  const groups = groupsOf(rows.filter((r) => r.ranked && r.earning !== false && r.pts >= 1));
+  const n = groups.reduce((t, g) => t + g.length, 0), need = Math.ceil((n * 30) / 100), out = new Set<string>();
+  let cum = 0;
+  for (const g of groups) { if (cum >= need) break; for (const r of g) out.add(r.a); cum += g.length; }
+  return out;
+}
+/** earns, on the weekly boards (owner, 2026-10-29: only wallets that earn get a medal): 1 or 2 = the free prize's 1st
+ *  or 2nd (prizePlaces: ties, and the 10 earliest when more are tied), 3 = a share of the staked bucket, 0 = nothing.
+ *  Other boards: 0. Exported. */
+export function withEarns(rows: Row[], firstPick: Map<string, number> | null): Row[] {
+  if (!firstPick) return rows.map((r) => ({ ...r, earns: 0 }));
+  const free = prizePlaces(rows, firstPick), share = stakedWinners(rows);
+  const place = new Map<string, number>([...free.first.map((a): [string, number] => [a, 1]), ...free.second.map((a): [string, number] => [a, 2])]);
+  return rows.map((r) => ({ ...r, earns: r.ranked ? (share.has(r.a) ? 3 : 0) : place.get(r.a) || 0 }));
+}
+/** Each row's place on its own board (Staked or Free play), ties sharing it: 1, 1, 3, … Rows stay in rank() order. Exported. */
+export function withPlaces(rows: Row[]): Row[] {
+  const last: Record<string, { r: Row; place: number; n: number }> = {};
+  return rows.map((r) => {
+    const k = r.ranked ? "staked" : "free", prev = last[k], n = (prev ? prev.n : 0) + 1;
+    const place = prev && tied(prev.r, r) ? prev.place : n;
+    last[k] = { r, place, n };
+    return { ...r, boardPlace: place };
+  });
+}
+function groupsOf(rows: Row[]): Row[][] {
+  const groups: Row[][] = [];
+  for (const r of rows) { const g = groups[groups.length - 1]; if (g && tied(g[0], r)) g.push(r); else groups.push([r]); }
+  return groups;
+}
+
+/** The free prize's places from a week's rows in rank() order. Every free player (not staked in the Race that week)
+ *  with at least 1 point qualifies (owner, 2026-10-28). Wallets tied on every measure (points, wins, picks) share a
+ *  place: a tie for 1st takes both prizes, so 2nd stays empty. The vault takes at most 10 wallets a place: when more are
+ *  tied, the 10 that made their first pick of the week earliest (the time the chain recorded it; then the address)
+ *  take the place and the rest get nothing (owner, 2026-10-28). `firstPick`: each wallet's earliest pick time that
+ *  week. Exported. */
+export function prizePlaces(rows: Row[], firstPick: Map<string, number> = new Map()): { first: string[]; second: string[]; notes: string[] } {
+  const groups = groupsOf(rows.filter((r) => !r.ranked && r.pts >= 1));
+  const notes: string[] = [];
+  const at = (a: string) => firstPick.get(a) ?? Infinity;
+  const early = (g: Row[]) => [...g].sort((x, y) => at(x.a) - at(y.a) || (x.a < y.a ? -1 : 1)).map((r) => r.a).slice(0, MAX_PRIZE_WINNERS);
+  const [g1, g2] = groups;
+  if (!g1) return { first: [], second: [], notes };
+  if (g1.length > MAX_PRIZE_WINNERS) notes.push(`${g1.length} wallets are tied for 1st: the ${MAX_PRIZE_WINNERS} with the earliest first pick share it, ${g1.length - MAX_PRIZE_WINNERS} get nothing`);
+  if (g1.length > 1 || !g2) return { first: early(g1), second: [], notes };
+  if (g2.length > MAX_PRIZE_WINNERS) notes.push(`${g2.length} wallets are tied for 2nd: the ${MAX_PRIZE_WINNERS} with the earliest first pick share it, ${g2.length - MAX_PRIZE_WINNERS} get nothing`);
+  return { first: [g1[0].a], second: early(g2), notes };
+}
+
+/** The staked players' rows for the vault: every wallet staked in the Race that week with at least 1 point, in the
+ *  board's order, as points 255, 254, ... per tied group (only the order and the ties matter to the vault). Beyond 255
+ *  groups the rest all get 1 point and the run warns. Exported. */
+export function stakedRows(rows: Row[]): { rows: VaultRow[]; notes: string[] } {
+  const groups = groupsOf(rows.filter((r) => r.ranked && r.pts >= 1)), out: VaultRow[] = [], notes: string[] = [];
+  groups.forEach((g, i) => { for (const r of g) out.push({ player: r.a, points: Math.max(1, MAX_ROW_POINTS - i) }); });
+  if (groups.length > MAX_ROW_POINTS) notes.push(`${groups.length} different scores among staked players: the lowest ${groups.length - MAX_ROW_POINTS + 1} share 1 point`);
+  return { rows: out, notes };
+}
+
+/** A race that still isn't final this long after its week ends is skipped (owner, 2026-10-28): its picks don't count
+ *  (the leaderboard only ever counts final races) and the week's results become final without it. Normally every
+ *  race is final within an hour or two of its end. */
+export const VAULT_SKIP_AFTER = 12 * M.HOUR;
+
+/** The vault's file for week w. Final once:
+ *  - every race of the week is final (or was never run because the recorder hadn't started, or is skipped after
+ *    VAULT_SKIP_AFTER), and the week file shows the recorder did run that week;
+ *  - every Race stake was read, and the stakes read the same on the second node.
+ *  `skipped` lists the races left out. A file already published as final is kept exactly as it is, so the vault never
+ *  sees its results change (the publish job also refuses to change one). */
+async function vaultResults(all: Map<number, WeekFile>, w: number, now: number, rows: Row[], failed: Set<string>, problems: string[], stakedCheck: StakedOf | null = null): Promise<VaultFile | null> {
+  if (w < 0) return null;
+  const old = readPrev(`vault/W${w}.json`);
+  if (old && old.final === true && old.game === VAULT_GAME && old.week === w) return old;
+  const wf = all.get(w);
+  // No week file, or one with nothing recorded (e.g. the last run's files couldn't be read): write nothing.
+  if (!wf || !wf.races.some((r) => r.cards.some(Boolean) || r.result)) return null;
+  let firstCard = Infinity;
+  for (const x of all.values()) for (const r of x.races) if (r.cards.some(Boolean)) firstCard = Math.min(firstCard, r.start);
+  const open = wf.races.filter((r) => !r.result?.final && !(r.start < firstCard && !r.cards.some(Boolean)));
+  const late = now >= wf.end + VAULT_SKIP_AFTER;
+  const unread = rows.filter((r) => failed.has(`stake:${r.a}|${w}`));
+  const file: VaultFile = { game: VAULT_GAME, week: w, final: false, rows: [], first: [], second: [], skipped: [] };
+  const wait = (why: string) => { problems.push(`vault week ${w}: not final yet, ${why}`); return file; };
+  if (open.length && !late) return wait(`${open.length} race(s) still being checked (${open.map((r) => r.id).join(", ")}); skipped if still open at ${new Date(wf.end + VAULT_SKIP_AFTER).toISOString()}`);
+  if (unread.length) return wait(`${unread.length} Race stake(s) could not be read (tried again next run)`);
+  if (stakedCheck) {
+    for (const r of rows) {
+      let theirs: boolean;
+      try { theirs = standOf(await stakedCheck(r.a, w)).staked; } catch (e) { return wait(`the second node couldn't read ${r.a}'s Race stake (${(e as Error).message})`); }
+      if (theirs !== r.ranked) return wait(`the two nodes disagree about whether ${r.a} was staked in the Race`);
+    }
+  }
+  if (open.length) problems.push(`vault week ${w}: ${open.length} race(s) never became final and are skipped: ${open.map((r) => r.id).join(", ")}`);
+  const firstPick = new Map<string, number>();
+  for (const r of wf.races) if (r.result?.final && Array.isArray(r.result.picks)) for (const x of r.result.picks) {
+    const t = Number(x[2]); if (!firstPick.has(x[0]) || t < firstPick.get(x[0])!) firstPick.set(x[0], t);
+  }
+  const places = prizePlaces(rows, firstPick), staked = stakedRows(rows);
+  for (const n of [...places.notes, ...staked.notes]) problems.push(`vault week ${w}: ${n}`);
+  return { ...file, final: true, rows: staked.rows, first: places.first, second: places.second, skipped: open.map((r) => r.id) };
 }
 
 /** The producers (field and paddock) on the newest card in the published week files of the last day (audit BX-53). */

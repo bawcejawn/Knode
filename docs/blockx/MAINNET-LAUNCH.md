@@ -237,7 +237,20 @@ npm run picks -- apply 2 --send --mainnet
 npm run picks -- status --mainnet
 ```
 
-The last `status` must list **2 Who Signs Block X: ON, every 2400 blocks, locks 100 before**.
+The last `status` must list **2 Who Signs Block X: ON, every 2400 blocks, locks 100 before … 30 picks a day, 1
+changes** (audit BX-129: the page already says "change it once"; the contract enforces it only from the apply, so the
+Block X page is published only after this `status` shows 1).
+
+**Then check the 0.2 Mana pick row against mainnet prices (audit BX-123).** The 0.2 comes from testnet, and mainnet
+can cost more (the Picks upload cost 8.7 × its testnet cost; storage-heavy uploads differ most). Before step 9, run
+`npm run sponsor -- mana-report`. It reads the last day's sponsored mainnet transactions, such as question-game
+answers, and shows what each used. Send the output to Claude. If mainnet looks more than about 1.5 × testnet, Claude
+gives you a `mana-limit … --limit` line that raises the pick row for launch (at most 1 Mana, the per-transaction
+cap), then step 6's `payer` and `config` again. Step 10 then sets it from real Block X picks. A row that is too low
+refuses every sponsored pick (players with KOIN pay their own Mana; empty wallets can't play).
+
+**Publish (step 9) only after game 2 is applied (audit BX-127):** with `picks-data/deployment.json` on `main`, the
+hourly Block X job reports an error every run until game 2 exists. Nothing is lost.
 
 ## 9. Publish (Claude, with your OK)
 
