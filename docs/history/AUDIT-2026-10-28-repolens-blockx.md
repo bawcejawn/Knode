@@ -280,22 +280,22 @@ real publish step), `tests/audit/repolens-r5-sponsor-behaviour.test.ts`, and two
 
 | ID | Finding | Status |
 |---|---|---|
-| BX-72 | The amount was still read differently from the VHP contract | **Fixed (root cause)**: `canonicalTransferValue` accepts a transfer only when its bytes are exactly the canonical encoding of {from, to = the event's receiver, value, memo} (fields in order, once each, shortest varints, defaults left out: what koilib, Kondor and as-proto write); anything else throws, so the target is held (voided after 3 days). Mints (written by PoB itself) keep the field-2 read. New surface, accepted: any wallet can void a target by sending its signer a non-canonical transfer (one transaction per target; visible in the warnings; no points move) |
+| BX-72 | The amount was still read differently from the VHP contract | **Fixed (root cause)**: `canonicalTransferValue` accepts a transfer only when its bytes are exactly the standard encoding of {from, to = the event's receiver, value, memo} (fields in order, once each, shortest varints and lengths; a field written with its default, as koilib writes value 0, is read as every decoder reads it); anything else is a `NonCanonicalTransfer` and the target is voided at once with its reason. Mints (written by PoB itself) keep the field-2 read. New surface, accepted for the prize-free launch: any wallet can void a round by sending the producers non-canonical transfers between its lock and its block (one transaction per round, visible in the warnings, no points move). **Before prizes:** read the VHP contract's own decoder (or its developers' answer) so only bytes it would reject or read differently void a target |
 | BX-86 | Samples kept one node's higher read, unflagged | **Fixed**: a sample never keeps the higher read; disputed producers are re-read twice; a remaining dispute is stored (`flagged`, `high`) and checked in `race-samples.yml`; every card flags a producer disputed in any sample it uses, and `topInDoubt` is computed on the card's FINAL values (after the 6-hour highs and the floor). Published samples are now also unchangeable (the BX-88 rule) |
-| BX-88 | One bad run rewriting only `W<w>.json` decided the week | **Fixed (root cause)**: the publish job reads the published week files; a run whose week file changes or drops a published target (or has duplicate rounds) is held whole, with an alert (honest runs never rewrite a target) |
+| BX-88 | One bad run rewriting only `W<w>.json` decided the week | **Fixed (root cause)**: the publish job reads the published week files; a run whose week file changes or drops a published target, has duplicate rounds, adds a round that isn't a past target block of its week (block time before the job's clock and inside the week, height = round × round size + offset, as the recorder's `loadWeek`), or adds a future week's file, is held whole, with an alert (honest runs never do any of these). **Before prizes:** the run that makes a week final re-reads that week's targets (signer, time, picks) on both nodes and holds on any difference from the published ones, so a NEW target from a bad run can't stand either |
 | BX-87 / BX-91 | A missing `vault/` (or new testnet game) folder stopped recording / publishing | **Fixed**: every `git ls-tree … | while` is `{ … || true; } | while` |
 | BX-89 | A lying primary could date a card 10 min late | **Fixed**: a card is never dated more than 60 s after this computer's clock (the command line passes the clock) |
 | BX-90 | A short receipt page voided targets | **Fixed**: reads on from where the node stopped, still requiring every block in order |
 | BX-92 | A vault file past its 3 days failed every run | **Fixed**: none is written past the window; one warning the hour it closes |
 | BX-93 | Wrong void reason; stale wording | **Fixed** |
 | BX-94 | r4 publish tests ran on the wall clock | **Fixed**: fixed `CHECK_NOW_MS`, plus the honest board → P → vault path |
-| BX-65 | A vault file with only some stakers passed silently | **Fixed** as a warning naming the left-out Staked players (the job can't re-read stakes; the recorder reads them on two nodes) |
+| BX-65 | A vault file with only some stakers passed silently | **Fixed**: published, with an error naming the left-out Staked players that fails the job, so you are emailed once (the job can't re-read stakes; the recorder reads them on two nodes; you can correct within the vault's 3 days) |
 
 ### Part B, sponsor v3 (tool only; contract unchanged `b61ac238…`)
 
 | ID | Finding | Status |
 |---|---|---|
-| SP-44 | Off/on could quietly loosen caps | **Fixed**: `capsOf` keeps every on-chain cap exactly (0 stays 0); the disable fallback takes each cap's lower of chain and default (minimum stake the higher), only ever lowered further to stay in order (unreadable: all 0); the fallback is sent only with `--rebuilt`, which its preview asks for (separate admin card); admin wording corrected |
+| SP-44 | Off/on could quietly loosen caps | **Fixed**: `capsOf` keeps every on-chain cap exactly (0 stays 0); the disable fallback takes each cap's lowest of this node, the second node (when it answered) and the default (minimum stake the highest), only ever lowered further to stay in order (unreadable: all 0); the fallback is sent only with `--rebuilt`, which its preview asks for (separate admin card); admin wording corrected |
 | SP-47 | The emergency stop could throw on a row | **Fixed**: the fallback has no per-action rows |
 | SP-48 | v3-ness read from one node | **Fixed** for config/enable (both nodes must show the same code); the off fallback uses one node (harmless while off) |
 | SP-49 | v6-day step | **Fixed**: runbook (after v6's first transaction, `config` with your caps); `status` warns when v6 is live and the switch is off; hand-off note for the Vault v6 runbook |
@@ -308,3 +308,21 @@ real publish step), `tests/audit/repolens-r5-sponsor-behaviour.test.ts`, and two
 | SP-46 | Nothing on chain ties the vault switch to v6 code | **Accepted for launch**: the tool reads it from two nodes; turning it on by hand against v5 needs a deliberate mistake |
 | SP-11 | Batch run-outs not counted | Low, unchanged |
 | SP-2, SP-3 | Lock-outs by many wallets | Accepted for launch (owner) |
+
+### Blind review of the round-5 diff (2026-10-30, owner's decision: before Repo Lens)
+
+An independent reviewer checked `41289a2..c4c9dc8` with the auditor's checklist and ran two scenarios against the real
+recorder and publish step. Its findings and what was done:
+
+| # | Finding | Done |
+|---|---|---|
+| 1 (High) | The append-only rule protected only published rounds: a bad run could pre-publish a FUTURE round (or next week's file), which the honest recorder would keep | **Fixed**: new rounds must be past target blocks of their week; no future week file (test: `bx88-week-files.test.mjs`) |
+| 2 (Medium) | A round at a height the recorder drops on load would hold every later honest run for good | **Fixed**: the publish job applies the recorder's height rule to new rounds (round size and offset passed in; testnet reads `testnet/blockx.json`) |
+| 3 (Medium) | A non-canonical transfer (even koilib's value 0) held a target for 3 days, which could push a week past the vault's window | **Fixed**: explicit defaults are read; anything else voids the target at once (tests in both r5 behaviour files) |
+| 4 (Low) | Honest value-0 or empty-memo transfers did the same | **Fixed** with #3 |
+| 5 (Low) | The disable fallback's caps came from the node the second one disagreed with | **Fixed**: the lowest of both nodes and the default |
+| 6 (Low) | One lasting sample dispute flags a top producer's cards for 6 hours (all targets void) | Accepted: the safe direction (hold, never mis-score); each card says so in the run's warnings |
+| 7 (Low) | BX-65 was only a warning (no email) | **Fixed**: an error that fails the job, file still published |
+| 8 (Low, testnet) | Held rounds beyond 48 a run could stall a fast testnet week | **Fixed** with #3 |
+| 9 (Info) | 0.2 Mana for picks is 2.2 × a testnet number | Runbook: re-measure (step 10) a day after the v6 switch-on too |
+| 10 (Info) | `--rebuilt` adds a command when the second node is down | Accepted (separate admin card) |

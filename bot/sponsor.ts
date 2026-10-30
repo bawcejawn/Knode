@@ -441,12 +441,22 @@ export function capsOf(cur: any) {
  *  (per transaction ≤ per player per day ≤ per player per week; per player per day and free ≤ everyone per day).
  *  Unreadable chain caps: all 0 (switched off, nothing is paid; run config with your caps before enable).
  *  Exported for the tests. */
-export function tighterCaps(cur: any): { caps: typeof DEFAULT_CAPS; unreadable: boolean } {
+export function tighterCaps(cur: any, other: any = null): { caps: typeof DEFAULT_CAPS; unreadable: boolean } {
   const sat = (x: string) => BigInt(units(x));
-  let c: typeof DEFAULT_CAPS;
-  try { c = capsOf(cur); for (const v of Object.values(c)) if (!/^\d+(\.\d+)?$/.test(v)) throw new Error("not a number"); }
-  catch { return { caps: { perTx: "0", perPlayerDay: "0", perPlayerWeek: "0", perDay: "0", minVhp: DEFAULT_CAPS.minVhp, freePerDay: "0" }, unreadable: true }; }
   const lo = (a: string, b: string) => (sat(a) < sat(b) ? a : b), hi = (a: string, b: string) => (sat(a) > sat(b) ? a : b);
+  const read = (x: any): typeof DEFAULT_CAPS => { const c = capsOf(x); for (const v of Object.values(c)) if (!/^\d+(\.\d+)?$/.test(v)) throw new Error("not a number"); return c; };
+  let c: typeof DEFAULT_CAPS;
+  try { c = read(cur); }
+  catch { return { caps: { perTx: "0", perPlayerDay: "0", perPlayerWeek: "0", perDay: "0", minVhp: DEFAULT_CAPS.minVhp, freePerDay: "0" }, unreadable: true }; }
+  // Review (round 5, #5): with the second node's settings too (the node this one disagrees with), the lower of both,
+  // so a primary that reports a higher cap than the chain has can't get it kept.
+  if (other) {
+    try {
+      const o = read(other);
+      c = { perTx: lo(c.perTx, o.perTx), perPlayerDay: lo(c.perPlayerDay, o.perPlayerDay), perPlayerWeek: lo(c.perPlayerWeek, o.perPlayerWeek),
+        perDay: lo(c.perDay, o.perDay), minVhp: hi(c.minVhp, o.minVhp), freePerDay: lo(c.freePerDay, o.freePerDay) };
+    } catch { /* the second node's answer is unreadable: this node's, still never above the defaults */ }
+  }
   const perDay = lo(c.perDay, DEFAULT_CAPS.perDay);
   const perPlayerWeek = lo(c.perPlayerWeek, DEFAULT_CAPS.perPlayerWeek);
   const perPlayerDay = lo(lo(lo(c.perPlayerDay, DEFAULT_CAPS.perPlayerDay), perPlayerWeek), perDay);
@@ -493,9 +503,9 @@ export function switchedConfig(cur: any, on: boolean): any {
   return { ...cur, enabled: on };
 }
 async function setSwitch(rpc: string, provider: Provider, s: Signer, A: string, cur: any, on: false, send: boolean, mainnet: boolean, rebuiltOk = false) {
-  let agreed = !mainnet;
+  let agreed = !mainnet, other: any = null;
   if (mainnet) {
-    try { const other = await configOn(secondNode(), A); agreed = JSON.stringify(other) === JSON.stringify(cur); } catch { agreed = false; }
+    try { other = await configOn(secondNode(), A); agreed = JSON.stringify(other) === JSON.stringify(cur); } catch { agreed = false; other = null; }
   }
   let config: any;
   if (agreed) config = switchedConfig(cur, on);
@@ -506,11 +516,11 @@ async function setSwitch(rpc: string, provider: Provider, s: Signer, A: string, 
     let code = "";
     try { code = String((await contractMetadata(provider, A)).hash || "").replace(/^0x1220/, ""); } catch { /* treated as not v3: no Picks row while off */ }
     const v3 = V3_BUILDS.includes(code);
-    const { caps, unreadable } = tighterCaps(cur);
+    const { caps, unreadable } = tighterCaps(cur, other);
     config = buildConfig(game, desk, caps, false, race, v3 ? picks : undefined, [], picksCards, false);
     log("  ⚠ no second node agrees with this node's settings: switching off with the settings rebuilt from this PC's files,");
     log(unreadable ? "    and every cap 0 (this node's caps couldn't be read): before enable, run config with your caps"
-      : "    each cap the LOWER of the chain's and your default (never looser), and no per-action limits until enable or config");
+      : `    each cap the LOWEST of this node's${other ? ", the second node's" : ""} and your default (never looser), and no per-action limits until enable or config`);
   }
   const fromSat = (x: any) => (x && x !== "0" ? toMana(String(x)) : "0");
   const ids = (x: any) => (x ?? []).map((r: any) => `${r.contract}:${r.entry_point}`).join(", ") || "(none)";

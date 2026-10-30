@@ -40,6 +40,11 @@ cd picks && npm ci --ignore-scripts && npm test && npm run check && cd ..
    - a VHP transfer is read only from its one canonical encoding; anything else is held;
    - published history is append-only: a published week-file target or race sample never changes, and a run that
      tries publishes nothing.
+   Two known items are recorded as **before prizes**:
+   - the run that makes a week final re-reads that week's targets on both nodes, so a new target from a bad run
+     can't stand either (BX-88);
+   - the VHP contract's own decoder decides which transfers void a target (BX-72's griefing route: one transaction
+     voids a round).
 3. **SP-45 and SP-46 are accepted for launch.** The contract is frozen. The site sends `games` unpacked, and a
    misread changes only `would_pay`'s advisory answer.
 4. **New (owner):** the Picks `pick` row is 0.2 Mana, from the testnet Combo Card measurements (10 legs used 0.0916).

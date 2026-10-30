@@ -253,7 +253,9 @@ npm run sponsor -- site-limits --send
 ```
 
 `mana-report` reads every sponsored transaction of the last day on two nodes, and suggests a limit only for actions
-with at least 20 measured transactions (2 × the most used). `site-limits --send` writes the website's copy: Claude
+with at least 20 measured transactions (2 × the most used). Run it again a day after the sponsor's vault switch goes on (v6 day):
+the sponsor then makes one more read per transaction, and the Picks `pick` row's 0.2 Mana is 2.2 × a testnet number
+(blind review, round 5). `site-limits --send` writes the website's copy: Claude
 opens the pull request to `main`; once merged and live, `npm run sponsor -- config --send`.
 
 ## Every hour

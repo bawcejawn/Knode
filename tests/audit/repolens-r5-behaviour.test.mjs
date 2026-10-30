@@ -104,3 +104,15 @@ test("BX-89: a primary node whose head is 5 minutes ahead of this computer's clo
   assert.equal(cardsOf(out).length, 0);
   assert.ok(r.problems.some((x) => /ahead of this computer's clock/.test(x)));
 });
+
+// Blind review of round 5 (#3, #4): a transfer with explicit defaults (koilib writes value 0 as `18 00`, an empty memo
+// as `22 00`) is read like any decoder reads it; any other non-canonical transfer voids the target AT ONCE (the bytes
+// never change), instead of holding it for 3 days.
+test("BX-72 (review): explicit defaults are read (value 0, empty memo); non-canonical bytes throw NonCanonicalTransfer", async () => {
+  const zero = await koilibArgs({ from: B, to: A, value: "0" });
+  assert.equal(BX.vhpInflows(receipt(zero, A, B), VHP, A), 0n);
+  const b = [...Buffer.from(await koilibArgs({ from: B, to: A, value: "7" }), "base64"), 0x22, 0x00];
+  assert.equal(BX.vhpInflows(receipt(Buffer.from(b).toString("base64"), A, B), VHP, A), 7n);
+  const bad = [...Buffer.from(await koilibArgs({ from: B, to: A, value: "7" }), "base64"), 0x7a, 0x00];   // unknown field 15
+  assert.throws(() => BX.vhpInflows(receipt(Buffer.from(bad).toString("base64"), A, B), VHP, A), (e) => e instanceof BX.NonCanonicalTransfer);
+});

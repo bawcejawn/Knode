@@ -104,3 +104,74 @@ test("BX-88: a rewritten published week file is refused whole, and the recorder 
   assert.ok(alice && alice.pts > 0, "Alice's correct picks are scored");
   assert.ok(!board.lastWeek.rows.some((x) => x.a === Z), "Z is not on the board");
 });
+
+// Blind review of round 5 (#1, #2): new rounds must be real past target blocks of the file's week, so a bad run can't
+// pre-publish a round the honest recorder would then keep (#1), nor one it would drop on load and so hold every later
+// honest run (#2); and no week file for a future week.
+test("BX-88 (review): a bad run can't pre-publish a future round, a round at a wrong height, or next week's file", async () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "bx88r-")), remote = path.join(d, "r.git");
+  spawnSync("git", ["init", "-q", "--bare", remote]);
+  const sh = path.join(d, "publish.sh"); fs.writeFileSync(sh, publishScript());
+  const race = raceDir();
+  const lib = H0 + 6 * X.ROUND + 50, now = T(lib + 60);
+  const fresh = async () => {
+    const inn = fs.mkdtempSync(path.join(d, "in-")), out = path.join(inn, "blockx");
+    await quiet(() => run({ p: "main", check: "check", out, raceDir: race, picksContract: "1PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP", blockOf, picksOf, rankedOf, head: { height: lib + 60, time: now, lib } }));
+    return { inn, out };
+  };
+  const publish = (inn) => spawnSync("bash", [sh], { env: { ...ENV, IN: inn, REMOTE: remote, CHECK_NOW_MS: String(now) }, encoding: "utf8" });
+  const show = (f) => spawnSync("git", ["--git-dir", remote, "show", `games-data:blockx/${f}`], { encoding: "utf8" });
+  const edit = (out, f, fn) => { const p = path.join(out, f), j = JSON.parse(fs.readFileSync(p, "utf8")); fn(j); fs.writeFileSync(p, JSON.stringify(j)); };
+  const last = (j) => j.targets[j.targets.length - 1];
+
+  // a round three rounds ahead of the head (its block doesn't exist yet), Z given 300
+  let r = await fresh();
+  edit(r.out, "W003.json", (j) => { const t = last(j); j.targets.push({ ...t, round: t.round + 3, height: (t.round + 3) * X.ROUND, time: t.time + 3 * X.ROUND * 3000, picks: [[Z, MID, t.time, 300, 1]] }); });
+  let p = publish(r.inn);
+  assert.notEqual(p.status, 0); assert.match(p.stdout, /aren't past target blocks/);
+  assert.notEqual(show("W003.json").status, 0, "nothing from that run is published");
+
+  // a past round at a height that isn't its target height (the recorder would drop it on load)
+  r = await fresh();
+  edit(r.out, "W003.json", (j) => { const t = j.targets[0]; j.targets.unshift({ ...t, round: t.round - 1, height: (t.round - 1) * X.ROUND + 7, time: t.time - X.ROUND * 3000 }); });
+  p = publish(r.inn);
+  assert.notEqual(p.status, 0); assert.match(p.stdout, /aren't past target blocks/);
+
+  // next week's file
+  r = await fresh();
+  const w3 = JSON.parse(fs.readFileSync(path.join(r.out, "W003.json"), "utf8"));
+  fs.writeFileSync(path.join(r.out, "W004.json"), JSON.stringify({ ...w3, week: 4, start: w3.start + 7 * 86400000, end: w3.end + 7 * 86400000 }));
+  p = publish(r.inn);
+  assert.notEqual(p.status, 0); assert.match(p.stdout, /isn't this one or an earlier one/);
+
+  // the honest run still publishes
+  r = await fresh();
+  p = publish(r.inn);
+  assert.equal(p.status, 0, p.stdout + p.stderr);
+  assert.equal(show("W003.json").status, 0);
+});
+
+// Blind review of round 5 (#3): a non-canonical VHP transfer into the signer voids that target in the SAME run (with
+// its reason), instead of holding it for 3 days (which could push a week past the vault's window).
+test("BX-72 (review): a non-canonical transfer into the signer voids the target at once, with its reason", async () => {
+  const lib = H0 + 4 * X.ROUND + 50;
+  const { NonCanonicalTransfer } = await import(path.resolve(APP, "bot/games/blockx.ts"));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "bx72v-"));
+  const r = await quiet(() => run({ p: "main", check: "check", out, raceDir: raceDir(), picksContract: "1PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP", blockOf, picksOf, rankedOf,
+    vhpMovesOf: async () => { throw new NonCanonicalTransfer("a VHP transfer to X isn't in the standard encoding (unexpected fields)"); },
+    head: { height: lib + 60, time: T(lib + 60), lib } }));
+  const ts = r.weeks.get(3).targets;
+  assert.ok(ts.length >= 4);
+  for (const t of ts) {
+    assert.match(t.void || "", /standard encoding.*no points/);
+    assert.ok(t.picks.every((x) => x[3] === 0));
+  }
+});
+
+test("the mainnet publish check is given Block X's own round size and offset (blockx-math.js MAINNET_GAME)", () => {
+  const y = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
+  const G = globalThis.KBlockX.forGame ? globalThis.KBlockX.forGame() : null;
+  const m = /python3 - "\$IN\/blockx" 2 "\$PUB\/blockx" "\$HELD" blockx (\d+) (\d+) <<'PY'/.exec(y);
+  assert.ok(m, "the round size and offset are passed");
+  assert.equal(Number(m[1]), G ? G.ROUND : X.ROUND); assert.equal(Number(m[2]), G ? G.OFFSET : 0);
+});

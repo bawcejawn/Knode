@@ -56,3 +56,13 @@ test("SP-48 / SP-49: the code is read on both nodes for config; status warns whe
   assert.match(s.slice(s.indexOf("async function codeOn("), s.indexOf("/** Audit SP-37: is the game")), /secondNode\(\)/);
   assert.match(s.slice(s.indexOf("async function status()"), s.indexOf("export function usageAlerts")), /the game is Vault v6 now, but the sponsor still treats it as v5/);
 });
+
+test("SP-44 (review #5): the fallback takes the lower of BOTH nodes' caps, so a primary reporting a higher cap can't keep it", () => {
+  const primary = chain({ free: 2000, all: 5000, day: 25 }), second = chain({ free: 0, all: 800, day: 10, min: 4 });
+  const { caps } = tighterCaps(primary, second);
+  assert.equal(caps.freePerDay, "0");
+  assert.equal(caps.perDay, "800");
+  assert.equal(caps.perPlayerDay, "10");
+  assert.equal(caps.minVhp, "4");
+  assert.deepEqual(tighterCaps(primary, { max_mana_per_tx: "x" }).caps, tighterCaps(primary).caps, "an unreadable second answer is ignored");
+});

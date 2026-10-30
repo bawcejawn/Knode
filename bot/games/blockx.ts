@@ -300,9 +300,10 @@ export async function scoringVhpMoves(node: any, headId: string, vhp: string, wh
 /** From one block receipt: VHP received by `who`. The receiver is the event's impacted[0] (the contract's own decoded
  *  `to`). Audit BX-72 (round 5): the amount of a TRANSFER is taken only from the one canonical encoding of
  *  {from, to: impacted[0], value[, memo]} (fields 1-4 in order, each at most once, the right wire types, shortest
- *  varints, defaults left out: what koilib, Kondor and as-proto contracts write). Any other bytes for a transfer to
- *  `who` THROW, so the target is held (and voided if it never clears): a copy of the contract's decoder would have to
- *  follow every quirk of its library version, and "refuse to guess" can never count a different number. Mints are
+ *  varints: what koilib, Kondor and as-proto contracts write). Any other bytes for a transfer to `who` throw
+ *  NonCanonicalTransfer, and the recorder voids that target at once (review, round 5: the bytes never change, so a
+ *  retry can't help): a copy of the contract's decoder would have to follow every quirk of its library version, and
+ *  "refuse to guess" can never count a different number. Mints are
  *  written by the PoB contract itself (canonical): their value is field 2. */
 export function vhpInflows(receipt: any, vhp: string, who: string): bigint {
   const events = [...(receipt?.events ?? []), ...((receipt?.transaction_receipts ?? []) as any[]).flatMap((t) => t?.events ?? [])];
@@ -328,11 +329,17 @@ function varintBytes(v: bigint): number[] {
   do { let x = Number(v & 0x7fn); v >>= 7n; if (v) x |= 0x80; o.push(x); } while (v);
   return o;
 }
-/** Audit BX-72: the value of a VHP transfer event to `to`, ONLY when its bytes are exactly the canonical encoding of
- *  {from, to, value[, memo]}; anything else throws (the target is held). Exported for the tests. */
+/** A VHP transfer to the signer whose bytes aren't the standard encoding (audit BX-72). The bytes on chain never change,
+ *  so the target is voided at once with this reason (review, round 5), never retried for 3 days. */
+export class NonCanonicalTransfer extends Error {}
+/** Audit BX-72: the value of a VHP transfer event to `to`, ONLY when its bytes are exactly the standard encoding of
+ *  {from, to, value[, memo]}: fields 1-4 in order, each at most once, shortest varints and lengths. A field may be
+ *  written with its default (koilib writes value 0 as `18 00`, an empty memo as `22 00`): every decoder reads those the
+ *  same way. Anything else throws NonCanonicalTransfer. Exported for the tests. */
 export function canonicalTransferValue(data: unknown, to: string): bigint {
-  const b = b64(data);
-  const bad = (why: string) => new Error(`a VHP transfer to ${to} isn't in the standard encoding (${why}): not scored this run`);
+  let b: Uint8Array;
+  try { b = b64(data); } catch (e) { throw new NonCanonicalTransfer(`a VHP transfer to ${to}: ${(e as Error).message}`); }
+  const bad = (why: string) => new NonCanonicalTransfer(`a VHP transfer to ${to} isn't in the standard encoding (${why})`);
   let i = 0;
   const vint = (): bigint => {
     let r = 0n, sh = 0n;
@@ -347,21 +354,21 @@ export function canonicalTransferValue(data: unknown, to: string): bigint {
     const out = b.subarray(i, i + Number(n)); i += Number(n);
     return out;
   };
-  const from = lenField(0x0a) ?? new Uint8Array(0);
+  const from = lenField(0x0a);
   const toB = lenField(0x12) ?? new Uint8Array(0);
-  let value = 0n;
-  if (b[i] === 0x18) { i++; value = vint(); }
-  const memo = lenField(0x22) ?? new Uint8Array(0);
+  let value = 0n, hasValue = false;
+  if (b[i] === 0x18) { i++; value = vint(); hasValue = true; }
+  const memo = lenField(0x22);
   if (i !== b.length) throw bad("unexpected fields");
   let want: Uint8Array;
   try { want = kutils.decodeBase58(to); } catch { throw bad("not an address"); }
   if (toB.length !== want.length || toB.some((x, k) => x !== want[k])) throw bad("its `to` isn't the event's receiver");
   if (value > 0xffffffffffffffffn) throw bad("a value over 64 bits");
-  // Re-encode and require the same bytes (shortest varints, defaults left out).
+  // Re-encode the fields that were there and require the same bytes (shortest varints and lengths).
   const enc: number[] = [];
-  const put = (tag: number, x: Uint8Array) => { if (x.length) enc.push(tag, ...varintBytes(BigInt(x.length)), ...x); };
+  const put = (tag: number, x: Uint8Array | null) => { if (x) enc.push(tag, ...varintBytes(BigInt(x.length)), ...x); };
   put(0x0a, from); put(0x12, toB);
-  if (value) enc.push(0x18, ...varintBytes(value));
+  if (hasValue) enc.push(0x18, ...varintBytes(value));
   put(0x22, memo);
   if (enc.length !== b.length || enc.some((x, k) => x !== b[k])) throw bad("not the shortest encoding");
   return value;
@@ -594,20 +601,26 @@ export async function run(o: Opts) {
       if (lockFlagged && !old && !afterNever) { problems.push(`block ${h}: the two nodes disagreed about ${card.topInDoubt === true ? "the top producer's" : b.signer + "'s"} VHP on its lock card; held (voided after 3 hours)`); continue; }
       // Audit BX-53: VHP moved INTO the signer between its lock card and block X (a "flash" stake that neither card
       // sees) counts for the signer on both cards, read on both nodes (the higher of the two), so it can't look small.
-      let moved = 0n;
+      let moved = 0n, nonCanonical = "";
       // (Tests that serve fake blocks with blockOf and no vhpMovesOf have no receipts to read: nothing moved.)
       if (card && after && !lockFlagged && isAddr(b.signer) && (o.vhpMovesOf || !o.blockOf)) {
         // Audit BX-77: from the block the lock card's window ended at, when the card records it.
         const cardH = Number.isInteger(card.height) && card.height > 0 && card.height <= h ? card.height : h - Math.ceil(Math.max(0, b.time - Number(card.at)) / 3000);
         const from = Math.max(1, cardH - MOVE_MARGIN), to = h;
         const read = o.vhpMovesOf ?? ((node: any, who: string, f: number, t: number) => scoringVhpMoves(node, node === o.p ? headId : checkHeadId, VHP, who, f, t));
-        const mp = await read(o.p, b.signer, from, to), mc = o.check ? await read(o.check, b.signer, from, to) : mp;
-        moved = mp > mc ? mp : mc;
+        try {
+          const mp = await read(o.p, b.signer, from, to), mc = o.check ? await read(o.check, b.signer, from, to) : mp;
+          moved = mp > mc ? mp : mc;
+        } catch (e) {
+          if (!(e instanceof NonCanonicalTransfer)) throw e;
+          nonCanonical = e.message.slice(0, 120);
+          problems.push(`block ${h}: ${nonCanonical}; the target is void (no points)`);
+        }
         if (moved > 0n) console.log(`block ${h}: ${Number(moved) / 1e8} VHP moved into ${b.signer} between its card and the block; counted on both cards`);
       }
       const lockC = withMoved(card, b.signer, moved), afterC = withMoved(after, b.signer, moved);
       const { m, top } = lockC ? X.vhpOf(lockC) : { m: new Map(), top: 0 };
-      const scoring = card && after && !lockFlagged ? lockC : null;
+      const scoring = card && after && !lockFlagged && !nonCanonical ? lockC : null;
       const pointsOf = (producer: string) => (scoring ? Math.min(X.pointsOf(lockC, producer, b.signer), X.pointsOf(afterC, producer, b.signer)) : 0);
       const picks: Pick[] = raw.map((x) => [x.player, x.producer, x.time, pointsOf(x.producer), ranked.has(x.player) ? 1 : 0]);
       const t: Target = {
@@ -620,6 +633,7 @@ export async function run(o: Opts) {
         ? "the two nodes disagreed about the VHP of the top producer on the lock's handicap card, so every multiplier on it was in doubt; no points"
         : "the two nodes disagreed about the signer's VHP on the lock's handicap card; no points";
       else if (!after) t.void = "no handicap card was taken within 3 hours after the block; no points";
+      else if (nonCanonical) t.void = `${nonCanonical} between its lock card and the block, so the VHP moved can't be read; no points`;
       const wf = weekFor(M.weekOf(b.time));
       wf.targets = wf.targets.filter((x) => x.round !== r).concat([t]).sort((x, y) => x.round - y.round);
       done.add(r);

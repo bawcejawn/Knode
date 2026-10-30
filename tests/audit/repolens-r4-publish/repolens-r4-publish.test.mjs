@@ -73,12 +73,13 @@ test("BX-94: the honest board + P, then the honest vault file, are all published
 });
 
 // Audit BX-65 (round 5): a vault file that leaves out Staked-board players is published (the job can't re-read stakes)
-// but names them in a warning.
-test("BX-65: Staked players left out of the vault rows are named in a warning", () => {
+// but names them in an error that fails the job, so you are emailed (once: the file is written once).
+test("BX-65: Staked players left out of the vault rows are named in an alert; the file is still published", () => {
   const w = world();
   w.run({ ...honest, vault: null, P: true });
   w.run({ ...honest, upd_h: 14, vault: null, P: true });
   const r = w.run({ ...honest, upd_h: 21, vault: { rows: [[A, 255]], first: [F], second: [] } });
-  assert.equal(r.status, 0, r.stdout + r.stderr);
-  assert.match(r.stdout, new RegExp(`::warning::blockx/vault/W1\\.json: 1 of 2 Staked-board players.*${B}`));
+  assert.equal(r.status, 1, "the job fails so you are emailed");
+  assert.match(r.stdout, new RegExp(`::error::\\(published; check it\\) blockx/vault/W1\\.json: 1 of 2 Staked-board players.*${B}`));
+  assert.equal(w.show("vault/W1.json").status, 0, "still published");
 });

@@ -112,7 +112,7 @@ jobs:
             done
           else git read-tree --empty; fi
           # The content must be the recorder's own shape, not only parse as JSON.
-          /usr/bin/python3 - "$IN/blockx" 2 "$PUB/blockx" "$HELD" <<'PY'
+          /usr/bin/python3 - "$IN/blockx" 2 "$PUB/blockx" "$HELD" blockx 2400 0 <<'PY'
           import json, os, re, sys
           d = sys.argv[1]; gid = int(sys.argv[2]); addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
           iso = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{3})?Z"); ymd = re.compile(r"\d{4}-\d\d-\d\d")
@@ -163,6 +163,9 @@ jobs:
           now = int(os.environ.get("CHECK_NOW_MS") or time.time() * 1000); cw = (now - GENESIS) // WEEK
           pub = sys.argv[3] if len(sys.argv) > 3 else ""; heldf = sys.argv[4] if len(sys.argv) > 4 else ""
           pre = sys.argv[5] if len(sys.argv) > 5 else "blockx"   # the folder on the published branch
+          # The game's round size and offset (a target's height is round * size + offset), for the new-target check.
+          GROUND = int(sys.argv[6]) if len(sys.argv) > 6 and re.fullmatch(r"[1-9]\d{0,6}", sys.argv[6]) else None
+          GOFFSET = int(sys.argv[7]) if len(sys.argv) > 7 and re.fullmatch(r"\d{1,7}", sys.argv[7]) else None
           held = []
           def hold(name, why, alert):
               held.append(name); print(("::error::" if alert else "::notice::") + "held, not published: " + name + ": " + why)
@@ -210,9 +213,10 @@ jobs:
               if j["first"] != first or j["second"] != second: hold(name, "first/second aren't the published prize file's winners", True); continue
               # Audit BX-65 (round 5): Staked-board players left out of the rows (the vault counts only wallets whose
               # LOWEST stake that week met the minimum, read on two nodes, which this job can't re-read): published, but
-              # named in a warning so a short list never goes by unseen.
+              # named in an error that fails the job (so you are emailed, once: the file is written once) and checked
+              # within the vault's 3 days.
               out = [a for a in order if a not in st]
-              if out: print("::warning::" + name + ": " + str(len(out)) + " of " + str(len(order)) + " Staked-board players with points are not in the vault rows (not staked all week, by the recorder's two-node read): " + ", ".join(out[:20]) + (" ..." if len(out) > 20 else ""))
+              if out: held.append("!alert"); print("::error::(published; check it) " + name + ": " + str(len(out)) + " of " + str(len(order)) + " Staked-board players with points are not in the vault rows (not staked all week, by the recorder's two-node read): " + ", ".join(out[:20]) + (" ..." if len(out) > 20 else ""))
           # Audit BX-88 (round 5): published targets are append-only. A week file may add rounds but never change or drop
           # one that is already published (an honest run never rewrites a recorded target: bot/games/blockx.ts keeps them).
           # A run that tries is held WHOLE, with an alert: its board, prize and vault files were all built from that file.
@@ -223,7 +227,21 @@ jobs:
               nt = new.get("targets") if type(new) is dict else None
               rounds = [t.get("round") for t in nt if type(t) is dict] if type(nt) is list else None
               if rounds is None or len(rounds) != len(nt) or len(set(rounds)) != len(rounds): rewrote.append(f + " (its rounds aren't a list of distinct targets)"); continue
+              # Review (round 5): NEW rounds must be real past targets, so a bad run can't pre-publish a round (the honest
+              # recorder would then keep it and never record the real one), nor one the recorder would drop on load (that
+              # would hold every later honest run): its block time is before this job's clock and inside its week, the week
+              # isn't in the future, and its height is the game's target height for the round (as bot/games/blockx.ts loadWeek).
+              wk = new.get("week")
+              wstart = GENESIS + wk * WEEK if type(wk) is int else None
+              pubrounds = set()
               old = pubjson(f)
+              if type(old) is dict and type(old.get("targets")) is list: pubrounds = {t.get("round") for t in old["targets"] if type(t) is dict}
+              fresh = [t for t in nt if t["round"] not in pubrounds]
+              if fresh and (wstart is None or new.get("start") != wstart or wk > cw): rewrote.append(f + " (new targets for a week that isn't this one or an earlier one, by this job's clock)"); continue
+              if fresh and (GROUND is None or GOFFSET is None): rewrote.append(f + " (this job doesn't know the game's round size, so it can't check new targets)"); continue
+              badnew = [t["round"] for t in fresh if not (type(t.get("time")) is int and wstart <= t["time"] < wstart + WEEK and t["time"] <= now
+                  and type(t["round"]) is int and t.get("height") == t["round"] * GROUND + GOFFSET)]
+              if badnew: rewrote.append(f + " (new rounds " + ", ".join(str(r) for r in badnew[:10]) + " aren't past target blocks of this week)"); continue
               if old is None: continue
               ot = old.get("targets") if type(old) is dict else None
               if type(ot) is not list: rewrote.append(f + " (the published file can't be read)"); continue
@@ -288,5 +306,5 @@ jobs:
             commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "games: record")
             git push -q "$remote" "$commit:refs/heads/games-data"
           fi
-          if grep -qxF '!alert' "$HELD"; then echo "::error::A prize or vault file was held (see the errors above); everything else was published."; exit 1; fi
+          if grep -qxF '!alert' "$HELD"; then echo "::error::A file was held, or a published file needs your check (see the errors above); everything else was published."; exit 1; fi
           echo "Games files published."
