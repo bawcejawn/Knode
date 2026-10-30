@@ -380,13 +380,13 @@ describe("Repo Lens RL-14", () => {
     const q = new Picks().get_pick(new picks.get_pick_arguments(2, BR, P1)).pick!;
     expect(Arrays.equal(q.producers[0], A2)).toBe(true); expect(q.changes).toBe(1);
   });
-  it("an announced loosening (a later lock) changes nothing for 48 hours: a locked leg stays locked (RL-25; after that it could re-open, by design)", () => {
+  // (Fix-check FC-15: the new card holds only OPEN legs, so the refusal can only come from the STORED leg's lock.)
+  it("an announced loosening doesn't re-open a STORED locked leg for 48 hours (stored-leg path)", () => {
     start();
     legs0(); add(WIN, RACE, A1); add(BLOCK, BR, A2); at(H0, START - RACE_LEAD - 60000); send(P1, SLOT0);
-    at(H0, START - RACE_LEAD); legs0(); add(WIN, RACE, A3); add(BLOCK, BR, A2); refusedCard(P1, SLOT0, LEG_LOCKED);
-    // announce Win legs locking 5 minutes before the start instead of 25: nothing changes for 48 hours
     signedBy(OWNER); let g = combo(); g.leg_types[0].lead = 300000; G = g; announce(); MockVM.commitTransaction();
-    at(H0, START - RACE_LEAD + 1000); legs0(); add(WIN, RACE, A3); add(BLOCK, BR, A2); refusedCard(P1, SLOT0, LEG_LOCKED);
+    at(H0, START - RACE_LEAD + 1000);
+    legs0(); add(SHOW, RACE + 1, A3); add(HALF, RACE + 1, A4); refusedCard(P1, SLOT0, LEG_LOCKED);   // new legs all open
   });
   it("P-2 on a card game: tighten_game drops a pending announcement, so an announced loosening can't undo it", () => {
     start();

@@ -94,8 +94,13 @@ test("price card: the latest USABLE card taken at or before the time, at most 3 
   assert.equal(C.priceCard(races, 5000).at, 2000);
   assert.equal(C.priceCard(races, 2000 + 3 * H).at, 2000, "3 hours old: still in force");
   assert.equal(C.priceCard(races, 2001 + 3 * H), null, "older than 3 hours: no price card");
-  for (const bad of [ok(3000, { samples: 11 }), ok(3000, { samples: undefined }), ok(3000, { flagged: [TOP] }), ok(3000, { topInDoubt: true })])
-    assert.equal(C.priceCard([{ cards: [a, bad] }], 3500).at, 1000, "thin, flagged or in-doubt cards never price");
+  for (const bad of [ok(3000, { samples: 11 }), ok(3000, { samples: undefined })])
+    assert.equal(C.priceCard([{ cards: [a, bad] }], 3500).at, 1000, "thin cards never price");
+  // Flags are per producer, as Block X's flags(card, signer) (fix-check FC-8): a card flagging TOP (or with the top in
+  // doubt) doesn't price TOP's legs, but still prices everyone else's.
+  for (const bad of [ok(3000, { flagged: [TOP] }), ok(3000, { topInDoubt: true })]) assert.equal(C.priceCard([{ cards: [a, bad] }], 3500, TOP).at, 1000);
+  assert.equal(C.priceCard([{ cards: [a, ok(3000, { flagged: [TOP] })] }], 3500, LAST).at, 3000, "a flag on another producer doesn't matter");
+  assert.equal(C.priceCard([{ cards: [a, ok(3000, { topInDoubt: true })] }], 3500, LAST).at, 1000, "the top in doubt puts every price in doubt");
   assert.equal(C.cardAfter(races, 1000).at, 2000, "the first usable card after a time");
   assert.equal(C.cardAfter(races, 2000), null);
 });
@@ -170,10 +175,12 @@ test("results for every leg type: hit / miss / void / pending", () => {
   // Block X
   assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, checked: 2, signer: TOP }), "hit");
   assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, checked: 2, signer: LAST }), "miss");
-  assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, checked: 0, signer: null, void: "no card" }), "void");
+  // Fix-check FC-2: a target without a signer both nodes agreed on was never decided: "unresolved" (the card is void
+  // unless another leg missed), never a dropped leg.
+  assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, checked: 0, signer: null, void: "no card" }), "unresolved");
   // Repo Lens RL-3: Block X voiding a target for its own scoring doesn't hide who signed it.
   assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, checked: 2, signer: LAST, void: "the two nodes disagreed about the signer's VHP on the lock's handicap card; no points" }), "miss");
-  assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, checked: 1, signer: TOP }), "void", "a signer checked on one node only decides nothing");
+  assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, checked: 1, signer: TOP }), "unresolved", "a signer checked on one node only decides nothing");
   assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, null), "pending");
 });
 
@@ -199,28 +206,28 @@ test("leaderboard: best 10 cards, ties by hits then the earlier last hit", () =>
   assert.equal(b[3].player, "D"); assert.equal(b[3].pts, 0);
 });
 
-test("vault file: players with at least 1 full point who aren't known to be unstaked (the Vault checks stakes), mapped onto 1..255 keeping order and ties; no free prizes", () => {
+test("vault file: staked players with at least 1 full point, by board place onto 1..255 (ties share; fix-check FC-17); no free prizes", () => {
   const W = C.vaultWeek(Date.parse("2026-11-03T10:00:00Z"));
   assert.equal(W, 2); assert.equal(C.vaultWeek(Date.parse("2026-10-19T00:00:00Z")), 0); assert.equal(C.vaultWeek(Date.parse("2026-10-25T23:59:59Z")), 0);
   const P = (i) => "1" + String(i).padStart(33, "A").replace(/0/g, "B");
   const rows = [
-    { player: P(1), pts: 4374000, staked: true }, { player: P(2), pts: 2700, staked: true }, { player: P(3), pts: 2700, staked: true },
-    { player: P(4), pts: 100, staked: null }, { player: P(5), pts: 9999999, staked: false }, { player: P(6), pts: 0, staked: true },
-    { player: P(7), pts: 99, staked: true }, { player: "not an address", pts: 500, staked: true },
+    { player: P(1), pts: 4374000, place: 1, staked: true }, { player: P(2), pts: 2700, place: 2, staked: true }, { player: P(3), pts: 2700, place: 3, staked: true },
+    { player: P(8), pts: 2700, place: 3, staked: true }, { player: P(4), pts: 100, place: 5, staked: null }, { player: P(5), pts: 9999999, place: 6, staked: false },
+    { player: P(6), pts: 0, place: 7, staked: true }, { player: P(7), pts: 99, place: 8, staked: true }, { player: "not an address", pts: 500, place: 9, staked: true },
   ];
   const f = plain(C.vaultFile(W, true, rows));
+  // P(2) and P(3) have equal points but the board separates them (hits, last hit): they keep their places.
   assert.deepEqual(f, { game: 8, week: 2, final: true, first: [], second: [],
-    rows: [{ player: P(1), points: 255 }, { player: P(2), points: 254 }, { player: P(3), points: 254 }, { player: P(4), points: 253 }] });
-  // nobody qualifies: an empty file is still written for the week
-  assert.deepEqual(plain(C.vaultFile(W, true, [{ player: P(1), pts: 0, staked: true }])).rows, []);
+    rows: [{ player: P(1), points: 255 }, { player: P(2), points: 254 }, { player: P(3), points: 253 }, { player: P(8), points: 253 }] });
+  assert.deepEqual(plain(C.vaultFile(W, true, [{ player: P(1), pts: 0, place: 1, staked: true }])).rows, []);
   assert.equal(C.vaultFile(W, "yes", []).final, false, "final only when exactly true");
   assert.equal(C.MIN_WEEK_PTS, 100, "at least 1 full point for the week (owner, 2026-10-28); 0.99 is out");
-  // more than 255 distinct scores: the top 254 keep their order, the rest share 1
-  const many = Array.from({ length: 300 }, (_, i) => 1000 + i);
+  // more than 255 distinct places: the top 254 keep their order, the rest share 1
+  const many = Array.from({ length: 300 }, (_, i) => i + 1);
   const m = C.toVaultPoints(many);
-  assert.equal(m[299], 255); assert.equal(m[298], 254); assert.equal(m[299 - 253], 2);
-  for (let i = 0; i <= 299 - 254; i++) assert.equal(m[i], 1);
-  for (let i = 1; i < 300; i++) assert.ok(m[i] >= m[i - 1], "order kept");
+  assert.equal(m[0], 255); assert.equal(m[1], 254); assert.equal(m[253], 2);
+  for (let i = 254; i < 300; i++) assert.equal(m[i], 1);
+  for (let i = 1; i < 300; i++) assert.ok(m[i] <= m[i - 1], "order kept");
   assert.ok(m.every((v) => Number.isInteger(v) && v >= 1 && v <= 255));
 });
 

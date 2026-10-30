@@ -44,8 +44,8 @@ test("CC-C1 (b): a failed read of today's cards must not show card 1 as free and
 
 // Repo Lens RL-4 (page side), with the Vault v6 live: a wallet with no stake in the Combo Card this week is refused; a
 // staked one can send (the CC-C1 tests above run staked).
-test("RL-4: with the Vault v6 live, an unstaked wallet is refused before anything is signed", { timeout: 60000 }, async () => {
-  const t = await H.open({ vault: "unstaked", legs: H.openLegs(Date.now()) });
+test("RL-4: before the Vault v6 is live, nobody is staked: Send stays off", { timeout: 60000 }, async () => {
+  const t = await H.open({ legs: H.openLegs(Date.now()) });
   try {
     const { page } = t;
     await page.waitForFunction(() => /Send card/.test(document.getElementById("send").textContent) && /Stake at least 1 VHP/.test(document.getElementById("send").title), null, { timeout: 20000 });

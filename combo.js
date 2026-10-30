@@ -243,7 +243,7 @@
   const lockTimeOf = (l) => (isRaceLeg(l) ? M.raceStart(l.round) - C.RACE_LEAD_MS : head ? about(X.target(l.round) - C.BLOCK_LEAD) : Infinity);
   function cardStats() {
     // Repo Lens RL-13: one order for the same legs (lock time, code, round, producer), so re-sending never spends a change.
-    const sorted = head ? C.sortLegs(legs, head) : [...legs].sort((a, b) => lockTimeOf(a) - lockTimeOf(b));
+    const sorted = C.sortLegs(legs);
     const pot = card ? C.potential(card, sorted) : { pts: 0, prices: sorted.map(() => null), unpriced: true };
     const chances = pot.prices.map((p) => (p ? p.chance : null));
     const chance = chances.length && chances.every((c) => c != null) ? chances.reduce((s, c) => s * c, 1) : null;
@@ -305,6 +305,12 @@
       const g = (await picksC.functions.get_game({ game: C.GAME_ID })).result;
       const game = g && g.game;
       if (!game || Number(game.kind) !== 4 || !game.enabled) return;
+      // Fix-check FC-22: the leg types on chain must lock exactly as this page prices them (as the recorder checks).
+      const want = { 1: [2, M.RACE, C.RACE_LEAD_MS, C.RACE_AHEAD_MS], 2: [2, M.RACE, C.RACE_LEAD_MS, C.RACE_AHEAD_MS], 3: [2, M.RACE, C.RACE_LEAD_MS, C.RACE_AHEAD_MS], 4: [1, X.ROUND, C.BLOCK_LEAD, C.BLOCK_AHEAD] };
+      for (const t of (Array.isArray(game.leg_types) ? game.leg_types : [])) {
+        const w = want[Number(t.code)];
+        if (w && (Number(t.lock_mode) !== w[0] || Number(t.round_size) !== w[1] || Number(t.round_offset || 0) !== 0 || Number(t.lead) !== w[2] || Number(t.ahead) !== w[3])) return;
+      }
       liveMax = Number(game.max_legs) || C.MAX_LEGS;
       cardsLive = true;
     } catch { return; }
@@ -315,9 +321,11 @@
   /** Today's 3 cards, today's usage, and the stake in the Combo Card (from the Vault, once it can tell). */
   // The slots are replaced only after every read succeeded, all at once; while a read is out or failed they are
   // "unknown" and nothing can be sent (audit CC-C1: an empty list during a refresh made Send overwrite card 1).
-  let loadSeq = 0;
+  let loadSeq = 0, readFor = null;
   async function loadMine() {
     const seq = ++loadSeq, who = me();
+    // Fix-check FC-16: another wallet's stake and cards never stand in for this one's while they are read.
+    if (who !== readFor) { readFor = who; stake = null; slots = [null, null, null]; slotsDay = null; usage = null; editing = null; renderSlip(); }
     if (!(cardsLive && who && head)) { slots = [null, null, null]; slotsDay = null; usage = null; stake = null; editing = null; renderSlip(); return; }
     const day = C.utcDay(head.time);
     try {

@@ -150,7 +150,7 @@ test("when the two nodes disagree about a slot, it isn't recorded that run", asy
   assert.equal(wk(out, 3).slots.find((s) => s.round === round), undefined, "no earlier copy: nothing shown for it");
 });
 
-test("a leg whose race is never recorded waits, then is void at the deadline (2 days after the week ends); 1 leg left: the card is void", async () => {
+test("a leg whose race is never recorded waits, then is unresolved at the deadline (2 days after the week ends): the card is void", async () => {
   const lost = D3 * 4 + 3;     // Monday's 18:00 race
   const race = raceDir({ noResult: new Set([lost]) });
   let r = await days(D3, D3 + 4, 12, { raceDir: race });
@@ -159,8 +159,8 @@ test("a leg whose race is never recorded waits, then is void at the deadline (2 
   r = await days(D3, D3 + 9, 12, { raceDir: race });      // Wednesday of week 4, after the deadline (Wed 00:00)
   mon = wk(r.out, 3).slots.find((s) => s.round === C.slotRound(D3, 0));
   const a = mon.cards.find((c) => c.player === ALICE);
-  assert.equal(a.legs[0][4], "void");
-  assert.equal(a.state, "final"); assert.equal(a.outcome, "void", "1 leg left: the card is void");
+  assert.equal(a.legs[0][4], "unresolved", "never decided: unresolved (fix-check FC-2), not a dropped leg");
+  assert.equal(a.state, "final"); assert.equal(a.outcome, "void", "the card is void (no other leg missed)");
 });
 
 test("missing race-data makes cards wait, never void them: past the deadline it's an outage, reported as an error (FC-1)", async () => {
@@ -356,9 +356,10 @@ test("FC-1: a race-data outage after the deadline doesn't void, and a final card
   const o1 = tmp(); const r1 = await quiet(() => run({ p: "main", check: "check", prev, out: o1, raceDir: empty, blockxDir: bx, picksContract: "1P", cardsOf: cardsOf(), stakedOf, head: headAt(T(D3 + 9, 0) + 3000000) }));
   const o2 = tmp(); await quiet(() => run({ p: "main", check: "check", prev: o1, out: o2, raceDir: race, blockxDir: bx, picksContract: "1P", cardsOf: cardsOf(), stakedOf, head: headAt(T(D3 + 9, 2)) }));
   assert.notEqual(mon(o1).outcome, "void", "a priced card was voided by a race-data outage");
-  assert.equal(mon(o1).state, "pending", "during the outage it waits (nothing is taken from the earlier files: RL-7)");
-  assert.ok(r1.errors.length > 0, "the outage is reported as an error");
+  // Fix-check FC-5/FC-9: a card final on a published fixed slot is kept as published, so an outage changes nothing.
+  assert.equal(mon(o1).state, "final"); assert.equal(mon(o1).outcome, "hit");
   assert.equal(mon(o2).outcome, "hit", "once race-data is back, the same result");
+  void r1;
 });
 test("FC-1 / RL-9: race-data that never catches up past the send time is an outage: the card waits and an error is raised, never a void", async () => {
   // The race recorder stops on Monday at 00:01 (its week file is there, nothing after): the card can't be priced.

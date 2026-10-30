@@ -62,3 +62,44 @@ merging.
 
 **Tests:** contract 71 (as-pect); site and audit suite 625 passing (Combo: recorder 25, Repo Lens 13, page and math 17,
 testnet 3, merge 4); browser 7.
+
+## Fix-check (Repo Lens, 2026-10-30, at e0330a1) and the fixes
+
+Verdict "fix first": contract still ready (92d555d0… reproduces, source byte-identical); RL-10 and RL-12 fixed; 6 High and
+5 Medium new, none in the contract. Most came from Combo's own copies of Block X logic that `picks` had since fixed, and
+from "hold the whole run" in the publish job. First `picks` was merged again (rounds 6-7, the mainnet Picks upload).
+
+| ID | Sev | Finding | Done |
+|---|---|---|---|
+| FC-1 | High | A race leg kept its send worth when no usable card was in force at its lock. | No usable lock card (for that producer) makes the leg "unresolved", as for Block X: the card is void unless another leg missed. Test D-S-1. |
+| FC-2 | High | A leg its source never resolved was dropped, so a losing card could score. | New leg result "unresolved" (a Block X target without an agreed signer, or a leg undecided at the deadline): a miss elsewhere still decides; otherwise the whole card is void, with an error. `recount` in the recorder and the publish check. Tests D-S-6, D-R-2. |
+| FC-3 | High | One node's "0 staked" or a huge minimum dropped players from the write-once Vault file. | Any disagreement (live, minimum, any wallet's stake) is unknown: no Vault file and an error, as Block X. Test D-R-1. |
+| FC-4 | High | One node's non-canonical-transfer report voided a winning Block X leg (BX-100 not ported). | Each node read on its own: both report it → unresolved; only one, or a failed read → held, unresolved after Block X's 3-day edge (with an error). Tests D-S-2, D-R-3, D-C-5. |
+| FC-5 | High | One wrong final card made every honest run be held whole. | The publish job holds only the file that differs (alert); the recorder keeps a published fixed slot and its final cards as published while the chain still holds exactly those cards, so honest runs never look like rewrites. Test D-C-4. |
+| FC-6 | High | The published board was never checked against the published final cards. | Before a Vault file is accepted, last week's ranking (points, hits, last hit, places) is recomputed from the PUBLISHED day files' final cards and must match the published board. Test D-C-1. |
+| FC-7 | Med–High | A moved-VHP read that kept failing left a card pending, the Vault file lost silently. | Held, then unresolved at the 3-day edge with an error; an error whenever last week still has pending cards a day after it ended. Test D-S-3. |
+| FC-8 | Medium | Any flag on a card made it unusable. | Block X's rule: a card is unusable for a producer's leg only if it flags that producer or the top is in doubt (`flagsFor`; `priceCard`/`cardAfter` take the producer). Test D-S-4. |
+| FC-9 | Medium | Degraded honest runs un-fixed published slots and were held whole. | As FC-5: published fixed slots and final cards are kept when a read fails, a node is down or a clock is ahead. Tests D-R-4, D-C-3. |
+| FC-10 | Medium | board.json had no size bound. | All time: top 1,000; Today and This week: top 2,000; Last week: everyone with 1+ point plus the top of the rest to 2,000. Test D-C-6. |
+| FC-11 | Medium | Re-reading everything every run may not fit 30 minutes. | Cards final on published fixed slots are never re-priced (no receipt reads for them). Live timing still to measure. Test D-R-5. |
+| FC-12 | Low | Live race-data has no samples: every card would be void. | The recorder raises an error while the newest race card has no samples. Launch gate. |
+| FC-13 | Low | The 0.2 row was checked against a player-paid card. | Open: a sponsored testnet pick used 0.116 Mana (admin action text), so a sponsored 10-leg card must be measured before cards go live. |
+| FC-14 | Low | `sortLegs` used an estimated Block X time. | By code, round, producer only. Test D-W-1. |
+| FC-15 | Low | The loosening test was refused for the wrong reason. | The reviewer's corrected test (stored-leg path). 71 contract tests. |
+| FC-16 | Low | After a wallet switch, Send could use the old wallet's stake. | Stake, slots and usage cleared when the wallet changes. |
+| FC-17 | Low | The Vault file tied equal points the board separates. | Mapped by board place (as Block X). Repo Lens agreed the rank mapping is right for an order-only Vault (RL-18). |
+| FC-18 | Low | `readCards` stopped silently after 1,000 pages. | Throws. |
+| FC-20 | Info | The workflow guard didn't run Combo's tests. | It does. |
+| FC-21 | Info | An empty Vault file could be written before v6 is live. | No Vault file until v6 is live. |
+| FC-22 | Info | The page didn't check the leg types' clocks. | It does (same values as the recorder). |
+| FC-23 | Low | index.json wasn't append-only. | Published days must stay; new days only last week or this week (else that file is held). |
+| FC-24 | Low | Type-loose compares. | `same()` (types included) for published content and headers. |
+| FC-25 | Info | Tests passing for the wrong reason. | C-R-1 now sets the runner's clock past the lie; C-R-5b writes a day file; the stake browser test runs with a live Vault; C-W-3 uses the site's real sponsor block. |
+| FC-26 | Info | The recorder didn't filter race-card producers. | Filtered as on the page. |
+| FC-27 | Info | `bot/picks.ts` would accept v1 after v2 is live. | Once picks-data/deployment.json records the v2 code, only v2 is accepted. |
+| FC-19 | Info | Clock-edge holds for one run. | Accepted. |
+
+The reviewer's fixtures were adapted, each change commented: real addresses (koilib's encoder checks them), a fake node
+that also speaks koilib's provider interface, and the publish Python cut from combo.yml instead of a copy.
+
+**Tests:** contract 71; site and audit suite 664 passing (5 todo, 5 skipped); browser 7; workflow guard 8.

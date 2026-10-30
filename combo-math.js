@@ -132,23 +132,27 @@
   }
 
   // ── price ──
-  /** Can this race card price legs? Block X's rule (bot/games/blockx.ts usable / flags): a field, at least 12 VHP
-   *  samples, no producer flagged by the two nodes and the top producer not in doubt (Repo Lens RL-8). */
+  /** Can this race card price legs? Block X's rule (bot/games/blockx.ts usable): a field and at least 12 VHP samples
+   *  (Repo Lens RL-8). Flags are per producer (flagsFor), as Block X's flags(card, signer) (fix-check FC-8). */
   function usableCard(c) {
-    return !!c && Number.isFinite(c.at) && Array.isArray(c.field) && c.field.length > 0 && Number.isInteger(c.samples) && c.samples >= MIN_CARD_SAMPLES &&
-      c.topInDoubt !== true && !(Array.isArray(c.flagged) && c.flagged.length > 0);
+    return !!c && Number.isFinite(c.at) && Array.isArray(c.field) && c.field.length > 0 && Number.isInteger(c.samples) && c.samples >= MIN_CARD_SAMPLES;
   }
-  const cardsOf = (races) => { const out = []; for (const r of races || []) for (const c of (r && Array.isArray(r.cards) ? r.cards : [])) if (usableCard(c)) out.push(c); return out; };
-  /** The price card at time t: the latest usable race card taken at or before t and at most 3 hours before it. */
-  function priceCard(races, t) {
+  /** Block X's flags(card, who): the two nodes read this producer's VHP differently, or the top producer is in doubt
+   *  (which puts every price on the card in doubt). Such a card never prices this producer's legs. */
+  const flagsFor = (c, who) => !!c && (c.topInDoubt === true || (Array.isArray(c.flagged) && c.flagged.includes(who)));
+  const cardsOf = (races, who) => { const out = []; for (const r of races || []) for (const c of (r && Array.isArray(r.cards) ? r.cards : [])) if (usableCard(c) && !(who && flagsFor(c, who))) out.push(c); return out; };
+  /** The price card at time t: the latest usable race card taken at or before t and at most 3 hours before it; with
+   *  `who`, the latest one that doesn't flag that producer. */
+  function priceCard(races, t, who = null) {
     let best = null;
-    for (const c of cardsOf(races)) if (c.at <= t && t - c.at <= CARD_MAX_AGE_MS && (!best || c.at > best.at)) best = c;
+    for (const c of cardsOf(races, who)) if (c.at <= t && t - c.at <= CARD_MAX_AGE_MS && (!best || c.at > best.at)) best = c;
     return best;
   }
-  /** The first usable race card taken after time t, at most 3 hours after it (Block X's BX-35 "first card after X"). */
-  function cardAfter(races, t) {
+  /** The first usable race card taken after time t, at most 3 hours after it (Block X's BX-35 "first card after X"),
+   *  not flagging `who`. */
+  function cardAfter(races, t, who = null) {
     let best = null;
-    for (const c of cardsOf(races)) if (c.at > t && c.at - t <= CARD_MAX_AGE_MS && (!best || c.at < best.at)) best = c;
+    for (const c of cardsOf(races, who)) if (c.at > t && c.at - t <= CARD_MAX_AGE_MS && (!best || c.at < best.at)) best = c;
     return best;
   }
   /** The card with `vhp` (KOIN units) added to `who` (Block X's withMoved, BX-53): VHP moved into a producer between its
@@ -234,11 +238,10 @@
     for (const f of f100s) { num *= BigInt(f); den *= 100n; }
     return Number(num / den);
   }
-  /** The order a card's legs are sent in (Repo Lens RL-13): by lock time, then code, round and producer, so the same
-   *  legs always make the same card and re-sending them never spends a change. head: { height, time }. */
-  function sortLegs(legs, head) {
-    const t = (l) => { const k = lockOf(l); return k.mode === "time" ? k.at : X.aboutTime(k.at, head.height, head.time); };
-    return [...legs].sort((a, b) => t(a) - t(b) || a.code - b.code || a.round - b.round || (a.producer < b.producer ? -1 : a.producer > b.producer ? 1 : 0));
+  /** The order a card's legs are sent in (Repo Lens RL-13; fix-check FC-14): by code, round and producer only, never by
+   *  an estimated time, so the same legs always make the same card and re-sending them never spends a change. */
+  function sortLegs(legs) {
+    return [...legs].sort((a, b) => a.code - b.code || a.round - b.round || (a.producer < b.producer ? -1 : a.producer > b.producer ? 1 : 0));
   }
   /** What a card would pay if every leg hits (hundredths), and each leg's price. null if a leg can't be priced. */
   function potential(card, legs) {
@@ -248,7 +251,8 @@
   }
 
   // ── results ──
-  /** A leg's result: "hit", "miss", "void" or "pending".
+  /** A leg's result: "hit", "miss", "void" (dropped from the card), "unresolved" (fix-check FC-2: its source never
+   *  decided it; the card is void unless another leg missed) or "pending".
    *  race: the race's record from race-data ({ result: { final, missed?, standings } }) or null;
    *  target: the Block X target record ({ final, checked, signer, void? }) or null. A Block X leg is decided by the
    *  target's signer whenever the two nodes agreed on it (checked 2), even if Block X voided the target for its own
@@ -265,7 +269,9 @@
       return i < need ? "hit" : "miss";
     }
     if (!target || target.final !== true) return "pending";
-    if (target.checked !== 2 || !isAddr(target.signer)) return "void";
+    // Recorded but without a signer the two nodes agreed on (Block X gave up on it): never decided. The card can't
+    // score on its other legs (FC-2: that would let one node turn a losing card into a hit).
+    if (target.checked !== 2 || !isAddr(target.signer)) return "unresolved";
     return target.signer === leg.producer ? "hit" : "miss";
   }
 
@@ -294,29 +300,28 @@
   // ── the Vault's weekly file (hand-off from the Vault v6 chat, 2026-10-28) ──
   /** The Vault week of a time: week 0 began Monday 19 Oct 2026 00:00 UTC (the same week as KRaceMath.weekOf). */
   const vaultWeek = (t) => M.weekOf(t);
-  /** Scores onto 1..255 for the Vault, which only uses their order: distinct scores, highest first, get 255, 254, ...;
-   *  equal scores stay equal. If there are more than 255 distinct scores, the lowest ones share 1 (the top 254 keep
-   *  their exact order). scores: numbers above 0. Returns the mapped values in the same order. */
-  function toVaultPoints(scores) {
-    const distinct = [...new Set(scores)].sort((a, b) => b - a);
+  /** Board places onto 1..255 for the Vault, which only uses their order (Block X's vaultPoints; fix-check FC-17):
+   *  distinct places, best first, get 255, 254, ...; a shared place stays shared. Past 254 distinct places the rest
+   *  share 1 (the top 254 keep their exact order, which covers every prize place up to 846 players). */
+  function toVaultPoints(placeList) {
+    const distinct = [...new Set(placeList)].sort((a, b) => a - b);
     const rank = new Map(distinct.map((v, i) => [v, Math.max(1, 255 - i)]));
-    return scores.map((v) => rank.get(v));
+    return placeList.map((v) => rank.get(v));
   }
-  /** Combo Card's file for the Vault: staked game, so rows only (no free prizes). boardRows: C.board() rows for the
-   *  week, each with { player, pts (hundredths), staked (true, false, or null when the Vault can't be read yet) }.
-   *  Listed: players with at least 1 full point for the week (owner, 2026-10-28) who aren't known to be unstaked; the
-   *  Vault itself checks each row's stake in the Combo Card (at least 1 VHP that week) and drops any that isn't. */
+  /** Combo Card's file for the Vault: staked game, so rows only (no free prizes). boardRows: the week's board in
+   *  order, each { player, pts (hundredths), place, staked (true / false / null) }. Listed: players staked in the
+   *  Combo Card that week (staked === true) with at least 1 full point (owner, 2026-10-28), by board place. */
   const MIN_WEEK_PTS = 100;   // 1 point, in hundredths
   function vaultFile(week, final, boardRows) {
-    const ok = (boardRows || []).filter((r) => r && r.staked !== false && Number.isSafeInteger(r.pts) && r.pts >= MIN_WEEK_PTS && isAddr(r.player));
-    const pts = toVaultPoints(ok.map((r) => r.pts));
+    const ok = (boardRows || []).filter((r) => r && r.staked === true && Number.isSafeInteger(r.pts) && r.pts >= MIN_WEEK_PTS && isAddr(r.player) && Number.isSafeInteger(r.place));
+    const pts = toVaultPoints(ok.map((r) => r.place));
     return { game: GAME_ID, week, final: final === true, rows: ok.map((r, i) => ({ player: r.player, points: pts[i] })), first: [], second: [] };
   }
 
   // ── share ──
   /** A short text for sharing a card: "KnodeGames Combo · 4 legs · ✅✅⏳❌ · 0 pts". */
   function shareText(legs, results, pts) {
-    const icon = { hit: "✅", miss: "❌", void: "➖", pending: "⏳" };
+    const icon = { hit: "✅", miss: "❌", void: "➖", unresolved: "➖", pending: "⏳" };
     return `KnodeGames Combo · ${legs.length} legs · ${results.map((r) => icon[r] || "⏳").join("")} · ${(pts / 100).toFixed(2).replace(/\.00$/, "")} pts`;
   }
 
@@ -324,7 +329,7 @@
     GAME_ID, WIN, SHOW, HALF, BLOCK, CODES, NAMES, FAMILY, MIN_LEGS, MAX_LEGS, HARD_MAX_LEGS, BASE, CAP, PREF, F_MIN, F_MAX,
     CARDS_PER_DAY, MAX_CHANGES, BEST, RACE_LEAD_MS, RACE_AHEAD_MS, BLOCK_LEAD, BLOCK_AHEAD,
     isWindow, slotKey, slotRound, dayOfRound, utcDay, lockOf, legOpen, cardLockTime, cardProblem,
-    CARD_MAX_AGE_MS, MIN_CARD_SAMPLES, TRIALS, MISSING_F100, usableCard, priceCard, cardAfter, withMoved, sortLegs,
+    CARD_MAX_AGE_MS, MIN_CARD_SAMPLES, TRIALS, MISSING_F100, usableCard, flagsFor, priceCard, cardAfter, withMoved, sortLegs,
     raceChances, factorOf, priceLeg, finalWorth, legLockTime, pointsFor, potential, legResult, board, places, shareText,
     vaultWeek, toVaultPoints, vaultFile, MIN_WEEK_PTS,
   };

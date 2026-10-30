@@ -325,7 +325,10 @@ export async function assertAuditedContract(net: { testnet: boolean; picks: stri
   if (!net.picks) throw new Error("No Picks contract yet.");
   const one = wantOne ?? (net.testnet ? (readJson(TESTNET_MANIFEST)?.sha256 ?? net.cfg?.picksSha256) : null);
   if (net.testnet && !one) throw new Error("No expected build for the testnet Picks contract (picks/build/testnet/manifest.json).");
-  const want: string[] = one ? [one] : AUDITED_PICKS;
+  // Fix-check FC-27: once picks-data/deployment.json records the v2 code (the upgrade step writes wasmSha256), only v2
+  // is accepted on chain: v1 there would be a downgrade.
+  const v2Live = !net.testnet && readJson(MAINNET_STATE)?.wasmSha256 === PICKS_V2_SHA256;
+  const want: string[] = one ? [one] : v2Live ? [PICKS_V2_SHA256] : AUDITED_PICKS;
   // Audit BX-9/BX-20: on mainnet a second, independent node must say the same (the testnet has one public node).
   // Audit BX-47: it must be a different node from the first, and on the mainnet chain too.
   let extra = checkNodes;

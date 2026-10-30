@@ -7,7 +7,8 @@ const test = require("node:test"), assert = require("node:assert");
 const H = require("./harness.cjs");
 test("C-W-2: an unstaked wallet cannot send a Combo card", { timeout: 60000 }, async () => {
   const now = Date.now();
-  const t = await H.open({ legs: H.openLegs(now),
+  // (Fix-check FC-25: with the Vault v6 live and no stake, so the page's stake read itself is what refuses.)
+  const t = await H.open({ vault: "unstaked", legs: H.openLegs(now),
     files: { "picks-data/deployment.json": JSON.stringify({ contract: H.PICKS, cards: true }) } });  // the live switch
   try {
     const { page } = t;

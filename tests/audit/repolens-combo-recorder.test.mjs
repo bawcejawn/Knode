@@ -61,7 +61,8 @@ test("C-R-1: one node's head time can't trigger the deadline (a lying primary mu
   const cardsOf = async (_n, r) => (r === C.slotRound(D3, 0) ? [{ player: ALICE, legs, time: sent, height: heightAt(sent), changes: 0 }] : []);
   const now = (D3 + 1) * M.DAY + 3 * 3600000, lie = M.weekStart(4) + 2 * M.DAY + 60000, out = tmp();
   // NOTE: no `head:` option, so run() reads both nodes through headOf() (the real path the owner's tests never take).
-  await quiet(() => run({ p: node(now, lie), check: node(now), out, raceDir: raceDir({ noResult: new Set([tue00]) }), blockxDir: blockxDir(), picksContract: "1P", cardsOf, stakedOf: staked }));
+  // (Fix-check FC-25: this machine's clock is set past the lie, so only the two-node rule can protect the leg.)
+  await quiet(() => run({ p: node(now, lie), check: node(now), out, raceDir: raceDir({ noResult: new Set([tue00]) }), blockxDir: blockxDir(), picksContract: "1P", cardsOf, stakedOf: staked, now: lie + 3600000 }));
   const c = slot0(out)[0];
   assert.equal(c.legs[2][4], "pending", "the Tue 00:00 race isn't over: its leg must not be voided because one node claims a later time");
   assert.equal(c.state, "pending");
@@ -86,12 +87,13 @@ test("C-R-3: race cards the race recorder flags (thin samples, nodes disagreeing
   const big = CARD(0).field.map((r) => (r.a === H4 ? { ...r, vhp: 6000 } : r));
   const honest = { ...CARD(1000), field: big }, flagged = { ...CARD(2000, { flagged: [H4], samples: 1 }), field: CARD(0).field.map((r) => (r.a === H4 ? { ...r, vhp: 1 } : r)) };
   // The card in force at sending is the flagged one (a lying VHP node made H4 look tiny): it must not set the price.
-  const picked = C.priceCard([{ cards: [honest, flagged] }], 3000);
+  const picked = C.priceCard([{ cards: [honest, flagged] }], 3000, H4);
   assert.notEqual(picked, flagged, "a flagged / thin-sample card must not be the price card");
   assert.equal(picked, honest);
   assert.ok(C.priceLeg(picked, leg).f100 < 300);
-  for (const bad of [{ ...honest, flagged: [H4] }, { ...honest, topInDoubt: true }, { ...honest, samples: 11 }, { ...honest, samples: undefined }])
-    assert.equal(C.priceCard([{ cards: [bad] }], 3000), null, "flagged, top in doubt, or under 12 samples: not usable");
+  // (Fix-check FC-8: flags are per producer, as Block X's flags(card, signer).)
+  for (const bad of [{ ...honest, flagged: [H4] }, { ...honest, topInDoubt: true }]) assert.equal(C.priceCard([{ cards: [bad] }], 3000, H4), null, "flagged for H4, or the top in doubt: not H4's price card");
+  for (const bad of [{ ...honest, samples: 11 }, { ...honest, samples: undefined }]) assert.equal(C.priceCard([{ cards: [bad] }], 3000), null, "under 12 samples: not usable");
 });
 
 test("C-R-4: a busy week (200 wallets x 3 six-leg cards a day) still publishes, and the Vault file is never blocked by another file", async () => {
@@ -136,7 +138,10 @@ test("C-R-5b: a fixed slot in the previous files is checked against the chain be
   const MAL = "1MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM", round = C.slotRound(D3, 0), prev = tmp();
   const fake = { player: MAL, round, time: D3 * M.DAY + 3600000, changes: 0, priceAt: D3 * M.DAY, settled: D3 * M.DAY,
     legs: Array.from({ length: 10 }, (_, i) => [1, 99000 + i, H1, 300, "hit"]), state: "final", outcome: "hit", pts: 0 };
-  fs.writeFileSync(path.join(prev, "W003.json"), JSON.stringify({ v: 1, week: 3, start: 0, end: 0, slots: [{ round, fixed: true, cards: [fake] }] }));
+  // (Fix-check FC-25: the earlier file in the format the recorder reads now, a day file, so the test can fail.)
+  fake.pts = 2 * 0 + C.pointsFor(fake.legs.map((l) => l[3]));
+  fs.writeFileSync(path.join(prev, `D${String(D3).padStart(5, "0")}.json`), JSON.stringify({ v: 2, day: D3, start: D3 * M.DAY, slots: [{ round, fixed: true, cards: [fake] }] }));
+  fs.writeFileSync(path.join(prev, "index.json"), JSON.stringify({ v: 2, updated: "2026-11-09T00:00:00.000Z", days: [D3], contract: null }));
   const out = tmp();
   await quiet(() => run({ p: "p", check: "c", head: headAt(M.weekStart(4) + 13 * 3600000), prev, out, raceDir: raceDir(), blockxDir: blockxDir(), picksContract: "1P", cardsOf: async () => [], stakedOf: staked }));
   const vf = path.join(out, "vault", "W3.json");

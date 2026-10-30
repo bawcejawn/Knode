@@ -138,17 +138,25 @@ jobs:
           nat = lambda x: type(x) is int and 0 <= x <= SAFE
           isaddr = lambda a: type(a) is str and addr.fullmatch(a) is not None
           DAY = 86400000; WEEK = 7 * DAY; HOUR = 3600000; GENESIS = 1792368000000   # week 0: 2026-10-19 00:00 UTC
-          RACE = 6 * HOUR; BLOCK_ROUND = 2400; CARDS_PER_DAY = 3; MAX_CHANGES = 3; MAX_SIZE = 2048 * 1024
+          CARDS_PER_DAY = 3; MAX_CHANGES = 3; MAX_SIZE = 2048 * 1024; BEST = 10; MIN_WEEK_PTS = 100
           BASE = {2: 3, 3: 7, 4: 15, 5: 30, 6: 60, 7: 120, 8: 240, 9: 480, 10: 960}
-          RESULTS = ("pending", "hit", "miss", "void")
+          RESULTS = ("pending", "hit", "miss", "void", "unresolved")
           # (CHECK_NOW_MS: the tests' fixed clock; the workflow never sets it.)
           now = int(os.environ.get("CHECK_NOW_MS") or time.time() * 1000)
           cw = (now - GENESIS) // WEEK; today = now // DAY
           first_day = (GENESIS + max(0, cw - 1) * WEEK) // DAY        # Monday of last week
           held = []
           def hold(name, why, alert):
-              held.append(name); print(("::error::" if alert else "::notice::") + "held, not published: " + name + ": " + why)
+              if name not in held: held.append(name)
+              print(("::error::" if alert else "::notice::") + "held, not published: " + name + ": " + why)
               if alert: held.append("!alert")
+          # Fix-check FC-24 (Block X round 7): JavaScript compares with ===, Python's == says True == 1 and 3.0 == 3, so
+          # published content is compared with same(), types included.
+          def same(a, b):
+              if type(a) is not type(b): return False
+              if type(a) is dict: return a.keys() == b.keys() and all(same(a[k], b[k]) for k in a)
+              if type(a) is list: return len(a) == len(b) and all(same(x, y) for x, y in zip(a, b))
+              return a == b
           def load(path):
               try: return json.load(open(path, encoding="utf-8"))
               except Exception: return None
@@ -158,17 +166,20 @@ jobs:
               for f in fs: num *= f; den *= 100
               return num // den
           def recount(c):
+              # As bot/games/combo.ts recount: a miss decides; else an unresolved leg voids the card (fix-check FC-2).
               if c["priceAt"] is None: return ("void", 0)
+              if any(l[4] == "miss" or (l[4] == "hit" and not l[3] > 0) for l in c["legs"]): return ("miss", 0)
+              if any(l[4] == "unresolved" for l in c["legs"]): return ("void", 0)
               kept = [l for l in c["legs"] if l[4] != "void"]
               if len(kept) < 2: return ("void", 0)
               if any(l[4] != "hit" or not l[3] > 0 for l in kept): return ("miss", 0)
               return ("hit", points([l[3] for l in kept]))
           def leg_ok(l):
-              return type(l) is list and len(l) == 5 and l[0] in (1, 2, 3, 4) and nat(l[1]) and l[1] > 0 and isaddr(l[2]) and type(l[3]) is int and 0 <= l[3] <= 300 and l[4] in RESULTS
+              return type(l) is list and len(l) == 5 and type(l[0]) is int and l[0] in (1, 2, 3, 4) and nat(l[1]) and l[1] > 0 and isaddr(l[2]) and type(l[3]) is int and 0 <= l[3] <= 300 and l[4] in RESULTS
           CARD = {"player", "round", "time", "changes", "priceAt", "legs", "state", "outcome", "pts", "settled"}
           def card_ok(c, rnd, day):
               if type(c) is not dict or set(c) != CARD: return False
-              if not (isaddr(c["player"]) and c["round"] == rnd and nat(c["time"]) and day * DAY <= c["time"] < (day + 1) * DAY and c["time"] <= now): return False
+              if not (isaddr(c["player"]) and same(c["round"], rnd) and nat(c["time"]) and day * DAY <= c["time"] < (day + 1) * DAY and c["time"] <= now): return False
               if not (type(c["changes"]) is int and 0 <= c["changes"] <= MAX_CHANGES): return False
               if not (c["priceAt"] is None or (nat(c["priceAt"]) and c["priceAt"] <= c["time"] and c["time"] - c["priceAt"] <= 3 * HOUR)): return False
               legs = c["legs"]
@@ -180,13 +191,13 @@ jobs:
                   return (c["outcome"], c["pts"]) == recount(c) and all(l[4] != "pending" for l in legs)
               return c["pts"] == 0                                                         # not final: no points yet
           def day_ok(j, f):
-              if type(j) is not dict or set(j) != {"v", "day", "start", "slots"} or j["v"] != 2 or not nat(j["day"]) or f != "D%05d.json" % j["day"]: return False
+              if type(j) is not dict or set(j) != {"v", "day", "start", "slots"} or not same(j["v"], 2) or not nat(j["day"]) or f != "D%05d.json" % j["day"]: return False
               day = j["day"]
-              if j["start"] != day * DAY or day > today: return False
+              if not same(j["start"], day * DAY) or day > today: return False
               sl = j["slots"]
               if type(sl) is not list or len(sl) > CARDS_PER_DAY: return False
               rounds = [s.get("round") if type(s) is dict else None for s in sl]
-              if rounds != sorted(set(r for r in rounds if type(r) is int)) or len(rounds) != len(set(rounds)): return False
+              if not all(type(r) is int for r in rounds) or rounds != sorted(set(rounds)): return False
               for s in sl:
                   if set(s) != {"round", "fixed", "cards"} or not nat(s["round"]) or s["round"] // CARDS_PER_DAY != day or type(s["fixed"]) is not bool: return False
                   if s["fixed"] and now < (day + 1) * DAY: return False                  # a day not over can't be fixed
@@ -197,17 +208,35 @@ jobs:
           ROW = {"a", "place", "pts", "hits", "cards", "best", "days", "lastHit", "staked", "ranked"}
           def rows_ok(rows):
               return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == ROW and isaddr(x["a"]) and all(nat(x[k]) for k in ("place", "pts", "hits", "cards", "best", "days", "lastHit"))
-                  and x["place"] >= 1 and x["staked"] in (None, True, False) and x["ranked"] is (x["staked"] is True) for x in rows) and len({x["a"] for x in rows}) == len(rows)
+                  and x["place"] >= 1 and x["staked"] in (None, True, False) and type(x["staked"]) in (type(None), bool) and x["ranked"] is (x["staked"] is True) for x in rows) and len({x["a"] for x in rows}) == len(rows)
           def board_ok(j):
-              if type(j) is not dict or set(j) != {"v", "updated", "today", "week", "lastWeek", "allTime"} or j["v"] != 1 or not iso.fullmatch(str(j["updated"])): return False
+              if type(j) is not dict or set(j) != {"v", "updated", "today", "week", "lastWeek", "allTime"} or not same(j["v"], 1) or not iso.fullmatch(str(j["updated"])): return False
               t, w, lw, at = j["today"], j["week"], j["lastWeek"], j["allTime"]
-              if not (type(t) is dict and set(t) == {"day", "rows"} and ymd.fullmatch(str(t["day"])) and rows_ok(t["rows"])): return False
-              if not (type(w) is dict and set(w) == {"week", "start", "rows"} and nat(w["week"]) and w["start"] == GENESIS + w["week"] * WEEK and rows_ok(w["rows"])): return False
+              if not (type(t) is dict and set(t) == {"day", "rows"} and type(t["day"]) is str and ymd.fullmatch(t["day"]) and rows_ok(t["rows"])): return False
+              if not (type(w) is dict and set(w) == {"week", "start", "rows"} and nat(w["week"]) and same(w["start"], GENESIS + w["week"] * WEEK) and rows_ok(w["rows"])): return False
               if not (type(at) is dict and set(at) == {"rows"} and rows_ok(at["rows"])): return False
-              return lw is None or (type(lw) is dict and set(lw) == {"week", "start", "final", "rows"} and nat(lw["week"]) and lw["start"] == GENESIS + lw["week"] * WEEK and type(lw["final"]) is bool and rows_ok(lw["rows"]))
-          def vault_points(rows):
-              ds = sorted({r["pts"] for r in rows}, reverse=True); rank = {v: max(1, 255 - i) for i, v in enumerate(ds)}
-              return [{"player": r["a"], "points": rank[r["pts"]]} for r in rows]
+              return lw is None or (type(lw) is dict and set(lw) == {"week", "start", "final", "rows"} and nat(lw["week"]) and same(lw["start"], GENESIS + lw["week"] * WEEK) and type(lw["final"]) is bool and rows_ok(lw["rows"]))
+          def week_board(w):
+              # Fix-check FC-6: last week's board recomputed from the PUBLISHED day files' final cards, as bot/games/combo.ts
+              # does (best 10 cards; order: points, hits, the earlier last hit, address; equal on all three: one place).
+              by = {}
+              for day in range((GENESIS + w * WEEK) // DAY, (GENESIS + (w + 1) * WEEK) // DAY):
+                  j = load(os.path.join(pub, "D%05d.json" % day)) if os.path.isfile(os.path.join(pub, "D%05d.json" % day)) else None
+                  if not day_ok(j, "D%05d.json" % day) if j is not None else False: return None
+                  for s in (j["slots"] if j else []):
+                      for c in s["cards"]:
+                          if c["state"] != "final" or c["outcome"] == "void": continue
+                          b = by.setdefault(c["player"], {"list": [], "hits": 0, "lastHit": 0})
+                          b["list"].append(c["pts"])
+                          if c["outcome"] == "hit": b["hits"] += 1; b["lastHit"] = max(b["lastHit"], c["settled"])
+              out = [{"a": a, "pts": sum(sorted(b["list"], reverse=True)[:BEST]), "hits": b["hits"], "lastHit": b["lastHit"]} for a, b in by.items()]
+              out.sort(key=lambda r: (-r["pts"], -r["hits"], r["lastHit"] or float("inf"), r["a"]))
+              place = 0
+              for i, r in enumerate(out):
+                  p = out[i - 1] if i else None
+                  if not p or (p["pts"], p["hits"], p["lastHit"]) != (r["pts"], r["hits"], r["lastHit"]): place = i + 1
+                  r["place"] = place
+              return out
 
           # 1. Each file: its exact shape. A bad file is held (with an alert); an oversized one too (Repo Lens RL-6:
           #    one file never stops the rest).
@@ -218,56 +247,69 @@ jobs:
               if os.path.getsize(p) > MAX_SIZE: hold("combo/" + f, "over 2 MB", True); continue
               j = load(p)
               if f == "index.json":
-                  ok = type(j) is dict and set(j) == {"v", "updated", "days", "contract"} and j["v"] == 2 and iso.fullmatch(str(j["updated"])) and type(j["days"]) is list \
+                  ok = type(j) is dict and set(j) == {"v", "updated", "days", "contract"} and same(j["v"], 2) and iso.fullmatch(str(j["updated"])) and type(j["days"]) is list \
                       and len(j["days"]) <= 100000 and all(nat(x) and x <= today for x in j["days"]) and j["days"] == sorted(set(j["days"])) and (j["contract"] is None or isaddr(j["contract"]))
               elif f == "board.json": ok = board_ok(j)
               else: ok = day_ok(j, f)
               if not ok: hold("combo/" + f, "not the recorder's shape (or inconsistent: outcomes, points, days, slots)", True)
-          # 2. Day files against the published ones (Repo Lens RL-7, as Block X BX-88): a NEW day file only for last week
-          #    or this week; a published FIXED slot keeps exactly its cards (who, legs, time, changes); a published FINAL
-          #    card never changes. A run that tries is held WHOLE, with an alert: its board and Vault files came from it.
-          rewrote = []
+          # 2. Day files against the published ones (Repo Lens RL-7): a NEW day file only for last week or this week; a
+          #    published FIXED slot keeps exactly its cards (who, legs, time, changes); a published FINAL card never
+          #    changes. A file that breaks this is held ALONE, with an alert (fix-check FC-5, FC-9: one bad run must never
+          #    make every honest run after it look like a rewrite; the recorder keeps published fixed slots and final cards).
           for f in names:
               if not re.fullmatch(r"D\d{5}\.json", f) or ("combo/" + f) in held: continue
               new = load(os.path.join(d, f)); old = load(os.path.join(pub, f)) if os.path.isfile(os.path.join(pub, f)) else None
               if old is None:
-                  if new["day"] < first_day: rewrote.append(f + " (a new file for a day before last week)")
+                  if new["day"] < first_day: hold("combo/" + f, "a new file for a day before last week", True)
                   continue
               if type(old) is not dict or type(old.get("slots")) is not list: continue    # an older published format: replaced
               mine = {s["round"]: s for s in new["slots"]}
+              why = ""
               for s in old["slots"]:
                   if type(s) is not dict: continue
                   n = mine.get(s.get("round"))
                   if s.get("fixed") is True:
-                      key = lambda cs: sorted((c.get("player"), json.dumps(c.get("legs") and [l[:3] for l in c["legs"]]), c.get("time"), c.get("changes")) for c in cs)
-                      if n is None or n["fixed"] is not True or key(n["cards"]) != key(s.get("cards") or []): rewrote.append(f + " (fixed slot %s changed)" % s.get("round")); continue
+                      key = lambda cs: sorted(json.dumps([c.get("player"), [l[:3] for l in c.get("legs") or []], c.get("time"), c.get("changes")]) for c in cs)
+                      if n is None or n["fixed"] is not True or key(n["cards"]) != key(s.get("cards") or []): why = "fixed slot %s changed" % s.get("round"); break
                   nc = {c["player"]: c for c in (n["cards"] if n else [])}
-                  for c in s.get("cards") or []:
-                      if type(c) is dict and c.get("state") == "final" and nc.get(c.get("player")) != c: rewrote.append(f + " (a final card of %s in slot %s changed)" % (c.get("player"), s.get("round")))
-          if rewrote:
-              print("::error::this run changes published Combo cards: " + "; ".join(rewrote[:20]) + ". Nothing from it is published.")
-              for f in names:
-                  if os.path.isfile(os.path.join(d, f)) and ("combo/" + f) not in held: hold("combo/" + f, "the run changes published cards", True)
+                  bad = [c.get("player") for c in s.get("cards") or [] if type(c) is dict and c.get("state") == "final" and not same(nc.get(c.get("player")), c)]
+                  if bad: why = "a final card of %s in slot %s changed" % (bad[0], s.get("round")); break
+              if why: hold("combo/" + f, why, True)
+          # Fix-check FC-23 (Block X BX-96): index.json's day list is append-only; new days only last week or this week.
+          pi = load(os.path.join(pub, "index.json")) if os.path.isfile(os.path.join(pub, "index.json")) else None
+          if type(pi) is dict and type(pi.get("days")) is list and os.path.isfile(os.path.join(d, "index.json")) and "combo/index.json" not in held:
+              ni = load(os.path.join(d, "index.json"))
+              lost = [x for x in pi["days"] if x not in ni["days"]]
+              added = [x for x in ni["days"] if x not in pi["days"] and not (type(x) is int and first_day <= x <= today)]
+              if lost or added: hold("combo/index.json", ("published days %s are missing" % lost[:5]) if lost else ("new days %s aren't last week or this week" % added[:5]), True)
           # 3. Vault files: write-once, only for the week that just ended within the Vault's 3 days by this job's clock,
-          #    and exactly the PUBLISHED final board's staked players with 1+ point, in its order (Repo Lens RL-7).
+          #    and exactly the staked players with 1+ point of the PUBLISHED final board, whose points must equal the
+          #    PUBLISHED day files' final cards (fix-check FC-6), mapped by board place (FC-17).
           vdir = os.path.join(d, "vault")
           pb = load(os.path.join(pub, "board.json")) if os.path.isfile(os.path.join(pub, "board.json")) else None
           plw = pb.get("lastWeek") if type(pb) is dict else None
           for f in (sorted(os.listdir(vdir)) if os.path.isdir(vdir) else []):
               name = "combo/vault/" + f
-              if rewrote: hold(name, "the run changes published cards", True); continue
               j = load(os.path.join(vdir, f))
-              if not (type(j) is dict and set(j) == {"game", "week", "final", "rows", "first", "second"} and j["game"] == 8 and nat(j["week"]) and f == "W%d.json" % j["week"]
-                      and j["final"] is True and j["first"] == [] and j["second"] == [] and type(j["rows"]) is list and len(j["rows"]) <= 100000
+              if not (type(j) is dict and set(j) == {"game", "week", "final", "rows", "first", "second"} and same(j["game"], 8) and nat(j["week"]) and f == "W%d.json" % j["week"]
+                      and j["final"] is True and same(j["first"], []) and same(j["second"], []) and type(j["rows"]) is list and len(j["rows"]) <= 100000
                       and all(type(r) is dict and set(r) == {"player", "points"} and isaddr(r["player"]) and type(r["points"]) is int and 1 <= r["points"] <= 255 for r in j["rows"])
                       and len({r["player"] for r in j["rows"]}) == len(j["rows"])):
                   hold(name, "not the Vault file's shape", True); continue
               w = j["week"]; end = GENESIS + (w + 1) * WEEK
               if os.path.isfile(os.path.join(pub, "vault", f)): continue                  # write-once: the push step skips it
               if w != cw - 1 or not (end <= now <= end + 3 * DAY): hold(name, "not the week that just ended, within the Vault's 3 days, by this job's clock", w != cw); continue
-              if not (type(plw) is dict and board_ok(pb) and plw["week"] == w and plw["final"] is True and now >= end + 12 * HOUR): hold(name, "its week isn't final on the published board yet", False); continue
-              want = vault_points([r for r in plw["rows"] if r["staked"] is True and r["pts"] >= 100])
-              if j["rows"] != want: hold(name, "its rows aren't the published final board's staked players with 1+ point, in order", True); continue
+              if not (type(plw) is dict and board_ok(pb) and same(plw["week"], w) and plw["final"] is True and now >= end + 12 * HOUR): hold(name, "its week isn't final on the published board yet", False); continue
+              truth = week_board(w)
+              if truth is None: hold(name, "a published day file of its week isn't the recorder's shape", True); continue
+              rows = {r["a"]: r for r in plw["rows"]}
+              wrong = [t["a"] for t in truth if t["pts"] >= MIN_WEEK_PTS and not (t["a"] in rows and same(rows[t["a"]]["pts"], t["pts"]) and same(rows[t["a"]]["place"], t["place"]))]
+              wrong += [a for a, r in rows.items() if r["pts"] >= MIN_WEEK_PTS and not any(t["a"] == a for t in truth)]
+              if wrong: hold(name, "the published board's last week doesn't match the published final cards (e.g. %s)" % wrong[0], True); continue
+              ok = [t for t in truth if t["pts"] >= MIN_WEEK_PTS and rows[t["a"]]["staked"] is True]
+              distinct = sorted({t["place"] for t in ok}); rank = {pl: max(1, 255 - i) for i, pl in enumerate(distinct)}
+              want = [{"player": t["a"], "points": rank[t["place"]]} for t in ok]
+              if not same(j["rows"], want): hold(name, "its rows aren't the published final board's staked players with 1+ point, by place", True); continue
           open(heldf, "w").write("".join(x + "\n" for x in held))
           print("combo files checked")
           PY

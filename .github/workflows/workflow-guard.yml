@@ -4,9 +4,9 @@ name: Workflow guard
 
 on:
   push:
-    paths: [".github/workflows/**", "bot/workflow.test.ts", "tests/audit/*publish*", "tests/audit/published-files.test.ts"]
+    paths: [".github/workflows/**", "bot/workflow.test.ts", "tests/audit/*publish*", "tests/audit/published-files.test.ts", "tests/audit/combo-recorder.test.mjs", "tests/audit/repolens-combo-recorder.test.mjs", "tests/audit/repolens-fc-combo/**"]
   pull_request:
-    paths: [".github/workflows/**", "bot/workflow.test.ts", "tests/audit/*publish*", "tests/audit/published-files.test.ts"]
+    paths: [".github/workflows/**", "bot/workflow.test.ts", "tests/audit/*publish*", "tests/audit/published-files.test.ts", "tests/audit/combo-recorder.test.mjs", "tests/audit/repolens-combo-recorder.test.mjs", "tests/audit/repolens-fc-combo/**"]
   workflow_dispatch: {}
 
 permissions:
@@ -27,3 +27,5 @@ jobs:
       - run: npm ci --no-audit --no-fund --ignore-scripts
       # The publish job's own tests (they run its shell and merge code against a scratch repository).
       - run: node --import tsx --test --test-concurrency=1 tests/audit/*publish*.test.ts tests/audit/*publish*.test.mjs tests/audit/published-files.test.ts
+      # Combo's publish step (combo.yml) and its tests (fix-check FC-20).
+      - run: node --import tsx --test --test-concurrency=1 tests/audit/combo-recorder.test.mjs tests/audit/repolens-combo-recorder.test.mjs tests/audit/repolens-fc-combo/*.test.mjs

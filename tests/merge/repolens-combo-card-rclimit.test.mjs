@@ -29,14 +29,19 @@ test("C-W-3: a sponsored 6-leg card goes out with at least 2x the measured 10-le
   const provider = { getChainId: async () => "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==", readContract: async () => ({ result: "CAE" }), getAccountRc: async () => "1000000000", wait: async () => ({}) };
   // (Combo fix round: the connected wallet is set before init, which reads it; after init the wallet had no address.)
   ctx.localStorage.getItem = (k) => (k === "kw-active" ? ME : k === "kw-kind" ? "kondor" : k === "kw-accounts" ? JSON.stringify([{ kind: "kondor", address: ME }]) : null);
-  ctx.window.KWallet.init({ provider, payer: "sponsor", sponsor: { address: SP, covers: ["1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", PICKS], picks: PICKS, rcLimit: "100000000", rcLimits: { [`${PICKS}:8ce33c6c`]: ROW } } });
+  // (Fix-check FC-25: the sponsor block is the site's real one, game-data/deployment.json, not one made up here.)
+  const dep = JSON.parse(fs.readFileSync(`${APP}/game-data/deployment.json`, "utf8"));
+  assert.equal(dep.payer, "sponsor"); assert.ok(dep.sponsor.covers.includes(dep.sponsor.picks));
+  ctx.window.KWallet.init({ provider, payer: "sponsor", sponsor: dep.sponsor });
   // a 6-leg card: pick_arguments with field 6 (legs) repeated six times
   const legs = Array.from({ length: 6 }, (_, i) => [0x32, 0x1f, 0x08, 1 + (i % 4), 0x10, 0x90, 0x4e, 0x1a, 0x19, ...new Array(25).fill(i + 1)]).flat();
   const args = koilib.utils.encodeBase64url(new Uint8Array([0x0a, 0x19, ...new Array(25).fill(9), 0x10, 0x08, 0x18, 0x99, 0x01, ...legs]));
-  try { await ctx.window.KWallet.send("card", [{ call_contract: { contract_id: PICKS, entry_point: 0x8ce33c6c, args } }]); } catch { /* the stub signer may refuse; options are recorded first */ }
+  try { await ctx.window.KWallet.send("card", [{ call_contract: { contract_id: JSON.parse(fs.readFileSync(`${APP}/game-data/deployment.json`, "utf8")).sponsor.picks, entry_point: 0x8ce33c6c, args } }]); } catch { /* the stub signer may refuse; options are recorded first */ }
   const used = seen.find((o) => o && o.payer === SP);
   assert.ok(used, "the card was offered to the sponsor");
   assert.ok(BigInt(used.rcLimit) >= 2n * MEASURED_10_LEGS, `a card asked for ${used.rcLimit}: less than 2x a measured 10-leg card`);
   const admin = fs.readFileSync(`${APP}/admin/actions.ts`, "utf8");
-  assert.match(admin, /"mana-limit", "picks:pick", "0\.0916",[^\n]*"--limit", "0\.2"/, "the launch sets the Picks pick row to 0.2 Mana");
+  assert.match(admin, /"mana-limit", "picks:pick", [^\n]*"--limit", "0\.2"/, "the launch sets the Picks pick row to 0.2 Mana");
+  // (Fix-check FC-13: 0.0916 was a 10-leg card paid by the player; a SPONSORED single pick used 0.116 on testnet, so a
+  // sponsored 10-leg card must be measured against the 0.2 row before cards go live. That measurement is a launch step.)
 });
