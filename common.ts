@@ -13,10 +13,14 @@ export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const fmt = (x: number, d = 0) => (isFinite(x) ? x.toLocaleString("en-US", { maximumFractionDigits: d }) : "n/a");
 export const pct = (x: number, d = 1) => (isFinite(x) ? (x * 100).toFixed(d) + "%" : "n/a");
 
-export async function withRetry<T>(label: string, fn: () => Promise<T>, tries = 6): Promise<T> {
+/** Audit BX-83: one hung node call can't hold a run until the job's time limit: each try gives up after this long. */
+export const CALL_TIMEOUT_MS = 30000;
+export async function withRetry<T>(label: string, fn: () => Promise<T>, tries = 6, timeoutMs = CALL_TIMEOUT_MS): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await fn();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const limit = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${timeoutMs / 1000} s`)), timeoutMs); });
+      try { return await Promise.race([fn(), limit]); } finally { clearTimeout(timer); }
     } catch (err) {
       if (attempt >= tries) throw new Error(`${label}: ${(err as Error).message}`);
       const wait = 1000 * 2 ** attempt;
@@ -198,17 +202,20 @@ export function readCompact(file = COMPACT): Blk[] {
 /** The VHP token on mainnet; game-data/deployment.json's "vhp" is used when present. */
 export const MAINNET_VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq";
 
-/** VHP held by each address right now, and the whole network's VHP under the key "network" (the token's total
+/** VHP held by each address right now (opts.effective: the effective VHP block production uses, which counts added
+ *  VHP only after 20 blocks; handicap cards use it, audit BX-3 b), and the whole network's VHP under the key "network" (the token's total
  *  supply). Values are 1e-8 units, as text. The height is the head read AFTER the values, so every value is from that
  *  block or an earlier one. A read that returns no value is an error, never "0". */
-export async function readVhp(provider: Provider, vhpContract: string, who: string[]): Promise<{ height: number; values: Record<string, string> }> {
+export async function readVhp(provider: Provider, vhpContract: string, who: string[], opts: { effective?: boolean } = {}): Promise<{ height: number; values: Record<string, string> }> {
   const vhp = new Contract({ id: vhpContract, abi: tokenAbi as any, provider });
   const fn = vhp.functions as any;
   const values: Record<string, string> = {};
   for (const w of [...new Set(who)]) {
     const r: any = w === "network"
       ? await withRetry("VHP total supply", () => fn.total_supply({}))
-      : await withRetry(`VHP of ${w}`, () => fn.balance_of({ owner: w }));
+      : opts.effective
+        ? await withRetry(`effective VHP of ${w}`, () => fn.effective_balance_of({ owner: w }))
+        : await withRetry(`VHP of ${w}`, () => fn.balance_of({ owner: w }));
     // An empty result is how a token reports a zero balance; a missing result is a failed read.
     if (!r || typeof r !== "object" || !("result" in r)) throw new Error(`no answer reading the VHP of ${w}`);
     values[w] = String(r.result?.value ?? "0");

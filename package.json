@@ -11,9 +11,8 @@
     "export-blocks": "tsx export-blocks.ts",
     "bot": "tsx bot/bot.ts",
     "test:resolver": "node --import tsx --test resolver.test.ts",
-    "test:audit": "node --import tsx --test tests/audit/*.test.ts tests/audit/*.test.mjs",
-    "test:browser": "node --test tests/browser/*.test.cjs",
-    "test:audit:serial": "node --import tsx --test --test-concurrency=1 tests/audit/*.test.ts tests/audit/*.test.mjs",
+    "test:audit": "node --import tsx --test tests/audit/*.test.ts tests/audit/*.test.mjs tests/audit/repolens-r4-publish/*.test.mjs tests/audit/repolens-r5-publish/*.test.mjs tests/merge/*.test.mjs",
+    "test:audit:serial": "node --import tsx --test --test-concurrency=1 tests/audit/*.test.ts tests/audit/*.test.mjs tests/audit/repolens-r4-publish/*.test.mjs tests/audit/repolens-r5-publish/*.test.mjs tests/merge/*.test.mjs",
     "desk": "tsx bot/desk.ts",
     "admin": "tsx admin/server.ts",
     "heal": "node bot/heal.mjs",
@@ -21,6 +20,9 @@
     "race": "tsx bot/race.ts",
     "racepicks": "tsx bot/race-picks.ts",
     "blockx": "tsx bot/games/blockx.ts",
+    "picks": "tsx bot/picks.ts",
+    "testnet-site": "node tools/testnet-site.mjs",
+    "test:browser": "node --test tests/browser/*.test.cjs",
     "combo": "tsx bot/games/combo.ts"
   },
   "dependencies": {

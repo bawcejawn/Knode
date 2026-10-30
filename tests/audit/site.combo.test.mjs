@@ -1,4 +1,4 @@
-// Combo Card (site/combo-math.js, shared by the page and the recorder bot/games/combo.ts): the card rules (2 to 6 legs,
+// Combo Card (combo-math.js, shared by the page and the recorder bot/games/combo.ts): the card rules (2 to 6 legs,
 // one leg per race or block, every leg open, the contract's locks), the price of each leg type from a real race card,
 // exact points with the 150 cap, every leg-type result edge, void legs, and the best-10 leaderboard. Offline.
 import { test } from "node:test";
@@ -7,7 +7,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
-const read = (f) => fs.readFileSync(`${APP}/site/${f}`, "utf8");
+const read = (f) => fs.readFileSync(`${APP}/${f}`, "utf8");
 const box = { window: {} };
 vm.runInNewContext(read("race-math.js") + "\n" + read("blockx-math.js") + "\n" + read("combo-math.js"), box);
 const C = box.window.KCombo, M = box.window.KRaceMath, X = box.window.KBlockX;
@@ -84,13 +84,20 @@ test("slots: 3 per UTC day", () => {
   assert.equal(C.dayOfRound(C.slotRound(d, 2) + 1), d + 1);
 });
 
-test("price card: the latest card taken at or before the time", () => {
-  const a = { ...CARD, at: 1000 }, b = { ...CARD, at: 2000 }, empty = { ...CARD, at: 1500, field: [] };
+test("price card: the latest USABLE card taken at or before the time, at most 3 hours before it (Repo Lens RL-8)", () => {
+  const H = 3600000, ok = (at, x = {}) => ({ ...CARD, at, samples: 12, ...x });
+  const a = ok(1000), b = ok(2000), empty = ok(1500, { field: [] });
   const races = [{ cards: [a, null, empty] }, { cards: [b] }];
   assert.equal(C.priceCard(races, 999), null);
   assert.equal(C.priceCard(races, 1000).at, 1000);
   assert.equal(C.priceCard(races, 1999).at, 1000, "a card with no field is skipped");
   assert.equal(C.priceCard(races, 5000).at, 2000);
+  assert.equal(C.priceCard(races, 2000 + 3 * H).at, 2000, "3 hours old: still in force");
+  assert.equal(C.priceCard(races, 2001 + 3 * H), null, "older than 3 hours: no price card");
+  for (const bad of [ok(3000, { samples: 11 }), ok(3000, { samples: undefined }), ok(3000, { flagged: [TOP] }), ok(3000, { topInDoubt: true })])
+    assert.equal(C.priceCard([{ cards: [a, bad] }], 3500).at, 1000, "thin, flagged or in-doubt cards never price");
+  assert.equal(C.cardAfter(races, 1000).at, 2000, "the first usable card after a time");
+  assert.equal(C.cardAfter(races, 2000), null);
 });
 
 test("race chances from the real card: win near-equal, show and top-half spread; seeded and repeatable", () => {
@@ -105,7 +112,8 @@ test("race chances from the real card: win near-equal, show and top-half spread;
 });
 
 test("leg prices: factor = clamp(0.5 / chance, 0.25, 3); Block X by VHP share; unknown horse can't be priced", () => {
-  assert.equal(C.factorOf(0.5), 1); assert.equal(C.factorOf(0.9), 0.56); assert.equal(C.factorOf(0.99), 0.51);
+  // Rounded DOWN to the hundredth (Repo Lens RL-17).
+  assert.equal(C.factorOf(0.5), 1); assert.equal(C.factorOf(0.9), 0.55); assert.equal(C.factorOf(0.99), 0.5); assert.equal(C.factorOf(0.3), 1.66);
   assert.equal(C.factorOf(2.5), 0.25); assert.equal(C.factorOf(0.01), 3); assert.equal(C.factorOf(0), 3);
   const win = C.priceLeg(CARD, leg(C.WIN, R, TOP));
   assert.equal(win.factor, 3, "a ~5% win is capped at ×3");
@@ -114,9 +122,9 @@ test("leg prices: factor = clamp(0.5 / chance, 0.25, 3); Block X by VHP share; u
   const bx = C.priceLeg(CARD, leg(C.BLOCK, B, TOP));
   const total = [...CARD.field, ...CARD.paddock].reduce((s, r) => s + r.vhp, 0);
   assert.equal(bx.chance, Math.round(CARD.field[0].vhp / total * 1e4) / 1e4);
-  assert.equal(bx.factor, Math.round(Math.min(3, 0.5 / bx.chance) * 100) / 100);
+  assert.equal(bx.factor, Math.floor(Math.min(3, 0.5 / bx.chance) * 100 + 1e-9) / 100);
   assert.equal(C.priceLeg(CARD, leg(C.BLOCK, B, PADDOCK)).factor, 3, "small paddock producer: ×3");
-  assert.equal(C.priceLeg(CARD, leg(C.BLOCK, B, STRANGER)).factor, 3, "producer missing from the card: ×3, as Block X");
+  assert.equal(C.priceLeg(CARD, leg(C.BLOCK, B, STRANGER)).factor, 1, "producer missing from the card: ×1, as Block X BX-3 (Repo Lens RL-1)");
   assert.equal(C.priceLeg(CARD, leg(C.SHOW, R, PADDOCK)), null, "a paddock horse isn't in the race field");
   assert.equal(C.priceLeg(null, leg(C.SHOW, R, TOP)), null);
   assert.equal(C.potential(CARD, [leg(C.SHOW, R, PADDOCK), leg(C.BLOCK, B)]).unpriced, true);
@@ -160,27 +168,21 @@ test("results for every leg type: hit / miss / void / pending", () => {
   assert.equal(C.legResult(leg(C.SHOW, R, TOP), { result: null }), "pending");
   assert.equal(C.legResult(leg(C.SHOW, R, TOP), null), "pending");
   // Block X
-  assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, signer: TOP }), "hit");
-  assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, signer: LAST }), "miss");
-  assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, signer: null, void: "no card" }), "void");
+  assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, checked: 2, signer: TOP }), "hit");
+  assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, checked: 2, signer: LAST }), "miss");
+  assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, checked: 0, signer: null, void: "no card" }), "void");
+  // Repo Lens RL-3: Block X voiding a target for its own scoring doesn't hide who signed it.
+  assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, checked: 2, signer: LAST, void: "the two nodes disagreed about the signer's VHP on the lock's handicap card; no points" }), "miss");
+  assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, { final: true, checked: 1, signer: TOP }), "void", "a signer checked on one node only decides nothing");
   assert.equal(C.legResult(leg(C.BLOCK, B, TOP), null, null), "pending");
 });
 
-test("scoring a card: all hit, one miss, voids dropped, final only when every leg is final", () => {
-  const legs = [leg(C.WIN, R, TOP), leg(C.HALF, R + 1, TOP), leg(C.BLOCK, B, TOP)];
-  const f = legs.map((l) => C.priceLeg(CARD, l).f100);
-  assert.deepEqual(plain(C.scoreCard(CARD, legs, ["hit", "hit", "hit"])), { state: "final", outcome: "hit", pts: C.pointsFor(f), counted: 3 });
-  assert.deepEqual(plain(C.scoreCard(CARD, legs, ["hit", "miss", "hit"])), { state: "final", outcome: "miss", pts: 0, counted: 3 });
-  assert.deepEqual(plain(C.scoreCard(CARD, legs, ["miss", "pending", "hit"])), { state: "pending", outcome: "miss", pts: 0, counted: 3 });
-  assert.deepEqual(plain(C.scoreCard(CARD, legs, ["hit", "pending", "hit"])), { state: "pending", outcome: null, pts: 0, counted: 3 });
-  // One void: scored as a 2-leg card on the other two.
-  assert.deepEqual(plain(C.scoreCard(CARD, legs, ["hit", "void", "hit"])), { state: "final", outcome: "hit", pts: C.pointsFor([f[0], f[2]]), counted: 2 });
-  // Two voids of three: fewer than 2 legs left → the card is void.
-  assert.deepEqual(plain(C.scoreCard(CARD, legs, ["void", "void", "hit"])), { state: "final", outcome: "void", pts: 0, counted: 1 });
-  // A race leg on a horse not on the price card: a miss (unless its race is void anyway).
-  const bad = [leg(C.SHOW, R, PADDOCK), leg(C.BLOCK, B, TOP)];
-  assert.equal(C.scoreCard(CARD, bad, ["hit", "hit"]).outcome, "miss");
-  assert.equal(C.scoreCard(CARD, [...bad, leg(C.WIN, R + 2)], ["void", "hit", "hit"]).outcome, "hit");
+test("leg order: the same legs always go in one order (lock time, code, round, producer; Repo Lens RL-13)", () => {
+  const head = { height: 30000000, time: NOW };
+  const a = leg(C.WIN, R, TOP), b = leg(C.SHOW, R, LAST), c = leg(C.HALF, R, PADDOCK);
+  const one = C.sortLegs([c, b, a], head), two = C.sortLegs([b, a, c], head);
+  assert.deepEqual(plain(one), plain(two));
+  assert.deepEqual(plain(one.map((l) => l.code)), [C.WIN, C.SHOW, C.HALF], "one race: by code");
 });
 
 test("leaderboard: best 10 cards, ties by hits then the earlier last hit", () => {
@@ -250,14 +252,18 @@ test("combo page: sends only a Combo card through the Picks contract's pick, onl
   // Stake-only: guests and wallets the Vault says aren't staked are refused before anything is signed.
   assert.match(js, /W\.kind === "guest"\) why = "The Combo Card is a staked game/);
   assert.match(js, /stake === false\) why = "Stake at least 1 VHP in the Combo Card to play\. A stake made this week counts from next week\."/);
-  assert.match(js, /return BigInt\(r\.week_stake \|\| "0"\) >= 100000000n;/, "the stake that counts this week only (CC-C5)");
+  assert.match(js, /return w > 0n && w >= minStakeFor\(cfg, week\);/, "the stake that counts this week only (CC-C5), at least the vault's minimum");
+  assert.match(js, /new URL\("game\/abi\/kpred-v6\.koilib\.json", ROOT\)/, "read with the Vault v6 ABI (Repo Lens RL-4)");
+  assert.match(js, /stake === null\) why = "Reading your stake/, "an unknown stake blocks Send");
+  assert.match(js, /if \(stake !== true\) \{ toast = /, "sendCard itself refuses an unstaked or unknown stake (RL-22)");
+  assert.match(js, /if \(sending\) return;\n    sending = true;/, "a double-click can't send twice (RL-21)");
   // CC-C1: the slots are replaced only after every read succeeded; unknown slots or a new UTC day block sending;
   // the target slot is re-read on chain right before signing and must be empty or exactly the card being changed.
   assert.match(js, /slotsDay = null;\s+\/\/ unknown: Send stays off until a read succeeds/);
   assert.match(js, /const targetSlot = \(\) => \(slotsDay === null \? null :/);
-  assert.match(js, /if \(slotsDay === null \|\| C\.utcDay\(head\.time\) !== slotsDay\)/);
+  assert.match(js, /const sameDay = \(\) => day !== null && slotsDay === day && C\.utcDay\(head\.time\) === day && C\.utcDay\(Date\.now\(\)\) === day && !nearMidnight\(\);/);
   assert.match(js, /if \(!same\(onChain, expected\)\) \{ toast = "Your cards changed on the chain/);
-  assert.match(js, /const round = C\.slotRound\(slotsDay, slot\)/);
+  assert.match(js, /const round = C\.slotRound\(day, slot\)/);
   // Browser storage holds only the draft, and every access is wrapped (it can throw in private windows).
   for (const m of js.matchAll(/localStorage\.[a-zA-Z]+\(/g)) {
     const before = js.slice(Math.max(0, m.index - 80), m.index);
@@ -265,8 +271,8 @@ test("combo page: sends only a Combo card through the Picks contract's pick, onl
   }
   // Network reads: the RPC, race-data, games-data/combo, and this site's own deployment and ABI files.
   const urls = [...js.matchAll(/"https:\/\/[^"]+"/g)].map((m) => m[0]);
-  for (const u of urls) assert.match(u, /koinos\.armana\.io|raw\.githubusercontent\.com\/bawcejawn\/Knode\/(race-data|games-data\/combo)\/|koinosscan\.com|bawcejawn\.github\.io\/Knode\/site\/combo\.html/, u);
-  for (const f of js.matchAll(/new URL\("([^"]+)", ROOT\)/g)) assert.match(f[1], /^(picks-data\/deployment|game-data\/deployment|picks\/abi\/picks\.koilib|game\/abi\/kpred\.koilib)\.json$/, f[1]);
+  for (const u of urls) assert.match(u, /koinos\.armana\.io|raw\.githubusercontent\.com\/bawcejawn\/Knode\/(race-data|games-data\/combo)\/|koinosscan\.com|knodegames\.com\/combo\.html/, u);
+  for (const f of js.matchAll(/new URL\("([^"]+)", ROOT\)/g)) assert.match(f[1], /^(picks-data\/deployment|game-data\/deployment|picks\/abi\/picks\.koilib|game\/abi\/kpred-v6\.koilib)\.json$/, f[1]);
 });
 
 test("combo page: its rules text matches the math (locks, per-race and per-producer rules); base and cap come from the math", () => {

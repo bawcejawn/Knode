@@ -98,6 +98,10 @@ function main() {
   const out = path.join(ROOT, "build/testnet-v2");
   const tsha = compile(path.join(work, "testnet"), out);
   if (tsha === AUDITED_V2) fail("the testnet build came out identical to the mainnet build: the changes did not apply");
+  // Repo Lens RL-23: check the compiled code itself, not only the source lines: the owner's address is a string literal,
+  // which AssemblyScript stores as UTF-16. The test owner must be in it, the KnodeGames (mainnet) owner must not.
+  const wasm = fs.readFileSync(path.join(out, "contract.wasm")), has = (a) => wasm.indexOf(Buffer.from(a, "utf16le")) >= 0;
+  if (has(MAINNET_OWNER) || !has(owner)) fail(`the compiled testnet code ${has(MAINNET_OWNER) ? "still holds the mainnet owner" : "doesn't hold the test owner"}: the source was changed some other way. Nothing was built.`);
   try {
     execFileSync(process.execPath, [path.join(__dirname, "check.cjs")], { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"],
       env: { ...process.env, PICKS_SRC: path.join(work, "testnet/Picks.ts"), PICKS_WAT: path.join(out, "contract.wat") } });

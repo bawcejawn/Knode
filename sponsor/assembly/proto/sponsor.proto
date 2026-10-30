@@ -9,24 +9,23 @@ syntax = "proto3";
 // their own.
 //
 // The website sets payer = sponsor and payee = the player. The chain then asks
-// this contract whether to pay. It says yes only when ALL of these hold:
+// this contract whether to pay. It says yes only when ALL of these hold (v3):
 //   - the sponsor is switched on;
 //   - the transaction is signed by the payee (the player) and by nobody else;
-//   - every operation is a player action on the Knode game (deposit_vhp,
-//     deposit_koin, withdraw, answer, settle, claim, close_week,
-//     finalize_week) or on Knode Swap (swap), a `pick` on the Producer Race
-//     for the payee (when `race` is set), or a VHP/KOIN `approve` with
-//     spender = the game or Knode Swap and owner = the payee;
-//   - for anything but free play, the payee is a real Knode player: holds at
-//     least min_vhp VHP, or has a stake in the game. A transaction made only of
-//     free play (game `answer` calls and Producer Race `pick` calls) is paid
-//     for ANY player (free play drives activity); free play from wallets that
-//     are not real players also counts against a separate daily sub-cap for
-//     everyone (max_mana_free_day), so it can never use up what real players
-//     need;
+//   - every operation is a player action on the Knode game/vault (deposit,
+//     withdraw, answer, settle, claim, close/finalize week, and the vault v6
+//     deposit_to / withdraw_from / move_stake / claim_game for the payee's
+//     own wallet), a `pick` on the Producer Race for the payee, an
+//     allowlisted call for the payee (the Picks contract's `pick`), or a
+//     VHP/KOIN `approve` with spender = the game and owner = the payee.
+//     Knode Swap is NEVER sponsored (owner, 2026-10-29);
 //   - the transaction's Mana limit is within the per-transaction cap, and
 //     this player's totals today and this week, and everyone's total today,
-//     stay within their caps.
+//     stay within their caps;
+//   - a payee that is not a real player (at least min_vhp of ACTIVE stake
+//     this week, in the question game or in the call's own vault game) also
+//     draws from the free players' pool (max_mana_free_day, released by the
+//     hour), so free play can never use up what real players need.
 // A transaction signed by the sponsor wallet's own key is always paid (that
 // is the owner changing settings or moving KOIN out).
 //
@@ -55,12 +54,15 @@ message config {
   uint64 max_mana_per_account_week = 7 [jstype = JS_STRING];
   // Most Mana everyone together may reserve per UTC day.
   uint64 max_mana_per_day = 8 [jstype = JS_STRING];
-  // Only real Knode players are sponsored (audit 2026-10-26 M-1): the payee must hold at least min_vhp of this VHP
-  // token, or have a stake (active or pending) in the game. Required, and min_vhp > 0, when switched on.
+  // Only real Knode players are sponsored (audit 2026-10-26 M-1). v3 (audit SP-2, owner 2026-10-28): a real player has
+  // at least min_vhp ACTIVE stake in the Knode vault: in the question game, or (for a call whose row names game_arg,
+  // and race picks: game 7) in that game this week. Holding VHP, or a pending stake, no longer counts. vhp is still
+  // required (it is one of the tokens whose approve is paid for).
   bytes vhp = 9 [(koinos.btype) = ADDRESS];
   uint64 min_vhp = 10 [jstype = JS_STRING];
   // Most Mana per UTC day, for everyone together, that may pay for answers by wallets that are not real players
-  // (no VHP and no stake). At most max_mana_per_day. 0 = free wallets are never sponsored.
+  // (no stake). At most max_mana_per_day. 0 = free wallets are never sponsored. v3 (audit SP-3): released by the hour,
+  // 1/24 of it at 00:00 UTC and 1/24 more each hour, so a burst can only use what has been released so far today.
   uint64 max_mana_free_day = 11 [jstype = JS_STRING];
   // The Producer Race picks contract (race/). When set, `pick` calls for the payee are sponsored as free play, like
   // game answers. Empty = picks are not sponsored.
@@ -68,6 +70,25 @@ message config {
   // v3: more Knode player actions, by contract and entry point, so new KnodeGames contracts (the Picks contract first)
   // are sponsored without new sponsor code. At most 8. See allowed_call.
   repeated allowed_call allowed = 13;
+  // v3 (owner, 2026-10-28): the most Mana each kind of action may ask for, so a transaction's limit fits what it
+  // really uses. The caps count a transaction's Mana LIMIT (the sponsor can't know what it will use when it approves
+  // it), so a loose limit used up players' allowances and everyone's daily totals far faster than the Mana really spent.
+  // A transaction's rc_limit must be at most the sum, over its operations, of each operation's row here (an operation
+  // with no row counts as max_mana_per_tx), and at most max_mana_per_tx. At most 16 rows. The tool sets each row from
+  // measured use with a safety margin (npm run sponsor -- mana-report).
+  repeated mana_cap mana_caps = 14;
+  // v3, audit SP-37: the game is already the Knode vault (v6). Until then the sponsor never asks it for a stake in
+  // another game (the live v5 has no get_game_player, and on Koinos that failed call would abort the sponsor) and never
+  // pays for the vault's own calls. The tool reads it from the game's state on two nodes.
+  bool game_has_vault = 15;
+}
+
+// v3: one kind of action and the most Mana it may ask for (see config.mana_caps).
+message mana_cap {
+  bytes contract = 1 [(koinos.btype) = ADDRESS];
+  uint32 entry_point = 2;
+  // At most max_mana_per_tx, above 0.
+  uint64 max_mana = 3 [jstype = JS_STRING];
 }
 
 // v3: one more player action the sponsor pays for. The call is paid only when its arguments are exactly what the
@@ -80,12 +101,16 @@ message config {
 message allowed_call {
   bytes contract = 1 [(koinos.btype) = ADDRESS];
   uint32 entry_point = 2;
-  // Free play: paid for any wallet, like game answers (wallets that are not real players count against
-  // max_mana_free_day). Otherwise: real players only.
+  // Unused since v3 (audit SP-23): every covered call is paid for any wallet within its caps; a wallet that is
+  // not a real player draws from max_mana_free_day. Kept so old settings still decode.
   bool free_play = 3;
   // One byte per field number from 1: the field's protobuf wire type + 1 (1 = varint, 2 = 64-bit, 3 = bytes or a
-  // message, 6 = 32-bit), or 0 = the field may not appear. arg_types[0] must be 3 (the player). 1 to 16 bytes.
+  // message, 6 = 32-bit), or 0 = the field may not appear; plus 0x10 for a REPEATED field (audit SP-16: only a
+  // repeated field may appear more than once). arg_types[0] must be 3 (the player, once). 1 to 16 bytes.
   bytes arg_types = 4 [(koinos.btype) = HEX];
+  // The argument field holding the Knode vault game id (a varint), or 0. When set, a payee with at least min_vhp
+  // staked in THAT game this week counts as a real player for this call (owner, 2026-10-28: every game takes stakes).
+  uint32 game_arg = 5;
 }
 
 message usage {
@@ -107,7 +132,7 @@ message would_pay_result {
   string reason = 2;
   uint64 left_today = 3 [jstype = JS_STRING];
   uint64 left_this_week = 4 [jstype = JS_STRING];
-  // Mana left today for answers by wallets that are not real players (meaningful when answer_only was asked).
+  // Free players' Mana released and not yet used today (everyone's; it grows by the hour).
   uint64 left_free_today = 5 [jstype = JS_STRING];
   // True when this account would count as a free (non-player) wallet.
   bool free = 6;
@@ -135,13 +160,15 @@ message get_total_usage_arguments {}
 // @result usage
 message get_free_usage_arguments {}
 
-// @description Would the sponsor pay a transaction from this player with this Mana limit (on/off, caps and the player rule; the operations themselves are checked when it is sent). answer_only = the transaction is only free play (game answers and race picks).
+// @description Would the sponsor pay a transaction from this player with this Mana limit (on/off, caps and the player rule; the operations themselves are checked when it is sent). game = the call's game, so a wallet staked only in that game counts as a real player, as authorize does.
 // @read-only true
 // @result would_pay_result
 message would_pay_arguments {
   bytes account = 1 [(koinos.btype) = ADDRESS];
   uint64 rc_limit = 2 [jstype = JS_STRING];
-  bool answer_only = 3;
+  bool answer_only = 3;   // unused since v3 (any covered call may use the free pool); kept for old pages
+  uint32 game = 4;        // audit SP-22: the call's game (a Picks game id, 7 = race picks, 0 = the question game)
+  repeated uint32 games = 5;   // audit SP-38: every game of a batch (at most 4 are read, as authorize)
 }
 
 // @description Change the settings. Needs the sponsor wallet's own key.
@@ -174,12 +201,22 @@ message game_get_player_args {
   bytes player = 1 [(koinos.btype) = ADDRESS];
   uint64 week = 2 [jstype = JS_STRING];
 }
+// The Knode vault (game v6) get_game_player: only week_stake is read (the stake counted for that week).
+message game_get_game_player_args {
+  bytes player = 1 [(koinos.btype) = ADDRESS];
+  uint32 game = 2;
+  uint64 week = 3 [jstype = JS_STRING];
+}
+message game_get_game_player_result {
+  uint64 week_stake = 4 [jstype = JS_STRING];
+}
 message game_player {
   uint64 stake = 1 [jstype = JS_STRING];
   uint64 pending = 2 [jstype = JS_STRING];
 }
 message game_get_player_result {
   game_player player = 1;
+  uint64 active_stake = 3 [jstype = JS_STRING];   // audit SP-28: the stake that counts for the asked week
 }
 
 // The KCS-4 approve arguments, read from a token operation.

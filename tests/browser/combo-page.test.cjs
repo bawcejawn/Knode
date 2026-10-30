@@ -6,7 +6,7 @@ test("CC-C1: Send during a refresh must not overwrite card 1", { timeout: 60000 
   const now = Date.now(), day = Math.floor(now / H.DAY), r = Math.floor(now / 21600000) + 3;
   const card1 = { legs: [{ code: 1, round: String(r), producer: H.PRODS[2] }, { code: 2, round: String(r), producer: H.PRODS[3] }], changes: 0 };
   let slow = false;
-  const t = await H.open({ legs: H.openLegs(now), slots: (round) => (round === day * 3 ? card1 : null), delay: () => (slow ? 3000 : 0) });
+  const t = await H.open({ vault: "staked", legs: H.openLegs(now), slots: (round) => (round === day * 3 ? card1 : null), delay: () => (slow ? 3000 : 0) });
   try {
     const { page } = t;
     await page.waitForFunction(() => /Send card 2 of 3/.test(document.getElementById("send").textContent) && !document.getElementById("send").disabled, null, { timeout: 20000 });
@@ -26,7 +26,7 @@ test("CC-C1 (b): a failed read of today's cards must not show card 1 as free and
   const now = Date.now(), day = Math.floor(now / H.DAY), r = Math.floor(now / 21600000) + 3;
   const card1 = { legs: [{ code: 1, round: String(r), producer: H.PRODS[2] }, { code: 2, round: String(r), producer: H.PRODS[3] }], changes: 0 };
   let fail = false;
-  const t = await H.open({ legs: H.openLegs(now), slots: (round) => (round === day * 3 ? card1 : null), failPick: () => fail });
+  const t = await H.open({ vault: "staked", legs: H.openLegs(now), slots: (round) => (round === day * 3 ? card1 : null), failPick: () => fail });
   try {
     const { page } = t;
     await page.waitForFunction(() => /Send card 2 of 3/.test(document.getElementById("send").textContent) && !document.getElementById("send").disabled, null, { timeout: 20000 });
@@ -39,5 +39,16 @@ test("CC-C1 (b): a failed read of today's cards must not show card 1 as free and
     const sent = await page.evaluate(() => window.__sent[0] || null);
     const round = sent ? Number((await H.ser.deserialize(sent.args, "picks.pick_arguments")).round) : null;
     assert.ok(disabled || round !== day * 3, `button "${label}" sent to slot 0 (round ${round}): card 1 overwritten`);
+  } finally { await t.browser.close(); }
+});
+
+// Repo Lens RL-4 (page side), with the Vault v6 live: a wallet with no stake in the Combo Card this week is refused; a
+// staked one can send (the CC-C1 tests above run staked).
+test("RL-4: with the Vault v6 live, an unstaked wallet is refused before anything is signed", { timeout: 60000 }, async () => {
+  const t = await H.open({ vault: "unstaked", legs: H.openLegs(Date.now()) });
+  try {
+    const { page } = t;
+    await page.waitForFunction(() => /Send card/.test(document.getElementById("send").textContent) && /Stake at least 1 VHP/.test(document.getElementById("send").title), null, { timeout: 20000 });
+    assert.strictEqual(await page.$eval("#send", (b) => b.disabled), true);
   } finally { await t.browser.close(); }
 });

@@ -100,12 +100,19 @@ async function meta(p, id) {
   const hex = typeof v.hash === "string" ? (v.hash.startsWith("0x") ? v.hash.slice(2) : Buffer.from(v.hash, "base64url").toString("hex")) : "";
   return { sha256: hex.startsWith("1220") ? hex.slice(4) : hex, call: !!v.authorizes_call_contract, tx: !!v.authorizes_transaction_application, upload: !!v.authorizes_upload_contract };
 }
+/** Does compiled AssemblyScript code hold this address as a string literal (UTF-16)? */
+export const wasmHasOwner = (wasm, address) => typeof address === "string" && address.length > 0 && Buffer.from(wasm).indexOf(Buffer.from(address, "utf16le")) >= 0;
 function v2Build() {
   const m = path.join(V2_DIR, "manifest.json"), w = path.join(V2_DIR, "contract.wasm");
   if (!fs.existsSync(m) || !fs.existsSync(w)) fail("No testnet v2 build yet: node tools/combo-testnet.mjs build --home <dir>");
   const man = JSON.parse(fs.readFileSync(m, "utf8")), wasm = fs.readFileSync(w);
   const s = crypto.createHash("sha256").update(wasm).digest("hex");
   if (s !== man.sha256 || man.network !== "koinos-foundation-testnet" || man.version !== 2) fail("build/testnet-v2 doesn't match its manifest: build again.");
+  // Repo Lens RL-23: the owner is checked in the compiled code itself, not only in the manifest. The source's owner
+  // address is a string literal, which AssemblyScript stores once, as UTF-16, in the code's data: the testnet owner must
+  // be there and the KnodeGames (mainnet) owner must not.
+  if (wasmHasOwner(wasm, MAINNET_OWNER)) fail("build/testnet-v2/contract.wasm still holds the mainnet owner's address. Nothing was sent: build again.");
+  if (!wasmHasOwner(wasm, man.owner)) fail(`build/testnet-v2/contract.wasm doesn't hold the owner ${man.owner} its manifest names. Nothing was sent: build again.`);
   return { man, wasm, sha256: s };
 }
 /** The v2 build must keep the owner the contract has now. A contract never handed over takes its owner from the code
@@ -265,7 +272,8 @@ async function keys() {
   if (!FRESH) fail("keys is for --fresh only (the upgrade route uses the existing Block X testnet contract).");
   if (ENV.COMBO_PICKS_WIF) return log(`COMBO_PICKS_WIF is already in .env.testnet: ${Signer.fromWif(ENV.COMBO_PICKS_WIF).getAddress()}`);
   const s = new Signer({ privateKey: crypto.randomBytes(32).toString("hex") });
-  fs.appendFileSync(path.join(HOME, ".env.testnet"), `\n# Combo Card testnet: the brand-new wallet that becomes the Combo-only Picks contract (never send it KOIN)\nCOMBO_PICKS_WIF=${s.getPrivateKey("wif")}\n`);
+  fs.appendFileSync(path.join(HOME, ".env.testnet"), `\n# Combo Card testnet: the brand-new wallet that becomes the Combo-only Picks contract (never send it KOIN)\nCOMBO_PICKS_WIF=${s.getPrivateKey("wif")}\n`, { mode: 0o600 });
+  try { fs.chmodSync(path.join(HOME, ".env.testnet"), 0o600); } catch { /* Windows: the file stays as your account made it (Repo Lens RL-33) */ }
   log(`✔ COMBO_PICKS_WIF added to .env.testnet. The new contract wallet: ${s.getAddress()} (send it nothing).`);
 }
 async function uploadFresh() {

@@ -141,6 +141,18 @@ jobs:
           BOT_GIT_PUSH: "1"
           # The producer lookup's block snapshot (display only); the publish job puts it on the blocks-data branch.
           SNAPSHOT_OUT: ${{ runner.temp }}/snapshot/recent-blocks.json
+      # Owner, 2026-10-28: a warning on the run when the sponsor's free pool or everyone's total is past 80% today
+      # (read-only, no key), so the caps can be adjusted if free Mana drains fast.
+      # Audit SP-31: it runs even when the bot step failed. The step itself is continue-on-error; a warning makes the last
+      # step ("Mana sponsor alert") fail the run at the END (after the public files are handed on), so GitHub emails you.
+      # It also warns when the sponsor wallet's own Mana runs low.
+      - name: Mana sponsor watch
+        id: sponsor_watch
+        if: always()
+        continue-on-error: true
+        run: npm run sponsor -- watch
+        env:
+          RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
@@ -168,6 +180,11 @@ jobs:
           path: game-data/blocks.csv
           retention-days: 1
           if-no-files-found: ignore
+      - name: Mana sponsor alert (emails you)
+        if: ${{ always() && steps.sponsor_watch.outcome == 'failure' }}
+        run: |
+          echo "::error::Mana sponsor: a cap is past 80%, its Mana is low, or the check couldn't read the chain: see the 'Mana sponsor watch' step. If free Mana drains fast, lower the caps in the admin page (Mana sponsor)."
+          exit 1
 
   # Saving a cache runs nothing from it. The cache path stays game-data/blocks.csv so earlier caches keep matching.
   blocks-out:

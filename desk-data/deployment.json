@@ -14,25 +14,7 @@
   "timelockLength": "172800000",
   "chainId": "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==",
   "producerKey": "AzCYCDLDa49PPVHKk60xQbOErS6XY1TcEA8bkSo8Sk6E",
-  "payer": "sponsor",
-  "sponsor": {
-    "address": "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8",
-    "covers": [
-      "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr",
-      "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR",
-      "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq",
-      "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK",
-      "1EN7xU8R9tQXjHvrX79qZvvvGkkKWVnB5K"
-    ],
-    "race": "1EN7xU8R9tQXjHvrX79qZvvvGkkKWVnB5K",
-    "tokens": [
-      "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq",
-      "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK"
-    ],
-    "rcLimit": "100000000",
-    "rcLimitOther": "300000000",
-    "guest": true
-  },
+  "payer": "self",
   "v1UploadTx": "0x122054bac9c483a15f641c8553b3be541ae876eb7583a7299251e078500f005d6aee",
   "upgradedAt": "2026-10-28T19:25:15.274Z"
 }

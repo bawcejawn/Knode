@@ -1,0 +1,139 @@
+# Handicap VHP samples (audit BX-3 b; docs/HANDICAP-VHP.md): about every 5 minutes, at a random
+# moment inside the run, reads every producer's effective VHP on two nodes and keeps the last 8 hours of samples on
+# the race-samples branch. The hourly race recorder (race.yml) uses the highest sample of the last 6 hours for each
+# producer's card VHP, so moving VHP away just before a card is taken no longer pays.
+#
+# Two jobs, like race.yml, so repository code never runs next to a write token:
+#   record   runs bot/race.ts --sample with a read-only token and no secrets, and hands the file on.
+#   publish  runs no repository code: it checks the file's shape and pushes it to the race-samples branch.
+# Turned on with the same variable as the race: RACE_ENABLED = true.
+name: Race VHP samples
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"      # audit BX-42: more, shorter samples (a random wait of 0-4 minutes inside the run)
+  workflow_dispatch: {}
+
+concurrency:
+  group: knode-race-samples
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    if: ${{ vars.RACE_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Take the last samples
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/prev"
+          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-samples 2>/dev/null; then
+            if git cat-file -e "FETCH_HEAD:vhp-samples.json" 2>/dev/null; then git show "FETCH_HEAD:vhp-samples.json" > "$RUNNER_TEMP/prev/vhp-samples.json"; fi
+          else echo "No race-samples branch yet."; fi
+          # Audit BX-53: the newest published race week files, so every producer on the latest card is sampled too
+          # (read only; nothing from race-data is published by this job).
+          if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
+            for f in $(git ls-tree --name-only FETCH_HEAD | grep -E '^W[0-9]{3}\.json$' | sort | tail -n 2); do git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; done
+          else echo "::warning::couldn't read race-data: this sample covers only the last hour's producers (audit BX-78)"; fi
+      - name: Take a sample (at a random moment in the next 4 minutes)
+        run: npm run race -- --sample
+        env:
+          RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
+          RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
+          RACE_PREV: ${{ runner.temp }}/prev
+          RACE_OUT: ${{ runner.temp }}/samples
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: race-samples
+          path: ${{ runner.temp }}/samples/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  publish:
+    needs: record
+    if: ${{ vars.RACE_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write         # push the race-samples branch (never main)
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: race-samples
+          path: ${{ runner.temp }}/incoming
+      - name: Push race-samples (and nothing else)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IN: ${{ runner.temp }}/incoming
+        run: |
+          set -euo pipefail
+          if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git init -q work
+          parent=""
+          : > "$RUNNER_TEMP/published.json"
+          if git -C work fetch -q --depth 1 "$remote" race-samples 2>/dev/null; then
+            parent=$(git -C work rev-parse FETCH_HEAD)
+            git -C work show "FETCH_HEAD:vhp-samples.json" > "$RUNNER_TEMP/published.json" 2>/dev/null || : > "$RUNNER_TEMP/published.json"
+          fi
+          bad=$(find "$IN" -mindepth 1 \( -type l -o -type d -o \( -type f ! -path "$IN/vhp-samples.json" \) \) -print)
+          if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
+          big=$(find "$IN" -type f -size +1024k -print)
+          if [ -n "$big" ]; then echo "::error::Refusing to publish files over 1 MB: $big"; exit 1; fi
+          /usr/bin/python3 - "$IN/vhp-samples.json" "$RUNNER_TEMP/published.json" <<'PY'
+          import json, re, sys, time
+          j = json.load(open(sys.argv[1], encoding="utf-8"))
+          now = int(time.time() * 1000)
+          addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}"); iso = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
+          assert type(j) is dict and set(j) == {"v", "updated", "samples"} and j["v"] == 1 and iso.fullmatch(str(j["updated"]))
+          s = j["samples"]
+          assert type(s) is list and len(s) <= 120
+          for x in s:
+              # Audit BX-38: never a sample from the future (10 minutes of clock slack).
+              assert type(x) is dict and set(x) in ({"at", "height", "vhp"}, {"at", "height", "vhp", "flagged", "high"}) and type(x["at"]) is int and 0 < x["at"] <= now + 600000 and type(x["height"]) is int and 0 < x["height"] < 10**10
+              assert type(x["vhp"]) is dict and len(x["vhp"]) <= 500 and all(addr.fullmatch(a) and type(v) is str and re.fullmatch(r"\d{1,20}", v) for a, v in x["vhp"].items())
+              # Audit BX-86 (round 5): producers the two nodes still disagreed on: sampled at the LOWER read, listed in
+              # `flagged` (sorted, once each) with the higher read in `high` (never below the stored one).
+              if "flagged" in x:
+                  f, h = x["flagged"], x["high"]
+                  assert type(f) is list and 0 < len(f) <= 500 and f == sorted(set(f)) and all(type(a) is str and a in x["vhp"] for a in f)
+                  assert type(h) is dict and set(h) == set(f) and all(type(v) is str and re.fullmatch(r"\d{1,20}", v) and int(v) >= int(x["vhp"][a]) for a, v in h.items())
+          assert all(s[i]["at"] < s[i + 1]["at"] for i in range(len(s) - 1))
+          # Audit BX-38: a new file never drops a published sample of the last 8 hours (only older ones age out).
+          try:
+              old = json.load(open(sys.argv[2], encoding="utf-8")).get("samples", [])
+          except Exception:
+              old = []
+          # Round 5 (the BX-88 rule for samples): a published sample is never changed either (values and disputes).
+          mine = {(x["at"], x["height"]): x for x in s}
+          for x in old:
+              if type(x) is dict and type(x.get("at")) is int and now - 8 * 3600000 + 600000 < x["at"] <= now + 600000:
+                  assert (x["at"], x.get("height")) in mine, "a published sample of the last 8 hours would be dropped"
+                  assert mine[(x["at"], x.get("height"))] == x, "a published sample of the last 8 hours would be changed"
+          print("samples ok")
+          PY
+          cd work
+          blob=$(git hash-object -w "$IN/vhp-samples.json")
+          git read-tree --empty
+          git update-index --add --cacheinfo 100644 "$blob" vhp-samples.json
+          tree=$(git write-tree)
+          if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit 0; fi
+          export GIT_AUTHOR_NAME=kpred-bot GIT_AUTHOR_EMAIL=kpred-bot@users.noreply.github.com GIT_COMMITTER_NAME=kpred-bot GIT_COMMITTER_EMAIL=kpred-bot@users.noreply.github.com
+          commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "race: VHP sample")
+          git push -q "$remote" "$commit:refs/heads/race-samples"
+          echo "Sample published."

@@ -1588,7 +1588,7 @@ async function friendly(cmd: string, a: string[], send: boolean): Promise<boolea
     case "node-key": {
       if (a[0] === "personal") {
         const pub = nodePublicKey(PERSONAL_KEY_FILE);
-        log(`Your PERSONAL node's PUBLIC key (safe to share):\n  ${pub}\n\nRegister it for your own address on https://bawcejawn.github.io/Knode/site/producer.html (signed in Kondor).\nDo NOT register this one for the game contract.`);
+        log(`Your PERSONAL node's PUBLIC key (safe to share):\n  ${pub}\n\nRegister it for your own address on https://knodegames.com/producer.html (signed in Kondor).\nDo NOT register this one for the game contract.`);
         return true;
       }
       const pub = nodePublicKey(a[0] && !a[0].startsWith("--") ? a[0] : undefined);
@@ -1718,7 +1718,7 @@ The private keys are ONLY in: ${file}
   • Never paste a private key in a chat, email or GitHub. Only OPERATOR_WIF ever goes into GitHub (as a secret).
   • Open the file with:  notepad ${TESTNET ? ".env.testnet" : ".env"}${TESTNET ? `
 
-TESTNET: get free test KOIN for each wallet in the Koinos Discord (#faucet):  !faucet <address>
+TESTNET: get free test KOIN for each wallet from the Telegram bot @KoinosTestnetFaucetBot:  /faucet <address>
   At least the bot, admin and player wallets. Never send real KOIN to these addresses.` : ""}`);
 }
 // ═══════════════════════════════ wiring ═══════════════════════════════

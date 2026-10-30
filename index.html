@@ -1,4 +1,435 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Knode</title>
-<meta http-equiv="refresh" content="0; url=site/"><link rel="canonical" href="site/"></head>
-<body><a href="site/">Open Knode</a></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- Only these sources may run scripts, load data or be framed. 'unsafe-eval' is needed by koilib (its protobuf
+       encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://koinvault.app https://raw.githubusercontent.com/bawcejawn/Knode/race-data/; manifest-src 'self'; worker-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Knode Games: the daily Koinos prediction game</title>
+  <!-- seo:start (written by tools/site-seo.mjs; edit there) -->
+  <meta name="description" content="A free daily guessing game on the Koinos blockchain. Answer 5 questions a day about block producers, climb the weekly leaderboard, and win VHP.">
+  <link rel="canonical" href="https://knodegames.com/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Knode Games">
+  <meta property="og:title" content="Knode Games: call the next blocks">
+  <meta property="og:description" content="A free daily guessing game on the Koinos blockchain. Answer 5 questions a day about block producers, climb the weekly leaderboard, and win VHP.">
+  <meta property="og:url" content="https://knodegames.com/">
+  <meta property="og:image" content="https://knodegames.com/media/og-knode.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Knode Games: call the next blocks">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Knode Games: call the next blocks">
+  <meta name="twitter:description" content="A free daily guessing game on the Koinos blockchain. Answer 5 questions a day about block producers, climb the weekly leaderboard, and win VHP.">
+  <meta name="twitter:image" content="https://knodegames.com/media/og-knode.png">
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","name":"Knode Games","url":"https://knodegames.com/","description":"A free daily guessing game on the Koinos blockchain. Answer 5 questions a day about block producers, climb the weekly leaderboard, and win VHP."},{"@type":["WebApplication","VideoGame"],"name":"Knode Games","url":"https://knodegames.com/","applicationCategory":"GameApplication","genre":"Prediction game","operatingSystem":"Any (web browser; installable)","description":"A free daily guessing game on the Koinos blockchain. Answer 5 questions a day about block producers, climb the weekly leaderboard, and win VHP.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}]}</script>
+  <!-- seo:end -->
+  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="media/icon-180.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#14213D">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Archivo:wdth,wght@62..125,600;62..125,800;62..125,900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="board.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to the game</a>
+  <noscript><p class="noscript">Knode Games is a free daily prediction game on the Koinos blockchain: 5 questions a day about block producers, a weekly leaderboard, and VHP rewards for the top players. It needs JavaScript to read the chain and connect your wallet; please turn JavaScript on. <a href="get.html">How to get started</a> · <a href="terms.html">Terms</a></p></noscript>
+
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href="#play" aria-label="Knode Games home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="brand-name">Knode Games</span>
+      </a>
+      <nav class="tabs" aria-label="Sections">
+        <details class="dd">
+          <summary>Games</summary>
+          <div class="dd-menu">
+            <a href="games.html">All games</a>
+            <a href="#play" data-view="play">Daily Questions</a>
+            <a href="race.html">Producer Race</a>
+          </div>
+        </details>
+        <a href="#leaderboard" data-view="leaderboard">Leaderboards</a>
+        <a href="#results" data-view="results">Results</a>
+        <details class="dd">
+          <summary>Tools</summary>
+          <div class="dd-menu">
+            <a href="swap.html">Swap VHP → KOIN</a>
+            <a href="burn.html">Burn KOIN</a>
+            <a href="mana.html">Mana levels</a>
+            <a href="node.html">Producer lookup</a>
+            <a href="pulse.html">Network pulse</a>
+          </div>
+        </details>
+        <a href="#how" data-view="how">Rules</a>
+        <a href="start.html" class="tab-start">New to Koinos?</a>
+        <details class="dd">
+          <summary>Info</summary>
+          <div class="dd-menu">
+            <a href="get.html">Get VHP</a>
+            <a href="#welcome" data-view="welcome">New here? Quick tour</a>
+            <a href="install.html">Install app</a>
+            <a href="trust.html">Trust</a>
+            <a href="terms.html">Terms &amp; risks</a>
+          </div>
+        </details>
+      </nav>
+      <button class="btn btn-wallet" id="connect" type="button">Connect wallet</button>
+    </div>
+  </header>
+
+  <div class="demo-note" id="demo-note" hidden>
+    <div class="wrap">Preview with sample data from real Koinos blocks. Nothing here is sent to the chain.</div>
+  </div>
+
+  <div class="wrap">
+  </div>
+
+  <main id="main" class="wrap">
+
+    <!-- ───────────── WELCOME (first visit, and "New here?") ───────────── -->
+    <section class="view welcome" id="view-welcome" data-view="welcome" hidden>
+      <div class="welcome-card">
+        <p class="welcome-kicker">Welcome to Knode Games</p>
+        <h1>Guess what the blockchain does next. Win a share of the pool.</h1>
+        <p class="welcome-lede">Prediction games about Koinos block producers: daily questions, races and more on the way. Each game has a fresh leaderboard every week. Playing is free.</p>
+        <div class="welcome-why">
+          <h2>What's going on</h2>
+          <p>Koinos adds a new block every few seconds. Each block is made by a <b>producer</b>, a computer that earns a small reward for it. We ask things like <i>"How many blocks will this producer make in the next 4 hours?"</i></p>
+          <p>The VHP players stake helps Knode Games' own producer make blocks. Those block rewards fill the weekly prize pool, so the more people stake, the bigger the pool.</p>
+        </div>
+        <h2 class="welcome-steps-title">How Daily Questions work</h2>
+        <ol class="welcome-steps">
+          <li><span>1</span><div><b>Connect a wallet</b><p>KOIN Vault on your phone, or Kondor on a computer. <a href="get.html">No wallet or VHP yet?</a></p></div></li>
+          <li><span>2</span><div><b>Stake 1 VHP or more, or play free</b><p>Your stake is never spent: take it back any time. Free players climb the board too.</p></div></li>
+          <li><span>3</span><div><b>Answer 5 questions a day</b><p>New ones Monday to Saturday. Each right answer is a point.</p></div></li>
+          <li class="last"><span>4</span><div><b>Top 30% split the pool</b><p>Each week the staked players with the most points share what the pool earned (95% of it, minus the free players' prize). The 2 best free players get 1 VHP each.</p></div></li>
+        </ol>
+        <div class="welcome-also" id="welcome-games">
+          <h2>All the games</h2>
+          <a class="also-card" href="#play"><span aria-hidden="true">🎯</span><div><b>Daily Questions</b><p>Quick questions about block producers, Monday to Saturday. Free, or stake VHP to share the weekly rewards.</p></div></a>
+          <a class="also-card" href="race.html"><span aria-hidden="true">🏇</span><div><b>Producer Race</b><p>Pick the winning block producer, four races a day: 3 points for a win, 1 for a 2nd or 3rd. Free and just for fun.</p></div></a>
+          <p class="also-soon-title">Coming soon</p>
+          <div class="also-card soon"><span aria-hidden="true">🧱</span><div><b>Who Signs Block X</b><p>Pick the producer for the next 12 milestone blocks, about 2 hours apart.</p></div></div>
+          <div class="also-card soon"><span aria-hidden="true">🛡️</span><div><b>Survivor</b><p>One producer a day, two lives, four-week seasons.</p></div></div>
+          <div class="also-card soon"><span aria-hidden="true">📋</span><div><b>Fantasy Producers</b><p>Draft 5 producers under a salary cap. A staked game.</p></div></div>
+          <div class="also-card soon"><span aria-hidden="true">⛳</span><div><b>Block Golf</b><p>Nine holes a day: guess when a producer signs next. A staked game.</p></div></div>
+          <div class="also-card soon"><span aria-hidden="true">🎟️</span><div><b>Combo Card</b><p>2 to 6 calls on one card. Every leg must hit. A staked game.</p></div></div>
+          <a class="also-more" href="games.html">See every game and your standing →</a>
+          <h2>Also on Knode Games</h2>
+          <a class="also-card" href="swap.html"><span aria-hidden="true">🔁</span><div><b>Knode Games Swap</b><p>Turn VHP back into KOIN in one step, for a 3% fee.</p></div></a>
+        </div>
+        <div class="welcome-actions">
+          <a class="btn btn-primary btn-big" href="#play" id="welcome-go">Start playing</a>
+          <a class="btn btn-ghost btn-big" href="#how">The full rules</a>
+        </div>
+        <p class="welcome-app"><a href="install.html">Get the Knode Games app on your phone</a>: no app store, three taps.</p>
+        <div class="welcome-remind-box"><h2>Never miss a day</h2><div id="welcome-remind"></div></div>
+      </div>
+    </section>
+
+    <!-- ───────────── PLAY ───────────── -->
+    <section class="view" id="view-play" data-view="play">
+      <section class="band" id="band" aria-label="Your week"></section>
+
+      <div class="pots" aria-label="The prize pool">
+        <div class="pot pot-last" id="pot-last" hidden><span class="pot-k" id="pot-last-k">Last week</span><b id="pot-last-v">…</b><span id="pot-last-note"></span></div>
+        <div class="pot"><span class="pot-k" id="stat-pot-k">This week so far</span><b id="stat-pot">…</b><span id="stat-pot-note">for the winners, after the 5% fee</span></div>
+        <div class="pot"><span class="pot-k">Time left</span><b id="stat-ends">…</b><span>until the week ends</span></div>
+        <div class="pot"><span class="pot-k">Players</span><b id="stat-players">…</b><span>this week</span></div>
+      </div>
+
+      <div class="layout">
+        <div class="col-main">
+          <div class="section-head">
+            <h2 id="today-title">Today's questions</h2>
+            <p class="muted" id="today-note">Answers close when the timer hits zero.</p>
+            <p class="yesterday" id="yesterday" hidden></p>
+          </div>
+          <p class="schedule" id="schedule"></p>
+          <div id="open-questions" class="qlist"></div>
+
+          <details class="waiting" id="waiting">
+            <summary><span class="waiting-title" id="waiting-title">Waiting for results</span> <span class="waiting-count" id="waiting-count"></span></summary>
+            <p class="muted">This week's questions whose answers are locked. Each result appears when its blocks are final.</p>
+            <div id="locked-questions" class="qlist"></div>
+          </details>
+          <div class="ad ad-inline ad-phone" data-ad-slot="in-feed" aria-label="Advertisement"></div>
+        </div>
+
+        <aside class="col-side">
+          <section class="panel" id="panel-claim" hidden>
+            <h2>Rewards to collect</h2>
+            <div id="claim-body"></div>
+          </section>
+          <section class="panel" id="panel-remind">
+            <h2>Reminders</h2>
+            <div id="remind-body"></div>
+          </section>
+          <section class="panel" id="panel-you">
+            <h2>Your game</h2>
+            <div id="you-body"><p class="muted">Connect a wallet to stake and answer: Kondor on a computer, or KOIN Vault on your phone. No KOIN or VHP yet? <a href="get.html">Here's how to get some</a>.</p></div>
+          </section>
+          <div class="ticker" aria-label="Latest Koinos blocks">
+            <div class="ticker-head"><span class="live-dot" aria-hidden="true"></span>Live blocks</div>
+            <ol class="ticker-list" id="ticker"></ol>
+            <p class="ticker-foot" id="ticker-foot">Blocks signed by the game's pool are highlighted. <a id="producers-link" target="_blank" rel="noopener">See all producers</a></p>
+          </div>
+          <section class="panel">
+            <h2>The pool</h2>
+            <dl class="facts" id="pool-facts"></dl>
+          </section>
+          <div class="ad ad-box ad-desktop" data-ad-slot="sidebar" aria-label="Advertisement"></div>
+          <a class="panel kit-card" id="kit-card" target="_blank" rel="noopener" hidden></a>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ───────────── LEADERBOARD ───────────── -->
+    <section class="view" id="view-leaderboard" data-view="leaderboard" hidden>
+      <div class="section-head big">
+        <h1 id="lb-title">Leaderboard · Daily Questions</h1>
+        <p class="muted">Every game has its own leaderboard: its own players, and points from its own correct picks.</p>
+      </div>
+      <div class="lb-games" role="group" aria-label="Game" id="lb-games"><button type="button" aria-pressed="true">Daily Questions</button></div>
+      <div id="lb-q">
+        <p class="muted" id="lb-note">Points count as soon as each question's blocks are final. The top 30% of staked players win, and ties at the line win too.</p>
+        <div class="lb-kind" role="group" aria-label="Who" id="lb-kind"></div>
+        <div class="lb-switch" role="tablist" id="lb-weeks"></div>
+        <p class="muted lb-me" id="lb-me" role="status"></p>
+        <div class="table-wrap">
+          <table class="board" id="board">
+            <thead><tr><th scope="col">Rank</th><th scope="col">Player</th><th scope="col" class="num">Points</th><th scope="col" class="num">Stake</th><th scope="col" class="num">Reward</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="board-cards" id="board-cards"></div>
+      </div>
+      <div class="lb-game" id="lb-game" hidden></div>
+    </section>
+
+    <!-- ───────────── RESULTS ───────────── -->
+    <section class="view" id="view-results" data-view="results" hidden>
+      <div class="lb-games res-games" role="group" aria-label="Game" id="res-games"><button type="button" aria-pressed="true">Daily Questions</button></div>
+      <div id="res-q">
+      <div class="rband">
+        <div class="rband-top">
+          <h1>Results</h1>
+          <p class="rband-score" id="res-score"></p>
+        </div>
+        <div class="rweeks" id="res-weeks" role="group" aria-label="Week"></div>
+        <div class="rdays" id="res-days" role="group" aria-label="Day"></div>
+      </div>
+      <div class="rtools">
+        <label class="rsearch"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><input type="search" id="res-search" aria-label="Find a question" placeholder="Find a producer or answer" autocomplete="off"></label>
+        <button type="button" class="rmine" id="res-mine" aria-pressed="false" hidden>Only mine</button>
+        <button type="button" class="rmine rshare" id="res-share" hidden>Share this week</button>
+      </div>
+      <div id="results-list" class="results"></div>
+      <section class="history" id="history" hidden>
+        <h2>Your past weeks</h2>
+        <div class="table-wrap"><table class="board"><thead><tr><th scope="col">Week</th><th scope="col" class="num">Points</th><th scope="col">Result</th></tr></thead><tbody id="history-body"></tbody></table></div>
+      </section>
+      <div class="ad ad-inline" data-ad-slot="results-inline" aria-label="Advertisement"></div>
+      <p class="muted res-foot">Every answer comes straight from the blocks. Each result carries a fingerprint (hash) of the blocks it used, so anyone can check it.</p>
+      </div>
+      <div id="res-g" hidden></div>
+    </section>
+
+    <!-- ───────────── HOW IT WORKS ───────────── -->
+    <section class="view rules" id="view-how" data-view="how" hidden>
+      <div class="section-head big">
+        <h1>Rules</h1>
+        <p class="muted">Three things to do on Knode Games. Pick one to see how it works in a minute.</p>
+      </div>
+      <div class="rules-tabs" role="tablist" aria-label="Rules for">
+        <button type="button" role="tab" id="rt-game" data-rules="game" aria-controls="rp-game"><span aria-hidden="true">🎯</span>Daily Questions</button>
+        <button type="button" role="tab" id="rt-race" data-rules="race" aria-controls="rp-race"><span aria-hidden="true">🏇</span>Producer Race</button>
+        <button type="button" role="tab" id="rt-swap" data-rules="swap" aria-controls="rp-swap"><span aria-hidden="true">🔁</span>Knode Games Swap</button>
+      </div>
+
+      <div class="rules-panel" id="rp-game" data-rules-panel="game" role="tabpanel" aria-labelledby="rt-game">
+        <div class="rules-short"><h2>In short</h2><p>Answer 5 quick questions a day about Koinos block producers. Every right answer is a point, and each week the best players share what the pool earned.</p></div>
+        <ol class="rules-steps">
+          <li><span class="ri" aria-hidden="true">👛</span><div><b>Connect</b><p>Kondor on a computer, KOIN Vault on a phone, or play as a guest: free, no wallet needed.</p></div></li>
+          <li><span class="ri" aria-hidden="true">🔒</span><div><b>Stake 1 VHP or more, or play free</b><p>Staking lets you share the weekly pool. Your stake is never spent: take it back any time.</p></div></li>
+          <li><span class="ri" aria-hidden="true">✍️</span><div><b>Answer the day's 5 questions</b><p>New ones Monday to Saturday at <b class="lt" data-utc-hour="12">12:00 UTC</b>. Answers close at <b class="lt" data-utc-hour="0">00:00 UTC</b>.</p></div></li>
+          <li><span class="ri" aria-hidden="true">📈</span><div><b>Climb the weekly leaderboard</b><p>Results come straight from the blocks. Check them on the Results page.</p></div></li>
+          <li><span class="ri" aria-hidden="true">🏆</span><div><b>Collect your reward</b><p>Winners are final on Tuesday at <b class="lt" data-utc-hour="12">12:00 UTC</b>. Rewards are paid in VHP and never expire.</p></div></li>
+        </ol>
+        <div class="rules-good"><h3>Good to know</h3><ul>
+          <li><b>Free to play.</b> Knode Games pays the Mana (the network's transaction fee) for you, within daily limits.</li>
+          <li><b>Who wins:</b> the top 30% of staked players with at least 1 point share 95% of the week's block rewards. The 2 best free players get 1 VHP each.</li>
+          <li><b>A stake counts from the next week.</b> You can withdraw any amount at any time.</li>
+          <li><b>New reward split from Week 3 (Monday 2 November):</b> 40% shared by place × stake up to 10 VHP, 60% by place × full stake. Details below.</li>
+        </ul></div>
+        <h3 class="rules-more">The details</h3>
+        <details class="rules-d"><summary>How rewards are worked out</summary>
+      <ol class="steps">
+        <li><h3>Play free, or stake VHP</h3><p>Anyone can answer and climb the leaderboard for free, and each week the 2 best free players win 1 VHP each (ties share; a free player is one who never held the minimum stake that week; from the October 2026 contract update). To share in the rewards, stake at least 1 VHP (whole numbers only), or KOIN, which is burned into VHP. A stake counts from the next week. You can withdraw any amount at any time, down to the last decimal. Withdraw part during a week and you keep playing with the lower stake; withdraw everything and you're out for that week.</p></li>
+        <li><h3>Answer daily questions</h3><p>30 questions a week: 5 new ones every Monday to Saturday at 12:00 UTC, and answers close at 00:00 UTC, 12 hours later, before the blocks they ask about are produced. Every correct answer is one point. Sunday is results day.</p></li>
+        <li><h3>The week closes</h3><p><strong>95% of the week's block rewards go to the players</strong> (5% producer fee). Up to 2 VHP of it is the 2 best free players' prize; the rest goes to the top 30% of staked players who scored at least one point, ties included. Higher places earn more: 40% is shared by place × stake counted up to 10 VHP per wallet, so a small stake still earns a real share, and 60% by place × full stake, so staking more pays more. Winners are final Tuesday 12:00 UTC. No staked winners? The free players' prize is still paid, and the rest carries into next week.</p></li>
+        <li><h3>Collect your reward</h3><p>Your reward is paid in VHP. After a 5% producer fee, the top 30% of staked players who scored at least one point win, counted by headcount, and ties at the line win too. Each place weighs 1/√rank, so first place weighs the most. The pot is two baskets: 40% shared by place weight times your stake counted up to 10 VHP per wallet (so a small stake still earns a real share), and 60% shared by place weight times your full stake. There are at most 30 questions a week, so at most 30 points. (These rules apply from the first full week after the October 2026 contract update; before it, the first basket was shared by place alone.) Unclaimed rewards wait for you, and keep producing for the pool meanwhile.</p></li>
+      </ol>
+        </details>
+        <details class="rules-d"><summary>Anyone can move the results: voids and the VHP rule</summary>
+      <div class="section-head" id="open-network">
+        <h2>Anyone can move the results</h2>
+        <p>Koinos is an open network. Anyone can stake VHP, run a block producer or send transactions, and each of those changes what the blocks show. So players, producers and anyone else can influence the results of these questions, and that is allowed: it is part of the game.</p>
+        <p>Every active producer can be asked about, including the nodes Knode Games runs (the game pool's and Knode Games Swap's) and the operator's own node. To keep any one node from carrying too much weight, no producer is part of more than 4 questions in a week, and the least-used producers are picked first.</p>
+        <p>The project takes part too. It runs <strong>Knode Games Swap</strong> (the desk at 1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR, which produces blocks) and a block-producer node of its own. Both can appear in questions like any other producer. The game's own pool is never a subject.</p>
+        <p>Two rules keep a question fair to answer. It is voided, and counts for nobody, if a producer it asks about goes offline during its window. It is also voided if a producer it asks about (for a group question, the group's combined VHP) gains or loses more than 10% of its VHP, compared with the question's release, in one of the hourly readings taken during its window. For questions about the whole network, the network's total VHP is used. Every VHP reading is published with the question.</p>
+        <p>This void can be triggered on purpose, and not only by the producer: anyone can send or burn VHP to a producer a question is about, or swap VHP into Knode Games Swap, and a large enough move voids the question. That is why only readings taken before the blocks have decided the answer count: once the answer is known, moving VHP can no longer void it. Readings taken after the window has ended never count either, and if no reading was taken before the answer was decided the rule does not apply (the result says so).</p>
+        <p>“Decided” means the chance that the rest of the window changes the answer is below one in a billion. It is worked out cautiously from each producer's own blocks so far in that window: the producer is assumed to keep producing at the top of what its blocks so far allow, and the chance of still reaching another answer is bounded from above (a standard binomial tail bound). Once a question is decided, a producer going offline no longer voids it either. The limit is part of each question when it is released, and every result shows the block where its answer was decided.</p>
+      </div>
+        </details>
+        <h3 class="rules-more">Questions</h3>
+      <div class="faq">
+        <details><summary>Who decides the right answer?</summary><p>The blocks do. After a question's window ends and the blocks are final, the answer is computed from them and published with a hash of the exact blocks used. If a producer in a question goes offline, or a producer's VHP (or the whole network's, for network questions) moves by more than 10% before the window ends, the question is voided and doesn't count for anyone. Once the October 2026 contract upgrade is live, the week never closes less than 12 hours after its last result, so a wrong result can always be corrected before it is final, and corrections end 21 hours after the week (or after its latest first result) so they can't hold it open.</p></details>
+        <details><summary>Does it cost anything to play?</summary><p>No fees. Koinos uses Mana, which refills on its own. Knode Games pays the Mana for your answers, picks, stakes and claims, up to a daily limit per player. Past that limit, your wallet's own Mana is used, so keep a little KOIN in it. With KOIN Vault on your phone, holding a little KOIN gives you the Mana.</p></details>
+        <details><summary>Can anyone take my stake?</summary><p>No. The contract only sends your stake back to you. The owner can't move players' stakes or rewards, and code changes must be announced 48 hours ahead so anyone can withdraw first.</p></details>
+      </div>
+      </div>
+
+      <div class="rules-panel" id="rp-race" data-rules-panel="race" role="tabpanel" aria-labelledby="rt-race" hidden>
+        <div class="rules-short"><h2>In short</h2><p>Every Koinos block producer is a horse, and every block it signs moves it forward. A handicap gives every horse the same chance. Pick the winner for 3 points, or score 1 point (a show) if your horse finishes 2nd or 3rd. It's free and just for fun.</p></div>
+        <ol class="rules-steps">
+          <li><span class="ri" aria-hidden="true">🏇</span><div><b>Open the Race</b><p>Four 6-hour races a day, starting at 00:00, 06:00, 12:00 and 18:00 UTC<span class="lt-list" data-utc-hours="0,6,12,18"></span>.</p></div></li>
+          <li><span class="ri" aria-hidden="true">👆</span><div><b>Pick one horse per race</b><p>For any of the next 4 races, so up to 24 hours ahead. Guests can pick too.</p></div></li>
+          <li><span class="ri" aria-hidden="true">🔒</span><div><b>Change your mind until it starts</b><p>When the race starts, the chain locks your pick.</p></div></li>
+          <li><span class="ri" aria-hidden="true">📺</span><div><b>Watch it live, then check the board</b><p>A win is 3 points, a show (2nd or 3rd) is 1. Leaderboards for today, this week and all time.</p></div></li>
+        </ol>
+        <div class="rules-good"><h3>Good to know</h3><ul>
+          <li><b>Free.</b> No entry fee, no wager, no prize pool. Knode Games pays the Mana for picks.</li>
+          <li><b>Up to 5 picks a day,</b> counting changes.</li>
+          <li><b>To be ranked</b> on the leaderboard, hold at least 1 VHP or have a Knode Games stake. Everyone else still sees their own score.</li>
+          <li><b>Results are final</b> once the race's blocks are irreversible and match on two independent Koinos nodes.</li>
+        </ul></div>
+        <h3 class="rules-more">The details</h3>
+        <details class="rules-d"><summary>How the handicap works</summary>
+          <p>Koinos picks who signs each block in proportion to VHP. A producer with a third of the leader's VHP signs about a third as many blocks, so it moves 3 steps per block. That gives every horse the same expected speed. The biggest producer always moves exactly 1 step per block.</p>
+          <p>Small producers' few blocks come in lucky and unlucky bursts, so a small luck trim evens out every horse's chance of winning. The handicap is set at the start and updated every hour. The winner is the horse with the most steps at the 6-hour mark.</p>
+          <p><a href="race.html#how">The full handicap explanation</a> is on the Race page.</p>
+        </details>
+        <p class="rules-cta"><a class="btn btn-primary btn-big" href="race.html">Go to the Race</a></p>
+      </div>
+
+      <div class="rules-panel" id="rp-swap" data-rules-panel="swap" role="tabpanel" aria-labelledby="rt-swap" hidden>
+        <div class="rules-short"><h2>In short</h2><p>Turn VHP back into KOIN right now. On its own, VHP only turns back into KOIN slowly as it produces blocks. Knode Games Swap pays you KOIN at once, 1:1 minus a 3% fee.</p></div>
+        <ol class="rules-steps">
+          <li><span class="ri" aria-hidden="true">👛</span><div><b>Open Swap and connect</b><p>Kondor or KOIN Vault. You need nothing else: no account, no sign-up.</p></div></li>
+          <li><span class="ri" aria-hidden="true">🔢</span><div><b>Enter how much VHP</b><p>From 1 VHP up to the largest swap the page shows.</p></div></li>
+          <li><span class="ri" aria-hidden="true">✅</span><div><b>Approve once</b><p>You send VHP and get KOIN in the same transaction.</p></div></li>
+        </ol>
+        <div class="rules-good"><h3>Good to know</h3><ul>
+          <li><b>3% fee:</b> 1 VHP gets you 0.97 KOIN.</li>
+          <li><b>Safe by design.</b> Both sides move together or nothing moves. The desk never holds anyone else's funds.</li>
+          <li><b>Knode Games pays the Mana</b> for wallets that hold VHP, within daily limits.</li>
+          <li><b>The largest swap</b> depends on the KOIN the desk holds right now, and it grows with every block the desk produces.</li>
+        </ul></div>
+        <h3 class="rules-more">The details</h3>
+        <details class="rules-d"><summary>Where does the KOIN come from?</summary><p>The VHP people swap in joins the desk's own block producer. Every block it produces turns some of that VHP back into KOIN, which pays the next swap. The fee stays in the node, so the pool keeps growing.</p></details>
+        <details class="rules-d"><summary>Why is there a fee and a limit?</summary><p>VHP turns back into KOIN only as it produces blocks, which takes time. The desk takes on that wait for you, and the fee pays for running the node. The desk can only pay out KOIN it holds. After this week's upgrade, a daily payout limit also protects it.</p></details>
+        <details class="rules-d"><summary>Where can I check the contract?</summary><p>The desk is the contract 1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR. Its code is open source in the Knode Games repository, and every swap is on chain.</p></details>
+        <p class="rules-cta"><a class="btn btn-primary btn-big" href="swap.html">Go to Swap</a></p>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="Main">
+    <a href="games.html"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect></svg>Games</a>
+    <a href="#leaderboard" data-view="leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg>Leaders</a>
+    <a href="#results" data-view="results"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg>Results</a>
+    <a href="swap.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4L3 8l4 4"></path><path d="M3 8h14"></path><path d="M17 20l4-4-4-4"></path><path d="M21 16H7"></path></svg>Swap</a>
+    <button type="button" class="tb-more" aria-expanded="false" aria-controls="more-sheet"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>More</button>
+  </nav>
+  <div class="more-sheet" id="more-sheet" hidden>
+    <nav class="more-panel" aria-label="More pages">
+      <p class="ms-h">Play</p>
+      <a href="#play" data-view="play"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.6 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg><span>Daily Questions</span></a>
+      <a href="race.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 21V4"></path><path d="M5 4h12l-2.5 4L17 12H5"></path></svg><span>Producer Race</span></a>
+      <a href="#how" data-view="how"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"></path><path d="M9 9h6M9 13h6"></path></svg><span>Rules</span></a>
+      <p class="ms-h">Tools</p>
+      <a href="burn.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 21c-4 0-6.5-2.6-6.5-6 0-3.5 3-5.5 3.5-9 2 1.5 3 3 3 5 1-1 1.5-2 1.5-3.5 2.5 2 4.5 4.6 4.5 7.5 0 3.4-2.5 6-6 6z"></path></svg><span>Burn KOIN</span></a>
+      <a href="mana.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M13 3L5 14h6l-1 7 8-11h-6z"></path></svg><span>Mana levels</span></a>
+      <a href="node.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg><span>Producer lookup</span></a>
+      <a href="pulse.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12h4l2-5 4 10 2-5h6"></path></svg><span>Network pulse</span></a>
+      <p class="ms-h">Learn</p>
+      <a href="start.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg><span>New to Koinos?</span></a>
+      <a href="#welcome" data-view="welcome"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg><span>New here? Quick tour</span></a>
+      <a href="get.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8M8 12h8"></path></svg><span>Get VHP</span></a>
+      <p class="ms-h">About</p>
+      <a href="install.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v11"></path><path d="M7.5 10.5L12 15l4.5-4.5"></path><path d="M5 20h14"></path></svg><span>Install app</span></a>
+      <a href="trust.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z"></path></svg><span>Trust</span></a>
+      <a href="terms.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"></path><path d="M10 12h5M10 16h5"></path></svg><span>Terms &amp; risks</span></a>
+    </nav>
+  </div>
+
+  <footer class="foot">
+    <div class="wrap">
+      <section class="eco" aria-labelledby="eco-title" hidden>
+        <h2 id="eco-title">Built on Koinos</h2>
+        <div class="eco-grid" id="eco-grid"></div>
+      </section>
+      <div class="foot-row">
+        <span>Knode Games runs fully on Koinos. Open source.</span>
+        <span class="foot-links"><a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a> · <a href="install.html">Install app</a> · <a href="https://github.com/bawcejawn/Knode" target="_blank" rel="noopener">Source code</a></span>
+        <span id="foot-contract"></span>
+      </div>
+    </div>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="share-dialog" aria-labelledby="share-title">
+    <div class="share-box">
+      <h2 id="share-title">Share your week</h2>
+      <canvas id="share-canvas" class="share-canvas" width="1200" height="630" role="img" aria-label="Your week on Knode Games"></canvas>
+      <label class="share-addr"><input type="checkbox" id="share-addr"> Show my wallet address on the picture</label>
+      <p class="muted fine-print">The picture is made on your device. Nothing is uploaded.</p>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" id="share-close" type="button">Close</button>
+        <button class="btn btn-ghost" id="share-save" type="button">Save picture</button>
+        <button class="btn btn-primary" id="share-go" type="button">Share</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="stake-dialog">
+    <form method="dialog" id="stake-form">
+      <h2 id="stake-title">Stake</h2>
+      <p class="muted" id="stake-help"></p>
+      <label class="field"><span id="stake-label">Amount</span><span class="amount-row"><input id="stake-amount" inputmode="numeric" autocomplete="off" placeholder="e.g. 25" required><button class="btn btn-ghost btn-small" id="stake-max" type="button" hidden>Withdraw all</button></span></label>
+      <div class="seg" id="stake-token" role="radiogroup" aria-label="Token">
+        <label><input type="radio" name="tok" value="VHP" checked><span>VHP</span></label>
+        <label><input type="radio" name="tok" value="KOIN"><span>KOIN</span></label>
+      </div>
+      <p class="warn" id="stake-warn" hidden></p>
+      <p class="muted fine-print">Staking is optional; rewards aren't guaranteed and audits are in progress. <a href="terms.html" target="_blank" rel="noopener">Terms &amp; risks</a></p>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" value="cancel" type="submit" formnovalidate>Cancel</button>
+        <button class="btn btn-primary" id="stake-go" value="go" type="submit">Continue in your wallet</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js" integrity="sha384-IAL9o3r4bQJvWhvszkorFINY2ct4LBA/LvyXE9NSOPCyYB25BsFV12JITA7Gxbk6" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js" integrity="sha384-WOeNFfSdOron0s4x9jdzLtA7Ic7RSqZCXZAaeQd6HRL6WezQp0KAtIF2XSa+11TL" crossorigin="anonymous"></script>
+  <script src="demo-data.js"></script>
+  <script src="extras.js"></script>
+  <script src="guest.js"></script>
+  <script src="wallet.js"></script>
+  <script src="header-wallet.js"></script>
+  <script src="nav.js"></script>
+  <script src="app.js"></script>
+  <script src="board.js"></script>
+  <script src="leaders.js"></script>
+  <script src="race-math.js"></script>
+  <script src="results.js"></script>
+</body>
+</html>

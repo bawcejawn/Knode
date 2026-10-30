@@ -11,9 +11,9 @@ import { createRequire } from "node:module";
 
 const APP = path.resolve(process.env.APP || path.join(path.dirname(new URL(import.meta.url).pathname), "..", ".."));
 const koilib = createRequire(APP + "/")("koilib");
-const guestSrc = fs.readFileSync(`${APP}/site/guest.js`, "utf8");
-const walletSrc = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
-const appSrc = fs.readFileSync(`${APP}/site/app.js`, "utf8");
+const guestSrc = fs.readFileSync(`${APP}/guest.js`, "utf8");
+const walletSrc = fs.readFileSync(`${APP}/wallet.js`, "utf8");
+const appSrc = fs.readFileSync(`${APP}/app.js`, "utf8");
 const MAINNET = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";
 const GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", DESK = "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR";
 const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK";
@@ -53,7 +53,7 @@ function world({ storage = memStorage(), sponsor = SPONSOR, covers = [GAME, DESK
     wait: async () => ({}),
   };
   const confirms = [];
-  const win = { koilib, crypto: webcrypto, localStorage: storage, confirm: (m) => { confirms.push(m); return true; }, navigator: {} };
+  const win = { location: { protocol: "https:", hostname: "knodegames.com" }, koilib, crypto: webcrypto, localStorage: storage, confirm: (m) => { confirms.push(m); return true; }, navigator: {} };
   win.top = win; win.self = win;
   const ctx = { window: win, document, localStorage: storage, sessionStorage: memStorage(), navigator: { userAgent: "test", maxTouchPoints: 0, platform: "x" },
     crypto: webcrypto, console, setTimeout, clearTimeout, Promise, URL, URLSearchParams, JSON, BigInt, Uint8Array, Array, Number, String, Object, Map, Set, Error, Math, Date };
@@ -70,14 +70,11 @@ async function connectAsGuest(w) { const p = w.KW.connect(); w.find(/Play as a g
 const sentTx = (w) => w.net.filter(([m]) => m === "sendTransaction").map(([, t]) => t);
 
 // ── AB-01 (Medium): any other page of the same origin can read the guest key ──
-test("AB-01 another page of the same origin cannot read the guest key", { todo: "needs the custom domain (owner action, like S2): on the shared bawcejawn.github.io origin any page there can read this origin's storage; guest play stays off until then" }, async () => {
-  const shared = memStorage();
-  const knode = world({ storage: shared });
-  const { address } = await knode.KG.create();
-  // Another page on https://<user>.github.io (another repo's Pages site, or any page there with an XSS) runs this:
-  const stolen = shared.getItem("kn-guest-v1");   // or indexedDB.open("knode-guest") → store "keys" → get("guest")
-  assert.ok(!(stolen && koilib.Signer.fromWif(stolen).getAddress() === address),
-    "a different page of the same origin read the guest's private key from storage");
+test("AB-01 the guest key lives on an origin of its own (knodegames.com), not the shared <user>.github.io origin", () => {
+  // Same-origin pages can always read each other's storage; the fix is an origin used by Knode alone. Since
+  // 2026-10-28 the site is served from https://knodegames.com/ (CNAME), so no other repository's Pages site shares it.
+  const cname = fs.existsSync(`${APP}/CNAME`) ? fs.readFileSync(`${APP}/CNAME`, "utf8").trim() : "";
+  assert.ok(cname && !/github\.io$/i.test(cname), "no custom domain (CNAME): the guest key would share the github.io origin with other sites");
 });
 
 // ── AB-02 (Medium): the key can be evicted by the browser with no warning ──

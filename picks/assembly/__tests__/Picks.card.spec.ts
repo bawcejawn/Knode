@@ -5,7 +5,7 @@
 // Mock VM quirks (CLAUDE.md): keys sort as strings, direct() gives an empty caller, no closures (tests set globals).
 // =====================================================================
 
-import { Arrays, Base58, MockVM, System, authority, chain, common } from "@koinos/sdk-as";
+import { Arrays, Base58, MockVM, Protobuf, System, authority, chain, common } from "@koinos/sdk-as";
 import {
   Picks, DAY_MS, TIMELOCK_MS, LOCK_HEIGHT, LOCK_TIME, KIND_CARD, BAD_CHOICE, SAME, NO_CHANGES, USED_UP, NOT_TIGHTER, SHAPE_FIXED,
   CARD_DAY, CARD_SIZE, LEG_UNKNOWN, LEG_TWICE, PRODUCER_TWICE, LEG_LOCKED, LEG_TOO_EARLY,
@@ -339,5 +339,62 @@ describe("review follow-ups (CR-1, CR-2)", () => {
     refusedTighten(g, "PICKS: only a card game has leg types");
     g = new picks.game_config(2, "Who Signs Block X", 1, 1, 0, 0, LOCK_HEIGHT, 2400, 0, 100, 28900, 30, 5, true, new Array<picks.leg_type>(), 6);
     refusedTighten(g, "PICKS: only a card game has leg types");
+  });
+});
+
+// ── Repo Lens final audit 2026-10-30, RL-14: the test gaps ──
+function be(v: u64, n: i32): Uint8Array { const b = new Uint8Array(n); for (let i = n - 1; i >= 0; i--) { b[i] = u8(v & 0xff); v >>= 8; } return b; }
+function cat(a: Uint8Array, b: Uint8Array): Uint8Array { const o = new Uint8Array(a.length + b.length); o.set(a, 0); o.set(b, a.length); return o; }
+describe("Repo Lens RL-14", () => {
+  it("CR-2, completed: a wallet's card with a Block X leg, stored before Block X legs are switched off, can't be changed once that leg locks", () => {
+    start(); legs0(); add(SHOW, RACE + 1, A1); add(BLOCK, BR, A2); send(P2, SLOT0);
+    const g = combo(); g.leg_types[3].enabled = false; tightenTo(g);
+    // switched off: a new card with a Block X leg is refused, the stored one stays
+    legs0(); add(SHOW, RACE + 1, A5); add(BLOCK, BR, A6); refusedCard(P1, SLOT0, LEG_UNKNOWN);
+    expect(cardOf(P2, SLOT0)!.legs.length).toBe(2);
+    // while its Block X leg is open it can be changed (to legs without Block X); once it locks, it can't
+    at(BTARGET - 500, T0);
+    legs0(); add(SHOW, RACE + 1, A3); add(HALF, RACE + 2, A4); refusedCard(P2, SLOT0, LEG_LOCKED);
+  });
+  it("v1 records (exactly v1's wire bytes: no fields 15/16 or 6) are read by v2, and a v1 pick changes as before", () => {
+    start();
+    // Block X (game 2) and a pick on it written straight into storage with the v1 encoding. v2's encoder writes no
+    // field for an empty list or a zero, so encoding without leg_types / max_legs / legs gives v1's bytes exactly.
+    const bx = new picks.game_config(2, "Who Signs Block X", 1, 1, 0, 0, LOCK_HEIGHT, 2400, 0, 100, 28900, 30, 5, true, new Array<picks.leg_type>(), 0);
+    const gb = Protobuf.encode(bx, picks.game_config.encode);
+    System.putBytes(new chain.object_space(false, SELF, 1), be(2, 4), gb);
+    const ps = new Array<Uint8Array>(); ps.push(A1);
+    const pk = new picks.pick_object(ps, 0, H0 - 10, T0 - 1000, 0, new Array<picks.leg>());
+    const pb = Protobuf.encode(pk, picks.pick_object.encode);
+    System.putBytes(new chain.object_space(false, SELF, 3), cat(cat(be(2, 4), be(BR, 8)), P1), pb);
+    MockVM.commitTransaction();
+    // no field above 5 in either record
+    for (let i = 0; i < gb.length; i++) expect(gb[i] >> 3 <= 14 || gb[i] & 0x80).toBeTruthy();
+    const got = new Picks().get_game(new picks.get_game_arguments(2)).game!;
+    expect(got.kind).toBe(1); expect(got.leg_types.length).toBe(0); expect(got.max_legs).toBe(0); expect(got.round_size).toBe(2400);
+    const p = new Picks().get_pick(new picks.get_pick_arguments(2, BR, P1)).pick!;
+    expect(Arrays.equal(p.producers[0], A1)).toBe(true); expect(p.legs.length).toBe(0); expect(p.changes).toBe(0);
+    // the v1 pick is changed as v1 would (one producer, no legs)
+    signedBy(P1); const ps2 = new Array<Uint8Array>(); ps2.push(A2);
+    A = new picks.pick_arguments(P1, 2, BR, ps2, 0, new Array<picks.leg>()); doPick(); MockVM.commitTransaction();
+    const q = new Picks().get_pick(new picks.get_pick_arguments(2, BR, P1)).pick!;
+    expect(Arrays.equal(q.producers[0], A2)).toBe(true); expect(q.changes).toBe(1);
+  });
+  it("an announced loosening (a later lock) changes nothing for 48 hours: a locked leg stays locked (RL-25; after that it could re-open, by design)", () => {
+    start();
+    legs0(); add(WIN, RACE, A1); add(BLOCK, BR, A2); at(H0, START - RACE_LEAD - 60000); send(P1, SLOT0);
+    at(H0, START - RACE_LEAD); legs0(); add(WIN, RACE, A3); add(BLOCK, BR, A2); refusedCard(P1, SLOT0, LEG_LOCKED);
+    // announce Win legs locking 5 minutes before the start instead of 25: nothing changes for 48 hours
+    signedBy(OWNER); let g = combo(); g.leg_types[0].lead = 300000; G = g; announce(); MockVM.commitTransaction();
+    at(H0, START - RACE_LEAD + 1000); legs0(); add(WIN, RACE, A3); add(BLOCK, BR, A2); refusedCard(P1, SLOT0, LEG_LOCKED);
+  });
+  it("P-2 on a card game: tighten_game drops a pending announcement, so an announced loosening can't undo it", () => {
+    start();
+    // announce: max_legs 10 and a new leg type
+    signedBy(OWNER); let g = combo(); g.max_legs = 10; g.leg_types.push(legType(5, LOCK_TIME, DAY_MS, 300000, DAY_MS)); G = g; announce(); MockVM.commitTransaction();
+    // tighten: max_legs 3 (drops the announcement)
+    g = combo(); g.max_legs = 3; tightenTo(g);
+    at(H0, T0 + TIMELOCK_MS); nobody(); G = combo(); expect(() => { apply(); }).toThrow(); errorIs("PICKS: nothing announced for this game");
+    expect(new Picks().get_game(new picks.get_game_arguments(CG)).game!.max_legs).toBe(3);
   });
 });

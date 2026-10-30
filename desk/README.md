@@ -1,6 +1,6 @@
 # Knode Swap Desk — VHP → KOIN
 
-People with VHP can swap it for KOIN right away on `site/swap.html`. They get **1:1 minus 3%**, paid in the same transaction.
+People with VHP can swap it for KOIN right away on `swap.html`. They get **1:1 minus 3%**, paid in the same transaction.
 
 ## How the money moves
 
@@ -87,7 +87,7 @@ npm run desk -- register-key node --send
 ```
 Then watch the desk produce its first blocks on https://koinosscan.com.
 
-**7. Go public — only when you're satisfied.** Merge the `swap-desk` branch into `main` and commit `desk-data/deployment.json`. GitHub Pages then publishes `site/swap.html`. Fund it properly at that point (`fund koin …`).
+**7. Go public — only when you're satisfied.** Merge the `swap-desk` branch into `main` and commit `desk-data/deployment.json`. GitHub Pages then publishes `swap.html`. Fund it properly at that point (`fund koin …`).
 
 ## Day-to-day commands
 

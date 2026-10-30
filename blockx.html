@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- Only these sources may run scripts, load data or be framed. 'unsafe-eval' is needed by koilib (its protobuf
+       encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://api.koinosblocks.com https://raw.githubusercontent.com/bawcejawn/Knode/blocks-data/ https://raw.githubusercontent.com/bawcejawn/Knode/race-data/ https://raw.githubusercontent.com/bawcejawn/Knode/games-data/ https://koinvault.app; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Who Signs Block X · Pick the Koinos producer of the next big blocks</title>
+  <!-- seo:start (written by tools/site-seo.mjs; edit there) -->
+  <meta name="description" content="Every 2,400 Koinos blocks is a target. Pick the producer you think signs it; smaller producers score more, up to 3×. Free, with weekly VHP prizes.">
+  <link rel="canonical" href="https://knodegames.com/blockx.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Knode Games">
+  <meta property="og:title" content="Who Signs Block X">
+  <meta property="og:description" content="Every 2,400 Koinos blocks is a target. Pick the producer you think signs it; smaller producers score more, up to 3×. Free, with weekly VHP prizes.">
+  <meta property="og:url" content="https://knodegames.com/blockx.html">
+  <meta property="og:image" content="https://knodegames.com/media/og-knode.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Who Signs Block X">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Who Signs Block X">
+  <meta name="twitter:description" content="Every 2,400 Koinos blocks is a target. Pick the producer you think signs it; smaller producers score more, up to 3×. Free, with weekly VHP prizes.">
+  <meta name="twitter:image" content="https://knodegames.com/media/og-knode.png">
+  <!-- seo:end -->
+  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="media/icon-180.png">
+  <meta name="theme-color" content="#14213D">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Archivo:wdth,wght@62..125,600;62..125,800;62..125,900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="board.css">
+  <link rel="stylesheet" href="blockx.css">
+  <style>
+    .pr { max-width: 1000px; margin: 0 auto; padding: 28px 16px 60px; }
+    .pr h1 { font-family: var(--display); font-size: clamp(28px, 4vw, 40px); margin: 0 0 6px; }
+    .pr h2 { font-family: var(--display); font-size: 20px; margin: 0 0 8px; }
+    .pr .lede { color: var(--muted); margin: 0 0 18px; max-width: 70ch; }
+    .tools { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; margin-bottom: 16px; }
+    .tools a { color: var(--violet); }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; box-shadow: var(--shadow); margin-bottom: 16px; }
+    .status { font-size: 14px; color: var(--muted); min-height: 1.3em; margin: 0 0 8px; }
+    .note { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+    .head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .head .tag { font-size: 12px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; padding: 3px 10px; border-radius: 99px; background: var(--mint-soft); color: var(--mint); }
+    .head .tag.done { background: var(--paper); color: var(--muted); }
+    .ago { color: var(--muted); font-size: 12px; }
+    table.hist, table.cardt { width: 100%; border-collapse: collapse; font-size: 14px; }
+    .hist th, .hist td, .cardt th, .cardt td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    .hist th, .cardt th { font-size: 12px; color: var(--muted); font-weight: 700; }
+    .hist td.num, .hist th.num, .cardt td.num, .cardt th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .hist tr.sel td { background: var(--sun-soft); }
+    .hist button { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+    .mono { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+    .tabs2 { display: flex; gap: 6px; margin-bottom: 10px; }
+    .tabs2 button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+    .tabs2 button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+    .pk-modal { position: fixed; inset: 0; z-index: 1000; background: rgba(10, 12, 30, .55); display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .pk-modal[hidden] { display: none; }
+    .pk-box { background: var(--surface); color: var(--ink); width: 100%; max-width: 400px; border-radius: 20px; padding: 24px 22px; box-shadow: 0 20px 60px rgba(0,0,0,.35); text-align: center; }
+    .pk-box h3 { font-family: var(--display); font-size: 21px; margin: 10px 0 6px; }
+    .pk-box p { margin: 6px 0; font-size: 14px; color: var(--muted); }
+    .pk-box p b { color: var(--ink); }
+    .pk-box .pk-acts { margin-top: 16px; display: flex; justify-content: center; gap: 8px; }
+    .pk-big { display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 50%; font-size: 30px; font-weight: 800; background: var(--paper); }
+    .pk-big.ok { background: var(--mint-soft); color: var(--mint); } .pk-big.bad { background: var(--rose-soft); color: var(--rose); }
+    .pk-spin { display: inline-block; width: 44px; height: 44px; border-radius: 50%; border: 4px solid var(--line); border-top-color: var(--violet); animation: spin .9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .pk-spin { animation: none; } }
+    .champs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+    .champs:empty { display: none; }
+    .champ { border-radius: 12px; padding: 10px 12px; background: var(--sun-soft); border: 1px solid var(--sun); font-size: 13px; }
+    .champ b { display: block; font-family: var(--display); font-size: 16px; }
+    .champ .mono { word-break: break-all; }
+    .hist tr.top td { font-weight: 700; }
+    .hist tr.me td { background: var(--violet-soft); }
+    @media (max-width: 640px) { .pk-row { grid-template-columns: 1fr auto; } .pk-when { grid-column: 1 / -1; } .champs { grid-template-columns: 1fr; } }
+      .pr { padding-top: 16px; }
+      .pr .lede { font-size: 15px; margin-bottom: 12px; }
+      .tools { position: sticky; top: calc(60px + env(safe-area-inset-top, 0px)); z-index: 19; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 8px; margin: 0 -16px 14px; padding: 8px 16px; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+      .tools::-webkit-scrollbar { display: none; }
+      .tools a { flex: none; padding: 7px 14px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); text-decoration: none; font-weight: 700; font-size: 14px; }
+      .tools a.go-pick { background: var(--tang); border-color: var(--tang); color: #1b1206; }
+      .card { padding: 14px; border-radius: 18px; }
+    @media (max-width: 640px) { .pr-lane { grid-template-columns: 1fr 96px; } .pr-who { grid-column: 1 / -1; } .pr-meta { padding-left: 0; } .hist .hide-sm { display: none; } }
+    .explain { font-size: 14px; color: var(--muted); }
+    .explain p { margin: 8px 0; }
+    @media (max-width: 640px) { .hist .hide-sm { display: none; } .lede-more, .tools .hide-sm { display: none; } }
+    .tabs2 { flex-wrap: wrap; } .tabs2 button { white-space: nowrap; }
+    /* Block X: a list of upcoming target blocks, each a row with its time and your pick. */
+    .bx-head { font-family: var(--num); font-variant-numeric: tabular-nums; font-size: 14px; color: var(--muted); margin: 0 0 10px; }
+    .bx-list { display: flex; flex-direction: column; gap: 8px; }
+    .bx-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+    .bx-row.mine { border-color: var(--violet); background: var(--violet-soft); }
+    .bx-when { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .bx-when b { font-family: var(--num); font-size: 17px; font-variant-numeric: tabular-nums; }
+    .bx-eta { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .bx-pick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; }
+    .bx-pick select { flex: 1 1 200px; min-width: 0; font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+    .bx-now { font-size: 13px; color: var(--muted); width: 100%; }
+    .formula { font-family: ui-monospace, Consolas, monospace; font-size: 14px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; display: inline-block; }
+    @media (max-width: 640px) { .bx-row { grid-template-columns: 1fr; } }
+    #targets-box, #results-box, #board-box, #mults, #how { scroll-margin-top: 80px; }
+    @media (max-width: 760px) {
+      .pr { padding-top: 16px; }
+      .pr .lede { font-size: 15px; margin-bottom: 12px; }
+      #targets-box, #results-box, #board-box, #mults, #how { scroll-margin-top: 124px; }
+      .tools { position: sticky; top: calc(60px + env(safe-area-inset-top, 0px)); z-index: 19; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 8px; margin: 0 -16px 14px; padding: 8px 16px; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+      .tools::-webkit-scrollbar { display: none; }
+      .tools a { flex: none; padding: 7px 14px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); text-decoration: none; font-weight: 700; font-size: 14px; }
+      .card { padding: 14px; border-radius: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <a class="brand" href="./" aria-label="Knode home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="brand-name">Knode</span>
+      </a>
+      <nav class="tabs" aria-label="Sections">
+        <details class="dd">
+          <summary>Games</summary>
+          <div class="dd-menu">
+            <a href="games.html">All games</a>
+            <a href="index.html#play">Daily Questions</a>
+            <a href="race.html">Producer Race</a>
+          </div>
+        </details>
+        <a href="index.html#leaderboard">Leaderboards</a>
+        <a href="index.html#results">Results</a>
+        <details class="dd">
+          <summary>Tools</summary>
+          <div class="dd-menu">
+            <a href="swap.html">Swap VHP → KOIN</a>
+            <a href="burn.html">Burn KOIN</a>
+            <a href="mana.html">Mana levels</a>
+            <a href="node.html">Producer lookup</a>
+            <a href="pulse.html">Network pulse</a>
+          </div>
+        </details>
+        <a href="index.html#how">Rules</a>
+        <a href="start.html" class="tab-start">New to Koinos?</a>
+        <details class="dd">
+          <summary>Info</summary>
+          <div class="dd-menu">
+            <a href="get.html">Get VHP</a>
+            <a href="index.html#welcome">New here? Quick tour</a>
+            <a href="install.html">Install app</a>
+            <a href="trust.html">Trust</a>
+            <a href="terms.html">Terms &amp; risks</a>
+          </div>
+        </details>
+      </nav>
+      <a class="btn btn-wallet" href="./#play">Play Knode</a>
+    </div>
+  </header>
+
+    <main class="bx">
+    <div class="bx-intro">
+      <div>
+        <h1>Who Signs Block X</h1>
+        <p>Every 2,400 blocks (about every 2 hours) is a target. Guess which producer signs it. Smaller producers score more, up to ×3. Free to play.</p>
+      </div>
+    </div>
+    <p class="status" id="status" role="status">Reading the chain…</p>
+
+    <section class="bx-stage" id="stage" aria-label="The next target block">
+      <div class="bx-stage-top"><span>Live from Koinos · block <b id="head-num">–</b></span><span id="head-line">–</span></div>
+      <div class="bx-chain" aria-hidden="true">
+        <div class="bx-past" id="chain"></div>
+        <div class="bx-gap"><b id="gap-num">–</b><span>blocks to go</span><span class="bx-dots">• • •</span></div>
+        <div class="bx-x"><span>?</span><small id="x-num">–</small></div>
+      </div>
+      <div class="bx-stage-foot">
+        <div class="bx-lock" id="lock-line">Picks lock <b id="lock-clock">–:–</b> before the block</div>
+        <button class="bx-cta" type="button" id="cta">Pick who signs it</button>
+      </div>
+      <div class="bx-bar"><i id="lock-bar"></i></div>
+    </section>
+
+    <div class="bx-you" id="you" hidden>
+      <div><b id="you-left">–</b><span>picks left today</span></div>
+      <div><b id="you-pts">0.00</b><span>points this week</span></div>
+      <div><b id="you-rank">–</b><span>your place this week</span></div>
+      <div><b id="you-mana">–</b><span>your Mana (the sponsor pays for picks)</span></div>
+    </div>
+    <ol class="bx-steps" id="steps">
+      <li><span><b>Connect a wallet</b>Kondor, KOIN Vault, or a free guest wallet. Picks cost you nothing: the Knode Mana sponsor pays.</span></li>
+      <li><span><b>Pick who signs a target</b>12 targets are always open. Change your pick until it locks.</span></li>
+      <li><span><b>Score when you're right</b>×1 for the biggest producer, up to ×3 for small ones. The week's top 2 players win 2 and 1 VHP once the vault is live.</span></li>
+    </ol>
+
+    <section class="bx-sec" id="targets-box">
+      <div class="bx-sec-head"><h2>Open targets</h2><p id="game-rules"></p></div>
+      <p class="note" id="picks-soon" style="margin-top:0">Picks open when the Knode Games Picks contract is live. Until then you can watch the targets and the multipliers.</p>
+      <p class="note" id="picks-who"></p>
+      <span id="picks-left" hidden></span>
+      <div class="bx-grid" id="targets"></div>
+    </section>
+
+    <div class="bx-panels bx-sec">
+      <section class="bx-panel" id="results-box" hidden>
+        <h2>Latest results</h2>
+        <div class="bx-res" id="res-rows"></div>
+        <p class="note">Recorded once the block is irreversible and matches on two independent Koinos nodes.</p>
+      </section>
+      <section class="bx-panel" id="board-box" hidden>
+        <h2>Leaderboard</h2>
+        <div id="bx-board"></div>
+        <p class="note" id="prize-line"></p>
+        <p class="note" id="stake-line">Staked players (at least 1 VHP staked in Block X that week) share this game's weekly bucket; free players play for the 2 + 1 VHP prize.</p>
+        <p class="note" id="stake-mine" hidden></p>
+      </section>
+      <section class="card" id="blockx-stake" hidden>
+      </section>
+    </div>
+
+    <section class="bx-sec bx-panel" id="mults">
+      <h2>Who signs most often</h2>
+      <p class="note" id="mult-sub"></p>
+      <div id="mult-rows"></div>
+    </section>
+
+    <details class="bx-how" id="how">
+      <summary>How it works</summary>
+      <div class="explain">
+        <p><b>The targets.</b> Every block whose number is a multiple of 2,400 is a target, about every 2 hours. The next 12 are always open, about a day ahead. Nobody chooses them.</p>
+        <p><b>The lock.</b> The Picks contract refuses a pick once the chain reaches 100 blocks before the target, so every pick is in before anyone can know who signs it. You can change a pick up to 5 times, and make up to 30 picks a day (changes count).</p>
+        <p><b>The score.</b> Koinos picks who signs each block in proportion to VHP, so big producers sign more often. A right pick scores</p>
+        <p><span class="formula">min(3, top producer's VHP ÷ your producer's VHP)</span></p>
+        <p>with the VHP from the Producer Race's hourly handicap card at the lock. A wrong pick scores 0. Ties on the board go to more right picks, then the earlier last right pick.</p>
+        <p><b>Prizes.</b> Two boards, as in every Knode Games game: Staked (1 VHP or a Knode stake) and Free play (everyone else, guests too). Each week the top 2 of Free play (picks on at least 3 days) win 2 and 1 VHP, paid once the Knode Games vault is live. A week is final 12 hours after it ends.</p>
+        <p><b>Fair checks.</b> Results come from irreversible blocks that match on two independent nodes, and the scoring code is public: the page and the recorder run the same file.</p>
+      </div>
+    </details>
+  </main>
+
+  <nav class="tabbar" aria-label="Main">
+    <a href="games.html"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect></svg>Games</a>
+    <a href="index.html#leaderboard"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 20V10M12 20V4M18 20v-7"></path></svg>Leaders</a>
+    <a href="index.html#results"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg>Results</a>
+    <a href="swap.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4L3 8l4 4"></path><path d="M3 8h14"></path><path d="M17 20l4-4-4-4"></path><path d="M21 16H7"></path></svg>Swap</a>
+    <button type="button" class="tb-more" aria-expanded="false" aria-controls="more-sheet"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>More</button>
+  </nav>
+  <div class="more-sheet" id="more-sheet" hidden>
+    <nav class="more-panel" aria-label="More pages">
+      <p class="ms-h">Play</p>
+      <a href="index.html#play"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.6 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg><span>Daily Questions</span></a>
+      <a href="race.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 21V4"></path><path d="M5 4h12l-2.5 4L17 12H5"></path></svg><span>Producer Race</span></a>
+      <a href="index.html#how"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"></path><path d="M9 9h6M9 13h6"></path></svg><span>Rules</span></a>
+      <p class="ms-h">Tools</p>
+      <a href="burn.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 21c-4 0-6.5-2.6-6.5-6 0-3.5 3-5.5 3.5-9 2 1.5 3 3 3 5 1-1 1.5-2 1.5-3.5 2.5 2 4.5 4.6 4.5 7.5 0 3.4-2.5 6-6 6z"></path></svg><span>Burn KOIN</span></a>
+      <a href="mana.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M13 3L5 14h6l-1 7 8-11h-6z"></path></svg><span>Mana levels</span></a>
+      <a href="node.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg><span>Producer lookup</span></a>
+      <a href="pulse.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12h4l2-5 4 10 2-5h6"></path></svg><span>Network pulse</span></a>
+      <p class="ms-h">Learn</p>
+      <a href="start.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg><span>New to Koinos?</span></a>
+      <a href="index.html#welcome"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.3a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.8"></path><path d="M12 17.2v.1"></path></svg><span>New here? Quick tour</span></a>
+      <a href="get.html"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v8M8 12h8"></path></svg><span>Get VHP</span></a>
+      <p class="ms-h">About</p>
+      <a href="install.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 4v11"></path><path d="M7.5 10.5L12 15l4.5-4.5"></path><path d="M5 20h14"></path></svg><span>Install app</span></a>
+      <a href="trust.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z"></path></svg><span>Trust</span></a>
+      <a href="terms.html"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"></path><path d="M10 12h5M10 16h5"></path></svg><span>Terms &amp; risks</span></a>
+    </nav>
+  </div>
+
+  <footer class="foot">
+    <div class="wrap">
+      <div class="foot-row">
+        <span>Knode runs fully on Koinos. Open source.</span>
+        <span class="foot-links"><a href="trust.html">Trust</a> · <a href="terms.html">Terms &amp; risks</a> · <a href="install.html">Install app</a> · <a href="https://github.com/bawcejawn/Knode" target="_blank" rel="noopener">Source code</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js" integrity="sha384-IAL9o3r4bQJvWhvszkorFINY2ct4LBA/LvyXE9NSOPCyYB25BsFV12JITA7Gxbk6" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js" integrity="sha384-WOeNFfSdOron0s4x9jdzLtA7Ic7RSqZCXZAaeQd6HRL6WezQp0KAtIF2XSa+11TL" crossorigin="anonymous"></script>
+  <script src="guest.js"></script>
+  <script src="wallet.js"></script>
+  <script src="header-wallet.js"></script>
+  <script src="nav.js"></script>
+  <script src="stake-panel.js"></script>
+  <script src="race-math.js"></script>
+  <script src="blockx-math.js"></script>
+  <script src="board.js"></script>
+  <script src="blockx.js"></script>
+</body>
+</html>

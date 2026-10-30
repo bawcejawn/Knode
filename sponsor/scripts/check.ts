@@ -21,11 +21,11 @@ ok(fs.existsSync(ABI), `${ABI} exists`);
 const abi = fs.existsSync(ABI) ? JSON.parse(fs.readFileSync(ABI, "utf8")) : { methods: {} };
 for (const m of ["authorize", "get_config", "get_usage", "get_total_usage", "would_pay", "set_config"]) ok(!!abi.methods[m], `ABI has ${m}`);
 for (const m of ["get_config", "get_usage", "get_total_usage", "would_pay"]) ok(abi.methods[m]?.read_only === true, `${m} is read-only`);
-// The website (site/wallet.js) and the tools (bot/sponsor.ts) carry these entry points: they must match the built contract.
+// The website (wallet.js) and the tools (bot/sponsor.ts) carry these entry points: they must match the built contract.
 const SITE: Record<string, number> = { would_pay: 0xda1fd8f5, get_config: 0xbc4fcdd4 };
 for (const [m, ep] of Object.entries(SITE)) ok(abi.methods[m]?.entry_point === ep, `website entry point for ${m} matches`);
-const site = fs.existsSync("../site/wallet.js") ? fs.readFileSync("../site/wallet.js", "utf8") : "";
-ok(/0xda1fd8f5/.test(site), "site/wallet.js asks would_pay at 0xda1fd8f5");
+const site = fs.existsSync("../wallet.js") ? fs.readFileSync("../wallet.js", "utf8") : "";
+ok(/0xda1fd8f5/.test(site), "wallet.js asks would_pay at 0xda1fd8f5");
 
 // The player actions the contract pays for are the game's and the Desk's entry points by name.
 const game = JSON.parse(fs.readFileSync("../game/abi/kpred.koilib.json", "utf8"));
@@ -47,6 +47,25 @@ for (const [k, [a, name]] of Object.entries(pinned)) {
 const fieldsOf = (a: any, pkg: string, msg: string) => JSON.stringify(a.koilib_types?.nested?.[pkg]?.nested?.[msg]?.fields ?? null);
 ok(fieldsOf(abi, "sponsor", "race_pick_args") === fieldsOf(raceAbi, "race", "pick_arguments") && fieldsOf(abi, "sponsor", "race_pick_args") !== "null",
   "race_pick_args = the race contract's pick_arguments, field for field");
+// Audit SP-28: the sponsor reads the game's get_player exactly as the game answers it: player_object stake/pending
+// in field 1, and active_stake (the stake counting for the asked week) in field 3; get_player_arguments week = 2.
+const gf = (msg: string, field: string) => game.koilib_types?.nested?.kpred?.nested?.[msg]?.fields?.[field];
+const sf = (msg: string, field: string) => abi.koilib_types?.nested?.sponsor?.nested?.[msg]?.fields?.[field];
+ok(gf("get_player_result", "active_stake")?.id === 3 && sf("game_get_player_result", "active_stake")?.id === 3 && sf("game_get_player_result", "active_stake")?.type === gf("get_player_result", "active_stake")?.type,
+  "game_get_player_result.active_stake = the game's get_player_result.active_stake (field 3)");
+ok(gf("get_player_arguments", "week")?.id === 2 && sf("game_get_player_args", "week")?.id === 2, "game_get_player_args.week = the game's get_player_arguments.week (field 2)");
+// Audit SP-26: the vault (v6) calls and read, against the committed v6 ABI (game/abi/kpred-v6.koilib.json).
+const v6 = JSON.parse(fs.readFileSync("../game/abi/kpred-v6.koilib.json", "utf8"));
+const v6pins: Record<string, string> = { GAME_GET_GAME_PLAYER: "get_game_player", GAME_DEPOSIT_TO: "deposit_to", GAME_WITHDRAW_FROM: "withdraw_from",
+  GAME_MOVE_STAKE: "move_stake", GAME_CLAIM_GAME: "claim_game", GAME_FINALIZE_GAME_WEEK: "finalize_game_week" };
+for (const [k, name] of Object.entries(v6pins)) {
+  const m = src.match(new RegExp(`${k}: u32 = (0x[0-9a-f]+)`));
+  ok(!!m && Number(m[1]) === v6.methods[name]?.entry_point, `${k} = vault v6 ${name} (${v6.methods[name]?.entry_point?.toString(16)})`);
+}
+const v6f = (msg: string, field: string) => v6.koilib_types?.nested?.kpred?.nested?.[msg]?.fields?.[field];
+ok(["player", "game", "week"].every((f, i) => v6f("get_game_player_arguments", f)?.id === i + 1 && sf("game_get_game_player_args", f)?.id === i + 1), "game_get_game_player_args = the vault's get_game_player_arguments (player 1, game 2, week 3)");
+ok(v6f("get_game_player_result", "week_stake")?.id === 4 && sf("game_get_game_player_result", "week_stake")?.id === 4, "week_stake = the vault's get_game_player_result field 4");
+ok(v6f("get_player_result", "active_stake")?.id === 3, "the vault's get_player_result.active_stake is field 3 too");
 const body = (f: string) => fs.readFileSync(f, "utf8").replace(/^\/\/ A copy of[^\n]*\n/, "");
 // v3: the tests' copy of the Picks decoder, and the Picks pick_arguments shape the tool allowlists (bot/sponsor.ts
 // PICKS_ARG_TYPES: player bytes, game varint, round varint, producers bytes, number varint).

@@ -7,7 +7,7 @@ import vm from "node:vm";
 import { utils } from "koilib";
 
 const APP = process.env.APP || ".";
-const wallet = fs.readFileSync(`${APP}/site/wallet.js`, "utf8");
+const wallet = fs.readFileSync(`${APP}/wallet.js`, "utf8");
 const PLAYER = "1JEG83vHFKLwt3dnDqjuX9s5Zc56U4bQet", GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", DESK = "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR";
 const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", KOIN = "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK", POB = "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv";
 const SPONSOR = "1AZsVFFrvKFhhxLq2jKHUUesdm2zbCcbXW";
@@ -53,7 +53,7 @@ test("the sponsor pays a game action when it is on and would_pay says yes", asyn
   assert.equal(w.log.asked.length, 1);
   assert.equal(w.log.asked[0].contract_id, SPONSOR);
   assert.equal(w.log.asked[0].entry_point, 0xda1fd8f5);
-  assert.deepEqual(w.log.built[0], { payer: SPONSOR, payee: PLAYER, rcLimit: "300000000" });
+  assert.deepEqual(w.log.built[0], { payer: SPONSOR, payee: PLAYER, rcLimit: "100000000" });   // audit SP-17: other actions ask the 1-Mana cap
   assert.deepEqual(w.log.sent, [SPONSOR]);
 });
 
@@ -132,4 +132,56 @@ test("an own-Mana claim may be paid by the sponsor (never by the game contract)"
   const w = world();
   await w.send([w.op(GAME)], { ownMana: true });
   assert.deepEqual(w.log.sent, [SPONSOR]);
+});
+
+// ── sponsor v3: each action's own Mana limit (rcLimits, from the sponsor's mana-report) ──
+const PICKS = "1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW", PICK = 0x8ce33c6c, ANSWER = 0x0db52f40;
+const withLimits = (rcLimits) => ({ address: SPONSOR, covers: [GAME, DESK, VHP, KOIN, PICKS], tokens: [VHP, KOIN], picks: PICKS, rcLimit: "100000000", rcLimitOther: "300000000", rcLimits });
+test("v3: a pick asks for its own limit; several ask for the sum; never more than the old limit", async () => {
+  const w = world({ sponsor: withLimits({ [`${PICKS}:8ce33c6c`]: "8000000" }) });
+  await w.send([w.op(PICKS, PICK)]);
+  assert.equal(w.log.built[0].rcLimit, "8000000", "0.08 Mana for one pick");
+  await w.send([w.op(PICKS, PICK), w.op(PICKS, PICK), w.op(PICKS, PICK)]);
+  assert.equal(w.log.built[1].rcLimit, "24000000", "0.24 for three");
+  const many = Array.from({ length: 10 }, () => w.op(PICKS, PICK));
+  const w2 = world({ sponsor: withLimits({ [`${PICKS}:8ce33c6c`]: "20000000" }) });
+  await w2.send(many);
+  assert.equal(w2.log.built[0].rcLimit, "100000000", "10 × 0.2 = 2, capped at the old 1 Mana");
+});
+test("v3: an action without its own limit keeps the old limit; a malformed entry is ignored", async () => {
+  const w = world({ sponsor: withLimits({ [`${PICKS}:8ce33c6c`]: "8000000" }) });
+  await w.send([w.op(GAME, ANSWER), w.op(PICKS, PICK)]);
+  assert.equal(w.log.built[0].rcLimit, "100000000", "the answer has no row: the old answers limit");
+  const w2 = world({ sponsor: withLimits({ [`${PICKS}:8ce33c6c`]: "-5" }) });
+  await w2.send([w2.op(PICKS, PICK)]);
+  assert.equal(w2.log.built[0].rcLimit, "100000000");
+  const w3 = world({ sponsor: withLimits({ [`${PICKS}:8ce33c6c`]: "1e9" }) });
+  await w3.send([w3.op(PICKS, PICK)]);
+  assert.equal(w3.log.built[0].rcLimit, "100000000");
+});
+
+// ── audit BXW-2: the Kondor path names the chain and re-checks what Kondor signed ──
+function kondorTamper(tamper, chainId = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==") {
+  const built = [];
+  class Transaction {
+    constructor(c) { this.options = { ...(c.options || {}) }; built.push(this.options); this.transaction = { header: { payer: c.options?.payer, chain_id: c.options?.chainId, rc_limit: c.options?.rcLimit }, operations: [] }; }
+    async pushOperation(op) { this.transaction.operations.push(op); }
+    async sign() { return tamper({ ...this.transaction, header: { ...this.transaction.header }, operations: [...this.transaction.operations], signatures: ["s"] }); }
+    async send() { return {}; }
+  }
+  const ctx = { W: { kind: "kondor", address: PLAYER, provider: { wait: async () => {} }, payer: "self", chainId }, lib: { Transaction, utils }, window: { kondor: { getSigner: () => ({}) } },
+    JSON, Number, BigInt, Uint8Array, Promise, setTimeout, String, withTimeout: (p) => p };
+  vm.createContext(ctx);
+  vm.runInContext(wallet.slice(s0, s1) + "\nthis.sendKondorWith = sendKondorWith;", ctx);
+  const op = { call_contract: { contract_id: GAME, entry_point: 1, args: "AA" } };
+  return { built, send: (opts) => ctx.sendKondorWith("t", [op], opts) };
+}
+test("BXW-2: the chain id is named in the transaction; another chain, a raised Mana limit or changed operations are not sent", async () => {
+  const ok = kondorTamper((t) => t);
+  await ok.send({ ownMana: true });
+  assert.equal(ok.built[0].chainId, "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==");
+  await assert.rejects(kondorTamper((t) => ({ ...t, header: { ...t.header, chain_id: "other" } })).send({ ownMana: true }), /another chain/);
+  await assert.rejects(kondorTamper((t) => ({ ...t, header: { ...t.header, rc_limit: "999999999" } })).send({ sponsor: SPONSOR, rcLimit: "100000000" }), /raised the Mana limit/);
+  await assert.rejects(kondorTamper((t) => ({ ...t, operations: [{ call_contract: { contract_id: DESK, entry_point: 1, args: "AA" } }] })).send({ ownMana: true }), /changed what is signed/);
+  await assert.rejects(kondorTamper((t) => ({ ...t, operations: [] })).send({ ownMana: true }), /changed what is signed/);
 });

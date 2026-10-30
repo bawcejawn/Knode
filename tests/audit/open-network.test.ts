@@ -47,7 +47,7 @@ const endWith = (q: any, change: (who: string, start: bigint) => bigint, height 
 // ───────────── 1. the disclosure ─────────────
 
 test("the How it works page says plainly that anyone can influence results, and that the project's own producers take part", () => {
-  const html = fs.readFileSync("site/index.html", "utf8");
+  const html = fs.readFileSync("index.html", "utf8");
   const how = html.slice(html.indexOf('id="view-how"'), html.indexOf("</section>", html.indexOf('id="view-how"')));
   assert.match(how, /Koinos is an open network/);
   assert.match(how, /stake VHP, run a block producer or send transactions/);

@@ -11,7 +11,7 @@ async function trySend(t, before) {
 for (const changes of [0, 2]) test(`editing card 1 (changes ${changes}) reaches the wallet`, { timeout: 60000 }, async () => {
   const now = Date.now(), day = Math.floor(now / H.DAY), r = Math.floor(now / 21600000) + 3;
   const card1 = { legs: [{ code: 1, round: String(r), producer: H.PRODS[2] }, { code: 2, round: String(r), producer: H.PRODS[3] }], changes };
-  const t = await H.open({ legs: H.openLegs(now), slots: (round) => (round === day * 3 ? card1 : null) });
+  const t = await H.open({ vault: "staked", legs: H.openLegs(now), slots: (round) => (round === day * 3 ? card1 : null) });
   try {
     await t.page.waitForFunction(() => /Send card 2 of 3/.test(document.getElementById("send").textContent), null, { timeout: 20000 });
     await t.page.click('[data-k="slot:0"]');
@@ -25,7 +25,7 @@ test("a new card after a card landed (page not refreshed yet) goes to a free slo
   const now = Date.now(), day = Math.floor(now / H.DAY), r = Math.floor(now / 21600000) + 3;
   const card1 = { legs: [{ code: 1, round: String(r), producer: H.PRODS[2] }, { code: 2, round: String(r), producer: H.PRODS[3] }], changes: 0 };
   let landed = false;
-  const t = await H.open({ legs: H.openLegs(now), slots: (round) => (round === day * 3 || (landed && round === day * 3 + 1) ? card1 : null) });
+  const t = await H.open({ vault: "staked", legs: H.openLegs(now), slots: (round) => (round === day * 3 || (landed && round === day * 3 + 1) ? card1 : null) });
   try {
     await t.page.waitForFunction(() => /Send card 2 of 3/.test(document.getElementById("send").textContent) && !document.getElementById("send").disabled, null, { timeout: 20000 });
     landed = true;   // another tab sent card 2

@@ -9,7 +9,7 @@ import vm from "node:vm";
 import { webcrypto } from "node:crypto";
 
 const APP = process.env.APP || ".";
-const app = fs.readFileSync(`${APP}/site/app.js`, "utf8");
+const app = fs.readFileSync(`${APP}/app.js`, "utf8");
 const a = app.indexOf("// params-hash:start"), b = app.indexOf("// params-hash:end");
 assert.ok(a > 0 && b > a, "params-hash markers in site/app.js");
 const ctx = vm.createContext({ crypto: webcrypto, TextEncoder, Uint8Array });

@@ -19,5 +19,8 @@
     "@koinos/sdk-as": "1.5.1",
     "@koinos/sdk-as-cli": "1.0.2",
     "tsx": "4.23.15"
+  },
+  "config": {
+    "protocVersion": "21.12"
   }
 }
