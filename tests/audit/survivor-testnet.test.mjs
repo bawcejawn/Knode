@@ -283,3 +283,13 @@ test("the test page takes the next free port when its port is busy (8090 is the 
   busy.close();
   assert.equal(fs.readFileSync(path.join(APP, "bot/survivor-test.ts"), "utf8").match(/process\.env\.SURVIVOR_TEST_PORT \|\| (\d+)\)/)[1], "8370");
 });
+
+test("fix-check N8: one run at a time; a stale lock (its process gone) is taken over, and the message says what to do", async () => {
+  const T = await import(path.resolve(APP, "bot/survivor-test.ts"));
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "lock-"));
+  fs.writeFileSync(path.join(d, ".lock"), "999999");                 // no such process
+  T.takeLock(d);
+  assert.equal(fs.readFileSync(path.join(d, ".lock"), "utf8"), String(process.pid));
+  fs.writeFileSync(path.join(d, ".lock"), String(process.ppid));    // a live process
+  assert.throws(() => T.takeLock(d), /Another survivor-test command .* delete the file/);
+});

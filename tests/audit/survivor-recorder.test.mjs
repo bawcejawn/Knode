@@ -646,3 +646,11 @@ test("fix-check: a run that died between the two renames is put right by the nex
   recoverOut(out);
   assert.ok(fs.existsSync(path.join(out, "days.json")) && !fs.existsSync(parked));
 });
+
+test("fix-check N3: reads stop at the hard stop, so a day too big for one run is dropped and the files are still written", async () => {
+  const { setHardStop } = await import(path.resolve(APP, "bot/games/survivor.ts"));
+  setHardStop(Date.now() - 1);
+  await assert.rejects(pool([1, 2, 3], 2, async (i) => i), /out of time/);
+  setHardStop(Infinity);
+  assert.deepEqual(await pool([1, 2], 2, async (i) => i * 2), [2, 4]);
+});

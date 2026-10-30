@@ -279,7 +279,9 @@ test("Repo Lense S2-5, S2-6, S2-16, S2-17: page clock only forward; own pick lis
   const js = read("survivor.js");
   assert.match(js, /if \(t > 0 && t - Date\.now\(\) > 30000\) skew = Math\.max\(skew, t - Date\.now\(\)\)/, "a lagging node never turns the page clock back");
   assert.ok(!/Math\.abs\(t - Date\.now\(\)\)/.test(js));
-  assert.match(js, /myPicks\.set\(d, p\); sentPicks\.set\(d, p\); mineAt = 0;/, "a sent pick goes into the list at once, stays until seen, and the grace is dropped");
+  assert.match(js, /myPicks\.set\(d, p\); sentPicks\.set\(`\$\{who\}\|\$\{d\}`, p\); unseen\.delete\(d\); mineAt = 0;/, "a sent pick goes into the list at once (per wallet), stays until seen, and the grace is dropped");
+  assert.match(js, /sentPicks\.clear\(\); unseen\.clear\(\);/, "cleared when the wallet changes (fix-check N4)");
+  assert.match(js, /Date\.now\(\) - p\.at > 3 \* 60000/, "dropped when the chain still doesn't show it after 3 minutes");
   assert.match(js, /function doubles\(\)/); assert.match(js, /doubles\(\)\.length \? ` Warning: you picked/);
   assert.match(js, /else if \(who && !mineOk && sd\.n > 1\) cell = el\("div", \{ class: "bx-now", text: "Couldn't read your picks/);
   assert.match(js, /if \(me\(\) !== who \|\| seq !== mineSeq\) return;/, "only the newest read writes the list");

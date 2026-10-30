@@ -108,3 +108,27 @@ test("the publish shell on an existing branch: a changed vault file is held, the
   const dropped = publish(out, (IN) => { const f = path.join(IN, "survivor", "index.json"), j = JSON.parse(fs.readFileSync(f, "utf8")); j.seasons = []; fs.writeFileSync(f, JSON.stringify(j)); }, first.REMOTE);
   assert.notEqual(dropped.code, 0); assert.match(dropped.out, /drops a published season/);
 });
+
+test("fix-check N1, N2, N5, N6: Survivor runs only after a good fetch; published vault files aren't checked again; the index's seasons are on the calendar; a launch can still move", async (t) => {
+  const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
+  assert.match(yml, /- name: Take the last run's files and the race cards\n\s+id: prev/);
+  assert.match(yml, /- name: Record Survivor\n\s+id: survivor\n(?:\s+#.*\n)*\s+if: \$\{\{ !cancelled\(\) && steps\.prev\.outcome == 'success' \}\}/);
+  try { execFileSync("python3", ["--version"]); execFileSync("bash", ["--version"]); } catch { t.skip("python3 or bash missing"); return; }
+  const out = await recorded();
+  const first = publish(out);
+  assert.equal(first.code, 0, first.out);
+  // A vault file published by hand (e.g. after a late reading the owner checked): later runs re-send it as published
+  // and it isn't checked again, so no endless failure.
+  const hand = publish(out, (IN) => { const f = path.join(IN, "survivor", "vault", "W4.json"); fs.writeFileSync(f, fs.readFileSync(f)); }, first.REMOTE);
+  assert.equal(hand.code, 0, hand.out);
+  // A season in the index that hasn't started by the job's clock is refused.
+  const future = publish(out, (IN) => { const f = path.join(IN, "survivor", "index.json"), j = JSON.parse(fs.readFileSync(f, "utf8")); j.seasons.push(9999); fs.writeFileSync(f, JSON.stringify(j)); });
+  assert.notEqual(future.code, 0); assert.match(future.out, /a season that hasn't started/);
+  // Before any season is listed, Season 1's start may still move (a postponed launch).
+  const r0 = fs.mkdtempSync(path.join(os.tmpdir(), "remote0-")); execFileSync("git", ["init", "-q", "--bare", r0]);
+  const noSeasons = (fd) => (IN) => { for (const f of fs.readdirSync(path.join(IN, "survivor"))) if (/^S\d+\.json$/.test(f)) fs.rmSync(path.join(IN, "survivor", f)); fs.rmSync(path.join(IN, "survivor", "vault"), { recursive: true, force: true });
+    const i = path.join(IN, "survivor", "index.json"), j = JSON.parse(fs.readFileSync(i, "utf8")); j.seasons = []; j.firstDay = fd; fs.writeFileSync(i, JSON.stringify(j)); };
+  assert.equal(publish(out, noSeasons(FIRST), r0).code, 0);
+  const moved = publish(out, noSeasons(FIRST + 7), r0);
+  assert.equal(moved.code, 0, moved.out);
+});

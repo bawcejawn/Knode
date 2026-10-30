@@ -43,6 +43,7 @@ jobs:
       # The files the last run published, and the race recorder's cards (public branches; read without a token).
       # Only plain JSON files with the expected names are taken.
       - name: Take the last run's files and the race cards
+        id: prev
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/prev/blockx" "$RUNNER_TEMP/prev/survivor" "$RUNNER_TEMP/race"
@@ -93,7 +94,8 @@ jobs:
       # Survivor runs even if Block X failed this hour, and the files of whichever recorder worked are published.
       - name: Record Survivor
         id: survivor
-        if: ${{ !cancelled() }}
+        # Only from the last run's files: never from nothing after a failed fetch (fix-check of S2-15).
+        if: ${{ !cancelled() && steps.prev.outcome == 'success' }}
         timeout-minutes: 15          # a step timeout fails the step, not the job: Block X's files still go out
         run: npm run survivor
         env:
@@ -168,6 +170,8 @@ jobs:
             done
             # Survivor's published index, to keep its season list append-only (Repo Lense S3-8).
             if git cat-file -e "$parent:survivor/index.json" 2>/dev/null; then git show "$parent:survivor/index.json" > "$PUB/survivor/index.json"; fi
+            # The vault files already published: written once, so not checked again (the write-once rule below holds them).
+            if git cat-file -e "$parent:survivor/vault" 2>/dev/null; then git ls-tree --name-only "$parent:survivor/vault" > "$PUB/survivor/vault-names"; fi
           else git read-tree --empty; fi
           # The content must be the recorder's own shape, not only parse as JSON.
           if [ -d "$IN/blockx" ]; then /usr/bin/python3 - "$IN/blockx" 2 "$PUB/blockx" "$HELD" blockx 2400 0 <<'PY'
@@ -554,11 +558,14 @@ jobs:
                   assert type(j["seasons"]) is list and all(small(s, 1, 9999) for s in j["seasons"]), f
                   assert j["firstDay"] is None or (j["firstDay"] - 4) % 7 == 0, f + ": Season 1 must start on a Monday"
                   first_day = j["firstDay"]
+                  # No season that hasn't started yet by the job's clock (fix-check).
+                  assert j["firstDay"] is None or all(past((j["firstDay"] + 14 * (x - 1)) * DAYMS) for x in j["seasons"]), f + ": a season that hasn't started (S3-1)"
                   # Append-only (Repo Lense S3-8): every published season stays listed, under the same Season 1 start.
                   pi = os.path.join(pub, "index.json")
                   if os.path.exists(pi):
                       old = json.load(open(pi, encoding="utf-8"), parse_constant=bad_constant)
-                      if not (set(old.get("seasons") or []) <= set(j["seasons"]) and (old.get("firstDay") is None or old.get("firstDay") == j["firstDay"])):
+                      # Season 1's start may still move while no season is listed (a postponed launch).
+                      if not (set(old.get("seasons") or []) <= set(j["seasons"]) and (not old.get("seasons") or old.get("firstDay") is None or old.get("firstDay") == j["firstDay"])):
                           print("::error::Not publishing survivor/index.json this run: it drops a published season or moves Season 1")
                           os.remove(os.path.join(d, f)); dropped.append(f)
                   continue
@@ -618,9 +625,13 @@ jobs:
               if len(second) > 10: second = []
               assert j["first"] == first and j["second"] == second, f + ": not the season's winners"
               return "ok"
+          published = set(open(os.path.join(pub, "vault-names")).read().split()) if pub and os.path.exists(os.path.join(pub, "vault-names")) else set()
           for f in (sorted(os.listdir(vd)) if os.path.isdir(vd) else []):
               m = re.fullmatch(r"W(0|[1-9][0-9]{0,4})\.json", f)
               assert m, "vault/" + f
+              # Already published (by the recorder, or by hand after a check: the runbook's late-reading case): the
+              # write-once rule decides; a copy that differs is held there with an alert (fix-check of S3-6/S3-11).
+              if f in published: continue
               # A vault file that fails is left out on its own; the rest of Survivor still goes out (Repo Lense S3-7).
               try:
                   j = json.load(open(os.path.join(vd, f), encoding="utf-8"), parse_constant=bad_constant)

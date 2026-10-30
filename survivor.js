@@ -130,11 +130,14 @@
   let mineOk = false, mineWho = null, mineAt = 0, mineSeq = 0, gameChanged = false;
   // Picks this page sent: kept in the list until a read shows them or their day locks (Repo Lense S3-14), so a pick the
   // chain hasn't shown yet still blocks its producer for other days.
-  const sentPicks = new Map();                    // day → { producers, changes }
+  // Keyed by wallet and day, cleared when the wallet changes; a pick the chain still doesn't show 3 minutes after it was
+  // sent, or that a read shows replaced, is dropped and the row says so (fix-check of S3-14).
+  const sentPicks = new Map();                    // `${wallet}|${day}` → { d, producers, changes, at }
+  const unseen = new Set();                       // days whose sent pick never showed on the chain
   const twice = (f) => f().catch(() => new Promise((res) => setTimeout(res, 1500)).then(f));
   async function loadMine() {
     const who = me(), seq = ++mineSeq;
-    if (who !== mineWho) { myPicks = new Map(); usage = null; mineOk = false; mineAt = 0; mineWho = who; }
+    if (who !== mineWho) { myPicks = new Map(); usage = null; mineOk = false; mineAt = 0; mineWho = who; sentPicks.clear(); unseen.clear(); }
     if (picksContract && who) {
       // Every day of the current season so far (whether you joined, and the producers you already picked, before
       // the recorder has those days: audit SV-5), today, and the open days.
@@ -147,10 +150,12 @@
       if (me() !== who || seq !== mineSeq) return;                // the wallet changed, or a newer read started
       if (got.every((x) => x.status === "fulfilled") && use[0].status === "fulfilled") {
         myPicks = new Map(got.map((x) => x.value).filter(([, p]) => p));
-        for (const [d, p] of sentPicks) {
-          const seen = myPicks.get(d);
-          if ((seen && seen.producers[0] === p.producers[0]) || S.lockTime(d) <= now()) sentPicks.delete(d);
-          else myPicks.set(d, p);
+        for (const [k, p] of sentPicks) {
+          if (!k.startsWith(`${who}|`)) { sentPicks.delete(k); continue; }
+          const seen = myPicks.get(p.d);
+          if (seen && seen.producers[0] === p.producers[0]) { sentPicks.delete(k); unseen.delete(p.d); }
+          else if (seen || S.lockTime(p.d) <= now() || Date.now() - p.at > 3 * 60000) { sentPicks.delete(k); if (!seen) unseen.add(p.d); }
+          else myPicks.set(p.d, p);
         }
         usage = use[0].value.result || null;
         mineOk = true; mineAt = Date.now();
@@ -268,6 +273,7 @@
         const mineWhy = mineP ? blocked.get(mineP) : null;
         if (mineP) notes.push(el("div", { class: `bx-now${mineWhy ? " warn" : ""}`, text: `Your pick: ${nameOf(mineP)}${mineWhy ? ` (${mineWhy === "used" ? "already used this season" : mineWhy}: each producer counts once, so this pick costs a life; change it)` : f && f.exact && !f.field.some((x) => x.a === mineP) ? " (not in this day's field: it would cost a life)" : ""}` }));
         // The warning only on the next day to lock: the later ones can wait.
+        else if (unseen.has(d)) notes.push(el("div", { class: "bx-now warn", text: "Your last pick for this day was sent but never showed on the chain: it didn't count. Pick again." }));
         else if (sd.n > 1 && d === days[0] && opts.length) notes.push(el("div", { class: "bx-now warn", text: `No pick yet: a ${S.MAINNET ? "day" : "round"} without a pick costs a life.` }));
         // No handicaps published yet: nothing to pick from (Repo Lense S3-13).
         if (!opts.length) notes.push(el("div", { class: "bx-now", text: `The handicaps aren't out yet, so picking isn't possible right now. They're published the ${S.MAINNET ? "day" : "round"} before; come back then.` }));
@@ -330,7 +336,7 @@
       }
       drafts.delete(d);
       // Sent (seen on the chain or not): in the list at once, and kept until a read shows it (S2-6, S3-14).
-      { const p = { producers: [producer], changes: mine ? Number(mine.changes || 0) + 1 : 0 }; myPicks.set(d, p); sentPicks.set(d, p); mineAt = 0; }
+      { const p = { d, producers: [producer], changes: mine ? Number(mine.changes || 0) + 1 : 0, at: Date.now() }; myPicks.set(d, p); sentPicks.set(`${who}|${d}`, p); unseen.delete(d); mineAt = 0; }
       if (onChain) pickModal("ok", "Pick confirmed", [el("p", {}, "Your pick: ", el("b", { text: nameOf(producer) }), ` for ${dayName(d)}.`),
         `It locks ${LOCK_TEXT} (${localTime(S.lockTime(d))} your time). Until then you can change it (up to ${S.MAX_CHANGES} times).`,
         id ? el("p", { class: "ago mono", text: `Transaction ${String(id).slice(0, 18)}…` }) : null].filter(Boolean), [okBtn()]);

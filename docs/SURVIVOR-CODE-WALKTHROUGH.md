@@ -265,8 +265,9 @@ When started as a program (`npm run survivor`), it connects to the two nodes fro
   re-emitted as they are, never rebuilt (S3-6); a down check node no longer stops the run (S3-9); one-node days are
   re-checked oldest first with their own slots (S3-10); the folder swap stays two renames everywhere (S3-18).
 - **Workflow:** job 45 min, Block X step 25, Survivor 15 (S3-3); a recorder that failed has its files left out
-  (S3-20); Survivor's vault files come into PREV (S3-6); Block X's check runs with `python3 -I` (S3-21); no empty first
-  commit (S3-24).
+  (S3-20); Survivor runs only from a successful fetch of the last run's files; Survivor's vault files come into PREV
+  (S3-6) and published ones aren't checked again; no empty first commit (S3-24). (S3-21, `python3 -I` for Block X's
+  check, is left to the Block X chat: its tests pin that line.)
 - **Page:** your own pick is flagged whenever its producer is already used or picked for another day (S3-4); the clock
   keeps the largest chain lead seen (S3-12); "handicaps aren't out yet" instead of "costs a life" when there's no field
   (S3-13); sent picks stay listed until seen (S3-14); a tab that comes back reads again (S3-15); guests are told to pick

@@ -71,12 +71,19 @@ export const AUDITED_PICKS_WASM = "700c296a1064b904299c156061d6caf8fcabd0b176596
 export function takeLock(dir = DIR) {
   fs.mkdirSync(dir, { recursive: true });
   const f = path.join(dir, ".lock");
-  let pid = 0;
-  try { pid = Number(fs.readFileSync(f, "utf8")) || 0; } catch { /* no lock */ }
   const alive = (n: number) => { try { process.kill(n, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } };
-  if (pid && pid !== process.pid && alive(pid)) throw new Error(`Another survivor-test command (process ${pid}) is using the test data. Stop it first (Ctrl+C in its window).`);
-  fs.writeFileSync(f, String(process.pid));
-  process.on("exit", () => { try { if (Number(fs.readFileSync(f, "utf8")) === process.pid) fs.unlinkSync(f); } catch { /* gone */ } });
+  try { fs.writeFileSync(f, String(process.pid), { flag: "wx" }); }
+  catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    let pid = 0;
+    try { pid = Number(fs.readFileSync(f, "utf8")) || 0; } catch { /* unreadable: treat as stale */ }
+    if (pid && pid !== process.pid && alive(pid)) throw new Error(`Another survivor-test command (process ${pid}) is using the test data. Stop it first (Ctrl+C in its window). If no other survivor-test window is open, delete the file ${f} and try again.`);
+    fs.writeFileSync(f, String(process.pid));                      // a stale lock (its process is gone)
+  }
+  const release = () => { try { if (Number(fs.readFileSync(f, "utf8")) === process.pid) fs.unlinkSync(f); } catch { /* gone */ } };
+  process.on("exit", release);
+  // Ctrl+C doesn't run the exit handler by itself (fix-check N8).
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.once(sig, () => { release(); process.exit(130); });
 }
 const KEYS = () => path.join(DIR, "keys.env"), CONFIG = () => path.join(DIR, "config.json"), DATA = () => path.join(DIR, "data");
 const PICKS_SRC = () => path.join(DIR, "picks-src");

@@ -229,10 +229,14 @@ async function readGame(node: any, contract: string): Promise<any> {
 const GAME = (() => { try { const c = JSON.parse(fs.readFileSync(new URL("../../game-data/deployment.json", import.meta.url), "utf8")).contract; return isAddr(c) ? (c as string) : ""; } catch { return ""; } })();
 /** Runs fn over items, at most `limit` at a time (Repo Lense S2-3: one read after another took too long). The first
  *  failure is thrown once all running reads are done. */
+// A hard stop for a run's chain reads (fix-check of S3-2): past it, reads stop with an error, so a day too big for one
+// run is dropped cleanly and the files are still written well inside the step's time limit.
+let HARD_STOP = Infinity;
+export const setHardStop = (t: number) => { HARD_STOP = t; };
 export async function pool<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0, err: unknown = null;
-  const worker = async () => { while (next < items.length && !err) { const i = next++; try { out[i] = await fn(items[i]); } catch (e) { err ??= e; } } };
+  const worker = async () => { while (next < items.length && !err) { const i = next++; try { if (Date.now() > HARD_STOP) throw new Error("out of time for this run"); out[i] = await fn(items[i]); } catch (e) { err ??= e; } } };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   if (err) throw err;
   return out;
@@ -511,6 +515,8 @@ export async function run(o: Opts) {
   // even if its checks run past it (Repo Lense S3-2). SURVIVOR_BUDGET_MS (a repository variable) changes it.
   const t0 = Date.now(), budget = o.budgetMs ?? Number(E.SURVIVOR_BUDGET_MS || 8 * 60000);
   let outOfTime = false;
+  // Reads stop for good 4 minutes after the budget (8 + 4 = 12 of the step's 15 minutes), so the files are written.
+  setHardStop(t0 + budget + 4 * 60000);
   const timeLeft = () => { if (!outOfTime && Date.now() - t0 > budget) { outOfTime = true; problems.push(`Survivor: out of time for season work this run (${Math.round(budget / 60000)} min); it carries on next run`); } return !outOfTime; };
   // The vault must count weeks and seasons as the files do, or no vault file is written (Repo Lense S2-7, S2-21).
   let vaultOk = true, vault: { genesis: number; weekLen: number; game3: any | null } | null = null;
@@ -645,6 +651,7 @@ export async function run(o: Opts) {
     const mine = await rankedRead(o.p, who);
     if (!o.check) return mine;
     const theirs = await rankedRead(o.check, who);
+    if (Date.now() > HARD_STOP) throw new Error("out of time for this run");
     return new Set([...mine].filter((a) => theirs.has(a)));
   };
   for (const sf of active) {
@@ -751,6 +758,7 @@ export async function run(o: Opts) {
   }
   fs.writeFileSync(path.join(STAGE, "index.json"), JSON.stringify({ v: 1, updated: new Date(head.time).toISOString(), firstDay, contract: contract || null, seasons: [...known].sort((a, b) => a - b) }) + "\n");
   swapIn(STAGE, FINAL);
+  setHardStop(Infinity);
   for (const pr of problems) console.log(`::warning::${pr}`);
   return { problems, days, fields, seasons };
 }
