@@ -16,6 +16,15 @@ import {
 import { sponsor } from "../proto/sponsor";
 import { F } from "./fixtures";
 
+/** Extra reads for the vault game check (v3, SP-2: race picks and game_arg rows ask get_game_player too): a failed
+ *  read with no answer, which counts as "no stake in that game". */
+function padReads(r: system_calls.exit_arguments[]): system_calls.exit_arguments[] {
+  const out: system_calls.exit_arguments[] = [];
+  for (let i = 0; i < r.length; i++) out.push(r[i]);
+  for (let i = 0; i < 4; i++) out.push(new system_calls.exit_arguments(0, new chain.result()));
+  return out;
+}
+
 const SELF = Base58.decode(F.SELF);
 const USER = Base58.decode(F.USER);
 const OTHER = Base58.decode(F.OTHER);
@@ -29,7 +38,7 @@ const ATTACKER = Base58.decode("16ixK5DgvcojcZLvxyYWhHFcRXfhfrHbpL");
 const MANA: u64 = 100000000;
 const DAY_MS: u64 = 86400000;
 // 2023-11-14 22:13 UTC, a Tuesday.
-const T0: u64 = 1700000000000;
+const T0: u64 = 1700003600000;   // 23:13 UTC: the free pool is fully released at hour 23 (v3, SP-3)
 // 2023-11-19 23:00 UTC (Sunday) and 2023-11-20 00:00 UTC (the next Monday).
 const SUNDAY_LATE: u64 = 1700434800000;
 const NEXT_MONDAY: u64 = 1700438400000;
@@ -104,7 +113,7 @@ export function vhpBalance(v: u64): system_calls.exit_arguments {
 }
 /** A game get_player answer. */
 export function gamePlayer(stake: u64, pending: u64): system_calls.exit_arguments {
-  const r = new sponsor.game_get_player_result(new sponsor.game_player(stake, pending));
+  const r = new sponsor.game_get_player_result(new sponsor.game_player(stake, pending), stake);
   return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(r, sponsor.game_get_player_result.encode)));
 }
 /** A failed read (the called contract reverted). */
@@ -113,8 +122,8 @@ export function failedRead(): system_calls.exit_arguments {
 }
 /** By default the payee holds 10 VHP. Tests change READS before calling pays() / wouldPay(). */
 let READS: system_calls.exit_arguments[] = [];
-function holder(): void { READS = [vhpBalance(10 * MANA)]; }
-function queueReads(): void { MockVM.setCallContractResults(READS); }
+function holder(): void { READS = [gamePlayer(10 * MANA, 0)]; }
+function queueReads(): void { MockVM.setCallContractResults(padReads(READS)); }
 
 function wouldPay(account: Uint8Array, rc: u64): sponsor.would_pay_result {
   queueReads();
@@ -130,6 +139,13 @@ function pays(): bool {
   apply();
   queueReads();
   return new Sponsor().authorize(new authority.authorize_arguments(authority.authorization_type.transaction_application)).value;
+}
+
+/** v3 (owner, 2026-10-28): a wallet that isn't a real player is paid from the free pool for ANY covered call. */
+function paidFromFree(): void {
+  expect(pays()).toBe(true);
+  expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day > 0).toBe(true);
+  MockVM.rollbackTransaction();
 }
 
 /** A normal sponsored stake by USER: approve the game for VHP, then deposit. */
@@ -254,18 +270,26 @@ describe("sponsor settings", () => {
     errorIs("SPONSOR: caps must be per transaction <= per player per day <= per player per week, and per player per day <= per day");
   });
 
-  it("refuses a daily cap above 1,000 mana", () => {
+  it("refuses a daily cap above 5,000 mana", () => {
     CFG = goodConfig();
-    CFG.max_mana_per_day = 1001 * MANA;
+    CFG.max_mana_per_day = 5001 * MANA;
     expect(() => { setConfig(); }).toThrow();
-    errorIs("SPONSOR: daily cap above 1,000 mana");
+    errorIs("SPONSOR: daily cap above 5,000 mana");
   });
 
-  it("refuses a weekly cap above 7,000 mana", () => {
+  it("accepts a daily cap of exactly 5,000 mana (owner, 2026-10-28)", () => {
     CFG = goodConfig();
-    CFG.max_mana_per_account_week = 7001 * MANA;
+    CFG.max_mana_per_day = 5000 * MANA;
+    setConfig();
+    expect(new Sponsor().get_config(new sponsor.get_config_arguments()).max_mana_per_day).toBe(5000 * MANA);
+  });
+
+  it("refuses a weekly cap above 35,000 mana", () => {
+    CFG = goodConfig();
+    CFG.max_mana_per_day = 5000 * MANA;
+    CFG.max_mana_per_account_week = 35001 * MANA;
     expect(() => { setConfig(); }).toThrow();
-    errorIs("SPONSOR: weekly cap above 7,000 mana");
+    errorIs("SPONSOR: weekly cap above 35,000 mana");
   });
 
   it("refuses switching on with a zero cap", () => {
@@ -363,10 +387,15 @@ describe("sponsor pays player actions", () => {
     expect(pays()).toBe(true);
   });
 
-  it("pays a swap on Knode Swap (approve VHP to the Desk + swap)", () => {
-    TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
-    OPS = [approve(VHP, USER, DESK), call(DESK, DESK_SWAP, new Uint8Array(0))];
-    expect(pays()).toBe(true);
+  it("never pays Knode Swap, even for a real player (owner 2026-10-29, audit SP-24): a swap, and an approve to the Desk", () => {
+    userStake(1, MANA);
+    OPS = [call(DESK, DESK_SWAP, new Uint8Array(0))];
+    expect(() => { pays(); }).toThrow();
+    errorIs("SPONSOR: Knode Swap swaps are not sponsored (players pay their own Mana)");
+    userStake(2, MANA);
+    OPS = [approve(VHP, USER, DESK)];
+    expect(() => { pays(); }).toThrow();
+    errorIs("SPONSOR: approve must name the game as spender (Knode Swap is not sponsored)");
   });
 
   it("pays the owner's own transactions without counting them", () => {
@@ -471,7 +500,7 @@ describe("sponsor refuses", () => {
   it("anything on Knode Swap but a swap", () => {
     userCall(1, MANA, DESK, DESK_WITHDRAW_KOIN);
     expect(() => { pays(); }).toThrow();
-    errorIs("SPONSOR: only swaps on Knode Swap are sponsored");
+    errorIs("SPONSOR: Knode Swap swaps are not sponsored (players pay their own Mana)");
   });
 
   it("a token transfer", () => {
@@ -484,7 +513,7 @@ describe("sponsor refuses", () => {
     userStake(1, MANA);
     OPS = [approve(VHP, USER, ATTACKER), call(GAME, GAME_DEPOSIT_VHP, new Uint8Array(0))];
     expect(() => { pays(); }).toThrow();
-    errorIs("SPONSOR: approve must name the game or Knode Swap as spender");
+    errorIs("SPONSOR: approve must name the game as spender (Knode Swap is not sponsored)");
   });
 
   it("an approve of someone else's tokens", () => {
@@ -670,72 +699,73 @@ describe("only real Knode players are sponsored (audit M-1)", () => {
   beforeEach(() => { start(); configure(); });
 
   it("pays for a player who holds enough VHP (one read)", () => {
-    READS = [vhpBalance(MANA)];
+    READS = [gamePlayer(MANA, 0)];
     userStake(1, MANA);
     expect(pays()).toBe(true);
   });
 
   it("pays for a staked player with no VHP in the wallet (withdrawing everything)", () => {
-    READS = [vhpBalance(0), gamePlayer(25 * MANA, 0)];
+    READS = [gamePlayer(25 * MANA, 0)];
     userCall(1, MANA, GAME, GAME_WITHDRAW);
     expect(pays()).toBe(true);
   });
 
-  it("pays for a player whose stake is still pending (deposited this week)", () => {
-    READS = [vhpBalance(0), gamePlayer(0, 5 * MANA)];
-    userCall(1, MANA, GAME, GAME_ANSWER);
-    expect(pays()).toBe(true);
+  it("v3 (audit SP-2): a stake still pending (deposited this week) is not a stake yet: not a real player [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
+    READS = [gamePlayer(0, 5 * MANA)];
+    userCall(2, MANA, GAME, GAME_CLAIM);
+    expect(() => { pays(); }).toThrow();
+    errorIs(FREE_USED_UP);   // v3 (owner 2026-10-28): a non-player spends the free pool, which is 0 here
   });
 
-  it("refuses an empty wallet with no stake, and counts nothing", () => {
-    READS = [vhpBalance(0), gamePlayer(0, 0)];
+  it("refuses an empty wallet with no stake, and counts nothing [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
+    READS = [gamePlayer(0, 0)];
     userCall(1, MANA, GAME, GAME_CLAIM);
     expect(() => { pays(); }).toThrow();
-    errorIs(NOT_A_PLAYER);
+    errorIs(FREE_USED_UP);   // v3 (owner 2026-10-28): a non-player spends the free pool, which is 0 here
     expect(new Sponsor().get_total_usage(new sponsor.get_total_usage_arguments()).used_day).toBe(0);
   });
 
-  it("refuses a wallet holding less than the minimum", () => {
-    READS = [vhpBalance(MANA - 1), gamePlayer(0, 0)];
+  it("refuses a wallet holding less than the minimum [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
+    READS = [gamePlayer(MANA - 1, 0), gamePlayer(0, 0)];
     userCall(1, MANA, GAME, GAME_SETTLE);
     expect(() => { pays(); }).toThrow();
-    errorIs(NOT_A_PLAYER);
+    errorIs(FREE_USED_UP);   // v3 (owner 2026-10-28): a non-player spends the free pool, which is 0 here
   });
 
-  it("follows the minimum set in the config", () => {
+  it("follows the minimum set in the config [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     CFG = goodConfig();
     CFG.min_vhp = 50 * MANA;
     setConfig();
     MockVM.commitTransaction();
-    READS = [vhpBalance(10 * MANA), gamePlayer(0, 0)];
+    READS = [gamePlayer(10 * MANA, 0), gamePlayer(0, 0)];
     userCall(1, MANA, GAME, GAME_CLAIM);
     expect(() => { pays(); }).toThrow();
-    errorIs(NOT_A_PLAYER);
-    READS = [vhpBalance(50 * MANA)];
+    errorIs(FREE_USED_UP);   // v3 (owner 2026-10-28): a non-player spends the free pool, which is 0 here
+    READS = [gamePlayer(50 * MANA, 0)];
     userCall(2, MANA, GAME, GAME_CLAIM);
     expect(pays()).toBe(true);
   });
 
-  it("fails closed when the token and the game can't be read", () => {
+  it("fails closed when the token and the game can't be read [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     READS = [failedRead(), failedRead()];
     userCall(1, MANA, GAME, GAME_WITHDRAW);
     expect(() => { pays(); }).toThrow();
-    errorIs(NOT_A_PLAYER);
+    errorIs(FREE_USED_UP);   // v3 (owner 2026-10-28): a non-player spends the free pool, which is 0 here
   });
 
-  it("fails closed when the game answers nothing", () => {
-    READS = [vhpBalance(0), new system_calls.exit_arguments(0, new chain.result())];
+  it("fails closed when the game answers nothing [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
+    READS = [new system_calls.exit_arguments(0, new chain.result())];
     userCall(1, MANA, GAME, GAME_WITHDRAW);
     expect(() => { pays(); }).toThrow();
-    errorIs(NOT_A_PLAYER);
+    errorIs(FREE_USED_UP);   // v3 (owner 2026-10-28): a non-player spends the free pool, which is 0 here
   });
 
-  it("would_pay applies the same rule", () => {
-    READS = [vhpBalance(0), gamePlayer(0, 0)];
+  it("would_pay applies the same rule [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
+    READS = [gamePlayer(0, 0)];
     const no = wouldPay(USER, MANA);
     expect(no.ok).toBe(false);
-    expect(no.reason).toBe("only players who hold VHP or have a Knode stake are sponsored");
-    READS = [vhpBalance(0), gamePlayer(3 * MANA, 0)];
+    expect(no.reason).toBe("today's free-player Mana is used up (more is released on the hour)");   // free pool 0 here
+    READS = [gamePlayer(3 * MANA, 0)];
     expect(wouldPay(USER, MANA).ok).toBe(true);
   });
 
@@ -767,7 +797,7 @@ function freeConfig(free: u64): void {
   MockVM.commitTransaction();
 }
 
-function emptyWallet(): void { READS = [vhpBalance(0), gamePlayer(0, 0)]; }
+function emptyWallet(): void { READS = [gamePlayer(0, 0)]; }
 
 describe("free answers for any wallet (owner's decision 2026-10-26)", () => {
   beforeEach(() => { start(); freeConfig(3 * MANA); });
@@ -816,7 +846,7 @@ describe("free answers for any wallet (owner's decision 2026-10-26)", () => {
     expect(() => { pays(); }).toThrow();
     errorIs(FREE_USED_UP);
     // OTHER holding VHP is a real player: paid, and not counted as free.
-    READS = [vhpBalance(2 * MANA)];
+    READS = [gamePlayer(2 * MANA, 0)];
     TX = 2; RC = MANA; PAYEE = OTHER; SIGNERS = ["OTHER"]; RAW_SIGS = [];
     OPS = [call(GAME, GAME_ANSWER, new Uint8Array(0))];
     expect(pays()).toBe(true);
@@ -841,29 +871,25 @@ describe("free answers for any wallet (owner's decision 2026-10-26)", () => {
     expect(new Sponsor().get_free_usage(new sponsor.get_free_usage_arguments()).used_day).toBe(MANA);
   });
 
-  it("still refuses an empty wallet's approve, deposit and swap", () => {
+  it("still refuses an empty wallet's approve, deposit and swap [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     emptyWallet();
     TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
     OPS = [approve(VHP, USER, GAME)];
-    expect(() => { pays(); }).toThrow();
-    errorIs(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     emptyWallet();
     userCall(2, MANA, GAME, GAME_DEPOSIT_VHP);
-    expect(() => { pays(); }).toThrow();
-    errorIs(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     emptyWallet();
     userCall(3, MANA, DESK, DESK_SWAP);
-    expect(() => { pays(); }).toThrow();
-    errorIs(NOT_A_PLAYER);
+    expect(() => { pays(); }).toThrow();   // owner 2026-10-29: Knode Swap is never sponsored
     expect(new Sponsor().get_total_usage(new sponsor.get_total_usage_arguments()).used_day).toBe(0);
   });
 
-  it("refuses an answer bundled with anything else from an empty wallet", () => {
+  it("refuses an answer bundled with anything else from an empty wallet [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     emptyWallet();
     TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
     OPS = [call(GAME, GAME_ANSWER, new Uint8Array(0)), call(GAME, GAME_CLAIM, new Uint8Array(0))];
-    expect(() => { pays(); }).toThrow();
-    errorIs(NOT_A_PLAYER);
+    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
   });
 
   it("with a free sub-cap of 0, empty wallets' answers are refused", () => {
@@ -874,7 +900,7 @@ describe("free answers for any wallet (owner's decision 2026-10-26)", () => {
     errorIs(FREE_USED_UP);
   });
 
-  it("would_pay agrees: free answers, the free sub-cap and other actions", () => {
+  it("would_pay agrees: free answers, the free sub-cap and other actions [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     emptyWallet();
     const a = wouldPayAnswer(USER, MANA);
     expect(a.ok).toBe(true);
@@ -882,14 +908,14 @@ describe("free answers for any wallet (owner's decision 2026-10-26)", () => {
     expect(a.left_free_today).toBe(3 * MANA);
     emptyWallet();
     const b = wouldPay(USER, MANA);
-    expect(b.ok).toBe(false);
-    expect(b.reason).toBe("only players who hold VHP or have a Knode stake are sponsored");
+    expect(b.ok).toBe(true);    // v3 (owner 2026-10-28): any covered call, from the free pool
+    expect(b.free).toBe(true);
     for (let i = 1; i <= 3; i++) { emptyWallet(); userCall(i, MANA, GAME, GAME_ANSWER); expect(pays()).toBe(true); MockVM.commitTransaction(); }
     emptyWallet();
     const c = wouldPayAnswer(OTHER, MANA);
     expect(c.ok).toBe(false);
-    expect(c.reason).toBe("today's free-player answers and picks are used up");
-    READS = [vhpBalance(5 * MANA)];
+    expect(c.reason).toBe("today's free-player Mana is used up (more is released on the hour)");
+    READS = [gamePlayer(5 * MANA, 0)];
     const d = wouldPayAnswer(OTHER, MANA);
     expect(d.ok).toBe(true);
     expect(d.free).toBe(false);
@@ -963,12 +989,12 @@ describe("Producer Race picks are free play, like answers", () => {
     expect(pays()).toBe(true);
   });
 
-  it("a pick with a swap is not free play: only real players", () => {
+  it("a pick with a swap is not free play: only real players [v3, owner 2026-10-28: a non-player now spends the free pool]", () => {
     emptyWallet();
     TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
     OPS = [call(RACE, RACE_PICK, pickArgs(USER)), call(DESK, DESK_SWAP, new Uint8Array(0))];
-    expect(() => { pays(); }).toThrow();
-    errorIs(NOT_A_PLAYER);
+    expect(() => { pays(); }).toThrow();   // owner 2026-10-29: a swap in the transaction is never sponsored
+    errorIs("SPONSOR: Knode Swap swaps are not sponsored (players pay their own Mana)");
   });
 
   it("refuses a pick for another wallet, a pick with no player, and any other race call", () => {
