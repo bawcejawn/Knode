@@ -80,7 +80,8 @@ export const SPONSOR_SHA256 = "fa4659e65c6156da3dde34238e0545a489a8b7f00cdf51df9
  *  only on the testnet. After the audit and fix-check it replaces SPONSOR_SHA256. */
 export const SPONSOR_V3_CANDIDATE = "b61ac238da27c4a71c01127f39a7b95f19fabf15e35df9f9715546d221e256e4";
 /** The builds this network may receive. Audit SP-13: v2 stays allowed as the documented rollback target. */
-export const allowedBuilds = (mainnet: boolean) => (mainnet ? [SPONSOR_SHA256] : [SPONSOR_SHA256, SPONSOR_V3_CANDIDATE]);
+// The testnet trial is for v3: only the v3 candidate goes on there (2026-10-30: a v2 build was about to be uploaded).
+export const allowedBuilds = (mainnet: boolean) => (mainnet ? [SPONSOR_SHA256] : TESTNET ? [SPONSOR_V3_CANDIDATE] : [SPONSOR_SHA256, SPONSOR_V3_CANDIDATE]);
 /** v3 code on chain (the per-action and allowlist fields mean nothing to v2). */
 const V3_BUILDS = [SPONSOR_V3_CANDIDATE];
 
