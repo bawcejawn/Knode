@@ -77,6 +77,10 @@ message config {
   // with no row counts as max_mana_per_tx), and at most max_mana_per_tx. At most 16 rows. The tool sets each row from
   // measured use with a safety margin (npm run sponsor -- mana-report).
   repeated mana_cap mana_caps = 14;
+  // v3, audit SP-37: the game is already the Knode vault (v6). Until then the sponsor never asks it for a stake in
+  // another game (the live v5 has no get_game_player, and on Koinos that failed call would abort the sponsor) and never
+  // pays for the vault's own calls. The tool reads it from the game's state on two nodes.
+  bool game_has_vault = 15;
 }
 
 // v3: one kind of action and the most Mana it may ask for (see config.mana_caps).
@@ -164,6 +168,7 @@ message would_pay_arguments {
   uint64 rc_limit = 2 [jstype = JS_STRING];
   bool answer_only = 3;   // unused since v3 (any covered call may use the free pool); kept for old pages
   uint32 game = 4;        // audit SP-22: the call's game (a Picks game id, 7 = race picks, 0 = the question game)
+  repeated uint32 games = 5;   // audit SP-38: every game of a batch (at most 4 are read, as authorize)
 }
 
 // @description Change the settings. Needs the sponsor wallet's own key.

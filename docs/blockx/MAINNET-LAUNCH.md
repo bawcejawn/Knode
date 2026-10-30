@@ -47,7 +47,7 @@ certutil -hashfile sponsor\build\release\contract.wasm SHA256
 The two hashes must be:
 
 - Picks `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594`
-- Sponsor v3 `b21251d42beb1c4dd104194c6833d64abe0887c43d9631406765c8c7027aef96`
+- Sponsor v3 `b61ac238da27c4a71c01127f39a7b95f19fabf15e35df9f9715546d221e256e4`
 
 (or the new ones Claude gives you after the fix-check). If either differs, stop. Then copy the builds into your
 working folder (the one with `.env`):
@@ -90,7 +90,7 @@ npm run sponsor -- status
 npm run sponsor -- upload
 ```
 
-The dry run must name the v3 build `b21251d4…` and show **Knode Swap page: Mana paid by self**. Then:
+The dry run must name the v3 build `b61ac238…` and show **Knode Swap page: Mana paid by self**. Then:
 
 ```powershell
 npm run sponsor -- upload --send
@@ -106,8 +106,17 @@ npm run sponsor -- config --per-tx 1 --per-player-day 25 --per-player-week 150 -
 (25 a day and 150 a week for every wallet, free or staked: owner, 2026-10-29.) These are also the defaults, so a plain `config` gives the same (audit SP-1: the tool never keeps old values just
 because they are on chain); every line shows `old → new`. **No per-action Mana limit yet** (owner, 2026-10-28; audit
 SP-4): every action may ask up to 1 Mana until a full day of real mainnet use has been measured (step 10). The `--send`
-comes in step 6, once the Picks contract exists. If anything ever goes wrong with v3, `upload --send` with the v2
-build `fa4659e6…` is the rollback (audit SP-13).
+comes in step 6, once the Picks contract exists. The dry run also shows **vault (v6) live: no** (audit SP-37: until
+the vault is live the sponsor asks the game only for a question-game stake).
+
+**The day Vault v6 goes live:** run `npm run sponsor -- config`, check it now says **vault (v6) live: yes**, then
+`config --send`, so a stake in Block X, the Race and the other games counts and the vault's own calls are paid.
+
+**Rollback (audit SP-13):** if anything ever goes wrong with v3, put the v2 build `fa4659e6…` into
+`sponsor\build\release\contract.wasm`, then `npm run sponsor -- upload --send` and `npm run sponsor -- config --send`
+(the tool sees v2 code and sends v2's settings, without the Picks row and per-action limits). The website keeps working
+with v2: it still marks free play for v2 (audit SP-40). Block X picks are then not sponsored (players pay their own
+Mana) until v3 is back.
 
 ## 5. Upload the Picks contract
 

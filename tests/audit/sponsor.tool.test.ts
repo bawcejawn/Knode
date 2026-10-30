@@ -224,7 +224,8 @@ test("audit SP-8: the deployed site must ask for at most each chain row, its fal
 test("audit SP-1 / SP-5 / SP-14 / SP-17: config uses the owner's caps, stops on a failed read, checks the code, and the site's other-actions limit fits the cap", async () => {
   const src = fs.readFileSync("bot/sponsor.ts", "utf8");
   const body = src.slice(src.indexOf("async function setConfig("), src.indexOf("/** Copies the per-action limits"));
-  assert.match(body, /flag\(a, "--per-day", DEFAULT_CAPS\.perDay\)/, "the owner's 5,000, not the chain's value");
+  assert.match(body, /const base = enabledArg === true \? capsOf\(cur\) : DEFAULT_CAPS;/, "config: the owner's caps; enable: the caps on chain (round 4, SP-39)");
+  assert.match(body, /flag\(a, "--per-day", base\.perDay\)/);
   assert.ok(!/fromSat\(cur\.max_mana_per_day, DEFAULT_CAPS/.test(body), "no fallback to what is on chain");
   assert.match(src, /Couldn't read the sponsor's settings from/, "a failed read stops (never 'nothing set': switched off)");
   assert.match(body, /show different sponsor settings/, "two nodes on mainnet");
@@ -263,4 +264,25 @@ test("owner 2026-10-29: the deployed Knode Swap page asking the sponsor is a web
   const p = siteProblems({ game: { payer: "sponsor", sponsor: {} }, desk: { payer: "sponsor" } }, [], 100000000n);
   assert.ok(p.some((x) => /Knode Swap still asks the sponsor/.test(x)));
   assert.ok(!siteProblems({ game: {}, desk: { payer: "self" } }, [], 100000000n).some((x) => /Knode Swap/.test(x)));
+});
+
+test("audit SP-39 (round 4): enable keeps the caps on chain but rebuilds everything else from the files", async () => {
+  const { capsOf } = await import("../../bot/sponsor.ts");
+  assert.deepEqual(capsOf({ max_mana_per_tx: "100000000", max_mana_per_account_day: "700000000", max_mana_per_account_week: "3000000000", max_mana_per_day: "90000000000", max_mana_free_day: "1000000000", min_vhp: "100000000" }),
+    { perTx: "1", perPlayerDay: "7", perPlayerWeek: "30", perDay: "900", minVhp: "1", freePerDay: "10" });
+  const src = fs.readFileSync("bot/sponsor.ts", "utf8");
+  const body = src.slice(src.indexOf("async function setConfig("), src.indexOf("/** The caps as they are on chain"));
+  assert.ok(!/return setSwitch\(rpc, provider, s, A, cur, enabledArg/.test(body), "enable no longer re-sends the chain's settings as they are");
+  assert.match(body, /buildConfig\(game, desk, caps, enabled, race/);
+});
+
+test("audit SP-37 (round 4): the vault-live setting comes from the game's state, and both nodes must agree", async () => {
+  const { vaultLiveOn } = await import("../../bot/sponsor.ts");
+  assert.equal(await vaultLiveOn("a", "g", false, async () => false), false);
+  assert.equal(await vaultLiveOn("a", "g", false, async () => true), true);
+  process.env.RPC_CHECK = "https://b.example";
+  let n = 0;
+  await assert.rejects(vaultLiveOn("https://a.example", "g", true, async () => (n++ === 0)), /disagree/);
+  assert.equal(await vaultLiveOn("https://a.example", "g", true, async () => false), false);
+  delete process.env.RPC_CHECK;
 });

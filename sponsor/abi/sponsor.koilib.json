@@ -147,6 +147,10 @@
                 "rule": "repeated",
                 "type": "mana_cap",
                 "id": 14
+              },
+              "game_has_vault": {
+                "type": "bool",
+                "id": 15
               }
             }
           },
@@ -317,6 +321,11 @@
               "game": {
                 "type": "uint32",
                 "id": 4
+              },
+              "games": {
+                "rule": "repeated",
+                "type": "uint32",
+                "id": 5
               }
             }
           },

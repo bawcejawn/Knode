@@ -67,7 +67,7 @@ npm run check
 certutil -hashfile build\release\contract.wasm SHA256
 ```
 
-The hash must be `b21251d42beb1c4dd104194c6833d64abe0887c43d9631406765c8c7027aef96`. Then:
+The hash must be `b61ac238da27c4a71c01127f39a7b95f19fabf15e35df9f9715546d221e256e4`. Then:
 
 ```powershell
 cd C:\kprediction

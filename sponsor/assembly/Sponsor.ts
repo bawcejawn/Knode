@@ -47,6 +47,7 @@ export const GAME_CLAIM: u32 = 0xdd1b3c31;
 export const GAME_CLOSE_WEEK: u32 = 0x250d08be;
 export const GAME_FINALIZE_WEEK: u32 = 0x8c516995;
 export const DESK_SWAP: u32 = 0xda47c2f4;   // Knode Swap's swap: never sponsored (owner, 2026-10-29)
+export const VAULT_NOT_LIVE = "SPONSOR: the Knode vault (v6) isn't live yet";
 export const SWAPS_NOT_SPONSORED = "SPONSOR: Knode Swap swaps are not sponsored (players pay their own Mana)";
 // The Knode vault (game v6) player calls (owner, 2026-10-28: "ensure all game calls are covered"); the player is
 // argument 1 of each (game/abi/kpred.koilib.json on vault-v6). finalize_game_week has no player (anyone may send it).
@@ -252,6 +253,7 @@ export class Sponsor {
       // Audit SP-22: the call's game, as authorize reads it from the operations (0 = the question game only).
       const games: u32[] = [];
       if (args.game > 0) games.push(args.game);
+      for (let i = 0; i < args.games.length && games.length < MAX_PLAYER_GAMES; i++) if (args.games[i] > 0 && !games.includes(args.games[i])) games.push(args.games[i]);
       const player = isPlayer(cfg, args.account!, games, System.getHeadInfo().head_block_time);
       out.free = !player;
       const f = this.get_free_usage(new sponsor.get_free_usage_arguments());
@@ -368,6 +370,9 @@ function isPlayer(cfg: sponsor.config, account: Uint8Array, games: u32[], now: u
     const p = Protobuf.decode<sponsor.game_get_player_result>(g.res.object!, sponsor.game_get_player_result.decode);
     if (p.active_stake >= cfg.min_vhp) return true;
   }
+  // Audit SP-37: only once the game is the vault (v6). The live v5 has no get_game_player: calling it reverts, and on
+  // Koinos a callee's revert aborts this (user-mode) contract too, so no "failed read" result would ever come back.
+  if (!cfg.game_has_vault) return false;
   for (let i = 0; i < games.length; i++) {
     const r = System.call(cfg.game!, GAME_GET_GAME_PLAYER,
       Protobuf.encode(new sponsor.game_get_game_player_args(account, games[i], week), sponsor.game_get_game_player_args.encode));
@@ -547,6 +552,8 @@ function checkOperation(op: protocol.operation, cfg: sponsor.config, payee: Uint
     System.require(isGameAction(call.entry_point), "SPONSOR: only player actions on the game are sponsored");
     // The vault calls name their player: it must be the payee, read exactly as the game reads it.
     const shape = vaultShape(call.entry_point);
+    // Audit SP-37: the vault's own calls only once the game is the vault (v6).
+    System.require(cfg.game_has_vault || (shape == null && call.entry_point != GAME_FINALIZE_GAME_WEEK), VAULT_NOT_LIVE);
     if (shape != null) {
       const who = argsPlayer(call.args ? call.args! : new Uint8Array(0), shape!);
       System.require(who != null && Arrays.equal(who!, payee), "SPONSOR: a vault call must be the payee's own, with arguments in the vault's shape");
