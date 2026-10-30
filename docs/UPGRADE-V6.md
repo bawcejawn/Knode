@@ -15,7 +15,7 @@ mainnet also needs `CONFIRM_MAINNET=yes` in `.env`. Run everything in PowerShell
 ## Before you start (all must be true)
 
 1. **Done:** the audits are clean (owner, 2026-10-29: the owner's own audit programs count; RepoLens fix-check 4 said "ready for the rehearsal"), and branch `vault-v6` holds the fixed code.
-2. **Sponsor:** sponsor v3, with the Vault's calls added (`claude/handoff-sponsor-vault-calls.md`), is live. Without it, staking in other games, moving stake and claiming their prizes aren't sponsored. Its "vault live" switch stays off until v6 day; you turn it on in step 6.
+2. **Done (2026-10-30):** sponsor v3 `b61ac238…`, with the Vault's calls added (`claude/handoff-sponsor-vault-calls.md`), is live on `1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8`, and its code is on `main` (PR #38). Block X's Picks contract `700c296a…` is live at `1LmgqBGctL9F2YkyjTXgieTXwnYHh8Y6Pm`. Without it, staking in other games, moving stake and claiming their prizes aren't sponsored. Its "vault live" switch stays off until v6 day; you turn it on in step 6.
 3. **Seed:** it covers the free prizes, 3 VHP a week per game with a free prize. The question game, Block X, Survivor and the Race need 12 VHP a week, roughly **3,000 VHP** of seed at today's ~90 VHP of weekly rewards; with Producer Bracket, 15 VHP a week, roughly **3,750 VHP**. When the seed's share is short, every prize is cut that week:
    ```
    npm run bot -- seed-vhp <VHP>           then again with --send
