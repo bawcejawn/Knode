@@ -103,7 +103,11 @@ function knode() {
   if (TESTNET) {
     const t = readJson(TESTNET_SPONSOR);
     if (!t?.rpc || !t?.picks) throw new Error(`${TESTNET_SPONSOR} is missing or incomplete.`);
-    return { game: { contract: t.game, vhp: t.vhp, koin: t.koin }, desk: { contract: t.desk }, rpc: E.TESTNET_RPC || t.rpc, race: undefined, picks: t.picks as string, picksCards: false, testnetChainId: t.chainId as string };
+    // Testnet only (the Combo Card measurement, 2026-10-30): TESTNET_PICKS points the sponsor's Picks row at another
+    // testnet Picks contract (the Combo one), and TESTNET_PICKS_CARDS=yes uses the card argument shape (field 6, legs).
+    const picks = E.TESTNET_PICKS || (t.picks as string);
+    if (!/^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(picks)) throw new Error("TESTNET_PICKS isn't an address.");
+    return { game: { contract: t.game, vhp: t.vhp, koin: t.koin }, desk: { contract: t.desk }, rpc: E.TESTNET_RPC || t.rpc, race: undefined, picks, picksCards: E.TESTNET_PICKS_CARDS === "yes" || t.cards === true, testnetChainId: t.chainId as string };
   }
   const game = readJson(GAME_DEP), desk = readJson(DESK_DEP), race = readJson(RACE_DEP);
   if (!game?.contract || !desk?.contract) throw new Error(`${GAME_DEP} and ${DESK_DEP} are needed.`);
