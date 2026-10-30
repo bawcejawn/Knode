@@ -1,7 +1,9 @@
-/* Knode Games producer names: one shared file for every page, the claim checker (bot/names.ts) and the tests.
+/* Knode Games names: producers and players name their wallet. One shared file for every page, the claim checker
+   (bot/names.ts) and the tests.
    - KNames.rules: the automatic rules for a name and a claim (pure: no network, no DOM).
-   - KNames.of(address): "Name · 1Abc12…wxyz" for a producer with a name, else the short address. The short address is
-     always part of it, so a name can never pass for another node. KNames.node(address) is the same as a DOM element.
+   - KNames.of(address): "Name · 1Abc12…wxyz" for a wallet with a Knode Games name, else "@nick · 1Abc12…wxyz" for one
+     with an on-chain Koinos nickname (the Nicknames contract), else the short address. The short address is always
+     part of it, so a name can never pass for another wallet. KNames.node(address) is the same as a DOM element.
    - names.json is read once per page from the names-data branch (published by .github/workflows/names.yml); every
      entry is checked again here, and anything that fails the rules is ignored. Names are only ever set as textContent.
    See docs/NAMES.md. */
@@ -10,7 +12,7 @@
   const G = typeof globalThis !== "undefined" ? globalThis : window;
 
   const DATA = "https://raw.githubusercontent.com/bawcejawn/Knode/names-data/names.json";
-  const PREFIX = "Knode Games producer name: ";
+  const PREFIX = "Knode Games name: ";
   const ADDR = /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/;
   const DAY = 86400000;
   const MAX_AGE_DAYS = 7;       // a claim's date is at most 7 days old
@@ -30,12 +32,14 @@
     return s.replace(/rn/g, "m").replace(/vv/g, "w");
   }
   const RESERVED_EQUAL = ["Koinos", "admin", "support", "Knode", "Knode Games"].map(fold);
-  const RESERVED_CONTAINS = ["Knode", "official", "Koinos Foundation"].map(fold);
+  const RESERVED_CONTAINS = ["Knode Games", "official", "Koinos Foundation"].map(fold);
+  const RESERVED_WORD_START = fold("Knode");   // "Knode", "KnodeX", "My Knode" (a word starting with it), not "Blocknode"
   function reserved(name) {
     const f = fold(name);
-    return RESERVED_EQUAL.includes(f) || RESERVED_CONTAINS.some((r) => f.includes(r));
+    if (RESERVED_EQUAL.includes(f) || RESERVED_CONTAINS.some((r) => f.includes(r))) return true;
+    return String(name).split(/[ .\-_']+/).some((w) => fold(w).startsWith(RESERVED_WORD_START));
   }
-  /** null if the name is allowed, else the reason (plain words, shown to the producer). */
+  /** null if the name is allowed, else the reason (plain words, shown to the player or producer). */
   function checkName(name) {
     if (typeof name !== "string") return "Enter a name.";
     if (name.length < 3 || name.length > 24) return "A name is 3 to 24 characters.";
@@ -54,7 +58,7 @@
   const dayOf = (d) => Date.parse(`${d}T00:00:00Z`);
   const today = (now) => new Date(now).toISOString().slice(0, 10);
 
-  /** The exact message the producer signs. */
+  /** The exact message the wallet signs. */
   const message = (name, address, date) => `${PREFIX}${name} | ${address} | ${date}`;
   /** The claim as it is pasted (an issue, an email): the message, then "Signature: …" on the next line. */
   const claimText = (name, address, date, signature) => `${message(name, address, date)}\nSignature: ${signature}`;
@@ -65,7 +69,7 @@
     if (typeof text !== "string" || text.length > 20000) return null;
     const lines = text.replace(/\r/g, "").split("\n").map((l) => l.trim());
     for (let i = 0; i < lines.length - 1; i++) {
-      const m = /^Knode Games producer name: (.{1,40}) \| (1[1-9A-HJ-NP-Za-km-z]{25,34}) \| (\d{4}-\d{2}-\d{2})$/.exec(lines[i]);
+      const m = /^Knode Games name: (.{1,40}) \| (1[1-9A-HJ-NP-Za-km-z]{25,34}) \| (\d{4}-\d{2}-\d{2})$/.exec(lines[i]);
       if (!m) continue;
       let j = i + 1;
       while (j < lines.length && lines[j] === "") j++;
@@ -88,7 +92,9 @@
     }
   }
 
-  const emptyDb = () => ({ v: 1, updated: "", names: {}, hidden: {} });
+  const emptyDb = () => ({ v: 1, updated: "", names: {}, hidden: {}, nicknames: {} });
+  /** An on-chain Koinos nickname as the Nicknames contract allows it (shown with an @). Reserved ones are skipped. */
+  const okNick = (n) => typeof n === "string" && /^[a-z0-9][a-z0-9.-]{0,31}$/.test(n) && !reserved(n);
   /** A copy of names.json with only valid parts (the shape is checked again on every page and before publishing). */
   function cleanDb(db) {
     const out = emptyDb();
@@ -99,6 +105,9 @@
       if (typeof e.signature !== "string" || !/^[A-Za-z0-9_-]{80,96}={0,2}$/.test(e.signature)) continue;
       out.names[a] = { name: e.name, date: e.date, signature: e.signature };
     }
+    for (const [a, n] of Object.entries(db.nicknames && typeof db.nicknames === "object" ? db.nicknames : {})) {
+      if (ADDR.test(a) && !BUILTIN[a] && okNick(n)) out.nicknames[a] = n;
+    }
     for (const [a, h] of Object.entries(db.hidden && typeof db.hidden === "object" ? db.hidden : {})) {
       if (!ADDR.test(a) || !h || typeof h !== "object" || !isDate(h.date)) continue;
       out.hidden[a] = { reason: typeof h.reason === "string" ? h.reason.slice(0, 200) : "", date: h.date };
@@ -107,12 +116,12 @@
   }
 
   /** Checks a claim against names.json and returns { ok: true, db } (a new names.json) or { ok: false, reason }.
-   *  opts: { now (ms), isProducer(address) → boolean, lib (koilib) }. Same code on the claim page, in the workflow and
+   *  opts: { now (ms), isEligible(address) → boolean, lib (koilib) }. Same code on the claim page, in the workflow and
    *  in the owner's CLI. */
   /** Everything that needs neither the chain nor the signature: the name, the address, the date, hidden, the 7-day
    *  limit and lookalikes. null = fine, else the reason. The claim page runs it before asking for a signature. */
   function precheck(db, claim, now) {
-    if (!claim) return "No claim found. It needs the line \"Knode Games producer name: …\" and the \"Signature: …\" line under it.";
+    if (!claim) return "No claim found. It needs the line \"Knode Games name: …\" and the \"Signature: …\" line under it.";
     const bad = checkName(claim.name);
     if (bad) return bad;
     if (!ADDR.test(claim.address)) return "That is not a Koinos address.";
@@ -129,27 +138,30 @@
     }
     const f = fold(claim.name);
     for (const [a, e] of Object.entries(db.names)) {
-      if (a !== claim.address && fold(e.name) === f) return "That name, or one that looks the same, belongs to another producer.";
+      if (a !== claim.address && fold(e.name) === f) return "That name, or one that looks the same, belongs to another wallet.";
+    }
+    for (const [a, n] of Object.entries(db.nicknames)) {
+      if (a !== claim.address && fold(n) === f) return "That name, or one that looks the same, is another wallet's Koinos nickname.";
     }
     return null;
   }
 
   /** Checks a claim against names.json and returns { ok: true, db } (a new names.json) or { ok: false, reason }.
-   *  opts: { now (ms), isProducer(address) → boolean, lib (koilib) }. Same code on the claim page, in the workflow and
+   *  opts: { now (ms), isEligible(address) → boolean, lib (koilib) }. Same code on the claim page, in the workflow and
    *  in the owner's CLI. */
   async function applyClaim(dbIn, claim, opts) {
     const db = cleanDb(dbIn);
     const now = opts.now;
     const why = precheck(db, claim, now);
     if (why) return { ok: false, reason: why };
-    if (!(await opts.isProducer(claim.address))) return { ok: false, reason: "That address is not a producer: it is in no race card and signed no block in the last 30 days." };
-    if (!(await verifySignature(claim, opts.lib))) return { ok: false, reason: "The signature doesn't match the address: sign the exact message with the producer wallet." };
+    if (!(await opts.isEligible(claim.address))) return { ok: false, reason: "That wallet can't take a name yet: it needs at least 1 VHP in the wallet or staked in Knode Games, or to be a block producer." };
+    if (!(await verifySignature(claim, opts.lib))) return { ok: false, reason: "The signature doesn't match the address: sign the exact message with that wallet." };
     db.names[claim.address] = { name: claim.name, date: claim.date, signature: claim.signature };
     db.updated = new Date(now).toISOString();
     return { ok: true, db };
   }
 
-  /** Owner: hide an address's name (pages show its short address again; new claims from it are refused). */
+  /** Owner: hide an address's name and nickname (pages show its short address again; new claims from it are refused). */
   function hide(dbIn, address, reason, now) {
     if (!ADDR.test(address)) throw new Error("That is not a Koinos address.");
     const db = cleanDb(dbIn);
@@ -193,7 +205,8 @@
   function use(db) {
     const c = cleanDb(db), next = { ...BUILTIN };
     current = c;
-    for (const [a, e] of Object.entries(c.names)) if (!c.hidden[a]) next[a] = e.name;
+    for (const [a, n] of Object.entries(c.nicknames)) if (!c.hidden[a]) next[a] = `@${n}`;
+    for (const [a, e] of Object.entries(c.names)) if (!c.hidden[a]) next[a] = e.name;   // a Knode Games name wins
     shown = next;
     for (const f of listeners) { try { f(); } catch { /* one page part never stops another */ } }
   }
@@ -213,7 +226,7 @@
     of, name, short, node, load, onChange, DATA,
     /** names.json as loaded and checked (an empty list before it arrives or when there's none yet). */
     db: () => current || emptyDb(),
-    rules: { PREFIX, BUILTIN, fold, reserved, checkName, isDate, message, claimText, parseClaim, verifySignature, precheck, applyClaim, cleanDb, emptyDb, hide, unhide, today },
+    rules: { PREFIX, BUILTIN, fold, reserved, checkName, isDate, message, claimText, parseClaim, verifySignature, precheck, applyClaim, cleanDb, emptyDb, okNick, hide, unhide, today },
     _test: { use },
   };
   if (G.document && G.fetch) load();

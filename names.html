@@ -6,22 +6,22 @@
        encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://koinvault.app https://raw.githubusercontent.com/bawcejawn/Knode/names-data/ https://raw.githubusercontent.com/bawcejawn/Knode/race-data/ https://raw.githubusercontent.com/bawcejawn/Knode/blocks-data/; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Producer names · Knode Games</title>
+  <title>Name your wallet · Knode Games</title>
   <!-- seo:start (written by tools/site-seo.mjs; edit there) -->
-  <meta name="description" content="Run a Koinos block producer? Sign a short message with your producer wallet and its name shows on every Knode Games page, next to its address. Free, no transaction.">
+  <meta name="description" content="Players and producers: swap your long Koinos address for a name on every Knode Games page. Sign a short message with your wallet. Free, no transaction.">
   <link rel="canonical" href="https://knodegames.com/names.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Knode Games">
-  <meta property="og:title" content="Name your Koinos producer">
-  <meta property="og:description" content="Run a Koinos block producer? Sign a short message with your producer wallet and its name shows on every Knode Games page, next to its address. Free, no transaction.">
+  <meta property="og:title" content="Name your Koinos wallet">
+  <meta property="og:description" content="Players and producers: swap your long Koinos address for a name on every Knode Games page. Sign a short message with your wallet. Free, no transaction.">
   <meta property="og:url" content="https://knodegames.com/names.html">
   <meta property="og:image" content="https://knodegames.com/media/og-knode.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Name your Koinos producer">
+  <meta property="og:image:alt" content="Name your Koinos wallet">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Name your Koinos producer">
-  <meta name="twitter:description" content="Run a Koinos block producer? Sign a short message with your producer wallet and its name shows on every Knode Games page, next to its address. Free, no transaction.">
+  <meta name="twitter:title" content="Name your Koinos wallet">
+  <meta name="twitter:description" content="Players and producers: swap your long Koinos address for a name on every Knode Games page. Sign a short message with your wallet. Free, no transaction.">
   <meta name="twitter:image" content="https://knodegames.com/media/og-knode.png">
   <!-- seo:end -->
   <link rel="icon" href="media/icon.svg" type="image/svg+xml">
@@ -102,19 +102,20 @@
   </header>
 
   <main class="ml">
-    <h1>Producer names</h1>
-    <p class="lede">Run a Koinos block producer? Give it a name. It shows on every Knode Games page (races, leaderboards, Pulse, Producer lookup), always next to your short address, so nobody can pass for your node. It's free: you sign a short message with your producer wallet, and nothing is sent to the chain.</p>
+    <h1>Name your wallet</h1>
+    <p class="lede">Swap the long address for a name, for players and producers alike. It shows on every Knode Games page (leaderboards, races, Pulse, Producer lookup), always next to your short address, so nobody can pass for you. It's free: you sign a short message with your wallet, and nothing is sent to the chain.</p>
+    <p class="help" style="margin:-8px 0 18px">Already have a Koinos nickname (an @name from the Koinos Nicknames contract)? It shows here automatically until you choose a Knode Games name.</p>
 
     <section class="card" id="s-wallet">
-      <h2><span class="step">1</span>Your producer wallet</h2>
-      <p class="help" style="margin-top:0">The wallet that holds the VHP your node produces for (not the node's block-signing key).</p>
+      <h2><span class="step">1</span>Your wallet</h2>
+      <p class="help" style="margin-top:0">A player: the wallet you play with. It needs at least 1 VHP in it or staked in Knode Games. A producer: the wallet that holds the VHP your node produces for (not the node's block-signing key).</p>
       <div class="row" style="margin-top:10px">
         <button class="btn btn-primary" type="button" id="connect">Connect Kondor</button>
-        <select id="acct" hidden aria-label="Producer address"></select>
+        <select id="acct" hidden aria-label="Wallet address"></select>
       </div>
       <details class="alt" id="alt">
         <summary>Signing with another tool? Enter the address instead</summary>
-        <div class="row" style="margin-top:8px"><input type="text" id="addr" class="mono" placeholder="1… producer address" autocomplete="off" spellcheck="false"></div>
+        <div class="row" style="margin-top:8px"><input type="text" id="addr" class="mono" placeholder="1… wallet address" autocomplete="off" spellcheck="false"></div>
       </details>
       <p class="msg" id="who" role="status"></p>
     </section>
@@ -122,7 +123,7 @@
     <section class="card" id="s-name">
       <h2><span class="step">2</span>The name</h2>
       <div class="row"><input type="text" id="name" maxlength="24" placeholder="e.g. Blue Harbor Node" autocomplete="off" spellcheck="false"></div>
-      <p class="help">3 to 24 characters: letters A–Z, digits, spaces and . - _ '. It can't look like another producer's name or be a reserved one (Knode, Koinos, official…). One change every 7 days.</p>
+      <p class="help">3 to 24 characters: letters A–Z, digits, spaces and . - _ '. It can't look like another wallet's name or Koinos nickname, or be a reserved one (Knode, Koinos, official…). One change every 7 days.</p>
       <div class="preview" id="preview" hidden></div>
       <p class="msg" id="name-msg" role="status"></p>
     </section>
@@ -134,7 +135,7 @@
       <div class="row" style="margin-top:10px"><button class="btn btn-primary" type="button" id="sign" disabled>Sign with Kondor</button></div>
       <details class="alt" id="alt-sig">
         <summary>Signed with another tool? Paste the signature</summary>
-        <p class="help">Sign the message above with the producer address's key (Koinos message signing: sha256 of the text, 65-byte recoverable signature, base64url). Paste it here.</p>
+        <p class="help">Sign the message above with that address's key (Koinos message signing: sha256 of the text, 65-byte recoverable signature, base64url). Paste it here.</p>
         <div class="row" style="margin-top:8px"><input type="text" id="sig-in" class="mono" placeholder="Signature" autocomplete="off" spellcheck="false"><button class="btn btn-ghost" type="button" id="sig-use">Use it</button></div>
       </details>
       <p class="msg" id="sign-msg" role="status"></p>
@@ -148,22 +149,23 @@
         <a class="btn btn-primary" id="gh" href="https://github.com/bawcejawn/Knode/issues/new?template=producer-name.yml" target="_blank" rel="noopener">Submit on GitHub</a>
         <button class="btn btn-ghost" type="button" id="copy">Copy the claim</button>
       </div>
-      <p class="help">On GitHub it is checked automatically within a few minutes, and the issue gets a reply. No GitHub account? Send these two lines to the Knode Games owner, who adds them for you. The claim works for 7 days.</p>
+      <p class="help">On GitHub it is checked automatically within about 15 minutes, and the issue gets a reply. No GitHub account? Send these two lines to the Knode Games owner, who adds them for you. The claim works for 7 days.</p>
     </section>
 
     <section class="card">
-      <h2>Named producers</h2>
+      <h2>Named wallets</h2>
       <table class="names"><tbody id="list"><tr><td class="help">Loading…</td></tr></tbody></table>
     </section>
 
     <section class="card explain">
       <h2>The rules</h2>
       <ul class="rules help">
-        <li>Only a producer can name its address: it must be on a Producer Race card or have signed a block in the last 30 days, and the signature must come from that address.</li>
+        <li>Who can take a name: a wallet with at least 1 VHP in it or staked in Knode Games, or a block producer (on a Producer Race card or signing blocks in the last 30 days). The signature must come from that address.</li>
+        <li>Koinos nicknames (@names) show automatically for wallets without a Knode Games name. A Knode Games name always wins.</li>
         <li>A claim is dated and works for 7 days; each new claim must be newer than the last one. One change every 7 days.</li>
-        <li>No two names that look the same (ignoring case, spaces and lookalikes like 0/O, 1/l/I, 5/S).</li>
+        <li>No two names that look the same (ignoring case, spaces and lookalikes like 0/O, 1/l/I, 5/S), including other wallets' Koinos nicknames.</li>
         <li>Reserved: Knode, Knode Games, Koinos, Koinos Foundation, admin, official, support. The Knode Games nodes keep their names.</li>
-        <li>The owner can hide a name (the short address shows again). Every page always shows the short address next to a name.</li>
+        <li>The owner can hide a name or nickname (the short address shows again). Every page always shows the short address next to a name.</li>
       </ul>
     </section>
   </main>

@@ -1,11 +1,13 @@
-# Producer names: producers open a "Producer name" issue with a signed claim (made on names.html). Every 15 minutes
-# this reads the open ones, checks them and, for those that pass the rules, publishes the new names.json to the
-# names-data branch. See docs/NAMES.md.
+# Knode Games names: players and producers open a "Knode Games name" issue with a signed claim (made on names.html).
+# Every 15 minutes this reads the open ones, checks them and, for those that pass the rules, publishes the new
+# names.json to the names-data branch. Once an hour (minute 4) it also refreshes the wallets' on-chain Koinos
+# nicknames (read from two nodes; both must agree). See docs/NAMES.md.
 #
 # It is not triggered by issues (the guard bans issue triggers): it runs on a schedule and reads the open issues
 # through the API, as data, so issue text is never pasted into the workflow and never runs as code. Three jobs:
 #   check    a read-only token (contents, issues: read) and no secrets. Lists the open claim issues; if there are
-#            any, runs bot/names.ts, which reads them from a file. Hands on results.json and, if any passed, names.json.
+#            any (or it's the hourly refresh), runs bot/names.ts, which reads them from a file and reads the chain.
+#            Hands on results.json and, if names.json changed, names.json.
 #   publish  runs no repository code: checks names.json's shape and pushes it, alone, to names-data. Refused if
 #            names-data changed since the check read it; those claims are simply checked again on the next run.
 #   reply    runs no repository code: comments each outcome on its issue and closes it (an accepted claim only once
@@ -13,11 +15,12 @@
 # It never touches main, holds no key, and does not run on pull requests.
 #
 # Turn it on: Settings → Secrets and variables → Actions → Variables: NAMES_ENABLED = true
-name: Producer names
+name: Knode Games names
 
 on:
   schedule:
-    - cron: "4,19,34,49 * * * *"
+    - cron: "4 * * * *"          # claims + the hourly nickname refresh
+    - cron: "19,34,49 * * * *"   # claims
   workflow_dispatch: {}
 
 concurrency:
@@ -37,12 +40,14 @@ jobs:
       issues: read
     outputs:
       found: ${{ steps.find.outputs.found }}
+      go: ${{ steps.find.outputs.go }}
     steps:
       # The open issues that contain a claim (at most 30, oldest first). Only their number and text are kept.
       - name: Find open claims
         id: find
         env:
           GH_TOKEN: ${{ github.token }}
+          REFRESH: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '4 * * * *' }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/claims"
@@ -51,26 +56,29 @@ jobs:
           import json, sys
           items = json.load(open(sys.argv[1], encoding="utf-8"))
           out = [{"number": i["number"], "body": i.get("body") or ""} for i in items
-                 if type(i) is dict and "pull_request" not in i and type(i.get("number")) is int and "Knode Games producer name:" in (i.get("body") or "")][:30]
+                 if type(i) is dict and "pull_request" not in i and type(i.get("number")) is int and "Knode Games name:" in (i.get("body") or "")][:30]
           json.dump(out, open(sys.argv[2], "w", encoding="utf-8"))
           print(len(out), "claim issue(s)")
           PY
           if [ "$(/usr/bin/python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$RUNNER_TEMP/claims/issues.json")" = 0 ]; then
-            echo "found=false" >> "$GITHUB_OUTPUT"; else echo "found=true" >> "$GITHUB_OUTPUT"; fi
+            found=false; else found=true; fi
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+          if [ "$found" = true ] || [ "$REFRESH" = true ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
+          echo "refresh=$REFRESH" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        if: ${{ steps.find.outputs.found == 'true' }}
+        if: ${{ steps.find.outputs.go == 'true' }}
         with:
           ref: main
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        if: ${{ steps.find.outputs.found == 'true' }}
+        if: ${{ steps.find.outputs.go == 'true' }}
         with:
           node-version: 22
-      - if: ${{ steps.find.outputs.found == 'true' }}
+      - if: ${{ steps.find.outputs.go == 'true' }}
         run: npm ci --no-audit --no-fund --ignore-scripts
       # The current names.json and the producer evidence (public branches, read without a token). Plain JSON files only.
       - name: Take names.json, the race cards and the recent blocks
-        if: ${{ steps.find.outputs.found == 'true' }}
+        if: ${{ steps.find.outputs.go == 'true' }}
         run: |
           set -euo pipefail
           url="https://github.com/${GITHUB_REPOSITORY}.git"
@@ -84,29 +92,32 @@ jobs:
             if [ "$b" = names-data ]; then git rev-parse FETCH_HEAD > "$RUNNER_TEMP/base"; fi
             for f in $(git ls-tree -r --name-only FETCH_HEAD); do
               if [ "$b" = names-data ] && [ "$f" = names.json ]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/names.json"; fi
-              if [ "$b" = race-data ] && [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prod/$f"; fi
+              if [ "$b" = race-data ] && [[ "$f" =~ ^(W[0-9]{3}|board)\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prod/$f"; fi
               if [ "$b" = blocks-data ] && [ "$f" = recent-blocks.json ]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prod/$f"; fi
             done
           done
-      - name: Check the claims
-        if: ${{ steps.find.outputs.found == 'true' }}
+      - name: Check the claims (and refresh the nicknames)
+        if: ${{ steps.find.outputs.go == 'true' }}
         env:
+          RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
+          RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
+          NAMES_REFRESH: ${{ steps.find.outputs.refresh }}
           ISSUES_FILE: ${{ runner.temp }}/claims/issues.json
           NAMES_PREV: ${{ runner.temp }}/names.json
           NAMES_BASE_FILE: ${{ runner.temp }}/base
           PRODUCERS_DIR: ${{ runner.temp }}/prod
           NAMES_OUT: ${{ runner.temp }}/out
           NAMES_RESULT: ${{ runner.temp }}/result/results.json
-        run: npm run names -- verify-issues
+        run: npm run names -- run
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ steps.find.outputs.found == 'true' }}
+        if: ${{ steps.find.outputs.go == 'true' }}
         with:
           name: names-out
           path: ${{ runner.temp }}/out/
           retention-days: 1
           if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ steps.find.outputs.found == 'true' }}
+        if: ${{ steps.find.outputs.go == 'true' }}
         with:
           name: names-result
           path: ${{ runner.temp }}/result/
@@ -114,7 +125,7 @@ jobs:
 
   publish:
     needs: check
-    if: ${{ needs.check.outputs.found == 'true' }}
+    if: ${{ needs.check.outputs.go == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -136,7 +147,7 @@ jobs:
           RESULT: ${{ runner.temp }}/result/results.json
         run: |
           set -euo pipefail
-          if [ ! -f "$IN/names.json" ]; then echo "Nothing to publish (no claim was accepted)."; exit 0; fi
+          if [ ! -f "$IN/names.json" ]; then echo "Nothing to publish (nothing changed)."; exit 0; fi
           bad=$(find "$IN" -mindepth 1 ! -path "$IN/names.json" -print)
           if [ -n "$bad" ] || [ -L "$IN/names.json" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           if [ "$(stat -c %s "$IN/names.json")" -gt 1048576 ]; then echo "::error::names.json is over 1 MB"; exit 1; fi
@@ -149,11 +160,14 @@ jobs:
           sig = re.compile(r"[A-Za-z0-9_-]{80,96}={0,2}")
           name = re.compile(r"[A-Za-z0-9 .\-_']{3,24}")
           builtin = {"1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR"}
-          assert type(res) is dict and type(res.get("results")) is list and any(type(r) is dict and r.get("accepted") is True for r in res["results"]), "results: nothing accepted"
+          assert type(res) is dict and type(res.get("results")) is list and res.get("changed") is True, "results: nothing changed"
           b = res.get("base")
           assert type(b) is str and (b == "" or re.fullmatch(r"[0-9a-f]{40}", b)), "results: base"
-          assert type(db) is dict and set(db) == {"v", "updated", "names", "hidden"} and db["v"] == 1 and type(db["updated"]) is str and len(db["updated"]) <= 40, "names.json: top level"
-          assert type(db["names"]) is dict and type(db["hidden"]) is dict and len(db["names"]) <= 2000 and len(db["hidden"]) <= 2000, "names.json: sizes"
+          assert type(db) is dict and set(db) == {"v", "updated", "names", "hidden", "nicknames"} and db["v"] == 1 and type(db["updated"]) is str and len(db["updated"]) <= 40, "names.json: top level"
+          assert type(db["names"]) is dict and type(db["hidden"]) is dict and type(db["nicknames"]) is dict and len(db["names"]) <= 5000 and len(db["hidden"]) <= 5000 and len(db["nicknames"]) <= 5000, "names.json: sizes"
+          nick = re.compile(r"[a-z0-9][a-z0-9.\-]{0,31}")
+          for a, n in db["nicknames"].items():
+              assert addr.fullmatch(a) and a not in builtin and type(n) is str and nick.fullmatch(n), "names.json: nickname " + a
           for a, e in db["names"].items():
               assert addr.fullmatch(a) and a not in builtin, "names.json: address " + a
               assert type(e) is dict and set(e) == {"name", "date", "signature"}, "names.json: entry " + a
@@ -173,7 +187,7 @@ jobs:
           blob=$(git hash-object -w "$IN/names.json")
           tree=$(printf '100644 blob %s\tnames.json\n' "$blob" | git mktree)
           export GIT_AUTHOR_NAME=knode-names GIT_AUTHOR_EMAIL=knode-names@users.noreply.github.com GIT_COMMITTER_NAME=knode-names GIT_COMMITTER_EMAIL=knode-names@users.noreply.github.com
-          commit=$(git commit-tree "$tree" ${head:+-p "$head"} -m "names: producers' claims")
+          commit=$(git commit-tree "$tree" ${head:+-p "$head"} -m "names: claims and nicknames")
           git push -q "$remote" "$commit:refs/heads/names-data"
           echo "names.json published."
 

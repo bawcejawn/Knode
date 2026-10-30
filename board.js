@@ -49,7 +49,9 @@
   }
 
   function create(host, opt) {
-    const id = "kb" + ++n, o = Object.assign({ columns: [], name: short, scored: () => true, summary: () => "", me: null, link: null, unranked: "" }, opt || {});
+    // Wallet names (names.js, when the page loads it): "Name · 1Abc12…wxyz", else the short address.
+    const named = (a) => (window.KNames ? window.KNames.of(a) : short(a));
+    const id = "kb" + ++n, o = Object.assign({ columns: [], name: named, scored: () => true, summary: () => "", me: null, link: null, unranked: "" }, opt || {});
     let data = null, mode = "week", who = "", kind = "main";
     // The two boards have the same names in every game (owner, 2026-10-28): KBoard.LABELS, never set per game.
     const F = o.free ? { show: Number.isInteger(o.free.show) ? o.free.show : 6, prize: typeof o.free.prize === "string" ? o.free.prize : "", main: LABELS.staked, label: LABELS.free } : null;
@@ -77,6 +79,8 @@
       el("div", { class: "table-scroll" }, el("table", { class: "hist kb-table" }, el("thead", {}, head), body)),
       mine);
 
+    // Redraw once the wallet names arrive (names.js), if this page loads it.
+    if (window.KNames && window.KNames.onChange) window.KNames.onChange(() => { if (data) render(); });
     function render() {
       const part = partOf(data, mode), rows = (part && Array.isArray(part.rows)) ? part.rows : [];
       const weekly = mode === "week" || mode === "last";

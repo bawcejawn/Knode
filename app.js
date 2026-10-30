@@ -80,6 +80,8 @@
     return f ? `${w}.${f}` : `${w}`;
   };
   const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "");
+  /** A wallet on a leaderboard: its Knode Games name or Koinos @nickname with the short address (names.js), else the short address. */
+  const walletName = (a) => (window.KNames ? window.KNames.of(a) : short(a));
   /** Chain time now (ms): the last block's time plus however long ago we read it. */
   const nowMs = () => (S.chainTime ? S.chainTime + (Date.now() - S.seenAt) : Date.now());
   const BLOCK_MS = 3080; // typical time between Koinos blocks, for "result in about…" estimates only
@@ -1312,7 +1314,7 @@
     if (kind === "free") lastWinnerIdx = -1;
     tbody.replaceChildren(...rows.map((s, i) => el("tr", { class: [s.address === S.account ? "me" : "", i === lastWinnerIdx ? "cutline" : ""].join(" ").trim() },
       el("td", {}, el("span", { class: `rank${s.winner || freePrizeRow(s) ? " top" : ""}` }, placeOf.get(s) ? String(placeOf.get(s)) : "–")),
-      el("td", {}, el("span", { class: "addr" }, s.address === S.account ? youLabel() : short(s.address)), i === lastWinnerIdx ? el("span", { class: "cut-label" }, "winners' line") : null),
+      el("td", {}, el("span", { class: "addr" }, s.address === S.account ? youLabel() : walletName(s.address)), i === lastWinnerIdx ? el("span", { class: "cut-label" }, "winners' line") : null),
       el("td", { class: "num" }, String(s.pts)),
       el("td", { class: "num" }, s.stake < UNIT ? el("span", { class: "badge badge-free" }, "Free play") : `${amount(s.stake, 0)} VHP`),
       el("td", { class: "num" }, freePrizeRow(s) ? (rows.indexOf(s) === 0 ? "🥇 Prize" : "🥈 Prize") : s.winner && s.reward !== undefined && !(b.estimate && s.reward === 0n) ? `${b.estimate ? "~" : ""}${amount(s.reward)} VHP` : "–"))));
@@ -1324,7 +1326,7 @@
       const card = (s, i, pinned) => el("div", { class: ["lbc", s.address === S.account ? "me" : "", s.winner ? "win" : "", pinned ? "pinned" : ""].join(" ").trim() },
         el("span", { class: `lbc-place${s.winner ? " lbc-win" : ""}` }, placeOf.get(s) ? `#${placeOf.get(s)}` : "–"),
         el("div", { class: "lbc-who" },
-          el("b", {}, pinned ? `${youLabel()}: ${placeOf.get(s) ? `#${placeOf.get(s)}${kind === "main" ? ` of ${elig.length}` : " in free play"}` : "free play"}` : s.address === S.account ? youLabel() : short(s.address)),
+          el("b", {}, pinned ? `${youLabel()}: ${placeOf.get(s) ? `#${placeOf.get(s)}${kind === "main" ? ` of ${elig.length}` : " in free play"}` : "free play"}` : s.address === S.account ? youLabel() : walletName(s.address)),
           el("span", { class: "muted" }, s.stake < UNIT ? "Free play" : `${amount(s.stake, 0)} VHP staked`, tied(s) ? " · tied" : "", rewardOf(s) ? ` · ${rewardOf(s)}` : "")),
         el("span", { class: "lbc-pts" }, el("b", {}, String(s.pts)), el("small", {}, " pts")));
       const meRow = rows.find((s) => s.address === S.account);
@@ -1568,7 +1570,7 @@
   // ═══════════════ start ═══════════════
   async function start() {
     // Producer names (names.js): redraw once names.json arrives.
-    if (window.KNames) window.KNames.onChange(() => { try { renderAll(); } catch { /* not ready yet */ } });
+    if (window.KNames) window.KNames.onChange(() => { try { renderAll(); renderBoard().catch(() => {}); } catch { /* not ready yet */ } });
     const rs = $("#res-search");
     if (rs) rs.addEventListener("input", () => { RV.q = rs.value || ""; renderResults(); });
     const rm = $("#res-mine");

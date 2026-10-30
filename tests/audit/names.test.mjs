@@ -17,13 +17,13 @@ const DAY = 86400000;
 const NOW = Date.parse("2026-11-10T12:00:00Z");
 const A = Signer.fromSeed("names test producer A"), B = Signer.fromSeed("names test producer B"), C = Signer.fromSeed("names test not a producer");
 const PRODUCERS = new Set([A.getAddress(), B.getAddress()]);
-const isProducer = (a) => PRODUCERS.has(a);
+const isEligible = (a) => PRODUCERS.has(a);
 
 async function claim(signer, name, date, address = signer.getAddress()) {
   const sig = utils.encodeBase64url(await signer.signMessage(R.message(name, address, date)));
   return R.claimText(name, address, date, sig);
 }
-const apply = (db, text, now = NOW) => R.applyClaim(db, R.parseClaim(text), { now, lib: LIB, isProducer });
+const apply = (db, text, now = NOW) => R.applyClaim(db, R.parseClaim(text), { now, lib: LIB, isEligible });
 
 // ── rules ──
 test("name rules: length, characters, spaces, at least 2 letters or digits", () => {
@@ -36,6 +36,8 @@ test("reserved names and lookalikes of them are refused", () => {
     assert.equal(R.checkName(n), "That name is reserved.", n);
   }
   assert.equal(R.checkName("Koinos Blocks"), null, "Koinos alone is reserved, not every name containing it");
+  for (const n of ["Blocknode", "Block Node", "Kode Node"]) assert.equal(R.checkName(n), null, `${n}: knode inside a word is fine`);
+  for (const n of ["KnodeX", "My-Kn0de", "Super KNODEGAMES fan", "blockknodegames"]) assert.equal(R.checkName(n), "That name is reserved.", n);
 });
 
 test("lookalikes fold to the same form (case, spaces, 0/O, 1/l/I, 5/S, rn/m)", () => {
@@ -50,7 +52,8 @@ test("parseClaim: finds the two lines in an issue body (code fence, CRLF, extra 
   const c = R.parseClaim(body);
   assert.equal(c.name, "Blue Harbor"); assert.equal(c.address, A.getAddress()); assert.equal(c.date, "2026-11-09");
   assert.equal(c.message, R.message("Blue Harbor", A.getAddress(), "2026-11-09"));
-  assert.equal(R.parseClaim("Knode Games producer name: X | 1abc | 2026-11-09"), null);
+  assert.equal(R.parseClaim("Knode Games name: X | 1abc | 2026-11-09"), null);
+  assert.equal(R.parseClaim(text.replace("Knode Games name:", "Knode Games producer name:")), null, "only the current prefix");
   assert.equal(R.parseClaim(text.split("\n")[0]), null, "no signature line");
   assert.equal(R.parseClaim("x".repeat(30000)), null);
 });
@@ -65,8 +68,8 @@ test("signature: the right key is accepted; a wrong key, or a claim for someone 
   const t = await claim(A, "Blue Harbor", "2026-11-09");
   r = await apply(null, t.replace("Blue Harbor", "Red Harbor"));                        // text changed after signing
   assert.equal(r.ok, false); assert.match(r.reason, /signature doesn't match/);
-  r = await apply(null, await claim(C, "Gamma Node", "2026-11-09"));                    // valid signature, not a producer
-  assert.equal(r.ok, false); assert.match(r.reason, /not a producer/);
+  r = await apply(null, await claim(C, "Gamma Node", "2026-11-09"));                    // valid signature, not eligible
+  assert.equal(r.ok, false); assert.match(r.reason, /can't take a name yet/);
 });
 
 test("replay: the same claim twice, an old date, a future date", async () => {
@@ -95,7 +98,7 @@ test("one change every 7 days; the newest valid claim wins", async () => {
   assert.equal(older.ok, false, "an older claim sent later never wins");
 });
 
-test("unique: another producer can't take a name or its lookalike; keeping your own name is fine", async () => {
+test("unique: another wallet can't take a name or its lookalike; keeping your own name is fine", async () => {
   const a = await apply(null, await claim(A, "Blue Harbor", "2026-11-01"), Date.parse("2026-11-01T10:00:00Z"));
   for (const n of ["Blue Harbor", "BLUE HARBOR", "blue-harbor", "B1ue Harb0r"]) {
     const r = await apply(a.db, await claim(B, n, "2026-11-09"));
@@ -176,12 +179,12 @@ test("verifyIssues: claims in order, each against the list the earlier ones left
     { number: 8, body: await claim(B, "Red Rock", "2026-11-09") },
     { number: -1, body: "x" },
   ];
-  const r = await N.verifyIssues(null, issues, NOW, PRODUCERS);
+  const r = await N.verifyIssues(null, issues, NOW, isEligible);
   assert.deepEqual(r.results.map((x) => [x.issue, x.accepted]), [[5, true], [6, false], [7, false], [8, true]]);
   assert.match(r.results[1].reason, /looks the same/);
   assert.match(r.results[2].reason, /No claim found/);
   assert.deepEqual(Object.values(r.db.names).map((e) => e.name).sort(), ["Blue Harbor", "Red Rock"]);
-  const none = await N.verifyIssues(null, [{ number: 1, body: "nothing" }], NOW, PRODUCERS);
+  const none = await N.verifyIssues(null, [{ number: 1, body: "nothing" }], NOW, isEligible);
   assert.equal(none.db, null, "nothing accepted: no names.json to publish");
   const s = N.serialize(r.db);
   assert.equal(s, N.serialize(JSON.parse(s)), "stable output");
@@ -196,9 +199,9 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "names-"));
 test("names.yml publish: accepts names.json as bot/names.ts writes it, refuses anything else", async () => {
   const pub = heredocs.find((c) => c.includes("names.json: top level"));
   assert.ok(pub, "publish check found");
-  const r = await N.verifyIssues(null, [{ number: 1, body: await claim(A, "Blue Harbor", "2026-11-09") }], NOW, PRODUCERS);
+  const r = await N.verifyIssues(null, [{ number: 1, body: await claim(A, "Blue Harbor", "2026-11-09") }], NOW, isEligible);
   const d = tmp();
-  const write = (db, res = { base: "", results: [{ issue: 1, accepted: true }] }) => {
+  const write = (db, res = { base: "", changed: true, results: [{ issue: 1, accepted: true }] }) => {
     fs.writeFileSync(path.join(d, "names.json"), typeof db === "string" ? db : JSON.stringify(db));
     fs.writeFileSync(path.join(d, "r.json"), JSON.stringify(res));
     return runPy(pub, [path.join(d, "names.json"), path.join(d, "r.json")]);
@@ -206,7 +209,7 @@ test("names.yml publish: accepts names.json as bot/names.ts writes it, refuses a
   const good = write(N.serialize(R.hide(r.db, B.getAddress(), "test", NOW)));
   assert.equal(good.status, 0, good.stderr); assert.equal(good.stdout.trim(), "");
   const base = "a".repeat(40);
-  assert.equal(write(N.serialize(r.db), { base, results: [{ accepted: true }] }).stdout.trim(), base);
+  assert.equal(write(N.serialize(r.db), { base, changed: true, results: [{ accepted: true }] }).stdout.trim(), base);
   const bads = [
     { ...r.db, extra: 1 },
     { ...r.db, names: { [A.getAddress()]: { name: "<b>x</b>", date: "2026-11-09", signature: "A".repeat(87) } } },
@@ -216,8 +219,14 @@ test("names.yml publish: accepts names.json as bot/names.ts writes it, refuses a
     { ...r.db, hidden: { [A.getAddress()]: { reason: "x".repeat(201), date: "2026-11-09" } } },
   ];
   for (const b of bads) assert.notEqual(write(b).status, 0, JSON.stringify(b).slice(0, 120));
-  assert.notEqual(write(r.db, { base: "", results: [{ accepted: false }] }).status, 0, "nothing accepted");
-  assert.notEqual(write(r.db, { base: "main", results: [{ accepted: true }] }).status, 0, "base must be a commit");
+  assert.notEqual(write(r.db, { base: "", changed: false, results: [{ accepted: false }] }).status, 0, "nothing changed");
+  assert.notEqual(write(r.db, { base: "main", changed: true, results: [] }).status, 0, "base must be a commit");
+  const withNicks = N.withNicknames(r.db, { [B.getAddress()]: "jga" }, NOW);
+  assert.equal(write(N.serialize(withNicks)).status, 0, "nicknames accepted");
+  for (const n of ["JGA", "-x", "a b", "<x>", "x".repeat(33)]) {
+    assert.notEqual(write({ ...JSON.parse(N.serialize(withNicks)), nicknames: { [B.getAddress()]: n } }).status, 0, `bad nickname ${n}`);
+  }
+  assert.notEqual(write({ ...JSON.parse(N.serialize(withNicks)), nicknames: { "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr": "pool" } }).status, 0, "no nickname for a Knode node");
 });
 
 test("names.yml reply: fixed texts only; accepted claims are closed only once published; odd reasons are replaced", () => {
@@ -255,7 +264,8 @@ test("names.yml reply: fixed texts only; accepted claims are closed only once pu
 
 test("names.yml: no issue trigger, issue text only read as data, publish pushes only names.json to names-data", () => {
   assert.doesNotMatch(wf.match(/^on:[\s\S]*?^concurrency:/m)[0], /issues/);
-  assert.doesNotMatch(wf, /github\.event/);
+  assert.deepEqual([...new Set([...wf.matchAll(/github\.event[a-z_.]*/g)].map((m) => m[0]))].sort(), ["github.event.schedule", "github.event_name"],
+    "only the trigger's name and schedule are read from the event, never issue data");
   assert.match(wf, /vars\.NAMES_ENABLED == 'true' && github\.ref == 'refs\/heads\/main'/);
   assert.match(wf, /printf '100644 blob %s\\tnames\.json\\n' "\$blob" \| git mktree/);
   assert.match(wf, /git push -q "\$remote" "\$commit:refs\/heads\/names-data"/);
@@ -296,4 +306,73 @@ test("the pages that show producers use KNames (with their old fallback if names
     ["node-page.js", /window\.KNames\.of\(a\)/], ["node-page.js", /window\.KNames\.of\(addr\)/], ["results.js", /window\.KNames\.of\(a\)/]]) {
     assert.match(read(f), re, f);
   }
+});
+
+// ── wallets of every kind, nicknames, the chain ──
+test("eligibility: a producer, or 1 VHP in the wallet or staked; a failing node falls back to the next one", async () => {
+  const P = "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh";
+  const chain = (vhp, stake, fail = false) => ({ vhp: async () => { if (fail) throw new Error("down"); return vhp; }, stake: async () => stake, players: async () => [], nickname: async () => null });
+  assert.equal(await N.eligibility(new Set([P]), [chain(0n, 0n)])(P), true, "a producer");
+  assert.equal(await N.eligibility(new Set(), [chain(100000000n, 0n)])(A.getAddress()), true, "1 VHP held");
+  assert.equal(await N.eligibility(new Set(), [chain(99999999n, 0n)])(A.getAddress()), false, "just under 1 VHP");
+  assert.equal(await N.eligibility(new Set(), [chain(0n, 100000000n)])(A.getAddress()), true, "1 VHP staked (any game)");
+  assert.equal(await N.eligibility(new Set(), [chain(0n, 0n, true), chain(5n * 100000000n, 0n)])(A.getAddress()), true, "first node down");
+  assert.equal(await N.eligibility(new Set(), [chain(0n, 0n, true)])(A.getAddress()), false, "no node answers: refused");
+});
+
+test("nicknames: only when both nodes agree; shown with @; a Knode Games name wins; hidden hides both", async () => {
+  const P = "1JrsQXbrDqkT9yUH6gtj4yhQi1kgWwsohh", Q = "1UG4UUn7Da9JqE4PKbYUWgjbNwE5F9531", X = "14f34kUNZugf2DK4hPJGy4AkmBM7Y4pvVu";
+  const one = { [A.getAddress()]: "jga", [P]: "blocknode", [Q]: "liar", [X]: "knode" };
+  const two = { [A.getAddress()]: "jga", [P]: "blocknode", [Q]: "honest", [X]: "knode" };
+  const chain = (m, failFor) => ({ vhp: async () => 0n, stake: async () => 0n, players: async () => [], nickname: async (a) => { if (a === failFor) throw new Error("x"); return m[a] ?? null; } });
+  let nicks = await N.nicknames(new Set([A.getAddress(), P, Q, X, "junk"]), [chain(one), chain(two)]);
+  assert.deepEqual(nicks, { [A.getAddress()]: "jga", [P]: "blocknode", [X]: "knode" }, "disagreement dropped");
+  nicks = await N.nicknames(new Set([P]), [chain(one, P), chain(two)]);
+  assert.deepEqual(nicks, {}, "a node that fails counts as disagreement");
+  const db = N.withNicknames(R.emptyDb(), { [A.getAddress()]: "jga", [P]: "blocknode", [X]: "knode" }, NOW);
+  assert.deepEqual(db.nicknames, { [A.getAddress()]: "jga", [P]: "blocknode" }, "a reserved nickname (knode) is skipped");
+  assert.equal(N.withNicknames(db, { [A.getAddress()]: "jga", [P]: "blocknode" }, NOW), null, "nothing changed");
+  K._test.use(db);
+  assert.equal(K.of(P), `@blocknode · ${K.short(P)}`);
+  const named = await apply(db, await claim(A, "Blue Harbor", "2026-11-09"));
+  K._test.use(named.db);
+  assert.equal(K.of(A.getAddress()), `Blue Harbor · ${K.short(A.getAddress())}`, "the Knode Games name wins over @jga");
+  K._test.use(R.hide(named.db, P, "test", NOW));
+  assert.equal(K.of(P), K.short(P), "hidden: no nickname either");
+  K._test.use(R.emptyDb());
+});
+
+test("a Knode Games name can't copy another wallet's nickname (or a lookalike); your own nickname is fine", async () => {
+  const db = N.withNicknames(R.emptyDb(), { [B.getAddress()]: "bluenode", [A.getAddress()]: "harbor" }, NOW);
+  for (const n of ["bluenode", "Blue Node", "B1ue-N0de"]) {
+    const r = await apply(db, await claim(A, n, "2026-11-09"));
+    assert.equal(r.ok, false, n); assert.match(r.reason, /Koinos nickname/);
+  }
+  assert.equal((await apply(db, await claim(A, "Harbor", "2026-11-09"))).ok, true, "A may take its own nickname as its name");
+});
+
+test("players: leaderboard wallets are looked up for nicknames", () => {
+  const board = { v: 1, today: { rows: [{ a: A.getAddress() }] }, week: { rows: [{ a: B.getAddress() }, { a: "junk" }] }, lastWeek: null, allTime: { rows: [] } };
+  assert.deepEqual([...N.boardPlayers({ "board.json": JSON.stringify(board) })].sort(), [A.getAddress(), B.getAddress()].sort());
+  assert.deepEqual([...N.boardPlayers({ "board.json": "nope" })], []);
+});
+
+test("chain reads: the entry points the checker and the claim page use are the real ones", () => {
+  const game = JSON.parse(fs.readFileSync(`${APP}/game/abi/kpred.koilib.json`, "utf8")).methods;
+  const src = fs.readFileSync(`${APP}/bot/names.ts`, "utf8") + fs.readFileSync(`${APP}/names-page.js`, "utf8");
+  for (const [fn, ep] of [["get_player", game.get_player.entry_point], ["list_players", game.list_players.entry_point], ["balance_of", 0x5c721497]]) {
+    const uses = [...src.matchAll(new RegExp(`${fn}: \\{ entry_point: (0x[0-9a-f]+)`, "g"))].map((m) => Number(m[1]));
+    assert.ok(uses.length >= 1, fn);
+    for (const u of uses) assert.equal(u, ep, `${fn} entry point`);
+  }
+  assert.equal(utils.nicknamesAbi.methods.get_main_token.entry_point, 1053665215, "koilib's Nicknames ABI (get_main_token)");
+  assert.match(fs.readFileSync(`${APP}/bot/names.ts`, "utf8"), /const NICKNAMES = "1KD9Es7LBBjA1FY3ViCgQJ7e6WH1ipKbhz"/);
+});
+
+test("names show on the leaderboards and on your own wallet button", () => {
+  assert.match(read("board.js"), /window\.KNames \? window\.KNames\.of\(a\) : short\(a\)/);
+  assert.match(read("board.js"), /window\.KNames\.onChange\(\(\) => \{ if \(data\) render\(\); \}\)/);
+  assert.match(read("leaders.js"), /name: \(a\) => \(window\.KNames \? window\.KNames\.of\(a\) : short\(a\)\)/);
+  assert.match(read("app.js"), /youLabel\(\) : walletName\(s\.address\)/);
+  assert.match(read("header-wallet.js"), /window\.KNames\.name\(W\.address\)/);
 });
