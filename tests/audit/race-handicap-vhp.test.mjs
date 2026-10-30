@@ -98,12 +98,13 @@ test("the race and Block X cards read effective VHP; the 'holds 1 VHP' ranking r
   assert.match(wf, /race-samples/, "the hourly race takes the samples");
 });
 
-test("audit BX-37: combineReads takes each producer's higher read, capped at the top both nodes agree on", () => {
+test("audit BX-37 / BX-55 (round 3): combineReads takes the lower read of a producer the nodes disagree on, and names it", () => {
   const a = { [A]: sat(400), [B]: sat(100), [C]: sat(50) }, b = { [A]: sat(400), [B]: sat(200), [C]: sat(5000) };
   const { values, differ } = R.combineReads(a, b, [A, B, C]);
   assert.deepEqual(differ.sort(), [B, C].sort());
-  assert.equal(values[B], sat(200), "the higher read: it can't look small");
-  assert.equal(values[C], sat(400), "capped at the agreed top (400): one node can't inflate a producer above it");
+  assert.equal(values[B], sat(100), "the lower read (the card flags B; Block X holds a target B signs)");
+  assert.equal(values[C], sat(50), "one node can't lift C to the top");
+  assert.equal(R.combineReads(a, { ...a, [A]: String(BigInt(sat(400)) + 1n) }, [A]).values[A], String(BigInt(sat(400)) + 1n), "within 0.5%: the higher");
   assert.equal(R.combineReads(a, null, [A]).values[A], sat(400));
 });
 

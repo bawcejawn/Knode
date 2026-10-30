@@ -238,7 +238,8 @@
   const GUEST_NO_FREE = "Free answers are used up for today — try again after 00:00 UTC (5pm PT), or connect a wallet.";
   // Audit SP-18: say which limit it was. The free pool is released by the hour (sponsor v3), so "this hour" first.
   const guestRefusal = (m) =>
-    /free-player|free answers|FREE_USED_UP|free play/i.test(m) ? "Today's free play is used up for this hour — more opens on the hour (UTC). Try again then, or connect a wallet."
+    /switched off/i.test(m) ? "Free play is paused for now (the Mana sponsor is switched off). Try again later, or connect a wallet."   // audit SP-43
+    : /free-player|free answers|FREE_USED_UP|free play/i.test(m) ? "Today's free play is used up for this hour — more opens on the hour (UTC). Try again then, or connect a wallet."
       : /this player's daily/i.test(m) ? "This guest has used its free Mana for today — try again after 00:00 UTC (5pm PT)."
       : /weekly/i.test(m) ? "This guest has used its free Mana for this week — try again Monday (00:00 UTC)."
       : /today's sponsored mana is used up/i.test(m) ? GUEST_NO_FREE
@@ -272,7 +273,12 @@
   // Everywhere else every guest path is closed: create, restore, backup, reconnect, switch and sign never touch the key.
   const GUEST_ORIGINS = ["knodegames.com", "www.knodegames.com", "localhost", "127.0.0.1"];
   const guestOrigin = () => {
-    try { const l = window.location; return !!l && (l.protocol === "https:" || l.protocol === "http:") && GUEST_ORIGINS.includes(String(l.hostname || "")); } catch { return false; }
+    // Audit BX-67: https only on knodegames.com; plain http only on this computer (localhost, 127.0.0.1).
+    try {
+      const l = window.location, h = String((l && l.hostname) || "");
+      if (!l || !GUEST_ORIGINS.includes(h)) return false;
+      return l.protocol === "https:" || (l.protocol === "http:" && (h === "localhost" || h === "127.0.0.1"));
+    } catch { return false; }
   };
   const NO_GUEST = () => Promise.reject(new Error("Guest play is only on knodegames.com."));
   const guestLib = () => (guestOrigin() && window.KGuest ? window.KGuest
@@ -414,7 +420,9 @@
       throw new Error("Guest play is paused: the page's Mana sponsor settings aren't the live Knode Games sponsor. Nothing was sent.");
     if (!sp) throw new Error("Guest play works on the game pages. Nothing was sent.");
     const rcLimit = rcFor(sp, ops, String(sp.rcLimit || "100000000"));
-    if (!(await sponsorSaysYes(sp, rcLimit, true))) throw new Error(GUEST_NO_FREE);
+    // Audit SP-34: the sponsor's own reason (e.g. "released on the hour"), worded for a guest.
+    const yes = await sponsorAnswer(sp, rcLimit, gamesOfOps(sp, ops), true);
+    if (!yes.ok) throw new Error(yes.reason ? guestRefusal(yes.reason) : GUEST_NO_FREE);
     const signer = await guestLib().signer();
     if (signer.getAddress() !== W.address) throw new Error("The guest key on this device changed. Reconnect as a guest.");
     signer.provider = W.provider;
@@ -519,7 +527,7 @@
     // Answers are light (rcLimit, 1 Mana); staking, withdrawing, swapping and claiming do much more in one transaction
     // (approve, transfer, burn, stake), so they ask for rcLimitOther (audit SP-17: the sponsor's per-transaction cap, 1 Mana).
     const rcLimit = sp ? rcFor(sp, ops, String(answerOnly ? (sp.rcLimit || "100000000") : (sp.rcLimitOther || "100000000"))) : null;
-    if (sp && await sponsorSaysYes(sp, rcLimit, answerOnly)) {
+    if (sp && (await sponsorAnswer(sp, rcLimit, gamesOfOps(sp, ops), answerOnly)).ok) {
       try { return await sendKondorWith(label, ops, { ...opts, sponsor: sp.address, rcLimit }); }
       catch (e) {
         // The network turned the sponsored transaction down before it was included (nothing happened, nothing was
@@ -632,18 +640,61 @@
     }
     return String(sum < BigInt(fallback) ? sum : BigInt(fallback));
   }
-  /** would_pay(account, rc_limit, answer_only): true only when the sponsor answers yes (any error: no). */
-  async function sponsorSaysYes(sp, rcLimit, answerOnly) {
+  /** The calls' games for would_pay (audit SP-22, SP-38: as the sponsor's authorize reads them): race picks are game
+   *  7; a KnodeGames pick and the vault's own calls (deposit_to, withdraw_from, move_stake, claim_game) name it in
+   *  argument field 2. Every game of a batch, at most 4. */
+  function gameOfOps(sp, ops) { return gamesOfOps(sp, ops)[0] || 0; }
+  const VAULT_CALLS = [0x7bb5c436, 0x5b0aaef8, 0x7c268e69, 0x4107e3ab];
+  function gamesOfOps(sp, ops) {
+    const out = [], game = sp.game || (Array.isArray(sp.covers) ? sp.covers[0] : null);
+    for (const o of ops) {
+      const c = o && o.call_contract;
+      if (!c) continue;
+      const e = Number(c.entry_point) >>> 0;
+      let g = 0;
+      if (sp.race && c.contract_id === sp.race && e === PICK) g = 7;
+      else if ((sp.picks && c.contract_id === sp.picks && e === PICK) || (game && c.contract_id === game && VAULT_CALLS.includes(e))) g = varintField(c.args, 2);
+      if (g > 0 && !out.includes(g) && out.length < 4) out.push(g);
+    }
+    return out;
+  }
+  /** The first varint in protobuf field `want` of base64url (or byte) arguments, else 0. */
+  function varintField(args, want) {
+    let b;
+    try { b = typeof args === "string" ? lib.utils.decodeBase64url(args) : args instanceof Uint8Array ? args : new Uint8Array(0); } catch { return 0; }
+    let i = 0;
+    const vint = () => { let v = 0, sh = 0, k = 0; for (;;) { if (i >= b.length || k > 4) return -1; const x = b[i++]; v += (x & 0x7f) * 2 ** sh; sh += 7; k++; if (!(x & 0x80)) return v; } };
+    while (i < b.length) {
+      const tag = vint(); if (tag < 0) return 0;
+      const f = Math.floor(tag / 8), wt = tag % 8;
+      if (wt === 0) { const v = vint(); if (v < 0) return 0; if (f === want) return v > 0xffffffff ? 0 : v; }
+      else if (wt === 2) { const n = vint(); if (n < 0 || i + n > b.length) return 0; i += n; }
+      else if (wt === 1) i += 8; else if (wt === 5) i += 4; else return 0;
+    }
+    return 0;
+  }
+  /** would_pay(account, rc_limit, game) with answer_only and games: { ok, reason } from the sponsor (any error: not ok, no reason).
+   *  Audit SP-40: answer_only (field 3) is still sent for free play, so a rollback to sponsor v2 keeps guests playing;
+   *  v3 ignores it. Audit SP-38: every game of the batch (field 5, one entry each). */
+  async function sponsorAnswer(sp, rcLimit, games, answerOnly) {
     try {
       const acct = lib.utils.decodeBase58(W.address);
       const bytes = [0x0a, acct.length, ...acct, 0x10];
-      let v = BigInt(rcLimit);
-      do { let b = Number(v & 0x7fn); v >>= 7n; if (v > 0n) b |= 0x80; bytes.push(b); } while (v > 0n);
-      if (answerOnly) bytes.push(0x18, 0x01);   // field 3 (answer_only) = true
+      const push = (v) => { v = BigInt(v); do { let x = Number(v & 0x7fn); v >>= 7n; if (v > 0n) x |= 0x80; bytes.push(x); } while (v > 0n); };
+      push(rcLimit);
+      if (answerOnly) bytes.push(0x18, 0x01);                       // field 3 (answer_only), for v2
+      for (const g of games || []) { bytes.push(0x28); push(g); }   // field 5 (games), sponsor v3
       const r = await withTimeout(W.provider.readContract({ contract_id: sp.address, entry_point: WOULD_PAY, args: lib.utils.encodeBase64url(new Uint8Array(bytes)) }), 6000, "timeout");
       const out = r && r.result ? lib.utils.decodeBase64url(r.result) : new Uint8Array(0);
-      return out.length >= 2 && out[0] === 0x08 && out[1] === 0x01;   // field 1 (ok) = true
-    } catch { return false; }
+      const ok = out.length >= 2 && out[0] === 0x08 && out[1] === 0x01;   // field 1 (ok) = true
+      let reason = "";
+      for (let i = 0; i < out.length;) {   // field 2 (reason), a string
+        const tag = out[i++];
+        if (tag === 0x12) { const n = out[i++]; reason = String.fromCharCode(...out.subarray(i, i + n)); break; }   // the sponsor's reasons are plain ASCII
+        if ((tag & 7) === 0) { while (i < out.length && (out[i++] & 0x80)); } else break;
+      }
+      return { ok, reason };
+    } catch { return { ok: false, reason: "" }; }
   }
 
   async function sendVault(label, ops, opts = {}) {

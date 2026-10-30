@@ -24,6 +24,10 @@ It opens a link with a one-time key (a new one every start). It works only on th
 | Knode Swap | The Desk |
 | Testnet | Trials with test KOIN only |
 
+A game's id is the same number in the Picks contract and in the vault (the game id registry). Never register a Picks
+game under an id the vault uses for a different game: the Mana sponsor treats a stake in vault game N as a stake in
+Picks game N (audit SP-27).
+
 Each area shows **Live**, **Launching**, **Testnet** or **Not live yet**. A game that isn't live yet says what will appear there and when.
 
 **Middle: the chosen area.** At the top: what it is, its game id, which contract and key it runs on, and its runbook. Its

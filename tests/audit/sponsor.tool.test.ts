@@ -16,10 +16,10 @@ test("the default caps are in order and convert to chain units", () => {
   assert.equal(c.desk, DESK.contract);
   assert.deepEqual(c.tokens, [GAME.vhp, GAME.koin]);
   assert.equal(c.max_mana_per_tx, "100000000");
-  // Owner's decisions 2026-10-28: 50 a day and 300 a week per player; 5,000 for everyone a day, of which free players
-  // share at most 2,000 (staked players always have 3,000 or more). 1 Mana per transaction stays the ceiling.
-  assert.equal(c.max_mana_per_account_day, "5000000000");
-  assert.equal(c.max_mana_per_account_week, "30000000000");
+  // Owner's decisions: 25 a day and 150 a week per wallet, free or staked (2026-10-29); 5,000 for everyone a day, of
+  // which free wallets share at most 2,000 (2026-10-28). 1 Mana per transaction stays the ceiling.
+  assert.equal(c.max_mana_per_account_day, "2500000000");
+  assert.equal(c.max_mana_per_account_week, "15000000000");
   assert.equal(c.max_mana_per_day, "500000000000");
   assert.equal(c.max_mana_free_day, "200000000000");
   // Only real players (audit M-1): VHP is the token checked, at least 1 VHP by default.
@@ -77,16 +77,19 @@ function files(withSponsor: boolean) {
 }
 const read = (f: string) => JSON.parse(fs.readFileSync(f, "utf8"));
 
-test("payer sponsor writes the same sponsor block into both deployment files", () => {
+test("payer sponsor: the game pages ask the sponsor; Knode Swap never does (owner 2026-10-29, audit SP-24)", () => {
   const f = files(true);
   setPayer("sponsor", "0.5", f);
-  for (const x of [read(f.game), read(f.desk)]) {
-    assert.equal(x.payer, "sponsor");
-    assert.equal(x.sponsor.address, "1AZsVFFrvKFhhxLq2jKHUUesdm2zbCcbXW");
-    assert.deepEqual(x.sponsor.covers, [GAME.contract, DESK.contract, GAME.vhp, GAME.koin]);
-    assert.deepEqual(x.sponsor.tokens, [GAME.vhp, GAME.koin]);
-    assert.equal(x.sponsor.rcLimit, "50000000");
-  }
+  const x = read(f.game);
+  assert.equal(x.payer, "sponsor");
+  assert.equal(x.sponsor.address, "1AZsVFFrvKFhhxLq2jKHUUesdm2zbCcbXW");
+  assert.deepEqual(x.sponsor.covers, [GAME.contract, GAME.vhp, GAME.koin]);
+  assert.ok(!x.sponsor.covers.includes(DESK.contract), "the swap desk is not covered");
+  assert.deepEqual(x.sponsor.tokens, [GAME.vhp, GAME.koin]);
+  assert.equal(x.sponsor.rcLimit, "50000000");
+  const d = read(f.desk);
+  assert.equal(d.payer, "self");
+  assert.equal(d.sponsor, undefined);
 });
 
 test("payer self switches the website back to players' own Mana", () => {
@@ -221,7 +224,8 @@ test("audit SP-8: the deployed site must ask for at most each chain row, its fal
 test("audit SP-1 / SP-5 / SP-14 / SP-17: config uses the owner's caps, stops on a failed read, checks the code, and the site's other-actions limit fits the cap", async () => {
   const src = fs.readFileSync("bot/sponsor.ts", "utf8");
   const body = src.slice(src.indexOf("async function setConfig("), src.indexOf("/** Copies the per-action limits"));
-  assert.match(body, /flag\(a, "--per-day", DEFAULT_CAPS\.perDay\)/, "the owner's 5,000, not the chain's value");
+  assert.match(body, /const base = enabledArg === true \? capsOf\(cur\) : DEFAULT_CAPS;/, "config: the owner's caps; enable: the caps on chain (round 4, SP-39)");
+  assert.match(body, /flag\(a, "--per-day", base\.perDay\)/);
   assert.ok(!/fromSat\(cur\.max_mana_per_day, DEFAULT_CAPS/.test(body), "no fallback to what is on chain");
   assert.match(src, /Couldn't read the sponsor's settings from/, "a failed read stops (never 'nothing set': switched off)");
   assert.match(body, /show different sponsor settings/, "two nodes on mainnet");
@@ -235,4 +239,50 @@ test("audit SP-1 / SP-5 / SP-14 / SP-17: config uses the owner's caps, stops on 
   assert.ok(a.some((x: string) => /82% used/.test(x)), "everyone's total over 80%");
   const f = usageAlerts({ used_day: "0" }, { used_day: String(900n * 100000000n) }, { max_mana_per_day: String(5000n * 100000000n), max_mana_free_day: String(2400n * 100000000n) }, Date.UTC(2026, 10, 2, 9, 30));
   assert.ok(f.some((x: string) => /free play has used 90%/.test(x)), "at 09:30, 1,000 of 2,400 is released; 900 used is 90%");
+});
+
+test("audit SP-29/SP-30: enable and disable change only the switch, keeping every cap on chain", async () => {
+  const { switchedConfig } = await import("../../bot/sponsor.ts");
+  const cur = { enabled: true, max_mana_per_tx: "100000000", max_mana_per_account_day: "700000000", max_mana_per_day: "90000000000", max_mana_free_day: "1000000000", min_vhp: "100000000", allowed: [{ contract: "x" }] };
+  const off = switchedConfig(cur, false);
+  assert.deepEqual({ ...off, enabled: true }, cur);
+  assert.equal(off.enabled, false);
+  assert.equal(switchedConfig(cur, true).max_mana_per_account_day, "700000000", "a lowered cap stays lowered");
+  assert.throws(() => switchedConfig({}, true), /no settings yet/);
+});
+
+test("audit SP-31: the watch also warns when the sponsor wallet's own Mana is below what today's caps still allow", async () => {
+  const { manaAlerts } = await import("../../bot/sponsor.ts");
+  const cfg = { enabled: true, max_mana_per_day: "500000000000" };
+  assert.equal(manaAlerts(10n ** 12n, cfg, { used_day: "0" }).length, 0);
+  assert.match(manaAlerts(10n ** 10n, cfg, { used_day: "0" })[0], /less than/);
+  assert.equal(manaAlerts(10n ** 10n, { ...cfg, enabled: false }, { used_day: "0" }).length, 0);
+});
+
+test("owner 2026-10-29: the deployed Knode Swap page asking the sponsor is a website problem (v3 refuses swaps)", async () => {
+  const { siteProblems } = await import("../../bot/sponsor.ts");
+  const p = siteProblems({ game: { payer: "sponsor", sponsor: {} }, desk: { payer: "sponsor" } }, [], 100000000n);
+  assert.ok(p.some((x) => /Knode Swap still asks the sponsor/.test(x)));
+  assert.ok(!siteProblems({ game: {}, desk: { payer: "self" } }, [], 100000000n).some((x) => /Knode Swap/.test(x)));
+});
+
+test("audit SP-39 (round 4): enable keeps the caps on chain but rebuilds everything else from the files", async () => {
+  const { capsOf } = await import("../../bot/sponsor.ts");
+  assert.deepEqual(capsOf({ max_mana_per_tx: "100000000", max_mana_per_account_day: "700000000", max_mana_per_account_week: "3000000000", max_mana_per_day: "90000000000", max_mana_free_day: "1000000000", min_vhp: "100000000" }),
+    { perTx: "1", perPlayerDay: "7", perPlayerWeek: "30", perDay: "900", minVhp: "1", freePerDay: "10" });
+  const src = fs.readFileSync("bot/sponsor.ts", "utf8");
+  const body = src.slice(src.indexOf("async function setConfig("), src.indexOf("/** The caps as they are on chain"));
+  assert.ok(!/return setSwitch\(rpc, provider, s, A, cur, enabledArg/.test(body), "enable no longer re-sends the chain's settings as they are");
+  assert.match(body, /buildConfig\(game, desk, caps, enabled, race/);
+});
+
+test("audit SP-37 (round 4): the vault-live setting comes from the game's state, and both nodes must agree", async () => {
+  const { vaultLiveOn } = await import("../../bot/sponsor.ts");
+  assert.equal(await vaultLiveOn("a", "g", false, async () => false), false);
+  assert.equal(await vaultLiveOn("a", "g", false, async () => true), true);
+  process.env.RPC_CHECK = "https://b.example";
+  let n = 0;
+  await assert.rejects(vaultLiveOn("https://a.example", "g", true, async () => (n++ === 0)), /disagree/);
+  assert.equal(await vaultLiveOn("https://a.example", "g", true, async () => false), false);
+  delete process.env.RPC_CHECK;
 });

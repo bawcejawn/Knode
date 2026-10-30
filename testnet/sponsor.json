@@ -1,11 +1,11 @@
 {
   "v": 1,
-  "note": "Sponsor v3 trial on the Koinos Foundation TESTNET (npm run sponsor -- <command> --testnet; docs/blockx/SPONSOR-TESTNET.md). Test KOIN only. There is no Knode game or Knode Swap on the testnet: game and desk are placeholder addresses with no contract (made from public labels, nobody holds their keys), so only the Picks contract's picks are exercised. The sponsor wallet itself is SPONSOR_WIF in .env.testnet; its address is written to sponsor-data/testnet/deployment.json by upload.",
+  "note": "Sponsor v3 trial on the Koinos Foundation TESTNET (npm run sponsor -- <command> --testnet; docs/blockx/SPONSOR-TESTNET.md). Test KOIN only. game = the Vault v6 test copy (1MXay5\u2026, 29 Oct 2026, 10-minute weeks): the sponsor asks it for each player's stake, and a contract that doesn't exist there makes every sponsored pick fail (\"contract does not exist\", found in the trial 30 Oct). Its weeks don't match the sponsor's 7-day weeks, so on the testnet every picker counts as a free wallet (the free pool), which is what the trial tests. desk is a placeholder address with no contract (Knode Swap is never sponsored anyway). The sponsor wallet itself is SPONSOR_WIF in .env.testnet.",
   "rpc": "https://testnet.koinosfoundation.org",
   "chainId": "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==",
   "koin": "1FaSvLjQJsCJKq5ybmGsMMQs8RQYyVv8ju",
   "vhp": "17n12ktwN79sR6ia9DDgCfmw77EgpbTyBi",
   "picks": "12xNetHpajRi8Xrv4ub8MbMWWjC2q7VrX5",
-  "game": "1PDBx3KEtxXax2CXjSLHjt3d76UQkfgDma",
+  "game": "1MXay5pSvPNzc8sBcZAMWfqaY4T9DkBvLn",
   "desk": "1PgfDQi16onkpfoFC2Ho2euva7RQs3myXC"
 }

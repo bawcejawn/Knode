@@ -211,7 +211,8 @@ test("testnet workflow: publishes only to testnet-data, off by default, and its 
   const out = tmp();
   await quiet(() => run({ p: "main", check: null, out, game: FAST, cards: "self", picksContract: "1" + "P".repeat(33), blockOf: blockOf(), picksOf: fastPicks, rankedOf, signersOf, vhpOf,
     head: { height: lib + 60, time: T(lib + 60), lib } }));
-  const check = (dir, id) => spawnSync("python3", ["-I", "-", dir, String(id)], { input: py, encoding: "utf8" });
+  // (Round 5 review: the check also needs the game's round size and offset, and a clock for the new-target rule.)
+  const check = (dir, id) => spawnSync("python3", ["-I", "-", dir, String(id), "", "", `blockx-${id}`, "300", "0"], { input: py, encoding: "utf8", env: { ...process.env, CHECK_NOW_MS: String(T(lib + 60)) } });
   const ok = check(out, 92);
   assert.equal(ok.status, 0, ok.stderr);
   assert.match(ok.stdout, /testnet games files ok/);
@@ -325,7 +326,10 @@ test("BX-5 / BX-23: a final week's prizes are frozen once (P###.json); the mainn
   const runs = JSON.parse(execFileSync("python3", ["-c", "import yaml,json,sys; w=yaml.safe_load(open(sys.argv[1])); print(json.dumps([s.get('run','') for j in w['jobs'].values() for s in j['steps']]))", path.resolve(APP, ".github/workflows/games.yml")], { encoding: "utf8" }));
   const sh = runs.find((r) => r.includes("<<'PY'"));
   const py = sh.slice(sh.indexOf("<<'PY'\n") + 7, sh.indexOf("\nPY\n") + 1);
-  const check = (dir) => spawnSync("python3", ["-I", "-", dir, "2"], { input: py, encoding: "utf8" });
+  // Round 4 (audit BX-79/80): prize and vault files are judged against the PUBLISHED branch and the job's clock. Here the
+  // published copy is the honest run's own board and prize file (as after the run before), and the clock is its head time.
+  let pubDir = "", nowMs = 0;
+  const check = (dir) => spawnSync("python3", ["-I", "-", dir, "2", pubDir, "", "blockx", "2400", "0"], { input: py, encoding: "utf8", env: { ...process.env, CHECK_NOW_MS: String(nowMs) } });
   const VALID = "1" + "P".repeat(33);
   const rd = raceDir();
   const startH = H0 - Math.floor(3600000 / 3000), endH = startH + 7 * 28800;
@@ -341,6 +345,8 @@ test("BX-5 / BX-23: a final week's prizes are frozen once (P###.json); the mainn
   assert.ok(fs.existsSync(path.join(out, "P003.json")), "the final week's prizes are frozen");
   const frozen = JSON.parse(fs.readFileSync(path.join(out, "P003.json"), "utf8"));
   assert.deepEqual(frozen.prizes, r.board.lastWeek.prizes);
+  pubDir = tmp(); fs.copyFileSync(path.join(out, "board.json"), path.join(pubDir, "board.json")); fs.copyFileSync(path.join(out, "P003.json"), path.join(pubDir, "P003.json"));
+  nowMs = T(at);
   const ok = check(out);
   assert.equal(ok.status, 0, ok.stderr);
   // The Vault (v6) results file for the week, from the frozen prize list (handoff 2026-10-28): vault/W3.json.
@@ -371,6 +377,7 @@ test("BX-5 / BX-23: a final week's prizes are frozen once (P###.json); the mainn
   assert.notEqual(check(bad2).status, 0);
   const wf = fs.readFileSync(path.resolve(APP, ".github/workflows/games.yml"), "utf8");
   assert.match(wf, /\(\/P\[0-9\]\{3\}\|\/vault\/W\[0-9\]\+\)\\\.json\$ \]\] && git cat-file -e/, "the publish step never replaces a published prize file or Vault file");
+  assert.match(wf, /if grep -qxF "\$name" "\$HELD"; then continue; fi/, "a held file is skipped, the rest published (BX-81)");
 });
 
 test("Vault results file (handoff 2026-10-28): ties share a place, 2+ tied for 1st leave 2nd empty, more than 10 tied leave that place empty, nobody qualifying gives empty lists", () => {

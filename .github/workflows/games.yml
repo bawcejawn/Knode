@@ -53,13 +53,18 @@ jobs:
             { git ls-tree --name-only FETCH_HEAD:blockx 2>/dev/null || true; } | while IFS= read -r f; do
               if [[ "$f" =~ ^(index|board|W[0-9]{3}|P[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:blockx/$f" > "$RUNNER_TEMP/prev/blockx/$f"; fi
             done
+            # Audit BX-81: the published vault files too, so the recorder doesn't write one again once it is published.
+            mkdir -p "$RUNNER_TEMP/prev/blockx/vault"
+            { git ls-tree --name-only FETCH_HEAD:blockx/vault 2>/dev/null || true; } | while IFS= read -r f; do
+              if [[ "$f" =~ ^W[0-9]+\.json$ ]]; then git show "FETCH_HEAD:blockx/vault/$f" > "$RUNNER_TEMP/prev/blockx/vault/$f"; fi
+            done
             { git ls-tree --name-only FETCH_HEAD:survivor 2>/dev/null || true; } | while IFS= read -r f; do
               if [[ "$f" =~ ^(index|days|fields|S[0-9]{3,4})\.json$ ]]; then git show "FETCH_HEAD:survivor/$f" > "$RUNNER_TEMP/prev/survivor/$f"; fi
             done
           elif [ "$has" = 2 ]; then echo "No games-data branch yet."
           else echo "::error::Couldn't reach the games-data branch; not recording this run"; exit 1; fi
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
-            git ls-tree --name-only FETCH_HEAD | while IFS= read -r f; do
+            { git ls-tree --name-only FETCH_HEAD 2>/dev/null || true; } | while IFS= read -r f; do
               if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/race/$f"; fi
             done
           else echo "No race-data branch yet: targets wait for cards."; fi
@@ -123,8 +128,21 @@ jobs:
             [ -n "$f" ] || continue
             echo "::error::Not publishing $f this run: over 2 MB (the published copy stays as it was)"; rm -f "$f"; failed=1
           done < <(if [ -d "$IN/survivor" ]; then find "$IN/survivor" -type f -size +2048k -print; fi)
+          # Audit BX-79 / BX-80: the published branch first (read only here): the vault and prize files are judged against
+          # what is ALREADY published and the job's own clock, never against this run's own board.
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          PUB=$(mktemp -d); HELD="$PUB/held"; : > "$HELD"; mkdir -p "$PUB/blockx"
+          git init -q work && cd work
+          parent=""
+          if git fetch -q --depth 1 "$remote" games-data 2>/dev/null; then
+            parent=$(git rev-parse FETCH_HEAD)
+            git read-tree FETCH_HEAD
+            { git ls-tree --name-only "$parent:blockx" 2>/dev/null || true; } | while IFS= read -r f; do
+              if [[ "$f" =~ ^(board|P[0-9]{3}|W[0-9]{3})\.json$ ]]; then git show "$parent:blockx/$f" > "$PUB/blockx/$f"; fi
+            done
+          else git read-tree --empty; fi
           # The content must be the recorder's own shape, not only parse as JSON.
-          if [ -d "$IN/blockx" ]; then /usr/bin/python3 - "$IN/blockx" 2 <<'PY'
+          if [ -d "$IN/blockx" ]; then /usr/bin/python3 - "$IN/blockx" 2 "$PUB/blockx" "$HELD" blockx 2400 0 <<'PY'
           import json, os, re, sys
           d = sys.argv[1]; gid = int(sys.argv[2]); addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
           iso = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{3})?Z"); ymd = re.compile(r"\d{4}-\d\d-\d\d")
@@ -165,11 +183,111 @@ jobs:
               if w is None or len(j["first"]) > 10 or len(j["second"]) > 10 or not all(type(a) is str and addr.fullmatch(a) for a in w): return False
               allw = w + [x["player"] for x in rows]
               return len(set(allw)) == len(allw)
-          if os.path.isdir(os.path.join(d, "vault")):
-              for f in os.listdir(os.path.join(d, "vault")):
-                  assert vault_ok(json.load(open(os.path.join(d, "vault", f), encoding="utf-8")), f), "vault/" + f
+          # Audit BX-62 / BX-65 / BX-79 / BX-80 / BX-81 (rounds 3-4): prize files (P<w>) and vault files (vault/W<w>) are
+          # write-once, so they are judged against the PUBLISHED board and prize files and this job's own clock, never this
+          # run's own board. A file that fails is HELD (not published; the recorder writes it again next run) and the rest
+          # of the run is published; a hold that isn't just "not yet" fails the job at the end so you are emailed.
+          import time
+          GENESIS = 1792368000000                                   # Block X weeks: the vault's genesis (2026-10-19 00:00 UTC)
+          # (CHECK_NOW_MS: the tests' fixed clock; the workflow never sets it.)
+          now = int(os.environ.get("CHECK_NOW_MS") or time.time() * 1000); cw = (now - GENESIS) // WEEK
+          pub = sys.argv[3] if len(sys.argv) > 3 else ""; heldf = sys.argv[4] if len(sys.argv) > 4 else ""
+          pre = sys.argv[5] if len(sys.argv) > 5 else "blockx"   # the folder on the published branch
+          # The game's round size and offset (a target's height is round * size + offset), for the new-target check.
+          GROUND = int(sys.argv[6]) if len(sys.argv) > 6 and re.fullmatch(r"[1-9]\d{0,6}", sys.argv[6]) else None
+          GOFFSET = int(sys.argv[7]) if len(sys.argv) > 7 and re.fullmatch(r"\d{1,7}", sys.argv[7]) else None
+          held = []
+          def hold(name, why, alert):
+              held.append(name); print(("::error::" if alert else "::notice::") + "held, not published: " + name + ": " + why)
+              if alert: held.append("!alert")
+          def pubjson(name):
+              path = os.path.join(pub, name) if pub else ""
+              return json.load(open(path, encoding="utf-8")) if path and os.path.isfile(path) else None
+          pb = pubjson("board.json"); plw = pb.get("lastWeek") if type(pb) is dict else None
+          def week_final(w):
+              return type(plw) is dict and plw.get("week") == w and plw.get("final") is True and plw.get("start") == GENESIS + w * WEEK \
+                  and type(plw.get("prizes")) is list and type(plw.get("rows")) is list and now >= GENESIS + (w + 1) * WEEK + 12 * 3600000
+          for f in sorted(os.listdir(d)):
+              if not re.fullmatch(r"P\d{3}\.json", f): continue
+              j = json.load(open(os.path.join(d, f), encoding="utf-8"))
+              assert set(j) == {"v", "week", "game", "at", "prizes"} and j["v"] == 1 and j["game"] == gid and f == "P%03d.json" % j["week"], f
+              assert iso.fullmatch(str(j["at"])) and prizes_ok(j["prizes"]), f
+              w = j["week"]
+              # (A week not over yet, or not final on the published board yet: simply not yet. An older week: an alert.)
+              if w < cw - 1: hold(pre + "/" + f, "an older week than the one that just ended, by this job's clock", True)
+              elif w > cw - 1 or not week_final(w): hold(pre + "/" + f, "its week isn't over and final on the published board yet", False)
+              elif j["prizes"] != plw["prizes"]: hold(pre + "/" + f, "its prizes differ from the published final board", True)
+          vdir = os.path.join(d, "vault")
+          for f in (sorted(os.listdir(vdir)) if os.path.isdir(vdir) else []):
+              name = pre + "/vault/" + f
+              j = json.load(open(os.path.join(vdir, f), encoding="utf-8"))
+              if not vault_ok(j, f): hold(name, "not the vault file's shape", True); continue
+              w = j["week"]; end = GENESIS + (w + 1) * WEEK
+              pp = pubjson("P%03d.json" % w)
+              if w != cw - 1 or not (end <= now <= end + 3 * 86400000): hold(name, "not the week that just ended, within the vault's 3 days, by this job's clock", True); continue
+              if not week_final(w) or type(pp) is not dict or pp.get("prizes") != plw["prizes"]: hold(name, "its week and prize file aren't final on the published branch yet", False); continue
+              # rows: Staked-board players of the PUBLISHED final board (with points), in board order, points recomputed
+              # (1-255 by distinct place, as bot/games/blockx.ts vaultPoints over the players the vault counts).
+              ranked = [r for r in plw["rows"] if r.get("ranked") is True and type(r.get("pts")) is int and r["pts"] > 0]
+              order = [r["a"] for r in ranked]; place = {r["a"]: r["place"] for r in ranked}
+              who = [x["player"] for x in j["rows"]]
+              pos = [order.index(a) if a in order else -1 for a in who]
+              if not (all(p >= 0 for p in pos) and pos == sorted(pos)): hold(name, "rows aren't the published Staked board's players in board order", True); continue
+              places = sorted({place[a] for a in who}); want = {pl: max(1, 255 - k) for k, pl in enumerate(places)}
+              if any(x["points"] != want[place[x["player"]]] for x in j["rows"]): hold(name, "points don't follow the published board's places", True); continue
+              # first / second: the published prize file's winners, as bot/games/blockx.ts vaultFile builds them.
+              at = lambda n: sorted({x["player"] for x in pp["prizes"] if x["place"] == n})
+              first = at(1); second = [] if len(first) >= 2 else sorted({x["player"] for x in pp["prizes"] if x["place"] != 1})
+              first = [] if len(first) > 10 else first; second = [] if len(second) > 10 else second
+              st = set(who); first = [a for a in first if a not in st]; second = [a for a in second if a not in st]
+              if j["first"] != first or j["second"] != second: hold(name, "first/second aren't the published prize file's winners", True); continue
+              # Audit BX-65 (round 5): Staked-board players left out of the rows (the vault counts only wallets whose
+              # LOWEST stake that week met the minimum, read on two nodes, which this job can't re-read): published, but
+              # named in an error that fails the job (so you are emailed, once: the file is written once) and checked
+              # within the vault's 3 days.
+              out = [a for a in order if a not in st]
+              if out: held.append("!alert"); print("::error::(published; check it) " + name + ": " + str(len(out)) + " of " + str(len(order)) + " Staked-board players with points are not in the vault rows (not staked all week, by the recorder's two-node read): " + ", ".join(out[:20]) + (" ..." if len(out) > 20 else ""))
+          # Audit BX-88 (round 5): published targets are append-only. A week file may add rounds but never change or drop
+          # one that is already published (an honest run never rewrites a recorded target: bot/games/blockx.ts keeps them).
+          # A run that tries is held WHOLE, with an alert: its board, prize and vault files were all built from that file.
+          rewrote = []
+          for f in sorted(os.listdir(d)):
+              if not re.fullmatch(r"W\d{3}\.json", f): continue
+              new = json.load(open(os.path.join(d, f), encoding="utf-8"))
+              nt = new.get("targets") if type(new) is dict else None
+              rounds = [t.get("round") for t in nt if type(t) is dict] if type(nt) is list else None
+              if rounds is None or len(rounds) != len(nt) or len(set(rounds)) != len(rounds): rewrote.append(f + " (its rounds aren't a list of distinct targets)"); continue
+              # Review (round 5): NEW rounds must be real past targets, so a bad run can't pre-publish a round (the honest
+              # recorder would then keep it and never record the real one), nor one the recorder would drop on load (that
+              # would hold every later honest run): its block time is before this job's clock and inside its week, the week
+              # isn't in the future, and its height is the game's target height for the round (as bot/games/blockx.ts loadWeek).
+              wk = new.get("week")
+              wstart = GENESIS + wk * WEEK if type(wk) is int else None
+              pubrounds = set()
+              old = pubjson(f)
+              if type(old) is dict and type(old.get("targets")) is list: pubrounds = {t.get("round") for t in old["targets"] if type(t) is dict}
+              fresh = [t for t in nt if t["round"] not in pubrounds]
+              if fresh and (wstart is None or new.get("start") != wstart or wk > cw): rewrote.append(f + " (new targets for a week that isn't this one or an earlier one, by this job's clock)"); continue
+              if fresh and (GROUND is None or GOFFSET is None): rewrote.append(f + " (this job doesn't know the game's round size, so it can't check new targets)"); continue
+              badnew = [t["round"] for t in fresh if not (type(t.get("time")) is int and wstart <= t["time"] < wstart + WEEK and t["time"] <= now
+                  and type(t["round"]) is int and t.get("height") == t["round"] * GROUND + GOFFSET)]
+              if badnew: rewrote.append(f + " (new rounds " + ", ".join(str(r) for r in badnew[:10]) + " aren't past target blocks of this week)"); continue
+              if old is None: continue
+              ot = old.get("targets") if type(old) is dict else None
+              if type(ot) is not list: rewrote.append(f + " (the published file can't be read)"); continue
+              mine = {t["round"]: t for t in nt}
+              changed = [t.get("round") if type(t) is dict else "?" for t in ot if type(t) is not dict or mine.get(t.get("round")) != t]
+              if changed: rewrote.append(f + " (rounds " + ", ".join(str(r) for r in changed[:10]) + " differ from the published targets)")
+          if rewrote:
+              print("::error::this run changes already-published Block X targets: " + "; ".join(rewrote) + ". Nothing from it is published (audit BX-88).")
+              for f in sorted(os.listdir(d)):
+                  if os.path.isfile(os.path.join(d, f)): hold(pre + "/" + f, "the run changes a published target", True)
+              for f in (sorted(os.listdir(vdir)) if os.path.isdir(vdir) else []): hold(pre + "/vault/" + f, "the run changes a published target", True)
+          if heldf: open(heldf, "w").write("".join(x + "\n" for x in held))
+          elif held: sys.exit("held: " + ", ".join(x for x in held if x != "!alert"))
+
           for f in os.listdir(d):
-              if f == "vault": continue
+              if f == "vault" or re.fullmatch(r"P\d{3}\.json", f): continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "board.json":
                   assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1 and iso.fullmatch(str(j["updated"])), f
@@ -190,10 +308,6 @@ jobs:
                   assert type(j["weeks"]) is list and len(j["weeks"]) <= 10000 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
                   assert j["game"] == gid and (j["prizesFromWeek"] is None or nat(j["prizesFromWeek"])), f
                   assert j["contract"] is None or addr.fullmatch(str(j["contract"])), f
-                  continue
-              if f.startswith("P"):
-                  assert set(j) == {"v", "week", "game", "at", "prizes"} and j["v"] == 1 and j["game"] == gid and f == "P%03d.json" % j["week"], f
-                  assert iso.fullmatch(str(j["at"])) and prizes_ok(j["prizes"]), f
                   continue
               assert set(j) == {"v", "week", "start", "end", "game", "targets"} and j["v"] == 1 and j["game"] == gid and f == "W%03d.json" % j["week"], f
               assert nat(j["start"]) and nat(j["end"]) and j["end"] - j["start"] == WEEK, f
@@ -438,26 +552,28 @@ jobs:
           PY
           fi
           if [ "$rc" = 3 ]; then failed=1; elif [ "$rc" != 0 ]; then drop survivor "its files don't have the recorder's shape"; fi
-          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git init -q work && cd work
-          parent=""
-          if git fetch -q --depth 1 "$remote" games-data 2>/dev/null; then
-            parent=$(git rev-parse FETCH_HEAD)
-            git read-tree FETCH_HEAD
-          else git read-tree --empty; fi
           shopt -s nullglob
           for f in "$IN"/blockx/*.json "$IN"/blockx/vault/*.json "$IN"/survivor/*.json "$IN"/survivor/vault/*.json; do
             name="${f#"$IN"/}"
             # Audit BX-5: a final week's prize file (P###.json), and the Vault's results file (vault/W<week>.json), are
-            # written once and never replaced (Survivor's vault files too).
-            if [[ "$name" =~ (/P[0-9]{3}|/vault/W[0-9]+)\.json$ ]] && git cat-file -e ":$name" 2>/dev/null; then echo "Keeping the published $name as it is."; continue; fi
+            # written once and never replaced.
+            if grep -qxF "$name" "$HELD"; then continue; fi
+            if [[ "$name" =~ (/P[0-9]{3}|/vault/W[0-9]+)\.json$ ]] && git cat-file -e ":$name" 2>/dev/null; then
+              # Audit BX-81: a write-once file that differs from the published one is held (with an error, failing the job
+              # at the end), never replaced; everything else is still published.
+              if [ "$(git hash-object "$f")" != "$(git rev-parse ":$name")" ]; then echo "::error::$name differs from the published file: not replaced."; echo '!alert' >> "$HELD"; fi
+              continue
+            fi
             blob=$(git hash-object -w "$f")
             git update-index --add --cacheinfo 100644 "$blob" "$name"
           done
           tree=$(git write-tree)
-          if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."; exit "$failed"; fi
-          export GIT_AUTHOR_NAME=kpred-bot GIT_AUTHOR_EMAIL=kpred-bot@users.noreply.github.com GIT_COMMITTER_NAME=kpred-bot GIT_COMMITTER_EMAIL=kpred-bot@users.noreply.github.com
-          commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "games: record")
-          git push -q "$remote" "$commit:refs/heads/games-data"
+          if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."
+          else
+            export GIT_AUTHOR_NAME=kpred-bot GIT_AUTHOR_EMAIL=kpred-bot@users.noreply.github.com GIT_COMMITTER_NAME=kpred-bot GIT_COMMITTER_EMAIL=kpred-bot@users.noreply.github.com
+            commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "games: record")
+            git push -q "$remote" "$commit:refs/heads/games-data"
+          fi
+          if grep -qxF '!alert' "$HELD"; then echo "::error::A file was held, or a published file needs your check (see the errors above); everything else was published."; exit 1; fi
           echo "Games files published."
           exit "$failed"

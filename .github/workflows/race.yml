@@ -109,8 +109,13 @@ jobs:
           def card_ok(c):
               # Audit BX-44: exact keys (cards feed Block X's scores). "samples" (how many VHP samples it used) is new.
               if c is None: return True
-              if type(c) is not dict or set(c) - {"samples"} != {"at", "blocksPerRace", "c", "fairness", "field", "paddock"}: return False
+              # Audit BX-55: "flagged", the producers whose VHP the two nodes read differently (Block X holds their targets).
+              # Round 4: "topInDoubt" (BX-73: the nodes disagreed at the top; Block X holds every target on it), "height" (BX-77).
+              if type(c) is not dict or set(c) - {"samples", "flagged", "topInDoubt", "height"} != {"at", "blocksPerRace", "c", "fairness", "field", "paddock"}: return False
+              if "topInDoubt" in c and c["topInDoubt"] is not True: return False
+              if "height" in c and not (type(c["height"]) is int and 0 < c["height"] < 10**12): return False
               if "samples" in c and not (type(c["samples"]) is int and 0 <= c["samples"] <= 1000): return False
+              if "flagged" in c and not (type(c["flagged"]) is list and 0 < len(c["flagged"]) <= 500 and all(isaddr(a) for a in c["flagged"]) and len(set(c["flagged"])) == len(c["flagged"])): return False
               if not num(c["at"]) or not num(c["c"]) or not num(c["blocksPerRace"]): return False
               if not (c["fairness"] is None or (type(c["fairness"]) is list and len(c["fairness"]) == 2 and all(num(v) for v in c["fairness"]))): return False
               if type(c["field"]) is not list or type(c["paddock"]) is not list or len(c["field"]) + len(c["paddock"]) > 500: return False
@@ -155,6 +160,12 @@ jobs:
               for r in j["races"]:
                   assert set(r) == {"id", "start", "end", "cards", "result"} and re.fullmatch(r"\d{4}-\d{2}-\d{2}T(00|06|12|18)", r["id"]), f
                   assert type(r["cards"]) is list and len(r["cards"]) in (3, 6) and all(card_ok(c) for c in r["cards"]) and result_ok(r["result"]), f + " " + r["id"]
+                  # Audit BX-54: a card's time fits its leg: taken at most 2 hours before the leg starts and before it ends.
+                  leg = (r["end"] - r["start"]) // len(r["cards"]) if type(r.get("start")) is int and type(r.get("end")) is int else 0
+                  for i, c in enumerate(r["cards"]):
+                      if c is not None:
+                          s0 = r["start"] + i * leg
+                          assert leg > 0 and s0 - 2 * 3600000 <= c["at"] < s0 + leg, f + " " + r["id"] + ": a card dated outside its leg"
               if pub and os.path.exists(os.path.join(pub, f)):
                   old = {r["id"]: r for r in json.load(open(os.path.join(pub, f), encoding="utf-8")).get("races", []) if type(r) is dict and "id" in r}
                   for r in j["races"]:

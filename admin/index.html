@@ -95,6 +95,7 @@
 <header>
   <h1>Knode Games Admin</h1>
   <p class="sub">The control room for the whole platform. It runs on this computer only. Every button runs the same command you would type in PowerShell, and anything that changes something is previewed (a dry run) before you can send it.</p>
+  <p class="sub" id="ver"></p>
   <div class="legend" aria-label="What the labels mean">
     <span><span class="tag">Read-only</span> looks only</span>
     <span><span class="tag files">Edits files on this PC</span> nothing on chain</span>
@@ -268,6 +269,9 @@
   (async () => {
     if (!KEY) return banner("Open the link printed in the PowerShell window (it carries this session's key).", true);
     try { CAT = await api("/api/actions"); } catch (e) { return banner(String(e.message || e), true); }
+    const v = CAT.version || {};
+    $("#ver").textContent = `Version ${v.commit || "?"} on branch ${v.branch || "?"}${v.date ? ` (${v.date})` : ""}.`;
+    if (v.branch && v.branch !== "picks" && v.branch !== "main") banner(`This copy is on branch “${v.branch}”. The admin page is kept on picks: run git checkout picks, git pull, then npm run admin again.`, true);
     sidebar();
     openArea(store.get("kg-admin-area") || "overview");
   })();

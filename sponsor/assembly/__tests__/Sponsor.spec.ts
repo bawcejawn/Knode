@@ -113,7 +113,7 @@ export function vhpBalance(v: u64): system_calls.exit_arguments {
 }
 /** A game get_player answer. */
 export function gamePlayer(stake: u64, pending: u64): system_calls.exit_arguments {
-  const r = new sponsor.game_get_player_result(new sponsor.game_player(stake, pending));
+  const r = new sponsor.game_get_player_result(new sponsor.game_player(stake, pending), stake);
   return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(r, sponsor.game_get_player_result.encode)));
 }
 /** A failed read (the called contract reverted). */
@@ -387,10 +387,15 @@ describe("sponsor pays player actions", () => {
     expect(pays()).toBe(true);
   });
 
-  it("pays a swap on Knode Swap (approve VHP to the Desk + swap)", () => {
-    TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
-    OPS = [approve(VHP, USER, DESK), call(DESK, DESK_SWAP, new Uint8Array(0))];
-    expect(pays()).toBe(true);
+  it("never pays Knode Swap, even for a real player (owner 2026-10-29, audit SP-24): a swap, and an approve to the Desk", () => {
+    userStake(1, MANA);
+    OPS = [call(DESK, DESK_SWAP, new Uint8Array(0))];
+    expect(() => { pays(); }).toThrow();
+    errorIs("SPONSOR: Knode Swap swaps are not sponsored (players pay their own Mana)");
+    userStake(2, MANA);
+    OPS = [approve(VHP, USER, DESK)];
+    expect(() => { pays(); }).toThrow();
+    errorIs("SPONSOR: approve must name the game as spender (Knode Swap is not sponsored)");
   });
 
   it("pays the owner's own transactions without counting them", () => {
@@ -495,7 +500,7 @@ describe("sponsor refuses", () => {
   it("anything on Knode Swap but a swap", () => {
     userCall(1, MANA, DESK, DESK_WITHDRAW_KOIN);
     expect(() => { pays(); }).toThrow();
-    errorIs("SPONSOR: only swaps on Knode Swap are sponsored");
+    errorIs("SPONSOR: Knode Swap swaps are not sponsored (players pay their own Mana)");
   });
 
   it("a token transfer", () => {
@@ -508,7 +513,7 @@ describe("sponsor refuses", () => {
     userStake(1, MANA);
     OPS = [approve(VHP, USER, ATTACKER), call(GAME, GAME_DEPOSIT_VHP, new Uint8Array(0))];
     expect(() => { pays(); }).toThrow();
-    errorIs("SPONSOR: approve must name the game or Knode Swap as spender");
+    errorIs("SPONSOR: approve must name the game as spender (Knode Swap is not sponsored)");
   });
 
   it("an approve of someone else's tokens", () => {
@@ -876,7 +881,7 @@ describe("free answers for any wallet (owner's decision 2026-10-26)", () => {
     paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
     emptyWallet();
     userCall(3, MANA, DESK, DESK_SWAP);
-    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
+    expect(() => { pays(); }).toThrow();   // owner 2026-10-29: Knode Swap is never sponsored
     expect(new Sponsor().get_total_usage(new sponsor.get_total_usage_arguments()).used_day).toBe(0);
   });
 
@@ -988,7 +993,8 @@ describe("Producer Race picks are free play, like answers", () => {
     emptyWallet();
     TX = 1; RC = MANA; PAYEE = USER; SIGNERS = ["USER"]; RAW_SIGS = [];
     OPS = [call(RACE, RACE_PICK, pickArgs(USER)), call(DESK, DESK_SWAP, new Uint8Array(0))];
-    paidFromFree();   // v3 (owner 2026-10-28): free pool, any covered call
+    expect(() => { pays(); }).toThrow();   // owner 2026-10-29: a swap in the transaction is never sponsored
+    errorIs("SPONSOR: Knode Swap swaps are not sponsored (players pay their own Mana)");
   });
 
   it("refuses a pick for another wallet, a pick with no player, and any other race call", () => {

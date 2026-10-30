@@ -20,7 +20,7 @@ npm ci
 npm run admin
 ```
 
-It prints a link with a one-time key (`http://127.0.0.1:8787/?key=…`). Open it in your browser. It only works on
+It prints a link with a one-time key (`http://127.0.0.1:8787/#…`). Open it in your browser. It only works on
 this PC. Go to the **Testnet trial** section and use the numbered steps 1 to 5 in order. Each one shows a **dry run**
 first. Press **Send** only when the dry run looks right. Stop the page with Ctrl+C in PowerShell.
 
@@ -67,7 +67,7 @@ npm run check
 certutil -hashfile build\release\contract.wasm SHA256
 ```
 
-The hash must be `8d515d153ad7df0c7044c8b8cf3154d5fc333e56c9691b499ebd86fb23113dd7`. Then:
+The hash must be `b61ac238da27c4a71c01127f39a7b95f19fabf15e35df9f9715546d221e256e4`. Then:
 
 ```powershell
 cd C:\kprediction
@@ -88,7 +88,7 @@ npm run sponsor -- status --testnet
 ```
 
 `upload` writes the sponsor's address into `testnet/blockx.json` (`"sponsor"`); that's how the testnet page knows
-to ask it. `config` uses the owner's caps (1 / 50 / 300 / 5000 / 2000, min VHP 1), the same as mainnet. `status` must
+to ask it. `config` uses the owner's caps (1 / 25 / 150 / 5000 / 2000, min VHP 1), the same as mainnet. `status` must
 show **v3 code**, **ON**, the caps and the Picks `pick` row.
 
 Tell Claude "testnet sponsor up" (or commit `testnet/blockx.json` yourself) so the address is saved on the branch.

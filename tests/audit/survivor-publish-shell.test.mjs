@@ -21,13 +21,17 @@ const picksOf = async (node, d) => [A("J"), A("K"), A("L")].map((p, i) => ({ pla
 const headAt = (t) => { const height = H(t), lib = height - 20; return { height, time: T(height), lib, libTime: T(lib) }; };
 const GAME3 = { id: 3, kind: 1, list_size: 1, lock_mode: 2, round_size: String(S.DAY), round_offset: "0", lead: String(S.LEAD_MS), ahead: String(S.AHEAD_MS), max_picks_per_day: 20, max_changes: 5, enabled: true };
 
+/** The whole publish step, with the push going to a local bare repository instead of GitHub. */
 function script() {
   const yml = fs.readFileSync(path.join(APP, ".github/workflows/games.yml"), "utf8");
   const i = yml.indexOf("      - name: Push games-data (and nothing else)");
   const body = yml.slice(yml.indexOf("run: |", i) + 7).split("\n");
   const out = [];
-  for (const l of body) { if (l.startsWith("          remote=")) break; out.push(l.startsWith("          ") ? l.slice(10) : l); }
-  return out.join("\n").replace(/\/usr\/bin\/python3/g, "python3") + '\necho "FAILED=$failed"\n';
+  for (const l of body) { if (l.trim() && !l.startsWith("          ")) break; out.push(l.slice(10)); }
+  const sh = out.join("\n").replace(/\/usr\/bin\/python3/g, "python3").replace(/^remote=.*$/m, 'remote="$REMOTE"');
+  assert.match(sh, /remote="\$REMOTE"/);
+  // Report `failed` on the way out, whatever the exit path.
+  return sh.replace(/^set -euo pipefail$/m, 'set -euo pipefail\ntrap \'echo "FAILED=${failed:-0}"\' EXIT');
 }
 async function recorded() {
   let prev = "", out;
@@ -46,9 +50,13 @@ function publish(survivorDir, edit = () => {}) {
   const IN = fs.mkdtempSync(path.join(os.tmpdir(), "in-"));
   fs.cpSync(survivorDir, path.join(IN, "survivor"), { recursive: true });
   edit(IN);
-  const r = spawnSync("bash", ["-c", script()], { env: { ...process.env, IN }, encoding: "utf8" });
+  const REMOTE = fs.mkdtempSync(path.join(os.tmpdir(), "remote-"));
+  execFileSync("git", ["init", "-q", "--bare", REMOTE]);
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "job-"));
+  const r = spawnSync("bash", ["-c", script()], { cwd, env: { ...process.env, IN, REMOTE, GH_TOKEN: "x", GITHUB_REPOSITORY: "o/r", GIT_CONFIG_GLOBAL: "/dev/null" }, encoding: "utf8" });
+  const pushed = spawnSync("git", ["--git-dir", REMOTE, "ls-tree", "-r", "--name-only", "games-data"], { encoding: "utf8" }).stdout.split("\n").filter(Boolean);
   const files = (d) => (fs.existsSync(d) ? fs.readdirSync(d, { recursive: true }).map(String).sort() : []);
-  return { code: r.status, out: r.stdout + r.stderr, failed: /FAILED=1/.test(r.stdout), files: files(path.join(IN, "survivor")) };
+  return { code: r.status, out: r.stdout + r.stderr, failed: /FAILED=1/.test(r.stdout), files: files(path.join(IN, "survivor")), pushed };
 }
 
 test("the publish shell: good files pass; bad ones are left out one by one, and the run fails", async (t) => {
@@ -57,18 +65,20 @@ test("the publish shell: good files pass; bad ones are left out one by one, and 
   assert.ok(fs.existsSync(path.join(out, "vault", "W4.json")), "week 1's vault file");
   const ok = publish(out);
   assert.equal(ok.code, 0, ok.out); assert.equal(ok.failed, false, ok.out);
+  assert.ok(ok.pushed.includes("survivor/S001.json") && ok.pushed.includes("survivor/vault/W4.json"), "pushed: " + ok.pushed.join(", "));
   assert.ok(ok.files.includes("S001.json") && ok.files.includes(path.join("vault", "W4.json")));
   // A Survivor file over 2 MB: only that file goes; its vault file can't be checked and goes too.
   const big = publish(out, (IN) => fs.appendFileSync(path.join(IN, "survivor", "S001.json"), " ".repeat(2.2 * 1024 * 1024)));
-  assert.equal(big.code, 0, big.out); assert.equal(big.failed, true);
+  assert.equal(big.code, 1, big.out); assert.equal(big.failed, true);
+  assert.ok(big.pushed.includes("survivor/days.json") && !big.pushed.includes("survivor/S001.json"), "the rest is still pushed");
   assert.ok(!big.files.includes("S001.json") && !big.files.includes(path.join("vault", "W4.json")) && big.files.includes("days.json"));
   // A season file that fails its check: the same.
   const bad = publish(out, (IN) => { const f = path.join(IN, "survivor", "S001.json"), j = JSON.parse(fs.readFileSync(f, "utf8")); j.result.players[0].lives = 7; fs.writeFileSync(f, JSON.stringify(j)); });
-  assert.equal(bad.code, 0, bad.out); assert.equal(bad.failed, true);
+  assert.equal(bad.code, 1, bad.out); assert.equal(bad.failed, true);
   assert.ok(!bad.files.includes("S001.json") && bad.files.includes("index.json"));
   // A broken days.json: the whole Survivor folder is left out, the run fails.
   const days = publish(out, (IN) => fs.writeFileSync(path.join(IN, "survivor", "days.json"), "{}"));
-  assert.equal(days.code, 0); assert.equal(days.failed, true); assert.deepEqual(days.files, []);
+  assert.equal(days.code, 1); assert.equal(days.failed, true); assert.deepEqual(days.files, []);
   // An unexpected file anywhere stops the job.
   const odd = publish(out, (IN) => fs.writeFileSync(path.join(IN, "survivor", "notes.txt"), "x"));
   assert.notEqual(odd.code, 0); assert.match(odd.out, /Refusing to publish unexpected files/);

@@ -54,7 +54,7 @@ function vhpBalance(v: u64): system_calls.exit_arguments {
   return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.balance_of_result(v), sponsor.balance_of_result.encode)));
 }
 function gamePlayer(stake: u64, pending: u64): system_calls.exit_arguments {
-  return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.game_get_player_result(new sponsor.game_player(stake, pending)), sponsor.game_get_player_result.encode)));
+  return new system_calls.exit_arguments(0, new chain.result(Protobuf.encode(new sponsor.game_get_player_result(new sponsor.game_player(stake, pending), stake), sponsor.game_get_player_result.encode)));
 }
 let READS: system_calls.exit_arguments[] = [];
 function queueReads(): void { MockVM.setCallContractResults(padReads(READS.length ? READS : [gamePlayer(10 * MANA, 0)])); }
@@ -155,7 +155,7 @@ describe("AB operations: odd shapes", () => {
     asUser(MANA);
     OPS = [call(VHP, APPROVE_ENTRY, NONE)];
     expect(() => { pays(); }).toThrow();
-    expect(MockVM.getErrorMessage()).toBe("SPONSOR: approve must name the game or Knode Swap as spender");
+    expect(MockVM.getErrorMessage()).toBe("SPONSOR: approve must name the game as spender (Knode Swap is not sponsored)");
     MockVM.rollbackTransaction();
   });
 

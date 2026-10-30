@@ -13,10 +13,14 @@ export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const fmt = (x: number, d = 0) => (isFinite(x) ? x.toLocaleString("en-US", { maximumFractionDigits: d }) : "n/a");
 export const pct = (x: number, d = 1) => (isFinite(x) ? (x * 100).toFixed(d) + "%" : "n/a");
 
-export async function withRetry<T>(label: string, fn: () => Promise<T>, tries = 6): Promise<T> {
+/** Audit BX-83: one hung node call can't hold a run until the job's time limit: each try gives up after this long. */
+export const CALL_TIMEOUT_MS = 30000;
+export async function withRetry<T>(label: string, fn: () => Promise<T>, tries = 6, timeoutMs = CALL_TIMEOUT_MS): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await fn();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const limit = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer within ${timeoutMs / 1000} s`)), timeoutMs); });
+      try { return await Promise.race([fn(), limit]); } finally { clearTimeout(timer); }
     } catch (err) {
       if (attempt >= tries) throw new Error(`${label}: ${(err as Error).message}`);
       const wait = 1000 * 2 ** attempt;
