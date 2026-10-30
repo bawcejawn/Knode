@@ -235,10 +235,32 @@ async function apply() {
   const r = await sendOps(p, chainId, owner, [operation], 2);
   log(r.ok ? `✔ game ${GAME} is in force (Mana ${mana(r.rcUsed)}). Next: cards --send` : `✖ ${r.error}`);
 }
+/** One transaction paid by the testnet Mana sponsor: payer = the sponsor, payee = the player, Mana limit 1 (the
+ *  sponsor's per-transaction cap), signed by the player only. The sponsor contract's own authorize decides whether it
+ *  pays. Retries while the network still holds Mana from the last transaction. */
+async function sendSponsored(p, chainId, s, ops, sponsor) {
+  for (let tries = 1; ; tries++) {
+    const tx = new Transaction({ signer: s, provider: p, options: { payer: sponsor, payee: s.getAddress(), chainId, rcLimit: "100000000" } });
+    for (const op of ops) await tx.pushOperation(op);
+    try {
+      const r = await tx.send();
+      if (r?.reverted) return { ok: false, rcUsed: String(r?.rc_used ?? 0), error: `reverted: ${JSON.stringify(r.logs ?? [])}` };
+      const w = await tx.wait("byBlock", 120000).catch(() => null);
+      return { ok: !!w, rcUsed: String(r?.rc_used ?? 0), error: w ? undefined : "not seen in a block within 2 minutes", txId: tx.transaction?.id };
+    } catch (e) {
+      const error = String(e?.message ?? e).slice(0, 300);
+      if (!HELD.test(error) || tries >= 8) return { ok: false, error };
+      log(`  … Mana from the last transaction is still held by the network; trying again in 1 minute (${tries}/8)`);
+      await sleep(60000);
+    }
+  }
+}
 async function cards() {
   const { p, chainId } = await connect();
   const g = (await read(p, "get_game", { game: GAME })).game;
   if (!g || Number(g.kind) !== 4 || !g.enabled) fail(`Game ${GAME} isn't an enabled card game yet (announce, wait 10 min, apply).`);
+  const SPONSOR = arg("--sponsor");
+  if (SPONSOR !== undefined) return sponsoredCards(p, chainId, SPONSOR);
   const player = signer("PLAYER_WIF", p), me = player.getAddress();
   const h = await p.getHeadInfo(), now = Number(h.head_block_time), height = Number(h.head_topology.height);
   const day = Math.floor(now / DAY_MS);
@@ -265,6 +287,38 @@ async function cards() {
   }
   for (let k = 0; k < 3; k++) { const c = (await read(p, "get_pick", { game: GAME, round: String(day * 3 + k), player: me })).pick; log(`  slot ${k + 1} on chain: ${c?.legs?.length ?? 0} legs, changes ${c?.changes ?? 0}`); }
   log(`Saved ${saveOut("combo-cards.json", { game: GAME, at: new Date().toISOString(), out })}. Send me the lines above (never the .env.testnet file).`);
+}
+
+/** cards --sponsor <address>: a 6-leg and a 10-leg card into today's two free slots, paid by the testnet sponsor. */
+async function sponsoredCards(p, chainId, sponsor) {
+  if (!/^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(sponsor || "")) fail("--sponsor needs the testnet sponsor's address.");
+  const player = signer("PLAYER_WIF", p), me = player.getAddress();
+  const h = await p.getHeadInfo(), now = Number(h.head_block_time), height = Number(h.head_topology.height), day = Math.floor(now / DAY_MS);
+  const races = []; for (let i = Math.floor(now / RACE_MS) + 1; races.length < 3; i++) if (i * RACE_MS - RACE_LEAD - now > 30 * 60000 && i * RACE_MS - now <= DAY_MS - 60000) races.push(i);
+  const blocks = []; for (let r = Math.floor(height / BLOCK_ROUND) + 1; blocks.length < 6; r++) if (r * BLOCK_ROUND - BLOCK_LEAD - height > 600 && r * BLOCK_ROUND - height <= 28700) blocks.push(r);
+  const pool = [];
+  for (const r of races) for (const c of [LEGS.WIN, LEGS.SHOW, LEGS.HALF]) pool.push({ code: c, round: r });
+  for (const r of blocks) pool.push({ code: LEGS.BLOCK, round: r });
+  const card = (n) => pool.slice(0, n).map((l, i) => ({ code: l.code, round: String(l.round), producer: PRODUCERS[i % PRODUCERS.length] }));
+  // Today's free slots (a card already in a slot would make this a change, and its old legs may have locked).
+  const free = [];
+  for (let k = 0; k < 3; k++) { const c = (await read(p, "get_pick", { game: GAME, round: String(day * 3 + k), player: me })).pick; if (!(c?.legs?.length)) free.push(k); }
+  const hhmm = new Date((day + 1) * DAY_MS).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (free.length < 2) fail(`Today's card slots (UTC day) for ${me} are used (${3 - free.length} of 3). Run this again after 00:00 UTC (${hhmm} your time).`);
+  const plan = [["6 legs, sponsored", free[0], card(6)], ["10 legs, sponsored", free[1], card(10)]];
+  log(`Sponsored cards on game ${GAME} from ${me}: payer ${sponsor} (the testnet sponsor), payee the player, Mana limit 1.`);
+  log(`Slots ${plan.map((x) => x[1] + 1).join(" and ")} of today. Legs: races ${races.join(", ")}, Block X rounds ${blocks.join(", ")}.`);
+  if (!SEND) return log("\nDry run only. Add --send.");
+  const out = [];
+  for (const [what, slot, legs] of plan) {
+    const { operation } = await picksC(p, player).functions.pick({ player: me, game: GAME, round: String(day * 3 + slot), producers: [], number: "0", legs }, { onlyOperation: true });
+    const r = await sendSponsored(p, chainId, player, [operation], sponsor);
+    out.push({ what, legs: legs.length, slot, ...r });
+    log(`  ${what} (slot ${slot + 1}): ${r.ok ? `${mana(r.rcUsed)} Mana, paid by the sponsor` : `NOT sent (${(r.error ?? "").slice(0, 160)})`}`);
+    await sleep(4000);
+  }
+  for (const [, slot] of plan) { const c = (await read(p, "get_pick", { game: GAME, round: String(day * 3 + slot), player: me })).pick; log(`  slot ${slot + 1} on chain: ${c?.legs?.length ?? 0} legs`); }
+  log(`Saved ${saveOut("combo-cards-sponsored.json", { game: GAME, sponsor, at: new Date().toISOString(), out })}. Send me the lines above (never the .env.testnet file).`);
 }
 
 // ── the fresh route ──
