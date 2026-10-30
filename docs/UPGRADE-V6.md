@@ -15,7 +15,7 @@ mainnet also needs `CONFIRM_MAINNET=yes` in `.env`. Run everything in PowerShell
 ## Before you start (all must be true)
 
 1. **Done:** the audits are clean (owner, 2026-10-29: the owner's own audit programs count; RepoLens fix-check 4 said "ready for the rehearsal"), and branch `vault-v6` holds the fixed code.
-2. **Sponsor:** sponsor v3, with the Vault's calls added (`claude/handoff-sponsor-vault-calls.md`), is live. Without it, staking in other games, moving stake and claiming their prizes aren't sponsored.
+2. **Sponsor:** sponsor v3, with the Vault's calls added (`claude/handoff-sponsor-vault-calls.md`), is live. Without it, staking in other games, moving stake and claiming their prizes aren't sponsored. Its "vault live" switch stays off until v6 day; you turn it on in step 6.
 3. **Seed:** it covers the free prizes, 3 VHP a week per game with a free prize. The question game, Block X, Survivor and the Race need 12 VHP a week, roughly **3,000 VHP** of seed at today's ~90 VHP of weekly rewards; with Producer Bracket, 15 VHP a week, roughly **3,750 VHP**. When the seed's share is short, every prize is cut that week:
    ```
    npm run bot -- seed-vhp <VHP>           then again with --send
@@ -80,6 +80,7 @@ npm run bot -- games
 - status matches `before-v6.txt`: same stakes, seed and pots, apart from new block rewards.
 - games lists game 1, Questions.
 - Then GitHub → Actions → Kpred bot → Run workflow: it must finish green.
+- After the first game announcement (step 6), the sponsor still has to be switched to the vault: see "Then switch the sponsor to the vault".
 
 ## 6. Add the games (right after the upload)
 The first game announcement is also the first v6 transaction. It switches the rules on from the next Monday. Announce every game that should pay prizes from that Monday:
@@ -96,6 +97,24 @@ Each game's results source goes into `game-data/deployment.json` (its chat gives
 ```json
 "vaultGames": { "2": { "name": "Who Signs Block X", "results": "games-data:blockx/vault" } }
 ```
+
+### Then switch the sponsor to the vault (right after the first game announcement)
+Sponsor v3 has a "vault live" switch. While it is off, the sponsor treats the game as v5: it refuses the vault's own calls (`VAULT_NOT_LIVE`), so **staking in other games, moving stake and claiming their prizes aren't sponsored** until you turn it on. The sponsor tool decides "is the game v6" from the game's own state, and v6 only reports that after its **first v6 transaction** (the first `game-add … --send` above). So do this once that announcement has gone through, not straight after the upload. From the sponsor chat, 2026-10-30 (Repo Lens round 5, SP-49).
+
+1. Read the sponsor's current caps. **Copy them into the next command**: a plain `config` resets every cap to its default.
+   ```powershell
+   cd C:\kprediction
+   npm run sponsor -- status
+   ```
+2. Preview the switch, with the caps exactly as `status` showed them (these numbers are an example):
+   ```powershell
+   npm run sponsor -- config --per-tx 1 --per-player-day 25 --per-player-week 150 --per-day 5000 --free-per-day 2000 --min-vhp 1
+   ```
+   The preview must show **vault (v6) live: no → yes**, and every cap line unchanged. If any cap changes, fix the numbers and preview again.
+3. Run the same line again with `--send`.
+4. Check: `npm run sponsor -- status` shows the vault as live and no warning. If it still says "the game is Vault v6 now, but the sponsor still treats it as v5", the switch didn't go through: repeat steps 1 to 3.
+
+The sponsor's own runbook has the same step: `docs/blockx/MAINNET-LAUNCH.md` on the `picks` branch, "On Vault v6 day".
 
 ## 7. 48 hours later, by Sunday: apply them
 ```
