@@ -27,11 +27,11 @@ button where there is one). Share link: https://knodegames.com/install.html
 
 `stake-panel.js` is one shared "stake in this game" panel for every game page except the question game (which keeps
 its own controls). A page loads it after `wallet.js` (`<script src="stake-panel.js"></script>`), adds an empty
-`<section class="card" id="…-stake" hidden></section>`, and calls `KStake.mount(element, { game: <vault game id> })`
+`<section class="card" id="stake" hidden></section>` (the hub links to `<page>#stake`), and calls `KStake.mount(element, { game: <vault game id> })`
 from its own script. The panel stays hidden until the vault answers `get_state` with `v6_rule_week_plus_one > 0` and
 the game is registered with a stake bucket. It shows the wallet's stake in that game, the game's total and this week's
 minimum, whether the wallet is a staked or a free player there this week, Stake (approve + `deposit_to`), Withdraw
 (`withdraw_from`, always offered with a stake, also when deposits are paused or the game has stopped), Move
-(`move_stake`, counts from next week) and Claim for finished weeks (`claim_game`). Game ids: 2 Block X, 3 Survivor,
+(`move_stake`, counts from next week) and Claim for finished weeks (`claim_game`). Weeks show as dates (the Monday they start, UTC). `KStake.mountList(element, { links })` draws the hub's "Where to stake" list (games.html): every staked game with its stake, yours, and last week's rewards per 100 VHP, each linking to its page's `#stake`. Game ids: 2 Block X, 3 Survivor,
 4 Fantasy, 6 Block Golf, 7 Race, 8 Combo Card, 9 Bracket, 13 Last Node Standing. Tests: `tests/audit/site.stake-panel.test.mjs`
 (run it with `STAKE_PANEL_ABI=<vault-v6 game/abi/kpred.koilib.json>` to check every field against the vault until v6 is merged).
