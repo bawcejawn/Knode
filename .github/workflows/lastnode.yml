@@ -5,7 +5,8 @@
 #
 # Two jobs, like the other recorders, so repository code never runs next to a write token:
 #   record   runs the recorder with a read-only token and no secrets (it only reads the chain), and hands the files on.
-#   publish  runs no repository code: it checks the files' shape and pushes them to games-data/lastnode.
+#   publish  runs no repository code: it checks the files' shape and history, re-reads what the run adds (new hours,
+#            picks, a new field) from two mainnet nodes and race-data itself, and pushes them to games-data/lastnode.
 # It never touches main, holds no key, and does not run on pull requests.
 #
 # Turn it on: Settings → Secrets and variables → Actions → Variables: LASTNODE_ENABLED = true
@@ -73,7 +74,8 @@ jobs:
           fi
           # Fix-check LNF-4 (owner, 2026-10-29): the 5-minute VHP samples of the last ~2.5 days, for each hour's average
           # VHP in the form. The race-samples branch keeps 8 hours per file, so one snapshot every 6 hours of its
-          # history covers it all. No branch or no history yet: fields are set without form (VHP only).
+          # history covers it all. Too few samples: the field waits (fix-check N-11), and on mainnet an event with no form
+          # by its lock is void unless you set LASTNODE_ALLOW_NO_FORM (fix-check N-10 launch gate).
           mkdir -p "$RUNNER_TEMP/samples"
           if git ls-remote --exit-code --heads "$repo" race-samples >/dev/null; then
             git fetch -q --shallow-since="60 hours ago" "$repo" race-samples || git fetch -q --depth 1 "$repo" race-samples
@@ -85,7 +87,12 @@ jobs:
               fi
             done < <(git log --format='%H %ct' FETCH_HEAD)
             echo "VHP sample snapshots: $n"
-          else echo "No race-samples branch yet: fields are set without form."; fi
+          else
+            # Fix-check N-11: only "no such branch" (exit 2) means no samples yet; a read that failed stops the run.
+            rc=$?
+            if [ "$rc" -ne 2 ]; then echo "::error::Couldn't read the race-samples branch (git exit $rc); not recording this run."; exit 1; fi
+            echo "No race-samples branch yet: no form (fields wait unless LASTNODE_ALLOW_NO_FORM is true)."
+          fi
       - name: Record Last Node Standing
         run: npm run lastnode
         env:
@@ -97,6 +104,8 @@ jobs:
           LASTNODE_SAMPLES: ${{ runner.temp }}/samples
           # Watch-and-hold: weeks the owner released after review, e.g. "3,7" (gh variable set LASTNODE_RELEASE_WEEKS).
           LASTNODE_RELEASE_WEEKS: ${{ vars.LASTNODE_RELEASE_WEEKS || '' }}
+          # Launch gate (fix-check N-10): "true" lets a field be set without form while race-samples has too little history.
+          LASTNODE_ALLOW_NO_FORM: ${{ vars.LASTNODE_ALLOW_NO_FORM || '' }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lastnode-data
@@ -108,7 +117,7 @@ jobs:
     needs: record
     if: ${{ vars.LASTNODE_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20      # the chain re-read of a long catch-up run (fix-check N-1)
     permissions:
       contents: write         # push the games-data branch (never main)
     steps:
@@ -121,6 +130,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           IN: ${{ runner.temp }}/incoming
+          # Fix-check N-1: what a run adds is read again from the chain, on two nodes, by this job (no repository code).
+          LASTNODE_RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
+          LASTNODE_RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
+          # The Picks contract game 13 is played on (picks-data/deployment.json on main).
+          LASTNODE_PICKS: ${{ vars.LASTNODE_PICKS || '1LmgqBGctL9F2YkyjTXgieTXwnYHh8Y6Pm' }}
+          # Watch-and-hold (fix-check N-9): the weeks you released after review, as the record job.
+          LASTNODE_RELEASE_WEEKS: ${{ vars.LASTNODE_RELEASE_WEEKS || '' }}
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
@@ -134,12 +150,18 @@ jobs:
           import json, os, re, sys, datetime
           d = sys.argv[1]; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}"); dayre = re.compile(r"\d{4}-\d{2}-\d{2}")
           WEEK0, WEEK = 1792368000000, 7 * 86400000
-          num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
+          # Fix-check N-8 (Block X's js_safe rule): only numbers JavaScript reads back exactly as the recorder wrote them:
+          # within 2^53 - 1, and no whole number written as a float (JavaScript never writes "13.0").
+          num = lambda x: (type(x) is int or (type(x) is float and x == x and not x.is_integer())) and abs(x) <= 2**53 - 1
+          import math
+          def js_round(x):
+              r = math.floor(x)
+              return r + 1 if x - r >= 0.5 else r
           nat = lambda x: type(x) is int and 0 <= x < 10**16
           isa = lambda x: type(x) is str and addr.fullmatch(x) is not None
           def field_ok(f):
               if f is None: return True
-              if type(f) is not dict or not ({"at", "c", "fairness", "nodes"} <= set(f) <= {"at", "c", "fairness", "nodes", "form", "vt"}) or ("vt" in f and not (num(f["vt"]) and f["vt"] > 0)) or not num(f["at"]) or not num(f["c"]) or not 0 <= f["c"] <= 2.5: return False
+              if type(f) is not dict or not ({"at", "c", "fairness", "nodes", "vt"} <= set(f) <= {"at", "c", "fairness", "nodes", "form", "vt"}) or not (num(f["vt"]) and f["vt"] > 0) or not num(f["at"]) or not num(f["c"]) or not 0 <= f["c"] <= 2.5: return False
               # Form (2026-10-29): how it was measured, or why not.
               fm = f.get("form")
               if "form" in f and not (type(fm) is dict and set(fm) in ({"hours", "from", "to"}, {"hours", "note"}) and nat(fm["hours"]) and fm["hours"] <= 48
@@ -147,7 +169,7 @@ jobs:
               if not (f["fairness"] is None or (type(f["fairness"]) is list and len(f["fairness"]) == 2 and all(num(x) and 0 <= x <= 1 for x in f["fairness"]))): return False
               n = f["nodes"]
               return (type(n) is list and 2 <= len(n) <= 23 and len({x.get("a") for x in n if type(x) is dict}) == len(n) and all(
-                  type(x) is dict and set(x) in ({"a", "vhp", "kh", "h"}, {"a", "vhp", "kh", "h", "r"}) and isa(x["a"]) and num(x["vhp"]) and x["vhp"] > 0 and num(x["kh"]) and num(x["h"]) and 0 < x["h"] < 1e4
+                  type(x) is dict and set(x) in ({"a", "vhp", "kh", "h"}, {"a", "vhp", "kh", "h", "r"}) and isa(x["a"]) and num(x["vhp"]) and x["vhp"] > 0 and num(x["kh"]) and num(x["h"]) and 0 < x["h"] < 1e4 and js_round(x["h"] * 10000) >= 1
                   # Fix-check LNF-14: 20 blocks an hour by VHP (kh ÷ form when there is form).
                   and ("r" not in x or (num(x["r"]) and 0.8 <= x["r"] <= 1.2)) and x["kh"] / x.get("r", 1) >= 19.99 for x in n) and len({("r" in x) for x in n}) == 1
                   # The form's note and its numbers go together.
@@ -261,9 +283,189 @@ jobs:
               r = subprocess.run(["git", "ls-tree", "--name-only", parent, "lastnode/"], capture_output=True, text=True)
               return [os.path.basename(x)[1:-5] for x in r.stdout.split() if os.path.basename(x).startswith("D") and x.endswith(".json")]
 
+          # ── the chain (fix-check N-1): what a run ADDS is read again here, on two nodes, by this job's own client ──
+          # Every newly published hour: its first and last block and each field node's count, from block_store on both nodes; a
+          # newly published field: the race card it names; newly published picks: the Picks contract's list_picks on both nodes.
+          # Python standard library only (no repository code runs in this job). Anything that can't be read refuses the run.
+          import base64, urllib.request
+          RPCS = [u for u in (os.environ.get("LASTNODE_RPC") or "", os.environ.get("LASTNODE_RPC_CHECK") or "") if u]
+          PICKS = os.environ.get("LASTNODE_PICKS") or ""
+          B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+          def b58_bytes(s):
+              n = 0
+              for ch in s: n = n * 58 + B58.index(ch)
+              body = n.to_bytes((n.bit_length() + 7) // 8, "big") if n else b""
+              return b"\0" * (len(s) - len(s.lstrip("1"))) + body
+          def b58_str(b):
+              n, s = int.from_bytes(b, "big"), ""
+              while n: n, r = divmod(n, 58); s = B58[r] + s
+              return "1" * (len(b) - len(b.lstrip(b"\0"))) + s
+          def pb_varint(n):
+              out = bytearray()
+              while True:
+                  x = n & 0x7F; n >>= 7
+                  out.append(x | (0x80 if n else 0))
+                  if not n: return bytes(out)
+          def pb_fields(b):
+              """(field, value) pairs of one protobuf message: ints for varints, bytes for length-delimited fields."""
+              i, out = 0, []
+              def vint():
+                  nonlocal i
+                  v, s = 0, 0
+                  while True:
+                      x = b[i]; i += 1; v |= (x & 0x7F) << s; s += 7
+                      if not x & 0x80: return v
+              while i < len(b):
+                  k = vint(); f, w = k >> 3, k & 7
+                  if w == 0: out.append((f, vint()))
+                  elif w == 2: n = vint(); out.append((f, b[i:i + n])); i += n
+                  else: raise ValueError("unexpected protobuf wire type %d" % w)
+                  if i > len(b): raise ValueError("truncated protobuf")
+              return out
+          _rid = [0]
+          def rpc(url, method, params):
+              _rid[0] += 1
+              req = urllib.request.Request(url, data=json.dumps({"jsonrpc": "2.0", "id": _rid[0], "method": method, "params": params}).encode(), headers={"Content-Type": "application/json"})
+              last = None
+              for attempt in range(3):
+                  try:
+                      with urllib.request.urlopen(req, timeout=30) as r: j = json.loads(r.read())
+                      if "error" in j: raise RuntimeError("%s: %s" % (method, j["error"]))
+                      return j["result"]
+                  except Exception as e:
+                      last = e
+              raise RuntimeError("%s on %s: %s" % (method, url, last))
+          _heads = {}
+          def head(url):
+              if url not in _heads:
+                  h = rpc(url, "chain.get_head_info", {})
+                  _heads[url] = (h["head_topology"]["id"], int(h["last_irreversible_block"]))
+              return _heads[url]
+          def blocks(url, a, b):
+              """[(height, signer, time)] for heights a..b, all irreversible on that node."""
+              hid, lib = head(url)
+              if b > lib: raise RuntimeError("block %d isn't irreversible on %s yet" % (b, url))
+              out, s = [], a
+              while s <= b:
+                  items = rpc(url, "block_store.get_blocks_by_height", {"head_block_id": hid, "ancestor_start_height": str(s), "num_blocks": min(200, b - s + 1), "return_block": True, "return_receipt": False}).get("block_items") or []
+                  if not items: raise RuntimeError("no blocks returned at %d on %s" % (s, url))
+                  for k, it in enumerate(items):
+                      if int(it["block_height"]) != s + k: raise RuntimeError("blocks out of order at %d on %s" % (s, url))
+                      hd = it["block"]["header"]
+                      out.append((s + k, str(hd["signer"]), int(hd["timestamp"])))
+                  s += len(items)
+              return out
+          def window_on(url, t0, t1, frm, to):
+              """The recorded window [frm, to] for [t0, t1): its boundary blocks and each signer's count, on one node."""
+              bs = blocks(url, max(1, frm - 1), to + 1)
+              inside = [x for x in bs if frm <= x[0] <= to]
+              if frm > 1 and not bs[0][2] < t0: return None, "block %d (before the window) isn't before its start" % (frm - 1)
+              if not inside or inside[0][2] < t0 or inside[-1][2] >= t1: return None, "blocks %d-%d aren't all inside the window" % (frm, to)
+              if not bs[-1][2] >= t1: return None, "block %d (after the window) isn't at or after its end" % (to + 1)
+              counts = {}
+              for _, s, _t in inside: counts[s] = counts.get(s, 0) + 1
+              return counts, None
+          CHAIN_OK = {}
+          def check_hour_on_chain(f, j, i, h):
+              """Fix-check N-1: a newly published hour is what both nodes say."""
+              t0 = j["start"] + i * H; t1 = t0 + H
+              if len(RPCS) < 2 or RPCS[0] == RPCS[1]: bad("%s: hour %d can't be checked on the chain (LASTNODE_RPC and LASTNODE_RPC_CHECK must be two nodes)" % (f, i)); return
+              got = []
+              for u in RPCS:
+                  try: c, why = window_on(u, t0, t1, h["from"], h["to"])
+                  except Exception as e: bad("%s: hour %d couldn't be read on the chain (%s); tried again next run" % (f, i, str(e)[:200])); return
+                  if why: bad("%s: hour %d's blocks %d-%d: %s (on %s)" % (f, i, h["from"], h["to"], why, u)); return
+                  got.append(c)
+              if got[0] != got[1]: bad("%s: hour %d: the two nodes disagree about its blocks; tried again next run" % (f, i)); return
+              names = [x["a"] for x in j["field"]["nodes"]]
+              want = {a: got[0].get(a, 0) for a in names}
+              have = {a: int(h["blocks"].get(a, 0)) for a in names}
+              if want != have: bad("%s: hour %d's block counts aren't the chain's" % (f, i))
+          def picks_on(url, rnd):
+              """Picks list_picks for game 13, round rnd: [player, start, time] / [player, start, time, backup], as the recorder keeps them."""
+              out, after = [], b""
+              for page in range(1000):
+                  args = pb_varint(1 << 3) + pb_varint(13) + pb_varint(2 << 3) + pb_varint(rnd) + (pb_varint(3 << 3 | 2) + pb_varint(len(after)) + after if after else b"") + pb_varint(4 << 3) + pb_varint(100)
+                  r = rpc(url, "chain.read_contract", {"contract_id": PICKS, "entry_point": 2118033200, "args": base64.urlsafe_b64encode(args).decode().rstrip("=")})
+                  raw = r.get("result") or ""
+                  rows = [v for f, v in pb_fields(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))) if f == 1]
+                  for row in rows:
+                      player, prods, t = None, [], 0
+                      for f, v in pb_fields(row):
+                          if f == 1: player = v
+                          if f == 2:
+                              for g, w in pb_fields(v):
+                                  if g == 1: prods.append(b58_str(w))
+                                  if g == 4: t = w
+                      if player is None: continue
+                      after = player
+                      pa = b58_str(player)
+                      if t >= lock_of(rnd): continue                        # fix-check L-5: only picks made before the lock count
+                      if len(prods) == 1: out.append([pa, prods[0], t])
+                      elif len(prods) == 2 and prods[0] != prods[1]: out.append([pa, prods[0], t, prods[1]])
+                  if len(rows) < 100: break
+              return sorted(out)
+          # The real game's round for an event: its target is 13:55 UTC (lead 5 minutes after the 13:50 lock); the lock is the target − lead.
+          OFFSET = (14 * H - 10 * 60000 + 5 * 60000) % DAY
+          def round_of(start): return (start - 10 * 60000 + 5 * 60000 - OFFSET) // DAY
+          def lock_of(rnd): return rnd * DAY + OFFSET - 5 * 60000
+          def check_picks_on_chain(f, j):
+              if not PICKS: bad("%s: its picks can't be checked (LASTNODE_PICKS isn't set)" % f); return
+              if len(RPCS) < 2 or RPCS[0] == RPCS[1]: bad("%s: its picks can't be checked on the chain (two nodes needed)" % f); return
+              try: a, b = picks_on(RPCS[0], round_of(j["start"])), picks_on(RPCS[1], round_of(j["start"]))
+              except Exception as e: bad("%s: its picks couldn't be read on the chain (%s); tried again next run" % (f, str(e)[:200])); return
+              if a != b: bad("%s: the two nodes disagree about its picks; tried again next run" % f); return
+              if sorted(j["picks"].get("0", [])) != a: bad("%s: its picks aren't the Picks contract's" % f)
+
+          # Fix-check N-8: JavaScript's Math.round exactly (floor(x + 0.5) is wrong at 0.49999999999999994).
+          def js_round(x):
+              r = math.floor(x)
+              return r + 1 if x - r >= 0.5 else r
+          def r2(x): return js_round(x * 100) / 100
+          def card_total(c):
+              t = 0
+              for x in (c.get("field") or []) + (c.get("paddock") or []):
+                  if type(x) is dict and type(x.get("vhp")) in (int, float) and x["vhp"] > 0: t += x["vhp"]
+              return r2(t)
+          def opens_of(start): return round_of(start) * DAY + OFFSET - DAY
+          def card_time_of(start): return (opens_of(start) - H) // H * H
+          def check_field_card(f, j):
+              """Fix-check N-1: a newly published field is the one its race card gives: the event's card (the first one taken from
+              the card time to when picks open), every node's VHP and expected blocks from it (and its form), the nodes the card's
+              VHP puts in the field, and each handicap from the formula at the field's c. (c's calibration and the form's 48 hours
+              are the record job's; see the README.)"""
+              fd = j["field"]
+              ct, op = card_time_of(j["start"]), opens_of(j["start"])
+              cands = [c for c in CARDS if ct <= c["at"] < op]
+              if not cands: bad("%s: its field names a race card that isn't on race-data" % f); return
+              c = cands[0]
+              if fd["at"] != c["at"]: bad("%s: its field isn't from the event's race card (the first one taken from %d)" % (f, ct)); return
+              if fd.get("vt") != card_total(c): bad("%s: its field's card total isn't its race card's" % f)
+              rows = [x for x in c["field"] if type(x) is dict and type(x.get("a")) is str and type(x.get("vhp")) in (int, float) and x["vhp"] > 0 and type(x.get("k")) in (int, float) and x["k"] > 0]
+              rows = [{"a": x["a"], "vhp": x["vhp"], "k0": x["k"] / 6} for x in rows]
+              rows = [x for x in rows if x["k0"] >= 20]
+              rows.sort(key=lambda x: (-x["vhp"], x["a"]))
+              rows = rows[:23]
+              nodes = fd["nodes"]
+              if [x["a"] for x in rows] != [n["a"] for n in nodes]: bad("%s: its field's nodes aren't the ones its race card gives" % f); return
+              form = "r" in nodes[0]
+              if form and not (type(fd.get("form")) is dict and fd["form"].get("to") == ct and fd["form"].get("from") == ct - 48 * H): bad("%s: its form isn't the 48 hours before the card time" % f)
+              ks = []
+              for x, n in zip(rows, nodes):
+                  r = n["r"] if form else 1
+                  k = x["k0"] * r
+                  ks.append(k)
+                  if n["vhp"] != r2(x["vhp"]) or n["kh"] != r2(k): bad("%s: node %s's VHP or expected blocks aren't its race card's" % (f, n["a"])); return
+              order = sorted(range(len(ks)), key=lambda i: (-ks[i], i)) if form else list(range(len(ks)))
+              kTop, cc = ks[order[0]], fd["c"]
+              if not any(cc == g / 10 for g in range(26)) or not cc < math.sqrt(min(ks)) * 0.8 and cc != 0: bad("%s: its c isn't one the calibration can give" % f); return
+              for k, n in zip(ks, nodes):
+                  h = js_round(((kTop / k) * (1 - cc / math.sqrt(k)) / (1 - cc / math.sqrt(kTop))) * 10000) / 10000
+                  if n["h"] != h: bad("%s: node %s's handicap isn't the formula's at c = %s" % (f, n["a"], cc)); return
+
           # ── the rules (ports of lastnode-math.js cutsFrom and playerResult; the board as the recorder builds it) ──
           BONUS_STAYED, BONUS_JUMPED = 5, 3
-          def h_int(n): return math.floor(n["h"] * 10000 + 0.5)           # JavaScript's Math.round
+          def h_int(n): return js_round(n["h"] * 10000)                  # JavaScript's Math.round (N-8)
           def cuts_from(field, hours):
               nodes = field["nodes"]; n = len(nodes)
               steps, blocks, out, cuts = [0] * n, [0] * n, [0] * n, []
@@ -288,12 +490,6 @@ jobs:
               standing = [x["a"] for i, x in enumerate(nodes) if not out[i]]
               done = len(cuts) == n - 1
               return {"cuts": cuts, "standing": standing, "done": done, "winner": standing[0] if done else None}
-          def r2(x): return math.floor(x * 100 + 0.5) / 100
-          def card_total(c):
-              t = 0
-              for x in (c.get("field") or []) + (c.get("paddock") or []):
-                  if type(x) is dict and type(x.get("vhp")) in (int, float) and x["vhp"] > 0: t += x["vhp"]
-              return r2(t)
           def race_cut(field, c):
               """Port of lastnode-math.js raceCut: VHP added after the field's card can only lower a multiplier."""
               out = {}
@@ -316,23 +512,28 @@ jobs:
                   except Exception: continue
                   for r in (w.get("races") or []) if type(w) is dict else []:
                       for c in (r.get("cards") or []) if type(r) is dict else []:
-                          if type(c) is dict and type(c.get("at")) in (int, float) and type(c.get("field")) is list: CARDS.append(c)
+                          # L-10: the recorder's own filter (cardsIn): whole-number times, every row a producer with a VHP.
+                          rowok = lambda x: type(x) is dict and type(x.get("a")) is str and type(x.get("vhp")) in (int, float) and x["vhp"] >= 0
+                          if type(c) is dict and type(c.get("at")) is int and type(c.get("field")) is list and all(rowok(x) for x in c["field"]) and (c.get("paddock") is None or (type(c["paddock"]) is list and all(rowok(x) for x in c["paddock"]))): CARDS.append(c)
           CARDS.sort(key=lambda c: c["at"])
-          def check_hours(f, j):
-              """Each recorded window names the race card it was checked against: a real race-data card taken after the field's
-              card and by the window's end, no staler than one that existed 30 minutes before the end; hh must be raceCut's."""
-              if not j.get("field") or not j["field"].get("vt"): return
-              for i, h in enumerate(j["hours"]):
-                  end = j["start"] + (i + 1) * H
-                  if "card" not in h: bad("%s: hour %d doesn't name its race card" % (f, i)); continue
-                  newest = [c for c in CARDS if j["field"]["at"] <= c["at"] <= end - 30 * 60000]
-                  if h["card"] is None:
-                      if newest: bad("%s: hour %d skipped the race card check" % (f, i))
-                      if h.get("hh"): bad("%s: hour %d lowered multipliers without a card" % (f, i))
-                      continue
-                  c = next((c for c in CARDS if c["at"] == h["card"]), None)
-                  if c is None or not (j["field"]["at"] <= c["at"] <= end) or (newest and c["at"] < newest[-1]["at"]): bad("%s: hour %d's race card isn't the one to use" % (f, i)); continue
-                  if (h.get("hh") or {}) != race_cut(j["field"], c): bad("%s: hour %d's lowered multipliers aren't what its race card gives" % (f, i))
+          def check_hour_card(f, j, i, h):
+              """Fix-check N-4 (and LNF-3): a newly published window names the FIRST race card taken at or after its end (the card's
+              VHP covers the whole window), so VHP moved in after the window's start is seen; only when race-data has no such card
+              2 hours after the window ends, the latest card taken by its end (never older than the field's). hh must be raceCut's.
+              Checked once, when the hour is first published (N-7): a card that reaches race-data later never re-judges it."""
+              end = j["start"] + (i + 1) * H
+              if "card" not in h: bad("%s: hour %d doesn't name its race card" % (f, i)); return
+              after = [c for c in CARDS if c["at"] >= end]
+              before = [c for c in CARDS if j["field"]["at"] <= c["at"] < end]
+              if after: want = after[0]
+              elif now >= end + 2 * H: want = before[-1] if before else None
+              else: bad("%s: hour %d was recorded before the race card after it was out" % (f, i)); return
+              if want is None:
+                  if h["card"] is not None or h.get("hh"): bad("%s: hour %d names a race card that isn't on race-data" % (f, i))
+                  return
+              if h["card"] is None: bad("%s: hour %d skipped the race card check" % (f, i)); return
+              if h["card"] != want["at"]: bad("%s: hour %d's race card isn't the one to use" % (f, i)); return
+              if (h.get("hh") or {}) != race_cut(j["field"], want): bad("%s: hour %d's lowered multipliers aren't what its race card gives" % (f, i))
           def player_result(field, res, start, backup):
               names = [x["a"] for x in field["nodes"]]
               r = {"start": start, "jumpTo": None, "out": 0, "survived": 0, "rode": False, "jumped": False, "points": 0}
@@ -403,14 +604,25 @@ jobs:
               if j["week"] != weekOf(j["start"]): bad("%s: week %s isn't the week of its start" % (f, j["week"]))       # LNF-10
               for i in range(len(j["hours"])):
                   if j["start"] + (i + 1) * H > now + 120000: bad("%s: hour %d is recorded before it ended" % (f, i))
-              check_hours(f, j)
+              old = pub.get(day)
+              if old is not None and "void" in old: old_n, old_field, old_picks = len(old["hours"]), old.get("field"), True
+              else: old_n, old_field, old_picks = (len(old["hours"]), old.get("field"), "0" in old["picks"]) if old is not None else (0, None, False)
+              # Fix-check N-1: what this run adds is checked against race-data and the chain (published parts can't change, below).
+              if j["field"] and not old_field:
+                  if not j["field"].get("vt"): bad("%s: a new field without its card total (vt)" % f)            # L-1
+                  else: check_field_card(f, j)
+              if j["field"] and "void" not in j:
+                  for i in range(old_n, len(j["hours"])):
+                      check_hour_card(f, j, i, j["hours"][i])
+                      check_hour_on_chain(f, j, i, j["hours"][i])
+                  if "0" in j["picks"] and not old_picks: check_picks_on_chain(f, j)
+                  if j["hours"] and "0" not in j["picks"] and PICKS: bad("%s: hours without the event's picks" % f)
               rp = replay(j)
               if rp is not None:
                   res, players = rp
                   if [j["cuts"], j["standing"], j["winner"], j["done"]] != [res["cuts"], res["standing"], res["winner"], res["done"]]: bad("%s: the cuts don't follow from its field and hours" % f)
                   if strip_ranked(j["players"]) != players: bad("%s: the players don't follow from its picks and cuts" % f)          # LNF-23
               elif j["players"] or j["cuts"]: bad("%s: players or cuts without a field" % f)
-              old = pub.get(day)
               if old is not None:
                   if old.get("field") and j["field"] != old["field"]: bad("%s: the field changed after it was published" % f)        # LNF-2
                   if old["picks"] and j["picks"] != old["picks"]: bad("%s: the picks changed after they were published" % f)
@@ -430,16 +642,75 @@ jobs:
           inc_board = json.load(open(os.path.join(d, "board.json"), encoding="utf-8")) if os.path.isfile(os.path.join(d, "board.json")) else None
           pub_board = show("lastnode/board.json")
           ib, pb = week_board(inc_board), week_board(pub_board)
-          if ib and ib["rows"] != want: bad("board.json: last week's rows don't add up from the day files")
+          # L-4: board.json shows last week's top 2,000 rows; the vault file is checked against the whole list (want).
+          if ib and ib["rows"] != want[:2000]: bad("board.json: last week's rows don't add up from the day files")
           if pb and pb.get("final") and ib and (ib.get("final") is not True or ib["rows"] != pb["rows"]): bad("board.json: last week was final and has changed")
+          # Fix-check N-3 (the recorder's coversWeek): last week is final only 12 hours after it ends and once every event of
+          # it, from the game's first day on, is recorded and finished or void. A run that says "final" (or files a vault
+          # file) any earlier is refused, so a half-recorded week can't be frozen.
+          lw_start = WEEK0 + (now_w - 1) * WEEK
+          first = min([j["start"] for j in merged.values()], default=None)
+          want_days = [lw_start + 14 * H + k * DAY for k in range(7)]
+          by_start = {j["start"]: j for j in merged.values()}
+          complete = first is not None and now >= lw_start + WEEK + 12 * H and all(
+              t < first or (t in by_start and (by_start[t].get("done") or "void" in by_start[t])) for t in want_days)
+          vfiles = [f for f in (sorted(os.listdir(os.path.join(d, "vault"))) if os.path.isdir(os.path.join(d, "vault")) else []) if f == "W%d.json" % (now_w - 1)]
+          if ((ib and ib.get("final") is True) or vfiles) and not complete: bad("board.json: last week is called final (or its vault file is filed) before every event of it is finished or void, or before 12 hours after it ended")
           final = bool((ib and ib.get("final")) or (pb and pb.get("final")))
+          # ── watch-and-hold, as the recorder's watchWeek (fix-check N-9: the publish job enforces it too) ──
+          import re
+          REL = (os.environ.get("LASTNODE_RELEASE_WEEKS") or "").replace(" ", "")
+          released = {int(x) for x in REL.split(",")} if re.fullmatch(r"\d{1,5}(,\d{1,5})*", REL) else set()
+          if REL and not released: print("::warning::LASTNODE_RELEASE_WEEKS isn't a list of week numbers like 3,7; no week is released")   # I-7
+          WEEK_Z, WEEK_WINS, EVENT_Z = 3.4, 2, 5
+          def watch_week(days):
+              by, chi, m = {}, 0, 0
+              for j in sorted(days, key=lambda j: j["start"]):
+                  if "void" in j or not j.get("field") or not j.get("done"): continue
+                  for n in j["field"]["nodes"]:
+                      s = by.setdefault(n["a"], {"got": 0, "exp": 0, "wins": 0, "events": 0, "chi": 0, "m": 0, "ev": []})
+                      g, e = 0, 0
+                      for h in j["hours"]:
+                          base, low = h_int(n), (h.get("hh") or {}).get(n["a"])
+                          used = low if type(low) is int and 1 <= low < base else base
+                          g += int(h["blocks"].get(n["a"], 0))
+                          e += n["kh"] * (H / 3600000) * (base / used)
+                      if e > 0:
+                          c = (g - e) * (g - e) / e; chi += c; m += 1; s["chi"] += c; s["m"] += 1
+                      s["got"] += g; s["exp"] += e; s["events"] += 1
+                      won = j["winner"] == n["a"]
+                      if won: s["wins"] += 1
+                      s["ev"].append((g, e, won))
+              out = []
+              for a, s in by.items():
+                  if not s["exp"] > 0: continue
+                  phi = max(1, (chi - s["chi"]) / (m - s["m"]) if m > s["m"] else 1)
+                  z = (s["got"] - s["exp"]) / math.sqrt(phi * s["exp"])
+                  one_day = any(won and e > 0 and (g - e) / math.sqrt(phi * e) >= EVENT_Z for g, e, won in s["ev"])
+                  if (s["wins"] >= WEEK_WINS and z >= WEEK_Z) or one_day: out.append({"a": a, "q": js_round((s["got"] / s["exp"]) * 1000) / 1000, "wins": s["wins"], "events": s["events"]})
+              return out
+          lw = now_w - 1
+          flags = watch_week(lw_days)
+          lw_changed = any(day in pub and inc[day] != pub[day] or day not in pub for day, j in inc.items() if j["week"] == lw)
+          pub_hold = show("lastnode/vault/HOLD-W%d.json" % lw) is not None
           lines = []
           vd = os.path.join(d, "vault")
-          for f in sorted(os.listdir(vd)) if os.path.isdir(vd) else []:
-              if f.startswith("HOLD-"): continue                                             # held for review: published as is
+          vnames = sorted(os.listdir(vd)) if os.path.isdir(vd) else []
+          inc_hold = "HOLD-W%d.json" % lw in vnames
+          for f in vnames:
               j = json.load(open(os.path.join(vd, f), encoding="utf-8"))
-              if j["week"] != now_w - 1: continue                                            # the shape check refuses these
+              if j["week"] != lw: continue                                                   # the shape check refuses these
+              if f.startswith("HOLD-"):
+                  # L-8: a hold file says exactly which nodes the rule flags; a week released by the owner needs none.
+                  if lw in released or not flags or j["nodes"] != flags: lines.append("%s bad" % f); print("::error::vault/%s isn't what watch-and-hold gives for last week's day files" % f)
+                  else: lines.append("%s ok" % f)
+                  continue
               if not final: lines.append("%s hold" % f); continue
+              # Two runs (fix-check N-1/N-3): a vault file is published only after last week's final board and day files are
+              # already on games-data, unchanged by this run, so one bad run can't add hours and file the week together.
+              if not (pb and pb.get("final")) or lw_changed: lines.append("%s hold" % f); continue
+              # N-9: a week the rule flags, or one already held on games-data, isn't filed until the owner releases it.
+              if lw not in released and (flags or pub_hold or inc_hold): lines.append("%s held" % f); continue
               listed = {x["player"] for x in j["rows"]}
               scoring = {r["a"] for r in want if r["pts"] >= 1}
               # No rows while the week has scoring players: the stakes may not have been read (audit LN-2). Not published; the
@@ -450,7 +721,7 @@ jobs:
               else: lines.append("%s ok" % f)
           # LNF-12: the Vault's 3 days end with no file while the week had scoring players: say so (the run fails at the end).
           ws = WEEK0 + now_w * WEEK
-          if ws + 3 * DAY <= now < ws + 3 * DAY + 2 * H and any(r["pts"] >= 1 for r in want) and parent and show("lastnode/vault/W%d.json" % (now_w - 1)) is None:
+          if ws + 3 * DAY <= now < ws + 3 * DAY + 2 * H and any(r["pts"] >= 1 for r in want) and parent and show("lastnode/vault/W%d.json" % (now_w - 1)) is None and "W%d.json ok" % (now_w - 1) not in lines:   # L-6
               lines.append("W%d.json unfiled" % (now_w - 1))
           open(status, "w").write("".join(x + "\n" for x in lines))
           for e in errs: print("::error::" + e)
@@ -459,10 +730,14 @@ jobs:
           now_ms=${KG_TEST_NOW:-$(date +%s%3N)}
           # The race cards, to check each window's lowered multipliers (fix-check LNF-3).
           mkdir -p race
-          if [ -n "${FAKE_RACE:-}" ]; then cp "$FAKE_RACE"/W*.json race/ 2>/dev/null || true
+          # Fix-check I-9: the tests' race folder only with the tests' clock (never in a real run).
+          if [ -n "${FAKE_RACE:-}" ] && [ -n "${KG_TEST_NOW:-}" ]; then cp "$FAKE_RACE"/W*.json race/ 2>/dev/null || true
           elif git ls-remote --exit-code --heads "$remote" race-data >/dev/null 2>&1; then
             git init -q racegit && git -C racegit fetch -q --depth 1 "$remote" race-data
             for f in $(git -C racegit ls-tree --name-only FETCH_HEAD); do if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git -C racegit show "FETCH_HEAD:$f" > "race/$f"; fi; done
+          else
+            rc=$?
+            if [ "$rc" -ne 2 ]; then echo "::error::Couldn't read the race-data branch (git exit $rc); not publishing this run."; exit 1; fi
           fi
           git init -q work && cd work
           export GIT_AUTHOR_NAME=kpred-bot GIT_AUTHOR_EMAIL=kpred-bot@users.noreply.github.com GIT_COMMITTER_NAME=kpred-bot GIT_COMMITTER_EMAIL=kpred-bot@users.noreply.github.com
@@ -486,10 +761,16 @@ jobs:
             # A vault file is final: once published it is never replaced (the Vault posts it within the hour). Audit LN-1: a
             # different copy is an error you are told about (the run fails after publishing the rest).
             differs=""; vbad=""
-            held=""
+            held=""; heldw=""
+            # Watch-and-hold: the hold file only when histcheck.py's own watch-and-hold gives exactly it (fix-check L-8).
             for f in "$IN"/lastnode/vault/HOLD-W*.json; do
               [ -e "$f" ] || continue
-              blob=$(git hash-object -w "$f"); git update-index --add --cacheinfo 100644 "$blob" "lastnode/vault/$(basename "$f")"; held="$held $(basename "$f")"
+              name="lastnode/vault/$(basename "$f")"
+              st=$(grep -E "^$(basename "$f") " ../vault-status.txt | cut -d' ' -f2 || true)
+              if [ "$st" != ok ]; then vbad="$vbad $name"; continue; fi
+              # Told once, when the hold is first published (not on every run while it waits for your review).
+              if [ -n "$parent" ] && git cat-file -e "$parent:$name" 2>/dev/null; then echo "::warning::$name is still waiting for your review."; continue; fi
+              blob=$(git hash-object -w "$f"); git update-index --add --cacheinfo 100644 "$blob" "$name"; held="$held $(basename "$f")"
             done
             for f in "$IN"/lastnode/vault/W*.json; do
               [ -e "$f" ] || continue
@@ -504,7 +785,8 @@ jobs:
               st=$(grep -E "^$(basename "$f") " ../vault-status.txt | cut -d' ' -f2 || true)
               case "$st" in
                 ok) git update-index --add --cacheinfo 100644 "$blob" "$name" ;;
-                hold) echo "Holding $name until last week is final (next run)." ;;
+                hold) echo "Holding $name until last week's final board is published and unchanged (next run)." ;;
+                held) heldw="$heldw $name" ;;
                 empty) echo "::warning::$name has no rows while last week has scoring players; not published (tried again next run)." ;;
                 *) vbad="$vbad $name" ;;
               esac
@@ -516,10 +798,13 @@ jobs:
             if [ "$try" = 3 ]; then echo "::error::Couldn't push games-data after 3 tries."; exit 1; fi
             sleep $((try * 5))
           done
-          # Fix-check LNF-5: a vault file that doesn't match is left out; the rest is published, and the run fails here.
-          if [ -n "$vbad" ]; then echo "::error::Not published: the vault file doesn't match last week's day files:$vbad"; exit 1; fi
-          if grep -q " unfiled$" ../vault-status.txt 2>/dev/null; then echo "::error::The Vault's 3 days for last week are over and no vault file was published (the week's bucket stays in the game). Check the recorder."; exit 1; fi
-          if [ -n "${big:-}" ]; then echo "::error::Left out (over 2 MB): $big"; exit 1; fi
-          if [ -n "${held:-}" ]; then echo "::error::Last week's vault file is HELD for your review:$held (see it on games-data). After reviewing, release it with: gh variable set LASTNODE_RELEASE_WEEKS --body \"<week>\""; exit 1; fi
-          if [ -n "$differs" ]; then echo "::error::Already published, and this run's copy is DIFFERENT (kept the published one; check it before the Vault seals):$differs"; exit 1; fi
+          # Fix-check LNF-5 / L-7: what was left out is reported together, and the run fails once, at the end.
+          fail=""
+          if [ -n "$vbad" ]; then echo "::error::Not published: a vault or hold file doesn't match last week's day files:$vbad"; fail=1; fi
+          if grep -q " unfiled$" ../vault-status.txt 2>/dev/null; then echo "::error::The Vault's 3 days for last week are over and no vault file was published (the week's bucket stays in the game). Check the recorder."; fail=1; fi
+          if [ -n "${big:-}" ]; then echo "::error::Left out (over 2 MB): $big"; fail=1; fi
+          if [ -n "${held:-}" ]; then echo "::error::Last week's vault file is HELD for your review:$held (see it on games-data). After reviewing, release it with: gh variable set LASTNODE_RELEASE_WEEKS --body \"<week>\""; fail=1; fi
+          if [ -n "${heldw:-}" ]; then echo "::error::Not published: watch-and-hold flags last week (or it is held on games-data) and it isn't released:$heldw. After reviewing, release it with: gh variable set LASTNODE_RELEASE_WEEKS --body \"<week>\""; fail=1; fi
+          if [ -n "$differs" ]; then echo "::error::Already published, and this run's copy is DIFFERENT (kept the published one; check it before the Vault seals):$differs"; fail=1; fi
+          if [ -n "$fail" ]; then exit 1; fi
           [ -n "${nochange:-}" ] || echo "Last Node Standing files published."

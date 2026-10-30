@@ -67,6 +67,7 @@
   let B = null;                    // recent blocks (chain-blocks.js)
   const days = new Map();          // day → the recorder's D file (or a field worked out here from the card)
   let card = null;                 // the race card in force now (for reliability)
+  let weekCards = [];              // this week's race cards, oldest first (each live window's card, as the recorder picks it)
   let picksContract = null, sending = false;
   const myPicks = new Map();       // round → producer (for the shown event and the next one)
   let board = null;
@@ -84,9 +85,13 @@
 
   // ── the hours: the recorder's where it has them, else counted here from recent blocks ──
   function liveHours(df, now = nowT()) {
-    // Fix-check LNF-3: recorded windows carry the multipliers their race card lowered; live ones use the latest card.
+    // Fix-check LNF-3/N-4 and L-3: recorded windows carry the multipliers their race card lowered; a live window uses
+    // the recorder's rule (the first card taken at or after its end), or until that card exists the latest one.
     const hours = (df.hours || []).map((h) => ({ blocks: h.blocks, hh: h.hh, recorded: true }));
-    const liveCut = card && df.field && Number(card.at) >= Number(df.field.at) ? L.raceCut(df.field, card) : null;
+    const cutFor = (t1) => {
+      const c = weekCards.find((x) => Number(x.at) >= t1) || card;
+      return c && df.field && Number(c.at) >= Number(df.field.at) ? L.raceCut(df.field, c) : null;
+    };
     if (!B || !B.ts.length || !df.field) return { hours, partial: null };
     const inField = new Set(df.field.nodes.map((n) => n.a));
     const tip = B.ts[B.ts.length - 1];
@@ -99,8 +104,8 @@
     for (let i = hours.length; i < df.field.nodes.length - 1; i++) {
       const t0 = df.start + i * H, t1 = t0 + H;
       if (t0 < B.ts[0]) return { hours, partial: null };
-      if (tip < t1) return { hours, partial: tip > t0 && now >= t0 ? { i, blocks: count(t0, t1), hh: liveCut, t0, t1 } : null };
-      hours.push({ blocks: count(t0, t1), hh: liveCut, recorded: false });
+      if (tip < t1) return { hours, partial: tip > t0 && now >= t0 ? { i, blocks: count(t0, t1), hh: cutFor(t1), t0, t1 } : null };
+      hours.push({ blocks: count(t0, t1), hh: cutFor(t1), recorded: false });
     }
     return { hours, partial: null };
   }
@@ -135,6 +140,9 @@
     const now = nowT(), ra = M.raceAt(now), w = M.weekOf(ra.start);
     const wf = await fetchJson(`${RACE_DATA}W${String(w).padStart(3, "0")}.json`);
     const race = wf && Array.isArray(wf.races) ? wf.races.find((r) => r && r.id === ra.id) : null;
+    const all = [];
+    for (const r of wf && Array.isArray(wf.races) ? wf.races : []) for (const c of r && Array.isArray(r.cards) ? r.cards : []) if (c && Number.isFinite(Number(c.at)) && Array.isArray(c.field)) all.push(c);
+    weekCards = all.sort((x, y) => Number(x.at) - Number(y.at));
     return race && Array.isArray(race.cards) ? M.cardForLeg(race.cards, M.legOf(ra.start, now, M.legsOf(race.cards))) : null;
   }
   async function loadBlocks() {

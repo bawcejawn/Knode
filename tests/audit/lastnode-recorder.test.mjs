@@ -29,6 +29,8 @@ function raceDir({ withCard = true } = {}) {
     for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) {
       const i = M.raceIndex(t), cards = new Array(6).fill(null);
       if (withCard && t === M.raceStart(M.raceIndex(EV.cardTime))) cards[M.legOf(t, EV.cardTime, 6)] = CARD;
+      // The race recorder's card every hour (5 minutes in) during the event: each window waits for the first one after it (N-4).
+      if (withCard) for (let k = 1; k <= 12; k++) { const at = EV.start + k * 3600000 + 300000; if (at >= t && at < t + M.RACE) cards[M.legOf(t, at, 6)] = { ...CARD, at }; }
       races.push({ id: M.raceId(i), start: t, end: t + M.RACE, cards, result: null });
     }
     fs.writeFileSync(path.join(d, `W${String(w).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), races }));
@@ -70,7 +72,7 @@ function picksOf({ tamperOffset = null } = {}) {
 const rankedOf = async (who) => new Set(who.filter((a) => a !== DAVE));
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "lastnode-"));
 const quiet = async (f) => { const log = console.log; console.log = () => {}; try { return await f(); } finally { console.log = log; } };
-const go = (o) => quiet(() => run({ p: "main", check: "check", raceDir: raceDir(), picksContract: "1PicksPicksPicksPicksPicksPicks", windowOf: windowOf(), picksOf: picksOf(), rankedOf, trials: 400, ...o }));
+const go = (o) => quiet(() => run({ p: "main", check: "check", raceDir: raceDir(), picksContract: "1PicksPicksPicksPicksPicksPicks", windowOf: windowOf(), picksOf: picksOf(), rankedOf, trials: 400, allowNoForm: true, ...o }));   // the launch gate has its own tests (M-F-3)
 const dayFile = (out) => JSON.parse(fs.readFileSync(path.join(out, `D${DAY}.json`), "utf8"));
 
 test("a whole event: field from the day-before card, three cuts, players' points", async () => {

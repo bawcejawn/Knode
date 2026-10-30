@@ -9,10 +9,13 @@
  *   at least 20 blocks an hour (the 23 biggest if more, so an event never reaches the next day's start round).
  * - Handicap (the race formula): h = (kTop ÷ k) × (1 − c ÷ √k) ÷ (1 − c ÷ √kTop), k = expected blocks an hour.
  * - FORM (owner, 2026-10-29): k is the card's VHP share × the node's form, and form = the blocks the node actually
- *   signed in the 48 hours before the card ÷ the blocks its VHP share (hour by hour, from that hour's race card) gave
+ *   signed in the 48 hours before the card ÷ the blocks its VHP share (hour by hour, that hour's average VHP from the
+ *   5-minute race-samples readings; fix-check LNF-4) gave
  *   it, kept between 0.80 and 1.20. Real blocks showed nodes signing a steady 78% to 108% of their VHP share; with VHP
  *   alone, the steady over-signers won most events and the under-signers never did. Form takes the part that can be
- *   seen in advance out of the handicap, so what's left is luck on the day.
+ *   seen in advance out of the handicap. What's left is the day itself: a node running hot or cold (which can last a
+ *   few days, so a node can win more than its share for a while) and luck. Watch-and-hold looks for a node that signs
+ *   far above its multiplier (fix-check L-12).
  *   c (0.0 to 2.5 in steps of 0.1) is the value that gives every node the most equal chance of being last standing,
  *   from 20,000 simulated events with a fixed seed, so anyone re-running it gets the same c (0.2 on 2026-10-27).
  *   h is kept in ten-thousandths (an integer), so steps are exact integers and the browser and the bot never differ.

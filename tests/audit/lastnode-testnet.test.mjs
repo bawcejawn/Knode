@@ -24,6 +24,8 @@ function raceDir() {
     for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) {
       const cards = new Array(6).fill(null);
       if (t === M.raceStart(M.raceIndex(EV.cardTime))) cards[M.legOf(t, EV.cardTime, 6)] = card;
+      // The race recorder's card every hour (5 minutes in) during the event: each window waits for the first one after it (N-4).
+      for (let k = 1; k <= 6; k++) { const at = EV.start + k * 3600000 + 300000; if (at >= t && at < t + M.RACE) cards[M.legOf(t, at, 6)] = { ...card, at }; }
       races.push({ id: M.raceId(M.raceIndex(t)), start: t, end: t + M.RACE, cards, result: null });
     }
     fs.writeFileSync(path.join(d, `W${String(w).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: w, races }));
@@ -51,7 +53,7 @@ const picksOf = async (node, round) => {
 test("the fast game: field, 20-minute cuts, backup, points; picks from the testnet, blocks from mainnet", async () => {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "lns-tn-"));
   const r = await run({ p: "main", check: "check", pp: "testnet", pcheck: null, game: L0.FAST_GAME, picksContract: "1PicksPicksPicksPicksPicksPicks",
-    raceDir: raceDir(), out, windowOf, hoursOf, picksOf, rankedOf: async (w) => new Set(w), trials: 300, now: { time: EV.start + 70 * 60000, libTime: EV.start + 61 * 60000 } });
+    raceDir: raceDir(), out, windowOf, hoursOf, picksOf, rankedOf: async (w) => new Set(w), trials: 300, allowNoForm: true, now: { time: EV.start + 70 * 60000, libTime: EV.start + 61 * 60000 } });
   assert.deepEqual(r.problems, []);
   const d = JSON.parse(fs.readFileSync(path.join(out, "D2026-11-03T08.json"), "utf8"));
   assert.equal(d.hours.length, 3); assert.equal(d.winner, N4);

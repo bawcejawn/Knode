@@ -11,6 +11,7 @@ import { execFileSync } from "node:child_process";
 
 const APP = process.env.APP || ".";
 const { run, sharesByHour } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+import { raceDir, hourOf, hoursOf, samplesDir, base } from "./lastnode-form.helpers.mjs";
 const M = globalThis.KRaceMath, L0 = globalThis.KLastNode;
 const F = L0.forGame(L0.FAST_GAME);
 const A = (c) => "1" + c.repeat(33);
@@ -61,42 +62,6 @@ test("the real cards fix the bias: the two steady under-signers win again, the s
 });
 
 // ── the recorder ──
-function raceDir(extra = []) {
-  // Hourly cards for the 48 hours before the field's card (N1 half the VHP, N2 a quarter, N3 and N4 an eighth each),
-  // plus the field's own card.
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), "race-f-"));
-  const fieldRows = [{ a: N1, vhp: 4000, k: 1200 }, { a: N2, vhp: 2000, k: 600 }, { a: N3, vhp: 1000, k: 300 }, { a: N4, vhp: 1000, k: 300 }];
-  const byWeek = {};
-  const put = (t, card) => {
-    const w = M.weekOf(t), rs = (byWeek[w] ||= (() => { const races = []; for (let s = M.weekStart(w); s < M.weekStart(w + 1); s += M.RACE) races.push({ id: M.raceId(M.raceIndex(s)), start: s, end: s + M.RACE, cards: new Array(6).fill(null), result: null }); return races; })());
-    const race = rs.find((r) => r.start <= t && t < r.end);
-    race.cards[M.legOf(race.start, t, 6)] = card;
-  };
-  for (let t = EV.cardTime - 48 * H; t < EV.cardTime; t += H) put(t, { at: t, field: fieldRows, paddock: [] });
-  put(EV.cardTime, { at: EV.cardTime + 60000, field: fieldRows, paddock: [] });
-  for (const c of extra) put(c.at, c);
-  for (const [w, races] of Object.entries(byWeek)) fs.writeFileSync(path.join(d, `W${String(w).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: Number(w), races }));
-  return d;
-}
-// Per hour: 1000 blocks; N4 signs 80% of its share and P5 (not in the field) the rest.
-const hourOf = { [N1]: 500, [N2]: 250, [N3]: 125, [N4]: 100, [P5]: 25 };
-const hoursOf = (bad) => async (node, t0, n) => {
-  assert.equal(n, 48);
-  if (t0 !== EV.cardTime - 48 * H) return Array.from({ length: n }, () => ({}));   // other events in the window: no form
-  return Array.from({ length: n }, (_, k) => (bad && node === "check" && k === 7 ? { ...hourOf, [N1]: 499 } : { ...hourOf }));
-};
-// Fix-check LNF-4: the form's VHP shares come from the 5-minute samples (12 an hour, as race-samples keeps them).
-function samplesDir(vhpOf = () => ({ [N1]: 4000, [N2]: 2000, [N3]: 1000, [N4]: 1000 }), from = EV.cardTime - 48 * H, to = EV.cardTime) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), "samples-")), all = [];
-  for (let t = from; t < to; t += 5 * 60000) all.push({ at: t, height: 1, vhp: Object.fromEntries(Object.entries(vhpOf(t)).map(([a, v]) => [a, String(Math.round(v * 1e8))])) });
-  // Two overlapping snapshots, as the workflow takes them from the branch's history.
-  fs.writeFileSync(path.join(d, "S0.json"), JSON.stringify({ v: 1, updated: "x", samples: all.slice(0, 400) }));
-  fs.writeFileSync(path.join(d, "S1.json"), JSON.stringify({ v: 1, updated: "x", samples: all.slice(380) }));
-  return d;
-}
-const base = (extra) => ({ p: "main", check: "check", game: L0.FAST_GAME, picksContract: null, samplesDir: samplesDir(), windowOf: async () => { throw new Error("not irreversible yet"); },
-  picksOf: async () => [], rankedOf: async (w) => new Set(w), trials: 300, ...extra });
-
 test("the recorder sets the field with form from the 48 h before the card, on both nodes, and publishes it", async () => {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "lns-f-")), t = EV.opens + 15 * 60000;
   const r = await run(base({ raceDir: raceDir(), out, hoursOf: hoursOf(false), now: { time: t, libTime: t } }));
@@ -177,8 +142,8 @@ test("fix-check LNF-3: VHP added after the field's card lowers that node's multi
   assert.ok(after <= 1.5 / 4, `with the check: ${after} (fair 0.25)`);
 });
 
-test("fix-check LNF-3: the recorder checks each window against the latest race card and records what it lowered", async () => {
-  const later = { at: EV.start + 10 * 60000, field: [{ a: N1, vhp: 4000, k: 1200 }, { a: N2, vhp: 2000, k: 600 }, { a: N3, vhp: 1000, k: 300 }, { a: N4, vhp: 2000, k: 600 }], paddock: [] };
+test("fix-check LNF-3/N-4: the recorder checks each window against the first race card taken after it and records what it lowered", async () => {
+  const later = { at: EV.start + 22 * 60000, field: [{ a: N1, vhp: 4000, k: 1200 }, { a: N2, vhp: 2000, k: 600 }, { a: N3, vhp: 1000, k: 300 }, { a: N4, vhp: 2000, k: 600 }], paddock: [] };
   const dir = raceDir([later]), out = fs.mkdtempSync(path.join(os.tmpdir(), "lns-f4-"));
   const t1 = EV.opens + 15 * 60000;
   await run(base({ raceDir: dir, out, hoursOf: hoursOf(false), now: { time: t1, libTime: t1 } }));
@@ -205,4 +170,22 @@ test("watch-and-hold: a node far above its multiplier that won 2+ races holds th
   assert.deepEqual(honest, [], "on par: nothing held");
   const hot = watchWeek([ev(1.15), ev(1.15), ev(1.15), ev(1.15)], 3600000);   // 15% over: above 3 standard deviations for 600 expected blocks
   assert.equal(hot.length, 1); assert.equal(hot[0].a, N4); assert.ok(hot[0].q >= 1.1 && hot[0].wins >= 2);
+});
+
+// ── Fix-check round 2 (FIXCHECK-LASTNODE-2.md), pasted in from the reviewer's paste-in file ──
+test("M-R-1: a window is checked against a race card that covers the WHOLE window (taken at or after its end)", async () => {
+  // Card A: taken 5 minutes into window 0, before N4 adds VHP. Card B: taken just after window 0 ends, N4 doubled.
+  // VHP N4 added after card A produced for most of window 0; only a card taken after the window's end can see it.
+  const row = (v4) => [{ a: N1, vhp: 4000, k: 1200 }, { a: N2, vhp: 2000, k: 600 }, { a: N3, vhp: 1000, k: 300 }, { a: N4, vhp: v4, k: v4 * 0.3 }];
+  const A = { at: EV.start + 5 * 60000, field: row(1000), paddock: [] }, B = { at: EV.start + F.CUT + 5 * 60000, field: row(2000), paddock: [] };
+  const dir = raceDir([A, B]), out = fs.mkdtempSync(path.join(os.tmpdir(), "mr1-"));
+  const t1 = EV.opens + 15 * 60000;
+  await run(base({ raceDir: dir, out, hoursOf: hoursOf(false), now: { time: t1, libTime: t1 } }));
+  const win = async (node, a, b) => { if (a < EV.start) throw new Error("not this event"); return { from: 1, to: 2, counts: { [N1]: 70, [N2]: 35, [N3]: 15, [N4]: 30 } }; };
+  const t2 = EV.start + F.CUT + 10 * 60000;
+  await run(base({ raceDir: dir, prev: out, out, hoursOf: hoursOf(false), windowOf: win, now: { time: t2, libTime: t2 } }));
+  const d = JSON.parse(fs.readFileSync(path.join(out, `D${EV.day}.json`), "utf8"));
+  assert.equal(d.hours.length, 1);
+  assert.ok(d.hours[0].card >= EV.start + F.CUT, `window 0 named a card taken ${(EV.start + F.CUT - d.hours[0].card) / 60000} min before its end`);
+  assert.ok(d.hours[0].hh && d.hours[0].hh[N4] < L0.hInt(d.field.nodes.find((n) => n.a === N4)), "N4's VHP added during window 0 must lower its multiplier for window 0");
 });

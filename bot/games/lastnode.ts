@@ -77,7 +77,7 @@ type Opts = {
   now?: { time: number; libTime: number };                                // for the tests
   windowOf?: (node: any, t0: number, t1: number) => Promise<Window>;
   /** Form: blocks per hour on a node over [t0, t0 + n h) (tests pass fake nodes). */
-  hoursOf?: (node: any, t0: number, n: number) => Promise<Record<string, number>[]>;
+  hoursOf?: (node: any, t0: number, n: number, signal?: AbortSignal) => Promise<Record<string, number>[]>;
   picksOf?: (node: any, round: number) => Promise<Pick[]>;
   rankedOf?: (who: string[]) => Promise<Set<string>>;
   /** Vault v6: the wallets with at least 1 VHP staked in this game for a vault week (null = can't tell yet). */
@@ -89,6 +89,8 @@ type Opts = {
   releaseWeeks?: number[];
   /** Fix-check LNF-6: the most time the 48 h form read may take in one run (default 4 minutes). */
   formDeadlineMs?: number;
+  /** Fix-check N-10 launch gate: may a field be set without form? Default: testnet practice, or LASTNODE_ALLOW_NO_FORM=true. */
+  allowNoForm?: boolean;
 };
 
 // ── files ──
@@ -107,15 +109,17 @@ function freshDay(day: string): DayFile {
 function loadDay(dir: string | undefined, day: string): DayFile {
   const f = freshDay(day), o = readJson(dir, dName(day));
   if (!o || o.v !== 1 || o.day !== f.day || o.start !== f.start) return f;
+  // Fix-check N-2: a published field is carried through exactly as published (vt, form and all), so a rerun writes the
+  // same field back and the publish job's "a field never changes" check passes. A field of another shape starts fresh.
   if (o.field && Array.isArray(o.field.nodes) && o.field.nodes.length >= 2 && o.field.nodes.length <= L.MAX_FIELD && o.field.nodes.every((n: any) => isAddr(n?.a) && Number.isFinite(n.h) && n.h > 0 && Number.isFinite(n.vhp)))
-    f.field = { at: Number(o.field.at) || 0, c: Number(o.field.c) || 0, fairness: o.field.fairness ?? null, nodes: o.field.nodes.map((n: any) => ({ a: n.a, vhp: n.vhp, kh: n.kh, h: n.h, ...(Number.isFinite(n.r) ? { r: n.r } : {}) })),
-      ...(o.field.form && typeof o.field.form === "object" ? { form: o.field.form } : {}) } as any;
+    f.field = JSON.parse(JSON.stringify(o.field));
   if (typeof o.void === "string") f.void = o.void.slice(0, 200);
   if (Array.isArray(o.hours)) for (const [k, h] of o.hours.entries()) {
     if (!h || h.i !== k || !Number.isInteger(h.from) || !Number.isInteger(h.to) || typeof h.blocks !== "object" || h.blocks === null) break;
     const hh = h.hh && typeof h.hh === "object" ? Object.fromEntries(Object.entries(h.hh).filter(([a, n]) => isAddr(a) && Number.isInteger(n) && (n as number) >= 1)) : null;
     f.hours.push({ i: k, from: h.from, to: h.to, blocks: Object.fromEntries(Object.entries(h.blocks).filter(([a, n]) => isAddr(a) && Number.isInteger(n) && (n as number) >= 0)) as any, checked: h.checked === 2 ? 2 : 1,
-      ...(Number.isFinite(h.card) ? { card: Number(h.card) } : {}), ...(hh && Object.keys(hh).length ? { hh } : {}) });
+      // N-2: "card": null (no race card for that window) is kept as null, not dropped.
+      ...(Number.isFinite(h.card) ? { card: Number(h.card) } : h.card === null ? { card: null } : {}), ...(hh && Object.keys(hh).length ? { hh } : {}) });
   }
   if (o.picks && typeof o.picks === "object") for (const [k, rows] of Object.entries(o.picks))
     if (k === "0" && Array.isArray(rows)) f.picks[k] = (rows as any[]).filter((x) => Array.isArray(x) && (x.length === 3 || (x.length === 4 && isAddr(x[3]) && x[3] !== x[1])) && isAddr(x[0]) && isAddr(x[1]) && Number.isFinite(x[2]))
@@ -172,12 +176,13 @@ export function sharesByHour(cards: any[], t0: number, hours: number): (Record<s
   return out;
 }
 
-/** Every VHP sample in a folder of race-samples snapshots (vhp-samples.json shape), once each, oldest first. */
-export function samplesIn(dir: string): { at: number; vhp: Record<string, number> }[] {
+/** Every VHP sample in a folder of race-samples snapshots (vhp-samples.json shape), once each, oldest first. A sample
+ *  the two nodes disputed (audit BX-86: `flagged` / `high`) is kept with disputed: true. */
+export function samplesIn(dir: string): { at: number; vhp: Record<string, number>; disputed?: boolean }[] {
   if (!dir) return [];
-  const by = new Map<number, Record<string, number>>();
+  const by = new Map<number, { vhp: Record<string, number>; disputed: boolean }>();
   let files: string[] = [];
-  try { files = fs.readdirSync(dir).filter((f) => /^[\w.-]+\.json$/.test(f)); } catch { return []; }
+  try { files = fs.readdirSync(dir).filter((f) => /^[\w.-]+\.json$/.test(f)).sort(); } catch { return []; }
   for (const f of files) {
     const j = readJson(dir, f);
     if (!j || j.v !== 1 || !Array.isArray(j.samples)) continue;
@@ -185,20 +190,27 @@ export function samplesIn(dir: string): { at: number; vhp: Record<string, number
       if (!x || !Number.isInteger(x.at) || !x.vhp || typeof x.vhp !== "object" || by.has(x.at)) continue;
       const v: Record<string, number> = {};
       for (const [a, n] of Object.entries(x.vhp)) if (isAddr(a) && typeof n === "string" && /^\d{1,20}$/.test(n)) v[a] = Number(n) / 1e8;
-      by.set(x.at, v);
+      by.set(x.at, { vhp: v, disputed: x.flagged !== undefined || x.high !== undefined });
     }
   }
-  return [...by.entries()].sort((p, q) => p[0] - q[0]).map(([at, vhp]) => ({ at, vhp }));
+  return [...by.entries()].sort((p, q) => p[0] - q[0]).map(([at, x]) => ({ at, vhp: x.vhp, ...(x.disputed ? { disputed: true } : {}) }));
 }
 /** Each hour's VHP shares from its samples: every producer's average over the hour's samples (absent = 0), ÷ the sum.
- *  null for an hour with fewer than 6 samples. Exported for the tests. */
-export function sharesFromSamples(all: { at: number; vhp: Record<string, number> }[], t0: number, hours: number): (Record<string, number> | null)[] {
+ *  Fix-check N-5: only samples both nodes agreed on (a disputed one is left out), and only samples whose total VHP is
+ *  within 2% of the hour's median total (the network's VHP barely moves in an hour; VHP swapped between addresses
+ *  keeps the total, while one node reading producers as 0, or an inserted huge value, doesn't). null for an hour with
+ *  fewer than 6 such samples. Exported for the tests. */
+export function sharesFromSamples(all: { at: number; vhp: Record<string, number>; disputed?: boolean }[], t0: number, hours: number): (Record<string, number> | null)[] {
   const out: (Record<string, number> | null)[] = [];
   for (let k = 0; k < hours; k++) {
-    const a = t0 + k * 3600000, in1 = all.filter((x) => x.at >= a && x.at < a + 3600000);
-    if (in1.length < 6) { out.push(null); continue; }
+    const a = t0 + k * 3600000;
+    const in1 = all.filter((x) => x.at >= a && x.at < a + 3600000 && !x.disputed);
+    const tots = in1.map((x) => Object.values(x.vhp).reduce((s, v) => s + v, 0));
+    const sorted = [...tots].sort((p, q) => p - q), med = sorted.length ? sorted[Math.floor((sorted.length - 1) / 2)] : 0;
+    const keep = in1.filter((_, i) => med > 0 && Math.abs(tots[i] - med) <= med * 0.02);
+    if (keep.length < 6) { out.push(null); continue; }
     const sum: Record<string, number> = {};
-    for (const x of in1) for (const [p, v] of Object.entries(x.vhp)) sum[p] = (sum[p] || 0) + v;
+    for (const x of keep) for (const [p, v] of Object.entries(x.vhp)) sum[p] = (sum[p] || 0) + v;
     const tot = Object.values(sum).reduce((s, v) => s + v, 0);
     out.push(tot > 0 ? Object.fromEntries(Object.entries(sum).map(([p, v]) => [p, v / tot])) : null);
   }
@@ -258,7 +270,7 @@ function hourlyReader(node: any) {
     while (lo < hi) { const m = Math.floor((lo + hi) / 2); if ((await timeOf(m)) < t) lo = m + 1; else hi = m; }
     return lo;
   };
-  return async (t0: number, n: number): Promise<Record<string, number>[]> => {
+  return async (t0: number, n: number, signal?: AbortSignal): Promise<Record<string, number>[]> => {
     const t1 = t0 + n * 3600000, hd = await head(), libT = await timeOf(hd.lib);
     if (libT < t1) throw new Error("not irreversible yet");
     let lo = Math.max(1, hd.lib - Math.ceil((libT - t0) / 3000) - 2400);
@@ -266,6 +278,8 @@ function hourlyReader(node: any) {
     const a = await firstAtOrAfter(t0, lo, hd.lib), b = (await firstAtOrAfter(t1, a, hd.lib)) - 1;
     const out: Record<string, number>[] = Array.from({ length: n }, () => ({}));
     for (let s = a; s <= b;) {
+      // Fix-check N-12: a read that lost to the form deadline stops here instead of running on in the background.
+      if (signal?.aborted) throw new Error("the 48-hour block read was stopped (deadline)");
       const got = await blocksAt(node, hd.id, s, Math.min(200, b - s + 1));
       for (const x of got) {
         const k = Math.floor((x.time - t0) / 3600000);
@@ -286,7 +300,9 @@ export async function checkRegistration(c: any, node: any, contract: string) {
   const g: any = (await withRetry(`game ${L.GAME_ID}`, () => c.functions.get_game({ game: L.GAME_ID })))?.result?.game;
   const want = L.PICKS_GAME;
   if (!g || Number(g.kind) !== want.kind || Number(g.list_size) !== want.list_size || Number(g.lock_mode) !== want.lock_mode
-    || String(g.round_size) !== String(want.round_size) || String(g.round_offset) !== String(want.round_offset))
+    || String(g.round_size) !== String(want.round_size) || String(g.round_offset) !== String(want.round_offset)
+    // Fix-check L-5: and the lock and opening (lead, ahead), so a pick can't be made later or earlier than the rules say.
+    || String(g.lead) !== String(want.lead) || String(g.ahead) !== String(want.ahead))
     throw new Error(`game ${L.GAME_ID} isn't registered with this game's rules in the Picks contract; its picks aren't counted`);
   seen.add(contract); if (typeof node === "object" && node) shapeChecked.set(node, seen);
 }
@@ -301,6 +317,8 @@ async function readPicks(node: any, contract: string, round: number): Promise<Pi
     for (const x of rows) {
       const ps = x.pick?.producers;
       // One pick per event: [start] or [start, backup] (the contract keeps them distinct).
+      // Fix-check L-5: only a pick made before the round locked counts (the contract enforces it; this makes sure).
+      if (Number(x.pick?.time || 0) >= L.lockTime(round)) continue;
       if (isAddr(x.player) && Array.isArray(ps) && (ps.length === 1 || ps.length === 2) && ps.every(isAddr) && ps[0] !== ps[1])
         out.push(ps.length === 2 ? [x.player, ps[0], Number(x.pick.time || 0), ps[1]] : [x.player, ps[0], Number(x.pick.time || 0)]);
     }
@@ -348,31 +366,45 @@ export async function stakedOnBoth(read: (node: any) => Promise<Set<string> | nu
   if (only.length) throw new Error(`the two nodes disagree on who is staked (${only.length} wallet${only.length === 1 ? "" : "s"}, e.g. ${only[0]})`);
   return a;
 }
-/** Watch-and-hold: per field node, across a week's finished events, blocks signed while standing ÷ what its multipliers
- *  expected (kh, raised where a window lowered its multiplier). Flags a node at least max(5%, 3 standard deviations)
- *  above expected that won at least 2 events. Exported for the tests. */
+/** Watch-and-hold (fix-check N-6/N-10): per field node, across a week's finished events, the blocks it signed in EVERY
+ *  recorded window (also after its cut, so a long run doesn't count against it) against what its multiplier expected
+ *  (kh, raised where a window lowered its multiplier). The noise is measured from the week itself: each node is judged
+ *  against the other nodes' spread (leave-one-out over-dispersion, at least Poisson). Flags a node
+ *   - z ≥ 3.4 over the week with at least 2 wins (steady over-signing), or
+ *   - z ≥ 5 in one event it won (gaming a single day).
+ *  On the round-2 reviewer's simulator: honest weeks held 1.5% (5% day-to-day spread) and 1.0% (no form); one gamed
+ *  event caught 98%; a node 3% under its form caught 13% (a week of blocks can't show 3% much better). The publish job
+ *  runs the same rule (histcheck watch_week). Exported for the tests. */
+export const WATCH = Object.freeze({ weekZ: 3.4, weekWins: 2, eventZ: 5 });
 export function watchWeek(events: DayFile[], cut = L.CUT): { a: string; q: number; wins: number; events: number }[] {
-  const by = new Map<string, { got: number; exp: number; wins: number; events: number }>();
-  for (const df of events) {
+  const by = new Map<string, { got: number; exp: number; wins: number; events: number; chi: number; m: number; ev: [number, number, boolean][] }>();
+  let chi = 0, m = 0;
+  const evs = [...events].sort((x, y) => (x.start ?? 0) - (y.start ?? 0));
+  for (const df of evs) {
     if (df.void || !df.field || !df.done) continue;
-    const outAt = new Map(df.cuts.map((c) => [c.a, c.at]));
     for (const n of df.field.nodes) {
-      const s = by.get(n.a) ?? { got: 0, exp: 0, wins: 0, events: 0 };
-      const last = outAt.get(n.a) ?? df.hours.length;
-      for (let i = 0; i < last && i < df.hours.length; i++) {
-        const h = df.hours[i], base = L.hInt(n), used = h.hh && Number.isInteger(h.hh[n.a]) ? h.hh[n.a] : base;
-        s.got += Number(h.blocks[n.a]) || 0;
-        s.exp += n.kh * (cut / 3600000) * (base / used);
+      const s = by.get(n.a) ?? { got: 0, exp: 0, wins: 0, events: 0, chi: 0, m: 0, ev: [] };
+      let g = 0, e = 0;
+      for (let i = 0; i < df.hours.length; i++) {
+        const h = df.hours[i], base = L.hInt(n), used = h.hh && Number.isInteger(h.hh[n.a]) && h.hh[n.a] >= 1 && h.hh[n.a] < base ? h.hh[n.a] : base;
+        g += Number(h.blocks[n.a]) || 0;
+        e += n.kh * (cut / 3600000) * (base / used);
       }
-      s.events++; if (df.winner === n.a) s.wins++;
+      if (e > 0) { const c = (g - e) * (g - e) / e; chi += c; m++; s.chi += c; s.m++; }
+      s.got += g; s.exp += e; s.events++;
+      const won = df.winner === n.a;
+      if (won) s.wins++;
+      s.ev.push([g, e, won]);
       by.set(n.a, s);
     }
   }
   const out: { a: string; q: number; wins: number; events: number }[] = [];
   for (const [a, s] of by) {
     if (!(s.exp > 0)) continue;
-    const q = s.got / s.exp, sd = 1 / Math.sqrt(s.exp);
-    if (s.wins >= 2 && q >= 1 + Math.max(0.05, 3 * sd)) out.push({ a, q: Math.round(q * 1000) / 1000, wins: s.wins, events: s.events });
+    const phi = Math.max(1, m > s.m ? (chi - s.chi) / (m - s.m) : 1);
+    const z = (s.got - s.exp) / Math.sqrt(phi * s.exp);
+    const oneDay = s.ev.some(([g, e, won]) => won && e > 0 && (g - e) / Math.sqrt(phi * e) >= WATCH.eventZ);
+    if ((s.wins >= WATCH.weekWins && z >= WATCH.weekZ) || oneDay) out.push({ a, q: Math.round((s.got / s.exp) * 1000) / 1000, wins: s.wins, events: s.events });
   }
   return out;
 }
@@ -436,8 +468,9 @@ export async function run(o: Opts) {
   const winC = o.check ? (o.windowOf ? (a: number, b: number) => o.windowOf!(o.check, a, b) : windowReader(o.check)) : null;
   // With fake block windows (the tests) and no fake hours, the form is read hour by hour from those windows.
   const viaWindows = (node: any) => async (a: number, n: number) => { const out = []; for (let k = 0; k < n; k++) out.push((await o.windowOf!(node, a + k * 3600000, a + (k + 1) * 3600000)).counts); return out; };
-  const hoursFor = (node: any) => (o.hoursOf ? (a: number, n: number) => o.hoursOf!(node, a, n) : o.windowOf ? viaWindows(node) : hourlyReader(node));
+  const hoursFor = (node: any) => (o.hoursOf ? (a: number, n: number, sig?: AbortSignal) => o.hoursOf!(node, a, n, sig) : o.windowOf ? viaWindows(node) : hourlyReader(node));
   const hrsP = hoursFor(o.p), hrsC = o.check ? hoursFor(o.check) : null;
+  const allowNoForm = o.allowNoForm ?? (!!o.practice || E.LASTNODE_ALLOW_NO_FORM === "true");
   /** The form for an event's field (owner, 2026-10-29): the 48 hours before its card, irreversible blocks, matching on
    *  both nodes, against each hour's race card. "wait": try again next run (until an hour after picks open, then the
    *  field is set without form so the event still runs); otherwise { form, info } (form null: not enough race cards). */
@@ -445,7 +478,14 @@ export async function run(o: Opts) {
     const t1 = ev.cardTime, t0 = t1 - L.FORM_HOURS * 3600000;
     // Fix-check LNF-16: a field without form only 3 hours after picks open (a node that disagrees can't force it sooner).
     const late = now.time >= ev.opens + 3 * 3600000;
-    const giveUp = (why: string) => { problems.push(`${ev.day}: form not measured (${why}); field set without it`); return { form: null, info: { hours: 0, note: why.slice(0, 120) } }; };
+    // Fix-check N-10/N-11 (launch gate): on mainnet a field is never set without form unless the owner allows it
+    // (LASTNODE_ALLOW_NO_FORM=true); otherwise the field waits, and an event whose form can't be measured before its
+    // picks lock is void. Testnet practice may run without form.
+    const giveUp = (why: string, hours = 0, warn = true): "wait" | { form: null; info: any } => {
+      if (!allowNoForm) { problems.push(`${ev.day}: form not measured (${why}); the field waits (LASTNODE_ALLOW_NO_FORM is off)`); return "wait"; }
+      (warn ? (x: string) => problems.push(x) : console.log)(`${ev.day}: form not measured (${why}); field set without it`);
+      return { form: null, info: { hours, note: why.slice(0, 120) } };
+    };
     if (now.libTime < t1) return late ? giveUp("blocks not irreversible") : "wait";
     let a: Record<string, number>[], b: Record<string, number>[] | null = null;
     try {
@@ -453,8 +493,11 @@ export async function run(o: Opts) {
       // event's hours are recorded first, and this is tried again next run).
       const ms = o.formDeadlineMs ?? 4 * 60000;
       let timer: any;
-      const deadline = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error(`the 48-hour block read took over ${Math.round(ms / 1000)} s`)), ms); });
-      try { [a, b] = await Promise.race([Promise.all([hrsP(t0, L.FORM_HOURS), hrsC ? hrsC(t0, L.FORM_HOURS) : Promise.resolve(null)]), deadline]); }
+      const stop = new AbortController();
+      const deadline = new Promise<never>((_, rej) => { timer = setTimeout(() => { stop.abort(); rej(new Error(`the 48-hour block read took over ${Math.round(ms / 1000)} s`)); }, ms); });
+      const reads = Promise.all([hrsP(t0, L.FORM_HOURS, stop.signal), hrsC ? hrsC(t0, L.FORM_HOURS, stop.signal) : Promise.resolve(null)]);
+      reads.catch(() => { /* a read stopped after the deadline: already reported */ });
+      try { [a, b] = await Promise.race([reads, deadline]); }
       finally { clearTimeout(timer); }
     } catch (e: any) { if (late) return giveUp(`couldn't read the blocks: ${e.message}`); problems.push(`${ev.day}: form: ${e.message} (tried again next run)`); return "wait"; }
     if (b && JSON.stringify(a.map((x) => Object.entries(x).sort())) !== JSON.stringify(b.map((x) => Object.entries(x).sort()))) {
@@ -470,7 +513,14 @@ export async function run(o: Opts) {
     const hours = a.map((blocks, k) => ({ blocks, shares: shares[k] }));
     const used = hours.filter((h) => h.shares && Object.values(h.blocks).some((x) => x > 0)).length;
     const form = L.formOf(hours);
-    return { form, info: form ? { hours: used, from: t0, to: t1 } : { hours: used, note: `VHP samples for only ${used} of ${L.FORM_HOURS} hours` } };
+    if (form) return { form, info: { hours: used, from: t0, to: t1 } };
+    const note = `VHP samples for only ${used} of ${L.FORM_HOURS} hours`;
+    // N-11: too few samples this run is a wait (the samples may be late), not a field without form at once.
+    // Allowed to run without form: at once when there are no samples at all (no race-samples data yet, the launch
+    // state), or in testnet practice; samples that exist but are too few wait as above.
+    if (allowNoForm && (o.practice || !samples().length)) { console.log(`${ev.day}: no form (${note}); field set without it`); return { form: null, info: { hours: used, note } }; }
+    if (!late) { problems.push(`${ev.day}: form: ${note} (tried again next run)`); return "wait"; }
+    return giveUp(note, used, false);
   }
   const picksRead = o.picksOf ?? (contract ? (node: any, r: number) => readPicks(node, contract, r) : null);
   const pMain = o.pp ?? o.p, pCheck = o.pp ? (o.pcheck ?? null) : o.check;
@@ -507,7 +557,10 @@ export async function run(o: Opts) {
         const card = cardAt(RACE, ev.cardTime, ev.opens);
         if (card) {
           const fm = await formFor(ev);
-          if (fm === "wait") continue;
+          if (fm === "wait") {
+            if (now.time >= ev.lock) { df.void = "form couldn't be measured before picks locked"; touched.add(df.day); }
+            continue;
+          }
           const f = L.makeField(card, o.trials, fm.form, fm.info);
           if (f && !fm.form) f.form = fm.info;          // says why there is no form
           if (f) { df.field = f; touched.add(df.day); console.log(`${df.day}: field of ${f.nodes.length}, c = ${f.c}${fm.form ? `, form over ${fm.info.hours} h: ${f.nodes.map((x: any) => x.r).join(" ")}` : `, no form (${fm.info.note})`}`); }
@@ -520,6 +573,13 @@ export async function run(o: Opts) {
       while (!res.done && hoursRead < MAX_HOURS_PER_RUN) {
         const i = df.hours.length, t0 = df.start + i * L.CUT, t1 = t0 + L.CUT;
         if (now.libTime < t1) break;
+        // Fix-check N-4 (LNF-3): the window is checked against the FIRST race card taken at or after its end, whose VHP
+        // covers the whole window (VHP moved in after the window started is seen); a node that gained VHP since the
+        // field's card has its multiplier lowered for this window. The hour waits for that card; only if race-data has
+        // none 2 hours after the window ends, the latest card taken by its end (never older than the field's).
+        const after = raceCards().find((c) => Number(c.at) >= t1);
+        if (!after && now.time < t1 + 2 * 3600000) { console.log(`${df.day} hour ${i}: waiting for the race card after it`); break; }
+        const rc = after || raceCards().filter((c) => Number(c.at) < t1 && Number(c.at) >= Number(df.field.at)).pop() || null;
         const w = await winP(t0, t1);
         let checked = 1;
         if (winC) {
@@ -542,9 +602,6 @@ export async function run(o: Opts) {
         const inField = new Set(df.field.nodes.map((n: any) => n.a));
         const blocks: Record<string, number> = {};
         for (const [a, n] of Object.entries(w.counts)) if (inField.has(a)) blocks[a] = n;
-        // Fix-check LNF-3: the window checked against the latest race card taken by its end (never older than the
-        // field's); a node that gained VHP since the field's card has its multiplier lowered for this window.
-        const rc = raceCards().filter((c) => Number(c.at) <= t1 && Number(c.at) >= Number(df.field.at)).pop() || null;
         const hh = rc ? L.raceCut(df.field, rc) : {};
         df.hours.push({ i, from: w.from, to: w.to, blocks, checked, card: rc ? Number(rc.at) : null, ...(Object.keys(hh).length ? { hh } : {}) });
         for (const [k, v] of Object.entries(got)) df.picks[k] = v;
@@ -585,16 +642,19 @@ export async function run(o: Opts) {
   };
   const nowW = L.weekOf(now.time), lw = nowW - 1;
   const inWeek = (w: number) => (df: DayFile) => df.week === w && df.start < now.time;
-  let lastWeek: any = null;
+  let lastWeek: any = null, lwRows: any[] = [];
   if (lw >= 0) {
     const evs = [...days.values()].filter(inWeek(lw));
     const complete = evs.length > 0 && evs.every((df) => df.done || df.void) && coversWeek(evs, lw, firstStart);
-    lastWeek = { week: lw, start: L.weekStart(lw), final: now.time >= L.weekStart(nowW) + CORRECTION_MS && complete, rows: view(rowsOf(inWeek(lw))) };
+    lwRows = view(rowsOf(inWeek(lw)));
+    // Fix-check L-4: board.json shows last week's top 2,000 too; the vault file is built from the whole list (and the
+    // publish job checks it against the day files, not against board.json).
+    lastWeek = { week: lw, start: L.weekStart(lw), final: now.time >= L.weekStart(nowW) + CORRECTION_MS && complete, rows: lwRows.slice(0, BOARD_ROWS) };
   }
   const board = {
     v: 1, updated: new Date(now.time).toISOString(),
     // Fix-check LNF-7: the shown lists keep their top 2,000 rows, so board.json stays under the publish job's 2 MB
-    // however many wallets ever played. Last week stays whole (the vault file is checked against it).
+    // however many wallets ever played (last week too: L-4).
     today: { day: today.day, rows: view(rowsOf((df) => df.day === today.day)).slice(0, BOARD_ROWS) },
     week: { week: nowW, start: L.weekStart(nowW), rows: view(rowsOf(inWeek(nowW))).slice(0, BOARD_ROWS) },
     lastWeek,
@@ -607,9 +667,9 @@ export async function run(o: Opts) {
   // first / second: empty (a staked game: no free prize). Not on the testnet (practice has no vault).
   let vault: any = null;
   if (!o.practice && lastWeek && lastWeek.final && now.time < L.weekStart(nowW) + 3 * L.DAY) {
-    const players = lastWeek.rows.filter((r: any) => r.pts >= 1).map((r: any) => r.a);
+    const players = lwRows.filter((r: any) => r.pts >= 1).map((r: any) => r.a);
     const staked = await (o.stakedOf ? o.stakedOf(lw, players) : stakedOnBoth((n) => readStakedV6(n, lw, players), o.p, o.check)).catch((e: Error) => { problems.push(`vault file for week ${lw}: ${e.message} (tried again next run)`); return null; });
-    if (staked) vault = { game: L.GAME_ID, week: lw, final: true, rows: vaultScores(lastWeek.rows.filter((r: any) => staked.has(r.a))), first: [], second: [] };
+    if (staked) vault = { game: L.GAME_ID, week: lw, final: true, rows: vaultScores(lwRows.filter((r: any) => staked.has(r.a))), first: [], second: [] };
     else if (!o.stakedOf) console.log(`week ${lw} is final; no vault file yet (the game contract has no per-game stakes before v6)`);
   }
   // ── watch-and-hold (owner, 2026-10-29; fix-check LNF-8/LNF-9) ──
@@ -732,6 +792,9 @@ async function main() {
   return run({ p, check, pp: tp, pcheck: null, game, practice: true, picksContract: picks, rankedOf, raceDir, samplesDir, out: inTestData(E.TESTNET_LASTNODE_OUT || dir), prev: inTestData(E.TESTNET_LASTNODE_PREV || dir) });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((e) => { console.error(e); process.exit(1); });
+/** Fix-check N-12: the process ends as soon as a run has written its files (a read that lost to a deadline, or a
+ *  socket left open, can't keep the job running into its timeout). Exported for the tests. */
+export function finish(p: Promise<unknown>) {
+  return p.then(() => process.exit(0), (e) => { console.error(e); process.exit(1); });
 }
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) finish(main());

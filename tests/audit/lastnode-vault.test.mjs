@@ -12,6 +12,7 @@ const APP = process.env.APP || ".";
 const { run, vaultScores } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
 const L = globalThis.KLastNode;
 const A = (c) => "1" + c.repeat(33);
+import { yml, AT, P1, P2, P3, P4, linux, publishScript, publisher, idx, NODES, CUT_ORDER, WINNER, dayFile, boardOf, PICKS, dayW3, brd, vgood, history, REST_W3, raceFiles, gamed, dayG, S10, grown } from "./lastnode-vault.helpers.mjs";
 const row = (a, pts, rides = 0, jumps = 0) => ({ a, pts, rides, jumps });
 
 test("scores: the real points when they already give the board's order", () => {
@@ -82,7 +83,6 @@ function weekFiles(w, players, { events = [1], blocks = { N: 100, M: 10 } } = {}
   fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify({ v: 1, days, contract: null, game: 13 }));
   return dir;
 }
-const P1 = A("P"), P2 = A("Q"), P3 = A("R");
 const go = (prev, now, stakedOf) => run({ p: "m", check: null, prev, out: prev, raceDir: "", picksContract: null, windowOf: async () => { throw new Error("no blocks needed"); },
   picksOf: async () => [], rankedOf: async (w) => new Set(w), stakedOf, trials: 200, now: { time: now, libTime: now } });
 
@@ -132,16 +132,13 @@ test("no vault file while stakes can't be read (before v6), and never in testnet
 
 // The publish job's shape check accepts the recorder's vault file and refuses a bad one. Run for real (python3), with
 // the clock set to 13 hours after week 3 ended (KG_TEST_NOW).
-const yml = fs.readFileSync(path.resolve(APP, ".github/workflows/lastnode.yml"), "utf8");
 const checkPy = yml.match(/<<'PY'\n([\s\S]*?)\n\s*PY\n/)[1].split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n");
-const AT = (w, h) => String(L.weekStart(w) + h * 3600000);
 const shapeRun = (dir, now = AT(4, 13)) => { const t = fs.mkdtempSync(path.join(os.tmpdir(), "lns-rt-"));
   try { execFileSync("python3", ["-I", "-c", checkPy, dir], { stdio: "pipe", env: { ...process.env, KG_TEST_NOW: now, RUNNER_TEMP: t } }); return { ok: true, skip: fs.readFileSync(path.join(t, "vault-skip.txt"), "utf8") }; }
   catch (e) { return { ok: false, err: String(e.stderr) }; } };
 const shapeOk = (dir, now) => shapeRun(dir, now).ok;
 const brow = (a, place, pts) => ({ a, place, pts, rides: 0, jumps: 0, events: 1, ranked: true });
 const board = (week, rows, final = true) => ({ v: 1, updated: "x", today: { rows: [] }, week: { rows: [] }, lastWeek: { week, final, rows }, allTime: { rows: [] } });
-const P4 = A("S");
 function vaultDir(j, name = "W3.json", b = board(3, [brow(P1, 1, 9), brow(P2, 1, 9), brow(P4, 3, 4), brow(P3, 4, 2)])) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lns-vp-"));
   fs.mkdirSync(path.join(dir, "vault"));
@@ -178,78 +175,6 @@ test("audit LN-1: only last week's file, only inside its window (the rows themse
   assert.equal(shapeOk(vaultDir(good), AT(5, 13)), false, "a week later, the file is two weeks old");
 });
 
-// The publish step's real shell against a throwaway bare repository (bash, git): skipped on Windows.
-const linux = process.platform === "win32" ? (name, fn) => test.skip(name, fn) : test;
-function publishScript() {
-  const lines = yml.split("\n");
-  const i = lines.findIndex((l) => /name:\s*Push games-data\/lastnode/.test(l));
-  const r = lines.findIndex((l, j) => j > i && /^\s+run:\s*\|\s*$/.test(l));
-  const indent = lines[r + 1].match(/^\s*/)[0].length;
-  const out = [];
-  for (let j = r + 1; j < lines.length; j++) { const l = lines[j]; if (l.trim() && l.match(/^\s*/)[0].length < indent) break; out.push(l.slice(indent)); }
-  const s = out.join("\n");
-  assert.match(s, /^remote=.*$/m);
-  return s.replace(/^remote=.*$/m, 'remote="$FAKE_REMOTE"').replace(/sleep \$\(\(try \* 5\)\)/g, "sleep 0");
-}
-function publisher() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lns-pub-"));
-  const remote = path.join(root, "remote.git");
-  const env = { ...process.env, HOME: root, GIT_CONFIG_NOSYSTEM: "1", FAKE_REMOTE: remote, GH_TOKEN: "x", KG_TEST_NOW: AT(4, 13) };
-  execFileSync("git", ["init", "-q", "--bare", remote], { env });
-  let n = 0;
-  return {
-    remote, env,
-    publish(files, extraEnv = {}) {
-      const t = path.join(root, `run${++n}`), IN = path.join(t, "incoming");
-      fs.mkdirSync(path.join(IN, "lastnode", "vault"), { recursive: true });
-      for (const [k, v] of Object.entries(files)) fs.writeFileSync(path.join(IN, "lastnode", k), typeof v === "string" ? v : JSON.stringify(v));
-      const r = spawnSync("bash", ["-c", publishScript()], { cwd: t, env: { ...env, IN, RUNNER_TEMP: t, ...extraEnv }, encoding: "utf8" });
-      return { status: r.status, out: r.stdout + r.stderr };
-    },
-    /** Put files on games-data directly, as earlier runs would have published them. */
-    seed(files) {
-      const w = path.join(root, `seed${++n}`);
-      execFileSync("git", ["init", "-q", w], { env });
-      const g = (...a) => execFileSync("git", a, { cwd: w, env, encoding: "utf8" });
-      try { g("fetch", "-q", remote, "games-data"); g("checkout", "-q", "FETCH_HEAD"); } catch { /* first */ }
-      for (const [k, v] of Object.entries(files)) { const f = path.join(w, "lastnode", k); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v)); }
-      g("add", "-A"); g("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "seed"); g("push", "-q", remote, "HEAD:refs/heads/games-data");
-    },
-    show: (name) => { try { return execFileSync("git", ["--git-dir", remote, "show", `games-data:lastnode/${name}`], { env, encoding: "utf8" }); } catch { return null; } },
-  };
-}
-const idx = { v: 1, updated: "x", days: [], contract: null, game: 13 };
-
-// Last week's history (week 3 starts Monday 2026-11-09), made by the real rules: one event, an 11-node field, one cut
-// an hour. P1 and P2 ride the winner (10 + 5 = 15), P4's node goes at cut 5 (4), P3's at cut 3 (2).
-const NODES = Array.from({ length: 11 }, (_, i) => A("ABCDEFGHJKL"[i]));
-const CUT_ORDER = NODES.slice(1), WINNER = NODES[0];
-function dayFile(day, pickRows, { hours = 10, extra = {}, raceCard = undefined } = {}) {
-  const start = Date.parse(`${day}T14:00:00Z`);
-  const field = { at: start - 26 * 3600000, c: 0, fairness: null, nodes: NODES.map((a, i) => ({ a, vhp: 2000 - i * 10, kh: 100, h: 1 })), ...(raceCard !== undefined ? { vt: 21450 } : {}) };
-  // raceCard: the card every window names (fix-check LNF-3), and the multipliers it lowers.
-  const hs = Array.from({ length: hours }, (_, i) => ({ i, from: 1000 + i * 1200, to: 2199 + i * 1200, checked: 2,
-    blocks: Object.fromEntries(NODES.filter((a) => !CUT_ORDER.slice(0, i).includes(a)).map((a) => [a, a === CUT_ORDER[i] ? 0 : 100])),
-    ...(raceCard !== undefined ? { card: raceCard ? raceCard.at : null, ...(raceCard && Object.keys(L.raceCut(field, raceCard)).length ? { hh: L.raceCut(field, raceCard) } : {}) } : {}) }));
-  const res = L.cutsFrom(field, hs);
-  const picks = { 0: pickRows.map(([w, s0, b]) => (b ? [w, s0, start - 3600000, b] : [w, s0, start - 3600000])) };
-  const players = pickRows.map(([w, s0, b]) => ({ a: w, r: L.playerResult(field, res, { start: s0, backup: b || null }) })).filter((x) => x.r.entered)
-    .map(({ a, r }) => ({ a, start: r.start, jumpTo: r.jumpTo, out: r.out, survived: r.survived, rode: r.rode, jumped: r.jumped, points: r.points, ranked: true }))
-    .sort((x, y) => y.points - x.points || (x.a < y.a ? -1 : 1));
-  return { v: 1, day, start, week: L.weekOf(start), field, hours: hs, picks, cuts: res.cuts, standing: res.standing, winner: res.winner, done: res.done, players, ...extra };
-}
-const boardOf = (days, final = true, week = 3) => {
-  const rows = days.flatMap((d) => d.players.map((p) => ({ player: p.a, points: p.points, rode: p.rode, jumped: p.jumped, ranked: p.ranked })));
-  const rk = new Set(rows.filter((x) => x.ranked).map((x) => x.player));
-  const view = L.places(L.board(rows)).map((x) => ({ a: x.player, place: x.place, pts: x.pts, rides: x.rides, jumps: x.jumps, events: x.events, ranked: rk.has(x.player) }));
-  return { v: 1, updated: "x", today: { rows: [] }, week: { rows: [] }, lastWeek: { week, start: L.weekStart(week), final, rows: view }, allTime: { rows: [] } };
-};
-const PICKS = [[P1, WINNER], [P2, WINNER], [P4, CUT_ORDER[4]], [P3, CUT_ORDER[2]]];
-const dayW3 = dayFile("2026-11-10", PICKS);
-const brd = boardOf([dayW3]);
-const vgood = { game: 13, week: 3, final: true, rows: [{ player: P1, points: 15 }, { player: P2, points: 15 }, { player: P3, points: 2 }], first: [], second: [] };
-const history = (b = brd, day = dayW3) => ({ "board.json": b, "D2026-11-10.json": day, "index.json": { ...idx, days: ["2026-11-10"] } });
-
 test("the test history follows the rules: 15, 15, 4 and 2 points", () => {
   assert.deepEqual(brd.lastWeek.rows.map((r) => [r.a, r.pts]), [[P1, 15], [P2, 15], [P4, 4], [P3, 2]]);
   assert.deepEqual(vaultScores(brd.lastWeek.rows.filter((r) => r.a !== P4)), vgood.rows);
@@ -269,7 +194,7 @@ linux("audit LN-1: the publish step refuses a planted week, keeps a published fi
   const same = pub.publish({ ...history(), "vault/W3.json": vgood });
   assert.equal(same.status, 0, same.out);
   const other = { ...vgood, rows: [{ player: P1, points: 15 }] };
-  const diff = pub.publish({ ...history(), "index.json": { ...idx, days: ["2026-11-10"], updated: "y" }, "vault/W3.json": other });
+  const diff = pub.publish({ ...history(), "index.json": { ...idx, days: ["2026-11-10", ...REST_W3], updated: "y" }, "vault/W3.json": other });
   assert.notEqual(diff.status, 0, "a different copy fails the run"); assert.match(diff.out, /::error::Already published, and this run's copy is DIFFERENT/);
   assert.deepEqual(JSON.parse(pub.show("vault/W3.json")), vgood, "the published file is kept");
   assert.equal(JSON.parse(pub.show("index.json")).updated, "y", "the rest of the run is still published");
@@ -292,7 +217,7 @@ linux("fix-check LNF-1: a vault file must have exactly the points last week's da
 linux("fix-check LNF-5: a vault file that doesn't match is left out, the rest is published, and the run fails", () => {
   const pub = publisher();
   pub.seed(history());
-  const r = pub.publish({ ...history(), "index.json": { ...idx, days: ["2026-11-10"], updated: "z" }, "vault/W3.json": { ...vgood, rows: [{ player: P1, points: 255 }] } });
+  const r = pub.publish({ ...history(), "index.json": { ...idx, days: ["2026-11-10", ...REST_W3], updated: "z" }, "vault/W3.json": { ...vgood, rows: [{ player: P1, points: 255 }] } });
   assert.notEqual(r.status, 0); assert.equal(JSON.parse(pub.show("index.json")).updated, "z", "the rest is published"); assert.equal(pub.show("vault/W3.json"), null);
 });
 
@@ -323,7 +248,7 @@ linux("fix-check LNF-2: a running day may only add hours; LNF-10: a day's week m
   const pub = publisher();
   const part = dayFile("2026-11-10", PICKS, { hours: 4 });
   pub.seed({ "D2026-11-10.json": part, "index.json": { ...idx, days: ["2026-11-10"] } });
-  const more = pub.publish({ "D2026-11-10.json": dayW3, "board.json": brd, "index.json": { ...idx, days: ["2026-11-10"] } });
+  const more = pub.publish(history());
   assert.equal(more.status, 0, more.out);
   const pub2 = publisher();
   const wrongWeek = { ...dayW3, week: 2 };
@@ -349,15 +274,6 @@ linux("fix-check LNF-12: the Vault's 3 days end with no file while the week had 
   assert.notEqual(r.status, 0); assert.match(r.out, /no vault file was published/);
 });
 
-// Fix-check LNF-3: each window's lowered multipliers are checked against the real race card in the publish job.
-function raceFiles(cards) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), "lns-race-"));
-  fs.writeFileSync(path.join(d, "W003.json"), JSON.stringify({ v: 1, week: 3, races: [{ id: "x", cards }] }));
-  return d;
-}
-const S10 = Date.parse("2026-11-10T14:00:00Z");
-const grown = { at: S10 - 2 * 3600000, field: NODES.map((a, i) => ({ a, vhp: i === 5 ? 4000 : 2000 - i * 10, k: 600 })), paddock: [] };
-
 linux("fix-check LNF-3: a window's lowered multipliers must be what its race card gives", () => {
   const dir = raceFiles([grown]);
   const okDay = dayFile("2026-11-10", PICKS, { raceCard: grown });
@@ -376,11 +292,65 @@ linux("fix-check LNF-3: a window's lowered multipliers must be what its race car
   assert.notEqual(r3.status, 0); assert.match(r3.out, /skipped the race card check/);
 });
 
-linux("watch-and-hold: a held week is published as HOLD-W<week>.json and the run fails so you're told", () => {
-  const pub = publisher();
-  pub.seed(history());
-  const hold = { game: 13, week: 3, nodes: [{ a: NODES[3], q: 1.6, wins: 3, events: 3 }], why: "held for the owner's review" };
-  const r = pub.publish({ ...history(), "vault/HOLD-W3.json": hold });
+linux("watch-and-hold: a held week is published as HOLD-W<week>.json and the run fails so you're told", async () => {
+  const { watchWeek } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+  const pub = publisher(); pub.chain(gamed.chain());
+  pub.seed(gamed.history());
+  const nodes = watchWeek([dayG], L.CUT);
+  assert.deepEqual(nodes.map((x) => x.a), [WINNER], "the rule flags the winner");
+  const hold = { game: 13, week: 3, nodes, why: "held for the owner's review" };
+  const r = pub.publish({ ...gamed.history(), "vault/HOLD-W3.json": hold });
   assert.notEqual(r.status, 0); assert.match(r.out, /HELD for your review/);
   assert.deepEqual(JSON.parse(pub.show("vault/HOLD-W3.json")), hold); assert.equal(pub.show("vault/W3.json"), null);
+  // Fix-check L-8: a hold file the day files don't give (a node the rule doesn't flag) is refused.
+  const pub2 = publisher(); pub2.seed(history());
+  const r2 = pub2.publish({ ...history(), "vault/HOLD-W3.json": { ...hold, nodes: [{ a: NODES[3], q: 1.6, wins: 3, events: 3 }] } });
+  assert.notEqual(r2.status, 0); assert.match(r2.out, /isn't what watch-and-hold gives/); assert.equal(pub2.show("vault/HOLD-W3.json"), null);
+});
+
+// ── Fix-check round 2, N-9 (M-W-n2, M-H-n6): the publish job enforces the hold itself ──
+const holdOf = async (days) => { const { watchWeek } = await import(path.resolve(APP, "bot/games/lastnode.ts")); return { game: 13, week: 3, nodes: watchWeek(days, L.CUT), why: "held" }; };
+const vgoodG = { ...vgood };
+linux("M-W-n2: a week held on games-data can't be filed by a later run unless the owner released it", async () => {
+  const pub = publisher(); pub.chain(gamed.chain());
+  pub.seed({ ...gamed.history(), "vault/HOLD-W3.json": await holdOf([dayG]) });
+  const r = pub.publish({ ...gamed.history(), "vault/W3.json": vgoodG });                 // a bad record run: W3, no HOLD
+  assert.notEqual(r.status, 0, r.out); assert.equal(pub.show("vault/W3.json"), null, "the held week stays unfiled");
+  const ok = pub.publish({ ...gamed.history(), "vault/W3.json": vgoodG }, { LASTNODE_RELEASE_WEEKS: "3" });   // released: filed
+  assert.equal(ok.status, 0, ok.out); assert.ok(pub.show("vault/W3.json"));
+});
+linux("M-W-n2: one run can't publish both HOLD-W<week> and W<week>", async () => {
+  const pub = publisher(); pub.chain(gamed.chain()); pub.seed(gamed.history());
+  const r = pub.publish({ ...gamed.history(), "vault/W3.json": vgoodG, "vault/HOLD-W3.json": await holdOf([dayG]) });
+  assert.notEqual(r.status, 0); assert.equal(pub.show("vault/W3.json"), null);
+});
+linux("M-W-n2: the publish job recomputes the hold from the day files (a flagged week needs the owner's release)", () => {
+  // Last week's day files flag the winner (160 blocks an hour against 100); W3 with no HOLD file and no release.
+  const pub = publisher(); pub.chain(gamed.chain()); pub.seed(gamed.history());
+  const r = pub.publish({ ...gamed.history(), "vault/W3.json": vgoodG });
+  assert.notEqual(r.status, 0); assert.match(r.out, /watch-and-hold flags last week/); assert.equal(pub.show("vault/W3.json"), null);
+  // A week the rule doesn't flag is filed as before.
+  const pub2 = publisher(); pub2.seed(history());
+  assert.equal(pub2.publish({ ...history(), "vault/W3.json": vgood }).status, 0); assert.ok(pub2.show("vault/W3.json"));
+  const rel = pub.publish({ ...gamed.history(), "vault/W3.json": vgoodG }, { LASTNODE_RELEASE_WEEKS: "3" });
+  assert.equal(rel.status, 0, rel.out); assert.ok(pub.show("vault/W3.json"));
+});
+linux("fix-check I-7: LASTNODE_RELEASE_WEEKS is read strictly (\"3,,7\" or \"0x3\" releases nothing)", () => {
+  for (const bad of ["3,,7", "0x3", "3;4", "three"]) {
+    const pub = publisher(); pub.chain(gamed.chain()); pub.seed(gamed.history());
+    const r = pub.publish({ ...gamed.history(), "vault/W3.json": vgoodG }, { LASTNODE_RELEASE_WEEKS: bad });
+    assert.notEqual(r.status, 0, bad); assert.equal(pub.show("vault/W3.json"), null, bad); assert.match(r.out, /isn't a list of week numbers/, bad);
+  }
+});
+
+// ── Fix-check round 2 (FIXCHECK-LASTNODE-2.md), pasted in from the reviewer's paste-in file ──
+linux("M-R-2: a race card that reaches race-data after a window was published never blocks later publishes", () => {
+  const okDay = dayFile("2026-11-10", PICKS, { raceCard: grown });
+  const pub = publisher();
+  const r1 = pub.publish(history(boardOf([okDay]), okDay), { FAKE_RACE: raceFiles([grown]) });
+  assert.equal(r1.status, 0, r1.out);
+  // The race recorder pushes a card late (queued publish job / re-run): taken 40 minutes before window 0's end, same VHP.
+  const late = { ...grown, at: okDay.start + 20 * 60000 };
+  const r2 = pub.publish(history(boardOf([okDay]), okDay), { FAKE_RACE: raceFiles([grown, late]) });
+  assert.equal(r2.status, 0, `the same published day file is refused after a late card: ${r2.out}`);
 });
