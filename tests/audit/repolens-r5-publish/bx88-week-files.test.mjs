@@ -237,3 +237,28 @@ test("G-A-2: a non-canonical transfer seen on one node only holds the target (a 
   assert.ok(ts.every((t) => !/standard encoding/.test(t.void || "")), "one node's word voided a target for good");
   assert.ok(r.problems.some((p) => /only one node reports a non-standard VHP transfer/.test(p)));
 });
+
+// Round-6 blind review (#1): a bad run that pushes the newest real round's time up to the job's clock can't hold the
+// honest runs after it (no neighbour-time rule any more).
+test("review #1: an inflated time on a new round doesn't hold the honest runs after it", async () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "rv1-")), remote = path.join(d, "r.git");
+  spawnSync("git", ["init", "-q", "--bare", remote]);
+  const sh = path.join(d, "publish.sh"); fs.writeFileSync(sh, publishScript());
+  const race = raceDir();
+  const show = (f) => spawnSync("git", ["--git-dir", remote, "show", `games-data:blockx/${f}`], { encoding: "utf8" });
+  const prev = () => { const p = fs.mkdtempSync(path.join(d, "prev-"));
+    for (const f of spawnSync("git", ["--git-dir", remote, "ls-tree", "--name-only", "games-data:blockx"], { encoding: "utf8" }).stdout.split("\n").filter(Boolean)) if (/^(index|board|W\d{3}|P\d{3})\.json$/.test(f)) fs.writeFileSync(path.join(p, f), show(f).stdout);
+    return p; };
+  const rec = async (lib, pv) => { const inn = fs.mkdtempSync(path.join(d, "in-")), out = path.join(inn, "blockx");
+    await quiet(() => run({ p: "main", check: "check", out, prev: pv, raceDir: race, picksContract: "1PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP", blockOf, picksOf, rankedOf, head: { height: lib + 60, time: T(lib + 60), lib } }));
+    return { inn, out, now: T(lib + 60) }; };
+  const publish = (r) => spawnSync("bash", [sh], { env: { ...ENV, IN: r.inn, REMOTE: remote, CHECK_NOW_MS: String(r.now) }, encoding: "utf8" });
+  let r = await rec(H0 + 6 * X.ROUND + 50);
+  assert.equal(publish(r).status, 0);
+  r = await rec(H0 + 7 * X.ROUND + 50, prev());
+  const f = path.join(r.out, "W003.json"), j = JSON.parse(fs.readFileSync(f, "utf8"));
+  j.targets[j.targets.length - 1].time = r.now;            // the newest real round, its time pushed to the job's clock
+  fs.writeFileSync(f, JSON.stringify(j));
+  publish(r);
+  for (const k of [8, 9, 10]) { r = await rec(H0 + k * X.ROUND + 50, prev()); const p = publish(r); assert.equal(p.status, 0, `honest run ${k}: ` + p.stdout); }
+});

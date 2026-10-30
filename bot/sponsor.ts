@@ -519,8 +519,19 @@ async function setSwitch(rpc: string, provider: Provider, s: Signer, A: string, 
     try { other = await configOn(secondNode(), A); agreed = JSON.stringify(other) === JSON.stringify(cur); } catch { agreed = false; other = null; }
   }
   let config: any;
-  if (agreed) config = switchedConfig(cur, on);
-  else {
+  if (agreed) {
+    config = switchedConfig(cur, on);
+    // Review (round 6, #6; audit SP-53): right after a v2 rollback upload the stored settings may hold v3's 5,000 a day,
+    // which v2 refuses: on v2 code the stop also lowers the caps to what v2 accepts (only ever lower).
+    let code = "";
+    try { code = String((await contractMetadata(provider, A)).hash || "").replace(/^0x1220/, ""); } catch { /* not v2 as far as we know */ }
+    if (code === SPONSOR_SHA256) {
+      const { caps } = tighterCaps(cur, null, code);
+      const fit = buildConfig({ contract: cur.game, vhp: cur.vhp, koin: (cur.tokens ?? [])[1] }, { contract: cur.desk }, { ...capsOf(cur), ...caps }, false);
+      for (const k of ["max_mana_per_tx", "max_mana_per_account_day", "max_mana_per_account_week", "max_mana_per_day", "max_mana_free_day", "min_vhp"]) config[k] = fit[k];
+      log("  (v2 code on chain: the caps are lowered to what v2 accepts)");
+    }
+  } else {
     // Rebuilt from the files: game, Knode Swap, tokens, race and the Picks row as config would send them, switched off,
     // no vault reads (the safe setting), no per-action rows (audit SP-47), caps never loosened (audit SP-44).
     const { game, desk, race, picks, picksCards } = knode();

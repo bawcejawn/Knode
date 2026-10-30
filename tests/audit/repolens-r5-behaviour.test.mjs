@@ -127,3 +127,16 @@ test("BX-101: a check node 15 minutes behind gives no sample this time", async (
   assert.ok(r.problems.some((x) => /no sample this time/.test(x)));
   assert.equal(JSON.parse(fs.readFileSync(path.join(out, "vhp-samples.json"), "utf8")).samples.length, 0);
 });
+
+// Round-6 blind review (#3): a tiny honest dispute (0.6%) on a producer that isn't the top shifts a floored producer
+// by a few satoshi; that alone must not hold the whole card (0.5% tolerance), though the producer is flagged.
+test("BX-99 (review): a 0.6% dispute on a mid producer flags it but doesn't put the whole card in doubt", async () => {
+  const now = Date.now(), prev = tmp(), out = tmp();
+  const V = { [A]: 3000, [B]: 1000, [C]: 2000 };
+  const read = (bump) => async (w) => Object.fromEntries(w.map((x) => [x, x === "network" ? sat(1e8) : String(BigInt(Math.round((V[x] ?? 0) * (x === C ? bump : 1) * 1e8)))]));
+  const r = await R.run({ p: chain({ head: 1_000_000, lib: 999_940, time: now }), check: chain({ head: 1_000_000, lib: 999_940, time: now }), prev, out, vhpOf: read(1), vhpCheckOf: read(1.006), raceContract: null, clock: () => now });
+  const c = cardsOf(out).at(-1);
+  assert.ok(c, "no card: " + r.problems.join("; "));
+  assert.deepEqual(c.flagged, [C]);
+  assert.ok(!c.topInDoubt, "a 0.6% dispute on a mid producer held the whole card");
+});

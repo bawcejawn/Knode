@@ -404,8 +404,11 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
       const samplesHi = samples.map((smp) => (smp.flagged ? { ...smp, vhp: { ...smp.vhp, ...smp.high } } : smp));
       const fairHi = productionFloor(windowHigh(valuesHi, samplesHi, cardTime, supply), counts, recent.sig.length).vhp;
       const topHi = producers.reduce((m, a) => ((fairHi[a] || 0n) > m ? fairHi[a] || 0n : m), 0n);
-      const moves = producers.filter((a) => !differ.includes(a) && (fair[a] || 0n) !== (fairHi[a] || 0n));
-      const topInDoubt = differ.length > 0 && (topHi !== top || moves.length > 0 || differ.some((a) => (fair[a] || 0n) >= top));
+      // (Round-6 blind review: compared within 0.5%, the tolerance combineReads uses, so a tiny honest dispute that shifts
+      // a floored producer by a few satoshi doesn't hold a whole card.)
+      const apart = (u: bigint, v: bigint) => { const hi = u > v ? u : v, lo = u < v ? u : v; return hi - lo > hi / 200n; };
+      const moves = producers.filter((a) => !differ.includes(a) && apart(fair[a] || 0n, fairHi[a] || 0n));
+      const topInDoubt = differ.length > 0 && (apart(topHi, top) || moves.length > 0 || differ.some((a) => (fair[a] || 0n) >= top));
       if (topInDoubt) problems.push(`a producer the two nodes disagree on decides other producers' multipliers on this card (the top${moves.length ? ", or " + moves.length + " other producer(s) through the production floor" : ""}): the whole card is flagged; Block X holds its targets`);
       // Audit BX-77: the card also records the block its window ends at (Block X reads VHP moves from there).
       const card: Card = { ...M.makeCard(vhp, blocksPerRace, cardTime), samples: used, height: winEnd, ...(differ.length ? { flagged: [...differ].sort() } : {}), ...(topInDoubt ? { topInDoubt: true } : {}) };

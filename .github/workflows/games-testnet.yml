@@ -142,14 +142,14 @@ jobs:
           def target_ok(t):
               if type(t) is not dict or not set(t) <= {"round", "height", "final", "checked", "signer", "time", "lockTime", "card", "void", "picks"}: return False
               if not ({"round", "height", "final", "checked", "signer", "time", "lockTime", "card", "picks"} <= set(t)): return False
-              if not (nat(t.get("round")) and nat(t.get("height")) and t["height"] >= t["round"] and t.get("final") is True and t.get("checked") in (0, 1, 2)): return False
+              if not (nat(t.get("round")) and nat(t.get("height")) and t["height"] >= t["round"] and t.get("final") is True and type(t.get("checked")) is int and t["checked"] in (0, 1, 2)): return False
               if not (t.get("signer") is None or addr.fullmatch(str(t["signer"]))) or not nat(t.get("time")) or not nat(t.get("lockTime")): return False
               c = t.get("card")
               if c is not None and (type(c) is not dict or set(c) not in ({"at", "top", "signerVhp"}, {"at", "top", "signerVhp", "afterAt"}) or not num(c["at"]) or not num(c["top"]) or not (c["signerVhp"] is None or num(c["signerVhp"])) or ("afterAt" in c and not (num(c["afterAt"]) and c["afterAt"] > c["at"]))): return False
               if "void" in t and (type(t["void"]) is not str or len(t["void"]) > 200): return False
               pk = t.get("picks")
               return type(pk) is list and len(pk) <= 100000 and all(type(x) is list and len(x) == 5 and addr.fullmatch(str(x[0])) and addr.fullmatch(str(x[1]))
-                  and nat(x[2]) and type(x[3]) is int and 0 <= x[3] <= 300 and x[4] in (0, 1) for x in pk)
+                  and nat(x[2]) and type(x[3]) is int and 0 <= x[3] <= 300 and type(x[4]) is int and x[4] in (0, 1) for x in pk)
           def rows_ok(rows):
               return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "place", "boardPlace", "pts", "correct", "picks", "days", "lastCorrect", "ranked"} and addr.fullmatch(str(x["a"]))
                   and all(nat(x[k]) for k in ("place", "boardPlace", "pts", "correct", "picks", "days", "lastCorrect")) and type(x["ranked"]) is bool for x in rows)
@@ -241,13 +241,12 @@ jobs:
           # one that is already published (an honest run never rewrites a recorded target: bot/games/blockx.ts keeps them).
           # A run that tries is held WHOLE, with an alert: its board, prize and vault files were all built from that file.
           rewrote = []
-          # Published targets, by week file, and the newest one of all (round 6, BX-97: new rounds must follow it).
+          # Published targets, by week file.
           pubt = {}
           for f in (sorted(os.listdir(pub)) if pub and os.path.isdir(pub) else []):
               if re.fullmatch(r"W\d{3}\.json", f):
                   o = pubjson(f)
                   pubt[f] = [t for t in o["targets"] if type(t) is dict and type(t.get("round")) is int] if type(o) is dict and type(o.get("targets")) is list else None
-          allpub = sorted([t for ts in pubt.values() if ts for t in ts if type(t.get("height")) is int and type(t.get("time")) is int], key=lambda t: t["height"])
           for f in sorted(os.listdir(d)):
               if not re.fullmatch(r"W\d{3}\.json", f): continue
               new = json.load(open(os.path.join(d, f), encoding="utf-8"))
@@ -261,9 +260,10 @@ jobs:
               # a week whose prize file is published or that has ended for good:
               # - the week is the current one or the one just ended (by this job's clock), and its P file isn't published;
               # - the height is the game's target height for the round (as bot/games/blockx.ts loadWeek);
-              # - the block time is before this job's clock and inside the week;
-              # - and it follows the published targets: between its published neighbours' times, and after the newest
-              #   published target no sooner than 3/4 of the usual 3 s a block (a future round given a past time fails).
+              # - the block time is before this job's clock and inside the week.
+              # (Round-6 blind review: a rule tying a new round's time to its published neighbours let one bad run, or an
+              # honest void row's estimated time, hold every later honest run, so it is gone. A future round given a past
+              # time (BX-97) is caught before prizes by the week-end re-read of every target on both nodes.)
               wk = new.get("week")
               wstart = GENESIS + wk * WEEK if type(wk) is int else None
               ot = pubt.get(f)
@@ -280,13 +280,8 @@ jobs:
                       for t in fresh:
                           h, tm = t.get("height"), t.get("time")
                           ok = type(tm) is int and type(h) is int and h == t["round"] * GROUND + GOFFSET and wstart <= tm < wstart + WEEK and tm <= now
-                          if ok and allpub:
-                              below = [p for p in allpub if p["height"] < h]; above = [p for p in allpub if p["height"] > h]
-                              if below and tm <= below[-1]["time"]: ok = False
-                              if above and tm >= above[0]["time"]: ok = False
-                              if not above and below and tm < below[-1]["time"] + (h - below[-1]["height"]) * 2250: ok = False
                           if not ok: bad.append(t["round"])
-                      if bad: why = "new rounds " + ", ".join(str(r) for r in bad[:10]) + " aren't past target blocks of this week, in order after the published ones"
+                      if bad: why = "new rounds " + ", ".join(str(r) for r in bad[:10]) + " aren't past target blocks of this week"
                   if why: rewrote.append(f + " (" + why + ")"); continue
               if ot is None: continue
               mine = {t["round"]: t for t in nt}
@@ -298,6 +293,8 @@ jobs:
               ni = json.load(open(os.path.join(d, "index.json"), encoding="utf-8"))
               lost = [w for w in pi["weeks"] if not (type(ni) is dict and type(ni.get("weeks")) is list and w in ni["weeks"])]
               if lost: rewrote.append("index.json (published weeks " + ", ".join(str(w) for w in lost[:10]) + " are missing)")
+              added = [w for w in (ni.get("weeks") if type(ni) is dict and type(ni.get("weeks")) is list else []) if w not in pi["weeks"] and not (type(w) is int and cw - 1 <= w <= cw)]
+              if added: rewrote.append("index.json (new weeks " + ", ".join(str(w) for w in added[:10]) + " aren't this week or the one just ended)")
           if rewrote:
               print("::error::this run changes or adds to already-published Block X history: " + "; ".join(rewrote) + ". Nothing from it is published (audit BX-88).")
               for f in sorted(os.listdir(d)):
