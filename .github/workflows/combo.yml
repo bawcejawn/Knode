@@ -1,0 +1,296 @@
+# Combo Card recorder: every hour, records the Combo Card's cards and results (bot/games/combo.ts) into the combo/
+# folder of the games-data branch. It reads the chain (two nodes must agree), the race recorder's files (race-data)
+# and the Block X recorder's files (games-data/blockx).
+#
+# Same two-job pattern as games.yml, so repository code never runs next to a write token:
+#   record   runs the recorder with a read-only token and no secrets, and hands the files on.
+#   publish  runs no repository code: it checks the files' exact shape and pushes only combo/ to games-data.
+# It shares games.yml's concurrency group, so the two never push to games-data at the same time. It never touches
+# main, holds no key, and does not run on pull requests.
+#
+# Turn it on: Settings → Secrets and variables → Actions → Variables: COMBO_ENABLED = true
+name: Combo Card recorder
+
+on:
+  schedule:
+    - cron: "52 * * * *"     # every hour at minute 52, after the race (:37) and Block X (:47) recorders
+  workflow_dispatch: {}
+
+concurrency:
+  group: knode-games
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    if: ${{ vars.COMBO_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      # The last run's files, the Block X results and the race cards and results (public branches; no token).
+      # Only plain JSON files with the expected names are taken.
+      - name: Take the last run's files, Block X results and race files
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/prev/combo/vault" "$RUNNER_TEMP/blockx" "$RUNNER_TEMP/race"
+          repo="https://github.com/${GITHUB_REPOSITORY}.git"
+          # A branch that exists but can't be fetched, or a GitHub that can't be reached, is an outage: stop rather than
+          # record without it (audit FC-1; Repo Lens RL-19: only ls-remote's "no such branch" (2) means no branch).
+          fetch_branch() {
+            if git fetch -q --depth 1 "$repo" "$1" 2>/dev/null; then return 0; fi
+            rc=0; git ls-remote --exit-code --heads "$repo" "$1" >/dev/null 2>&1 || rc=$?
+            if [ "$rc" = 2 ]; then return 1; fi
+            echo "::error::Could not fetch the $1 branch (git: $rc); not recording this run."; exit 1
+          }
+          # Names are read line by line and only expected names are taken (as Block X: BX-34, BX-87).
+          if fetch_branch games-data; then
+            { git ls-tree --name-only FETCH_HEAD:combo 2>/dev/null || true; } | while IFS= read -r f; do
+              if [[ "$f" =~ ^(index|board|D[0-9]{5})\.json$ ]]; then git show "FETCH_HEAD:combo/$f" > "$RUNNER_TEMP/prev/combo/$f"; fi
+            done
+            # The published Vault files, so the recorder never writes one again (it is write-once).
+            { git ls-tree --name-only FETCH_HEAD:combo/vault 2>/dev/null || true; } | while IFS= read -r f; do
+              if [[ "$f" =~ ^W[0-9]+\.json$ ]]; then git show "FETCH_HEAD:combo/vault/$f" > "$RUNNER_TEMP/prev/combo/vault/$f"; fi
+            done
+            { git ls-tree --name-only FETCH_HEAD:blockx 2>/dev/null || true; } | while IFS= read -r f; do
+              if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git show "FETCH_HEAD:blockx/$f" > "$RUNNER_TEMP/blockx/$f"; fi
+            done
+          else echo "No games-data branch yet."; fi
+          if fetch_branch race-data; then
+            { git ls-tree --name-only FETCH_HEAD 2>/dev/null || true; } | while IFS= read -r f; do
+              if [[ "$f" =~ ^W[0-9]{3}\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/race/$f"; fi
+            done
+          else echo "No race-data branch yet: cards wait for race cards."; fi
+      # The recorder exits 1 after writing its files when it raised an error (Repo Lens RL-5): the job turns red (you
+      # are emailed) and its files are still checked and published.
+      - name: Record the Combo Card
+        run: npm run combo
+        env:
+          RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
+          RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
+          COMBO_PREV: ${{ runner.temp }}/prev/combo
+          COMBO_OUT: ${{ runner.temp }}/games-data/combo
+          RACE_DATA: ${{ runner.temp }}/race
+          BLOCKX_DATA: ${{ runner.temp }}/blockx
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: combo-data
+          path: ${{ runner.temp }}/games-data/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  publish:
+    needs: record
+    if: ${{ always() && needs.record.result != 'cancelled' && needs.record.result != 'skipped' && vars.COMBO_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write         # push the games-data branch (never main)
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: combo-data
+          path: ${{ runner.temp }}/incoming
+      - name: Push games-data/combo (and nothing else)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IN: ${{ runner.temp }}/incoming
+        run: |
+          set -euo pipefail
+          if [ ! -d "$IN/combo" ]; then echo "Nothing to publish."; exit 0; fi
+          bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/combo" ! -path "$IN/combo/vault" \) -o \( -type f ! -regex "$IN/combo/\(index\|board\|D[0-9][0-9][0-9][0-9][0-9]\)\.json" ! -regex "$IN/combo/vault/W[0-9][0-9]*\.json" \) \) -print)
+          if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
+          # The published branch first (read only here): write-once and fixed files are judged against what is ALREADY
+          # published and this job's own clock, never against this run's own files (as Block X: BX-79/80/81/88).
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          PUB=$(mktemp -d); HELD="$PUB/held"; : > "$HELD"; mkdir -p "$PUB/combo/vault"
+          git init -q work && cd work
+          parent=""
+          if git fetch -q --depth 1 "$remote" games-data 2>/dev/null; then
+            parent=$(git rev-parse FETCH_HEAD)
+            git read-tree FETCH_HEAD
+            { git ls-tree --name-only "$parent:combo" 2>/dev/null || true; } | while IFS= read -r f; do
+              if [[ "$f" =~ ^(board|D[0-9]{5})\.json$ ]]; then git show "$parent:combo/$f" > "$PUB/combo/$f"; fi
+            done
+            { git ls-tree --name-only "$parent:combo/vault" 2>/dev/null || true; } | while IFS= read -r f; do
+              if [[ "$f" =~ ^W[0-9]+\.json$ ]]; then git show "$parent:combo/vault/$f" > "$PUB/combo/vault/$f"; fi
+            done
+          else git read-tree --empty; fi
+          # The content must be the recorder's own shape, consistent with itself and with what is published.
+          /usr/bin/python3 - "$IN/combo" "$PUB/combo" "$HELD" <<'PY'
+          import json, os, re, sys, time
+          d, pub, heldf = sys.argv[1], sys.argv[2], sys.argv[3]
+          addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}"); iso = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{3})?Z"); ymd = re.compile(r"\d{4}-\d\d-\d\d")
+          SAFE = 2 ** 53 - 1
+          nat = lambda x: type(x) is int and 0 <= x <= SAFE
+          isaddr = lambda a: type(a) is str and addr.fullmatch(a) is not None
+          DAY = 86400000; WEEK = 7 * DAY; HOUR = 3600000; GENESIS = 1792368000000   # week 0: 2026-10-19 00:00 UTC
+          RACE = 6 * HOUR; BLOCK_ROUND = 2400; CARDS_PER_DAY = 3; MAX_CHANGES = 3; MAX_SIZE = 2048 * 1024
+          BASE = {2: 3, 3: 7, 4: 15, 5: 30, 6: 60, 7: 120, 8: 240, 9: 480, 10: 960}
+          RESULTS = ("pending", "hit", "miss", "void")
+          # (CHECK_NOW_MS: the tests' fixed clock; the workflow never sets it.)
+          now = int(os.environ.get("CHECK_NOW_MS") or time.time() * 1000)
+          cw = (now - GENESIS) // WEEK; today = now // DAY
+          first_day = (GENESIS + max(0, cw - 1) * WEEK) // DAY        # Monday of last week
+          held = []
+          def hold(name, why, alert):
+              held.append(name); print(("::error::" if alert else "::notice::") + "held, not published: " + name + ": " + why)
+              if alert: held.append("!alert")
+          def load(path):
+              try: return json.load(open(path, encoding="utf-8"))
+              except Exception: return None
+          def points(fs):
+              if not 2 <= len(fs) <= 10: return 0
+              num = BASE[len(fs)] * 100; den = 1
+              for f in fs: num *= f; den *= 100
+              return num // den
+          def recount(c):
+              if c["priceAt"] is None: return ("void", 0)
+              kept = [l for l in c["legs"] if l[4] != "void"]
+              if len(kept) < 2: return ("void", 0)
+              if any(l[4] != "hit" or not l[3] > 0 for l in kept): return ("miss", 0)
+              return ("hit", points([l[3] for l in kept]))
+          def leg_ok(l):
+              return type(l) is list and len(l) == 5 and l[0] in (1, 2, 3, 4) and nat(l[1]) and l[1] > 0 and isaddr(l[2]) and type(l[3]) is int and 0 <= l[3] <= 300 and l[4] in RESULTS
+          CARD = {"player", "round", "time", "changes", "priceAt", "legs", "state", "outcome", "pts", "settled"}
+          def card_ok(c, rnd, day):
+              if type(c) is not dict or set(c) != CARD: return False
+              if not (isaddr(c["player"]) and c["round"] == rnd and nat(c["time"]) and day * DAY <= c["time"] < (day + 1) * DAY and c["time"] <= now): return False
+              if not (type(c["changes"]) is int and 0 <= c["changes"] <= MAX_CHANGES): return False
+              if not (c["priceAt"] is None or (nat(c["priceAt"]) and c["priceAt"] <= c["time"] and c["time"] - c["priceAt"] <= 3 * HOUR)): return False
+              legs = c["legs"]
+              if not (type(legs) is list and 2 <= len(legs) <= 10 and all(leg_ok(l) for l in legs)): return False
+              keys = [("race", l[0], l[1]) if l[0] != 4 else ("block", l[1]) for l in legs]
+              if len(set(keys)) != len(keys) or len({l[2] for l in legs}) != len(legs): return False   # one leg per slot, a producer once
+              if c["state"] not in ("pending", "final") or c["outcome"] not in (None, "hit", "miss", "void") or not nat(c["pts"]) or not nat(c["settled"]): return False
+              if c["state"] == "final":
+                  return (c["outcome"], c["pts"]) == recount(c) and all(l[4] != "pending" for l in legs)
+              return c["pts"] == 0                                                         # not final: no points yet
+          def day_ok(j, f):
+              if type(j) is not dict or set(j) != {"v", "day", "start", "slots"} or j["v"] != 2 or not nat(j["day"]) or f != "D%05d.json" % j["day"]: return False
+              day = j["day"]
+              if j["start"] != day * DAY or day > today: return False
+              sl = j["slots"]
+              if type(sl) is not list or len(sl) > CARDS_PER_DAY: return False
+              rounds = [s.get("round") if type(s) is dict else None for s in sl]
+              if rounds != sorted(set(r for r in rounds if type(r) is int)) or len(rounds) != len(set(rounds)): return False
+              for s in sl:
+                  if set(s) != {"round", "fixed", "cards"} or not nat(s["round"]) or s["round"] // CARDS_PER_DAY != day or type(s["fixed"]) is not bool: return False
+                  if s["fixed"] and now < (day + 1) * DAY: return False                  # a day not over can't be fixed
+                  cs = s["cards"]
+                  if type(cs) is not list or len(cs) > 100000 or not all(card_ok(c, s["round"], day) for c in cs): return False
+                  if len({c["player"] for c in cs}) != len(cs): return False
+              return True
+          ROW = {"a", "place", "pts", "hits", "cards", "best", "days", "lastHit", "staked", "ranked"}
+          def rows_ok(rows):
+              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == ROW and isaddr(x["a"]) and all(nat(x[k]) for k in ("place", "pts", "hits", "cards", "best", "days", "lastHit"))
+                  and x["place"] >= 1 and x["staked"] in (None, True, False) and x["ranked"] is (x["staked"] is True) for x in rows) and len({x["a"] for x in rows}) == len(rows)
+          def board_ok(j):
+              if type(j) is not dict or set(j) != {"v", "updated", "today", "week", "lastWeek", "allTime"} or j["v"] != 1 or not iso.fullmatch(str(j["updated"])): return False
+              t, w, lw, at = j["today"], j["week"], j["lastWeek"], j["allTime"]
+              if not (type(t) is dict and set(t) == {"day", "rows"} and ymd.fullmatch(str(t["day"])) and rows_ok(t["rows"])): return False
+              if not (type(w) is dict and set(w) == {"week", "start", "rows"} and nat(w["week"]) and w["start"] == GENESIS + w["week"] * WEEK and rows_ok(w["rows"])): return False
+              if not (type(at) is dict and set(at) == {"rows"} and rows_ok(at["rows"])): return False
+              return lw is None or (type(lw) is dict and set(lw) == {"week", "start", "final", "rows"} and nat(lw["week"]) and lw["start"] == GENESIS + lw["week"] * WEEK and type(lw["final"]) is bool and rows_ok(lw["rows"]))
+          def vault_points(rows):
+              ds = sorted({r["pts"] for r in rows}, reverse=True); rank = {v: max(1, 255 - i) for i, v in enumerate(ds)}
+              return [{"player": r["a"], "points": rank[r["pts"]]} for r in rows]
+
+          # 1. Each file: its exact shape. A bad file is held (with an alert); an oversized one too (Repo Lens RL-6:
+          #    one file never stops the rest).
+          names = sorted(os.listdir(d))
+          for f in names:
+              p = os.path.join(d, f)
+              if os.path.isdir(p): continue
+              if os.path.getsize(p) > MAX_SIZE: hold("combo/" + f, "over 2 MB", True); continue
+              j = load(p)
+              if f == "index.json":
+                  ok = type(j) is dict and set(j) == {"v", "updated", "days", "contract"} and j["v"] == 2 and iso.fullmatch(str(j["updated"])) and type(j["days"]) is list \
+                      and len(j["days"]) <= 100000 and all(nat(x) and x <= today for x in j["days"]) and j["days"] == sorted(set(j["days"])) and (j["contract"] is None or isaddr(j["contract"]))
+              elif f == "board.json": ok = board_ok(j)
+              else: ok = day_ok(j, f)
+              if not ok: hold("combo/" + f, "not the recorder's shape (or inconsistent: outcomes, points, days, slots)", True)
+          # 2. Day files against the published ones (Repo Lens RL-7, as Block X BX-88): a NEW day file only for last week
+          #    or this week; a published FIXED slot keeps exactly its cards (who, legs, time, changes); a published FINAL
+          #    card never changes. A run that tries is held WHOLE, with an alert: its board and Vault files came from it.
+          rewrote = []
+          for f in names:
+              if not re.fullmatch(r"D\d{5}\.json", f) or ("combo/" + f) in held: continue
+              new = load(os.path.join(d, f)); old = load(os.path.join(pub, f)) if os.path.isfile(os.path.join(pub, f)) else None
+              if old is None:
+                  if new["day"] < first_day: rewrote.append(f + " (a new file for a day before last week)")
+                  continue
+              if type(old) is not dict or type(old.get("slots")) is not list: continue    # an older published format: replaced
+              mine = {s["round"]: s for s in new["slots"]}
+              for s in old["slots"]:
+                  if type(s) is not dict: continue
+                  n = mine.get(s.get("round"))
+                  if s.get("fixed") is True:
+                      key = lambda cs: sorted((c.get("player"), json.dumps(c.get("legs") and [l[:3] for l in c["legs"]]), c.get("time"), c.get("changes")) for c in cs)
+                      if n is None or n["fixed"] is not True or key(n["cards"]) != key(s.get("cards") or []): rewrote.append(f + " (fixed slot %s changed)" % s.get("round")); continue
+                  nc = {c["player"]: c for c in (n["cards"] if n else [])}
+                  for c in s.get("cards") or []:
+                      if type(c) is dict and c.get("state") == "final" and nc.get(c.get("player")) != c: rewrote.append(f + " (a final card of %s in slot %s changed)" % (c.get("player"), s.get("round")))
+          if rewrote:
+              print("::error::this run changes published Combo cards: " + "; ".join(rewrote[:20]) + ". Nothing from it is published.")
+              for f in names:
+                  if os.path.isfile(os.path.join(d, f)) and ("combo/" + f) not in held: hold("combo/" + f, "the run changes published cards", True)
+          # 3. Vault files: write-once, only for the week that just ended within the Vault's 3 days by this job's clock,
+          #    and exactly the PUBLISHED final board's staked players with 1+ point, in its order (Repo Lens RL-7).
+          vdir = os.path.join(d, "vault")
+          pb = load(os.path.join(pub, "board.json")) if os.path.isfile(os.path.join(pub, "board.json")) else None
+          plw = pb.get("lastWeek") if type(pb) is dict else None
+          for f in (sorted(os.listdir(vdir)) if os.path.isdir(vdir) else []):
+              name = "combo/vault/" + f
+              if rewrote: hold(name, "the run changes published cards", True); continue
+              j = load(os.path.join(vdir, f))
+              if not (type(j) is dict and set(j) == {"game", "week", "final", "rows", "first", "second"} and j["game"] == 8 and nat(j["week"]) and f == "W%d.json" % j["week"]
+                      and j["final"] is True and j["first"] == [] and j["second"] == [] and type(j["rows"]) is list and len(j["rows"]) <= 100000
+                      and all(type(r) is dict and set(r) == {"player", "points"} and isaddr(r["player"]) and type(r["points"]) is int and 1 <= r["points"] <= 255 for r in j["rows"])
+                      and len({r["player"] for r in j["rows"]}) == len(j["rows"])):
+                  hold(name, "not the Vault file's shape", True); continue
+              w = j["week"]; end = GENESIS + (w + 1) * WEEK
+              if os.path.isfile(os.path.join(pub, "vault", f)): continue                  # write-once: the push step skips it
+              if w != cw - 1 or not (end <= now <= end + 3 * DAY): hold(name, "not the week that just ended, within the Vault's 3 days, by this job's clock", w != cw); continue
+              if not (type(plw) is dict and board_ok(pb) and plw["week"] == w and plw["final"] is True and now >= end + 12 * HOUR): hold(name, "its week isn't final on the published board yet", False); continue
+              want = vault_points([r for r in plw["rows"] if r["staked"] is True and r["pts"] >= 100])
+              if j["rows"] != want: hold(name, "its rows aren't the published final board's staked players with 1+ point, in order", True); continue
+          open(heldf, "w").write("".join(x + "\n" for x in held))
+          print("combo files checked")
+          PY
+          shopt -s nullglob
+          for f in "$IN"/combo/*.json "$IN"/combo/vault/*.json; do
+            name="${f#"$IN"/}"
+            if grep -qxF "$name" "$HELD"; then continue; fi
+            if [[ "$name" =~ /vault/W[0-9]+\.json$ ]] && git cat-file -e ":$name" 2>/dev/null; then
+              # A Vault file is written once and never replaced; one that differs is an alert.
+              if [ "$(git hash-object "$f")" != "$(git rev-parse ":$name")" ]; then echo "::error::$name differs from the published file: not replaced."; echo '!alert' >> "$HELD"; fi
+              continue
+            fi
+            blob=$(git hash-object -w "$f")
+            git update-index --add --cacheinfo 100644 "$blob" "$name"
+          done
+          tree=$(git write-tree)
+          if [ -n "$parent" ] && [ "$tree" = "$(git rev-parse "$parent^{tree}")" ]; then echo "No changes."
+          else
+            export GIT_AUTHOR_NAME=kpred-bot GIT_AUTHOR_EMAIL=kpred-bot@users.noreply.github.com GIT_COMMITTER_NAME=kpred-bot GIT_COMMITTER_EMAIL=kpred-bot@users.noreply.github.com
+            commit=$(git commit-tree "$tree" ${parent:+-p "$parent"} -m "games: record combo")
+            # One try: if another job pushed games-data in between, this run's files go out with the next run (the
+            # checks above were made against this parent, so a retry would have to repeat them).
+            if ! git push -q "$remote" "$commit:refs/heads/games-data"; then echo "::warning::games-data moved while publishing; the next run publishes these files."; fi
+          fi
+          if grep -qxF '!alert' "$HELD"; then echo "::error::A file was held, or a published file needs your check (see the errors above); everything else was published."; exit 1; fi
+          echo "Combo files published."

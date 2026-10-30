@@ -19,11 +19,31 @@ syntax = "proto3";
 //   - at most max_picks_per_day picks (new picks and changes together) per
 //     wallet per game per UTC day;
 //   - the choice fits the game's kind: one producer, a short list of
-//     distinct producers, or a number in a range;
+//     distinct producers, a number in a range, or a CARD of legs (below);
 //   - the pick must be signed by the wallet it is for (and come from that
 //     wallet's own transaction, not another contract).
 // A producer is any valid address: the game's handicap card is set off the
 // chain, so a pick on a producer that is not in the field simply can't win.
+//
+// CARD games (kind 4, the Combo Card): a pick is a card of 2 to max_legs legs
+// (max_legs at most list_size, at most 10). Each leg is {code, round,
+// producer}; its code names one of the game's leg types, and each leg type has
+// its own lock, exactly like a game: target = round * round_size +
+// round_offset, refused from target - lead, open at most `ahead` before.
+//   - a card is made or changed only while EVERY leg is open (and, for a
+//     change, every leg of the card it replaces);
+//   - one leg per leg type per round (a race may take a Win, a Show and a Top
+//     half; a block one leg), and each producer at most once per card;
+//   - the round of a card is its slot: UTC day * round_size + slot, so a
+//     wallet has round_size cards a day, each made on its own UTC day.
+// Leg types are part of the game's shape: a leg type's code, clock, round size
+// and offset never change, and none is ever removed or reordered. announce_game
+// (48 hours, public) may add leg types and may loosen an existing one (lock
+// later, open earlier, switch back on) or raise max_legs; tighten_game (at once)
+// may switch one off, lock it earlier, open it later or lower max_legs. The
+// owner must not add a new code with the same clock as an existing one (an
+// "alias", e.g. a second Win code): the chain would then allow two legs of the
+// same kind on one race. Monitoring alerts on every announcement for a card game.
 //
 // Owner changes are timelocked: a new game, or a looser setting on a game,
 // waits 48 hours (announce_game, then apply_game). Switching a game off or
@@ -54,8 +74,28 @@ message config {
   uint64 generation = 6 [jstype = JS_STRING];
 }
 
+// One kind of leg on a CARD game. Its lock works exactly like a game's (see above). Codes are 1 to 255, unique in the game.
+message leg_type {
+  uint32 code = 1;
+  uint32 lock_mode = 2;
+  uint64 round_size = 3 [jstype = JS_STRING];
+  uint64 round_offset = 4 [jstype = JS_STRING];
+  uint64 lead = 5 [jstype = JS_STRING];
+  uint64 ahead = 6 [jstype = JS_STRING];
+  bool enabled = 7;
+}
+
+// One leg of a card.
+message leg {
+  uint32 code = 1;
+  uint64 round = 2 [jstype = JS_STRING];
+  bytes producer = 3 [(koinos.btype) = ADDRESS];
+}
+
 // A game's rules. kind: 1 = one producer, 2 = a list of 1 to list_size distinct producers, 3 = a number from
-// number_min to number_max. lock_mode: 1 = block heights, 2 = time (ms).
+// number_min to number_max, 4 = a CARD of 2 to max_legs legs (list_size = the most it can ever be, at most 10;
+// round_size = cards per UTC day, 1 to 10; round_offset 0; lock_mode 2; lead 5 minutes and ahead 1 day, not used).
+// lock_mode: 1 = block heights, 2 = time (ms).
 message game_config {
   uint32 id = 1;
   string name = 2;
@@ -75,6 +115,9 @@ message game_config {
   // How many times a pick may be changed after the first. 0 = never.
   uint32 max_changes = 13;
   bool enabled = 14;
+  // CARD games only (kind 4): the leg types, and how many legs a card may have now (2 to list_size).
+  repeated leg_type leg_types = 15;
+  uint32 max_legs = 16;
 }
 
 message pending_game {
@@ -93,6 +136,8 @@ message pick_object {
   uint64 time = 4 [jstype = JS_STRING];
   // How many times this pick was changed after the first.
   uint32 changes = 5;
+  // CARD games: the card's legs.
+  repeated leg legs = 6;
 }
 
 // Picks made by one wallet in one game on one UTC day.
@@ -118,6 +163,8 @@ message pick_arguments {
   uint64 round = 3 [jstype = JS_STRING];
   repeated bytes producers = 4 [(koinos.btype) = ADDRESS];
   uint64 number = 5 [jstype = JS_STRING];
+  // CARD games: the card's legs (producers empty, number 0).
+  repeated leg legs = 6;
 }
 
 message pick_event {
@@ -129,6 +176,7 @@ message pick_event {
   uint64 height = 6 [jstype = JS_STRING];
   uint64 time = 7 [jstype = JS_STRING];
   bool change = 8;
+  repeated leg legs = 9;
 }
 
 // ── read-only ──

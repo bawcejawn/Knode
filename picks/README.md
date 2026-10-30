@@ -19,6 +19,15 @@ the vault pays prizes from the scores.
 - **The choice fits the game.** One producer (kind 1), a list of distinct producers up to `list_size` (kind 2), or a
   number from `number_min` to `number_max` (kind 3). A producer is any valid address.
 - **Signed by the player** in the player's own transaction: the caller is the player, or the player's own wallet contract (a smart wallet; audit BX-28). No other contract can pick for them.
+- **Cards (kind 4, the Combo Card; added 2026-10-28, not yet uploaded).** A pick is a card of 2 to `max_legs` legs
+  (`max_legs` at most `list_size`, at most 10). Each leg is `{code, round, producer}`; its `code` names one of the game's
+  `leg_types`, and each leg type has its own lock exactly like a game (target, `lead`, `ahead`, at most a day ahead). The
+  chain refuses a card unless every leg is open now (and, for a change, every leg of the card it replaces), with one leg
+  per leg type per round and each producer at most once. A card's round is its slot: UTC day × `round_size` + slot, made
+  and changed only on that day. A leg type's code, clock, round size and offset never change, and none is removed or
+  reordered. The 48-hour announcement may add leg types, loosen an existing one or raise `max_legs` (the owner must not
+  add an "alias" code with the same clock as an existing one); tighten_game can switch one off, lock it earlier, open
+  it later or lower `max_legs`. Audit 2026-10-28: `docs/history/AUDIT-2026-10-28-combo.md`.
 
 ## The owner (KnodeGames owner `1635QUr…H717`)
 
@@ -64,8 +73,14 @@ reads the compiled code too) and P-7 (`list_pending`). Fix-check 2026-10-27 (`do
 "ready for testnet"; its one new finding, PF-1 (Low, `list_pending` could come back empty with no cursor), is fixed
 (`next`).
 
-Release candidate sha256 (after the fix-check): `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594` (32,667 bytes).
-Tests: 46 contract tests (`npm test`, in the Koinos mock VM), including the auditor's attack tests (`Picks.audit.spec.ts`).
+v1 release (Block X launch): `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594` (32,667 bytes).
+
+**v2 (CARD type, Combo Card) release candidate:** `92d555d0680157854452e35162c1b1c5c100904996194b8c1c848df50e5e1c3d`
+(37,689 bytes; 71 tests). Formal audit 2026-10-28 and Repo Lens final audit 2026-10-30: contract "ready for mainnet" (`docs/history/AUDIT-2026-10-28-combo.md`, `docs/history/AUDIT-2026-10-30-combo-repolens.md`).
+Upgrade steps (after Block X launches): `schedule_upgrade` with this sha256 → wait 48 hours → upload (signed by the
+owner) → `schedule_upgrade` with an empty hash, so the same bytes can't be uploaded again (audit CC-A3) → announce
+game 8 (Combo Card) → 48 hours → `apply_game`.
+Tests: 71 contract tests (`npm test`, in the Koinos mock VM), including the auditor's attack tests (`Picks.audit.spec.ts`) and the card tests (`Picks.card.spec.ts`).
 
 Before announcing anything on mainnet (audit P-5, P-6): check on chain that all three overrides are on and the code's
 fingerprint matches; on Harbinger, check that a pick's stored height is the height of the block that holds it, that a

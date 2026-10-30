@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
-import { buildGameConfig, uploadBuild, encodeNonce, network, mainnetGuard, uploadTx, assertAuditedContract, PICKS_SHA256, PICKS_ABI_SHA256, MAINNET_CHAIN_ID } from "../../bot/picks.ts";
+import { buildGameConfig, uploadBuild, encodeNonce, network, mainnetGuard, uploadTx, assertAuditedContract, PICKS_SHA256, PICKS_ABI_SHA256, PICKS_V2_SHA256, PICKS_V2_ABI_SHA256, MAINNET_CHAIN_ID } from "../../bot/picks.ts";
 
 const require = createRequire(import.meta.url);
 const sha = (b: Buffer) => crypto.createHash("sha256").update(b).digest("hex");
@@ -25,7 +25,8 @@ test("mainnet upload: only the audited build", () => {
   fs.writeFileSync(f, Buffer.from("not the audited build"));
   assert.throws(() => uploadBuild(false, { mainnet: f, testnet: "", manifest: "" }), /not the audited Picks build/);
   assert.throws(() => uploadBuild(false, { mainnet: path.join(d, "missing.wasm"), testnet: "", manifest: "" }), /not found/);
-  if (fs.existsSync("picks/build/release/contract.wasm")) assert.equal(uploadBuild(false).sha256, PICKS_SHA256);
+  // (The Combo branch builds Picks v2, also audited: Repo Lens final audit 2026-10-30.)
+  if (fs.existsSync("picks/build/release/contract.wasm")) assert.ok([PICKS_SHA256, PICKS_V2_SHA256].includes(uploadBuild(false).sha256));
 });
 
 test("testnet upload: only a build whose manifest says it came from the audited source, and never the mainnet build", () => {
@@ -123,8 +124,9 @@ test("upload: another wallet pays the Mana, so the Picks wallet never needs KOIN
 });
 
 test("BX-21: the Picks ABI used for owner calls is pinned to the audited one", () => {
-  assert.equal(sha(fs.readFileSync("picks/abi/picks.koilib.json")), PICKS_ABI_SHA256);
-  assert.match(fs.readFileSync("bot/picks.ts", "utf8"), /sha256hex\(raw\) !== PICKS_ABI_SHA256/);
+  // v1's ABI, or v2's (a superset: the Combo branch builds v2; Block X's calls encode the same bytes with either).
+  assert.ok([PICKS_ABI_SHA256, PICKS_V2_ABI_SHA256].includes(sha(fs.readFileSync("picks/abi/picks.koilib.json"))));
+  assert.match(fs.readFileSync("bot/picks.ts", "utf8"), /!\[PICKS_ABI_SHA256, PICKS_V2_ABI_SHA256\]\.includes\(sha256hex\(raw\)\)/);
 });
 test("BX-9/BX-20: the contract must check out on BOTH mainnet nodes before the owner signs", async () => {
   const good = { exists: true, hash: "0x1220" + PICKS_SHA256, call: true, tx: true, upload: true };

@@ -44,6 +44,12 @@ const writeJson = (f: string, v: any) => { fs.mkdirSync(path.dirname(f), { recur
 
 /** The audited Picks build (picks/README.md "Build"; audit + fix-check 2026-10-27). Mainnet upload refuses any other. */
 export const PICKS_SHA256 = "700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594";
+/** Picks v2 (the CARD type, for the Combo Card): formal audit 2026-10-28 and Repo Lens final audit 2026-10-30, "ready for
+ *  mainnet" (docs/history/AUDIT-2026-10-28-combo.md, AUDIT-2026-10-30-combo-repolens.md). It is uploaded over v1 by the
+ *  owner's timelocked upgrade; this tool accepts it as the audited code on chain and its ABI for owner calls (audit
+ *  BX-19 / BX-21, with the Combo chat 2026-10-30). Block X's calls encode the same bytes with either ABI. */
+export const PICKS_V2_SHA256 = "92d555d0680157854452e35162c1b1c5c100904996194b8c1c848df50e5e1c3d";
+export const AUDITED_PICKS = [PICKS_SHA256, PICKS_V2_SHA256];
 export const MAINNET_OWNER = "1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717";
 export const MAINNET_CHAIN_ID = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";
 const MAINNET_RPCS = ["https://koinos.armana.io", "https://api.koinosblocks.com"];
@@ -51,6 +57,7 @@ const MAINNET_RPCS = ["https://koinos.armana.io", "https://api.koinosblocks.com"
 const MAINNET_CHECK_RPC = () => E.RPC_CHECK && E.RPC_CHECK !== "off" ? E.RPC_CHECK : "https://api.koinosblocks.com";
 /** Audit BX-21: the Picks ABI the owner calls are encoded with (picks/abi/picks.koilib.json, from the audited build). */
 export const PICKS_ABI_SHA256 = "8efa3ad40d3d0bd9a3bfe22533fa2f9ca14445174095c66d3d34b1fc88e0a1ff";
+export const PICKS_V2_ABI_SHA256 = "cea9b0736ce989e9b995735bf1330d6891861c999109c8ad7afacb1ce0f96aed";
 const ABI_FILE = "picks/abi/picks.koilib.json";
 const MAINNET_WASM = "picks/build/release/contract.wasm";
 const TESTNET_WASM = "picks/build/testnet/contract.wasm", TESTNET_MANIFEST = "picks/build/testnet/manifest.json";
@@ -64,7 +71,7 @@ const MAX_PICKS_PER_DAY = 50, MAX_CHANGES = 50;
 const loadAbi = () => {
   if (!fs.existsSync(ABI_FILE)) throw new Error(`${ABI_FILE} not found: in the picks folder run npm ci --ignore-scripts, npm test`);
   const raw = fs.readFileSync(ABI_FILE);
-  if (sha256hex(raw) !== PICKS_ABI_SHA256) throw new Error(`${ABI_FILE} is not the audited Picks ABI (sha256 ${sha256hex(raw)}). Restore it: git checkout -- ${ABI_FILE}`);
+  if (![PICKS_ABI_SHA256, PICKS_V2_ABI_SHA256].includes(sha256hex(raw))) throw new Error(`${ABI_FILE} is not the audited Picks ABI (sha256 ${sha256hex(raw)}). Restore it: git checkout -- ${ABI_FILE}`);
   return JSON.parse(raw.toString("utf8"));
 };
 const need = (k: string) => { if (!E[k]) throw new Error(`${k} is missing from ${TESTNET ? ".env.testnet" : ".env"} (npm run picks -- keys${TESTNET ? " --testnet" : ""})`); return E[k]!; };
@@ -148,9 +155,9 @@ async function status() {
   log(`Picks ${net.picks} on ${net.testnet ? "the Koinos TESTNET" : "MAINNET"} (${net.rpc[0]}, chain ${chainId})`);
   const m = await contractMetadata(p, net.picks);
   if (!m.exists) { log("  Contract       not uploaded yet (npm run picks -- upload)"); return; }
-  const want = net.testnet ? readJson(TESTNET_MANIFEST)?.sha256 : PICKS_SHA256;
+  const want: string[] = net.testnet ? [readJson(TESTNET_MANIFEST)?.sha256] : AUDITED_PICKS;
   const have = m.hash.replace(/^0x1220/, "");
-  log(`  Code           sha256 ${have} ${have === want ? "✔ (the expected build)" : "⚠ NOT the expected build " + want}`);
+  log(`  Code           sha256 ${have} ${want.includes(have) ? `✔ (the audited ${have === PICKS_V2_SHA256 ? "v2" : "build"})` : "⚠ NOT the expected build " + want.join(" or ")}`);
   log(`  Overrides      ${m.call && m.tx && m.upload ? "✔ all three ON (the contract decides for its own account)" : "⚠ NOT all on: the upload key still controls it. Do not announce games."}`);
   try { const n = await assertAuditedContract(net, p); log(`  Checked on     ${n} node${n > 1 ? "s (both agree)" : " (the testnet has one public node)"} ✔`); }
   catch (e) { log(`  ⚠ ${(e as Error).message}`); }
@@ -171,15 +178,15 @@ export function uploadBuild(testnet: boolean, files = { mainnet: MAINNET_WASM, t
   if (!testnet) {
     if (!fs.existsSync(files.mainnet)) throw new Error(`${files.mainnet} not found: in the picks folder run npm ci --ignore-scripts, npm test`);
     const wasm = fs.readFileSync(files.mainnet), h = sha256hex(wasm);
-    if (h !== PICKS_SHA256) throw new Error(`${files.mainnet} is not the audited Picks build (sha256 ${h}, expected ${PICKS_SHA256}). Rebuild: cd picks, npm ci --ignore-scripts, npm test (best in a clean copy with no .env).`);
+    if (!AUDITED_PICKS.includes(h)) throw new Error(`${files.mainnet} is not the audited Picks build (sha256 ${h}, expected ${AUDITED_PICKS.join(" or ")}). Rebuild: cd picks, npm ci --ignore-scripts, npm test (best in a clean copy with no .env).`);
     return { wasm, sha256: h, what: "the audited mainnet build" };
   }
   const man = readJson(files.manifest);
   if (!man || !fs.existsSync(files.testnet)) throw new Error("No testnet build yet: npm run picks -- build-testnet --testnet");
   const wasm = fs.readFileSync(files.testnet), h = sha256hex(wasm);
-  if (man.auditedSha256 !== PICKS_SHA256) throw new Error(`The testnet build was made from ${man.auditedSha256}, not the audited ${PICKS_SHA256}. Rebuild it.`);
+  if (!AUDITED_PICKS.includes(man.auditedSha256)) throw new Error(`The testnet build was made from ${man.auditedSha256}, not the audited ${AUDITED_PICKS.join(" or ")}. Rebuild it.`);
   if (man.sha256 !== h) throw new Error("The testnet build doesn't match its manifest. Rebuild it: npm run picks -- build-testnet --testnet");
-  if (h === PICKS_SHA256) throw new Error("The testnet build is the mainnet build (its owner would be the mainnet owner). Rebuild it.");
+  if (AUDITED_PICKS.includes(h)) throw new Error("The testnet build is the mainnet build (its owner would be the mainnet owner). Rebuild it.");
   return { wasm, sha256: h, what: `the testnet build (audited code, owner ${man.owner}, waits of ${man.timelockMs / 60000} min)` };
 }
 
@@ -311,10 +318,11 @@ export async function sendOps(p: Provider, chainId: string, signer: Signer, ops:
  *  three overrides on. A wrong or edited deployment file can't make the owner sign for another contract. */
 /** Audit BX-47: two node addresses are the same node when they match after trimming case and trailing slashes. */
 export const sameNode = (a: string, b: string) => a.trim().toLowerCase().replace(/\/+$/, "") === b.trim().toLowerCase().replace(/\/+$/, "");
-export async function assertAuditedContract(net: { testnet: boolean; picks: string | null; cfg?: any; rpc?: string[] }, p: Provider, meta = contractMetadata, want?: string, checkNodes?: Provider[]) {
+export async function assertAuditedContract(net: { testnet: boolean; picks: string | null; cfg?: any; rpc?: string[] }, p: Provider, meta = contractMetadata, wantOne?: string, checkNodes?: Provider[]) {
   if (!net.picks) throw new Error("No Picks contract yet.");
-  want = want ?? (net.testnet ? (readJson(TESTNET_MANIFEST)?.sha256 ?? net.cfg?.picksSha256) : PICKS_SHA256);
-  if (!want) throw new Error("No expected build for the testnet Picks contract (picks/build/testnet/manifest.json).");
+  const one = wantOne ?? (net.testnet ? (readJson(TESTNET_MANIFEST)?.sha256 ?? net.cfg?.picksSha256) : null);
+  if (net.testnet && !one) throw new Error("No expected build for the testnet Picks contract (picks/build/testnet/manifest.json).");
+  const want: string[] = one ? [one] : AUDITED_PICKS;
   // Audit BX-9/BX-20: on mainnet a second, independent node must say the same (the testnet has one public node).
   // Audit BX-47: it must be a different node from the first, and on the mainnet chain too.
   let extra = checkNodes;
@@ -332,7 +340,7 @@ export async function assertAuditedContract(net: { testnet: boolean; picks: stri
     const m = await meta(node, net.picks);
     if (!m.exists) throw new Error(`${net.picks} has no contract on chain${where}. Nothing was signed.`);
     const have = String(m.hash).replace(/^0x1220/, "");
-    if (have !== want) throw new Error(`${net.picks} holds code ${have}${where}, not the expected Picks build ${want}. Nothing was signed.`);
+    if (!want.includes(have)) throw new Error(`${net.picks} holds code ${have}${where}, not the expected Picks build ${want.join(" or ")}. Nothing was signed.`);
     if (!(m.call && m.tx && m.upload)) throw new Error(`${net.picks} does not have all three overrides on${where}. Nothing was signed.`);
   }
   return nodes.length;
