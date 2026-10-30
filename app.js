@@ -1567,6 +1567,8 @@
 
   // ═══════════════ start ═══════════════
   async function start() {
+    // Staked or free in Daily Questions, how much, and a link to the staking page (stake-panel.js).
+    if (window.KStake && !/[?&]demo\b/.test(location.search)) window.KStake.badge($("#stake-badge"), { game: 1, href: "stake.html" });
     const rs = $("#res-search");
     if (rs) rs.addEventListener("input", () => { RV.q = rs.value || ""; renderResults(); });
     const rm = $("#res-mine");

@@ -84,6 +84,22 @@
     },
   };
   function refresh() { document.querySelectorAll("[data-status]").forEach((b) => { const f = status[b.dataset.status]; if (f) f(b); }); }
+  /** Each live game card: staked or free for the connected wallet (stake-panel.js). Nothing for guests or before the
+   *  vault opens a game's staking. */
+  async function stakeChips() {
+    const K = window.KStake, who = W && W.address;
+    for (const b of document.querySelectorAll("[data-stake]")) {
+      if (!K || !who || W.kind === "guest") { b.hidden = true; continue; }
+      try {
+        const st = await K.status(Number(b.dataset.stake), who);
+        if (!st.open && st.amount === 0n) { b.hidden = true; continue; }
+        const vhp = Number(st.amount) / 1e8;
+        b.className = `g-stake ${st.staked ? "on" : "off"}`;
+        b.textContent = st.staked ? `● Staked · ${vhp.toLocaleString("en-US", { maximumFractionDigits: 2 })} VHP` : st.amount > 0n ? `○ Staked from next week · ${vhp.toLocaleString("en-US", { maximumFractionDigits: 2 })} VHP` : "○ Playing free";
+        b.hidden = false;
+      } catch { b.hidden = true; }
+    }
+  }
 
   async function loadRace() {
     try { const b = await fetchJson(RACE_DATA + "board.json"); if (b && b.v === 1) raceBoard = b; } catch { /* no board yet */ }
@@ -108,7 +124,8 @@
     const body = el("span", { class: "g-bd" },
       el("span", { class: "g-t" }, el("span", { class: "g-name", text: g.name }), ...pills),
       el("span", { class: "g-line", text: g.line }),
-      live && status[g.id] ? el("span", { class: "g-st", "data-status": g.id }) : null);
+      live && status[g.id] ? el("span", { class: "g-st", "data-status": g.id }) : null,
+      live && VAULT_IDS[g.id] ? el("span", { class: "g-stake", "data-stake": String(VAULT_IDS[g.id]), hidden: "" }) : null);
     const ic = el("span", { class: "g-ic" }); ic.append(icon(g.id));
     return live
       ? el("a", { class: "g", href: g.href, "data-game": g.id }, ic, body, el("span", { class: "g-go", "aria-hidden": "true", text: "›" }))
@@ -152,7 +169,8 @@
     refresh();
     loadRace(); loadQuestions();
     setInterval(() => { week(); refresh(); }, 60000);
-    if (W && W.subscribe) W.subscribe(refresh);
+    if (W && W.subscribe) W.subscribe(() => { refresh(); stakeChips(); });
+    stakeChips();
   }
   main();
 })();
