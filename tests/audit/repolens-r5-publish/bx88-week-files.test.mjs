@@ -142,7 +142,7 @@ test("BX-88 (review): a bad run can't pre-publish a future round, a round at a w
   const w3 = JSON.parse(fs.readFileSync(path.join(r.out, "W003.json"), "utf8"));
   fs.writeFileSync(path.join(r.out, "W004.json"), JSON.stringify({ ...w3, week: 4, start: w3.start + 7 * 86400000, end: w3.end + 7 * 86400000 }));
   p = publish(r.inn);
-  assert.notEqual(p.status, 0); assert.match(p.stdout, /isn't this one or an earlier one/);
+  assert.notEqual(p.status, 0); assert.match(p.stdout, /isn.t this one or the one just ended/);
 
   // the honest run still publishes
   r = await fresh();
@@ -174,4 +174,91 @@ test("the mainnet publish check is given Block X's own round size and offset (bl
   const m = /python3 - "\$IN\/blockx" 2 "\$PUB\/blockx" "\$HELD" blockx (\d+) (\d+) <<'PY'/.exec(y);
   assert.ok(m, "the round size and offset are passed");
   assert.equal(Number(m[1]), G ? G.ROUND : X.ROUND); assert.equal(Number(m[2]), G ? G.OFFSET : 0);
+});
+
+// Audit BX-95 (round 6): a number above 2^53 - 1 (which the JavaScript recorder can't read back exactly) never gets
+// onto the branch; the honest run after the bad one publishes.
+test("BX-95: a new round with lockTime 2^53 + 1 is refused; the next honest run publishes", async () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "bx95-")), remote = path.join(d, "r.git");
+  spawnSync("git", ["init", "-q", "--bare", remote]);
+  const sh = path.join(d, "publish.sh"); fs.writeFileSync(sh, publishScript());
+  const race = raceDir();
+  const show = (f) => spawnSync("git", ["--git-dir", remote, "show", `games-data:blockx/${f}`], { encoding: "utf8" });
+  const prev = () => { const p = fs.mkdtempSync(path.join(d, "prev-"));
+    for (const f of spawnSync("git", ["--git-dir", remote, "ls-tree", "--name-only", "games-data:blockx"], { encoding: "utf8" }).stdout.split("\n").filter(Boolean)) if (/^(index|board|W\d{3}|P\d{3})\.json$/.test(f)) fs.writeFileSync(path.join(p, f), show(f).stdout);
+    return p; };
+  const rec = async (lib, pv) => { const inn = fs.mkdtempSync(path.join(d, "in-")), out = path.join(inn, "blockx");
+    await quiet(() => run({ p: "main", check: "check", out, prev: pv, raceDir: race, picksContract: "1PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP", blockOf, picksOf, rankedOf, head: { height: lib + 60, time: T(lib + 60), lib } }));
+    return { inn, out, now: T(lib + 60) }; };
+  const publish = (r) => spawnSync("bash", [sh], { env: { ...ENV, IN: r.inn, REMOTE: remote, CHECK_NOW_MS: String(r.now) }, encoding: "utf8" });
+  let r = await rec(H0 + 6 * X.ROUND + 50);
+  assert.equal(publish(r).status, 0);
+  const before = JSON.parse(show("W003.json").stdout).targets.map((t) => t.round);
+  r = await rec(H0 + 7 * X.ROUND + 50, prev());
+  const f = path.join(r.out, "W003.json"), j = JSON.parse(fs.readFileSync(f, "utf8"));
+  const t = j.targets.find((x) => !before.includes(x.round));
+  assert.ok(t, "setup: the run has a new round");
+  t.lockTime = 9007199254740992;
+  fs.writeFileSync(f, JSON.stringify(j).replace("9007199254740992", "9007199254740993"));
+  assert.notEqual(publish(r).status, 0, "refused");
+  assert.ok(!show("W003.json").stdout.includes("9007199254740993"));
+  r = await rec(H0 + 8 * X.ROUND + 50, prev());
+  const p = publish(r);
+  assert.equal(p.status, 0, p.stdout + p.stderr);
+});
+
+// Audit BX-96 (round 6): index.json's week list never loses a published week.
+test("BX-96: index.json can't drop a published week; a run that tries is held", async () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "bx96-")), remote = path.join(d, "r.git");
+  spawnSync("git", ["init", "-q", "--bare", remote]);
+  const sh = path.join(d, "publish.sh"); fs.writeFileSync(sh, publishScript());
+  const race = raceDir();
+  const rec = async (lib) => { const inn = fs.mkdtempSync(path.join(d, "in-")), out = path.join(inn, "blockx");
+    await quiet(() => run({ p: "main", check: "check", out, raceDir: race, picksContract: "1PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP", blockOf, picksOf, rankedOf, head: { height: lib + 60, time: T(lib + 60), lib } }));
+    return { inn, out, now: T(lib + 60) }; };
+  const publish = (r) => spawnSync("bash", [sh], { env: { ...ENV, IN: r.inn, REMOTE: remote, CHECK_NOW_MS: String(r.now) }, encoding: "utf8" });
+  let r = await rec(H0 + 6 * X.ROUND + 50);
+  assert.equal(publish(r).status, 0);
+  r = await rec(H0 + 6 * X.ROUND + 50);
+  const f = path.join(r.out, "index.json"), j = JSON.parse(fs.readFileSync(f, "utf8")); j.weeks = []; fs.writeFileSync(f, JSON.stringify(j));
+  const p = publish(r);
+  assert.notEqual(p.status, 0); assert.match(p.stdout, /published weeks 2, 3 are missing/);
+});
+
+// Audit BX-100 (round 6), the auditor's README test: one node's word never voids a target for good.
+test("G-A-2: a non-canonical transfer seen on one node only holds the target (a disagreement), never voids it", async () => {
+  const lib = H0 + 4 * X.ROUND + 50;
+  const { NonCanonicalTransfer } = await import(path.resolve(APP, "bot/games/blockx.ts"));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "ga2-"));
+  const r = await quiet(() => run({ p: "main", check: "check", out, raceDir: raceDir(), picksContract: "1PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP", blockOf, picksOf, rankedOf,
+    vhpMovesOf: async (node) => { if (node === "main") throw new NonCanonicalTransfer("a VHP transfer to X isn't in the standard encoding (unexpected fields)"); return 0n; },
+    head: { height: lib + 60, time: T(lib + 60), lib } }));
+  const ts = r.weeks.get(3)?.targets ?? [];
+  assert.ok(ts.every((t) => !/standard encoding/.test(t.void || "")), "one node's word voided a target for good");
+  assert.ok(r.problems.some((p) => /only one node reports a non-standard VHP transfer/.test(p)));
+});
+
+// Round-6 blind review (#1): a bad run that pushes the newest real round's time up to the job's clock can't hold the
+// honest runs after it (no neighbour-time rule any more).
+test("review #1: an inflated time on a new round doesn't hold the honest runs after it", async () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "rv1-")), remote = path.join(d, "r.git");
+  spawnSync("git", ["init", "-q", "--bare", remote]);
+  const sh = path.join(d, "publish.sh"); fs.writeFileSync(sh, publishScript());
+  const race = raceDir();
+  const show = (f) => spawnSync("git", ["--git-dir", remote, "show", `games-data:blockx/${f}`], { encoding: "utf8" });
+  const prev = () => { const p = fs.mkdtempSync(path.join(d, "prev-"));
+    for (const f of spawnSync("git", ["--git-dir", remote, "ls-tree", "--name-only", "games-data:blockx"], { encoding: "utf8" }).stdout.split("\n").filter(Boolean)) if (/^(index|board|W\d{3}|P\d{3})\.json$/.test(f)) fs.writeFileSync(path.join(p, f), show(f).stdout);
+    return p; };
+  const rec = async (lib, pv) => { const inn = fs.mkdtempSync(path.join(d, "in-")), out = path.join(inn, "blockx");
+    await quiet(() => run({ p: "main", check: "check", out, prev: pv, raceDir: race, picksContract: "1PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP", blockOf, picksOf, rankedOf, head: { height: lib + 60, time: T(lib + 60), lib } }));
+    return { inn, out, now: T(lib + 60) }; };
+  const publish = (r) => spawnSync("bash", [sh], { env: { ...ENV, IN: r.inn, REMOTE: remote, CHECK_NOW_MS: String(r.now) }, encoding: "utf8" });
+  let r = await rec(H0 + 6 * X.ROUND + 50);
+  assert.equal(publish(r).status, 0);
+  r = await rec(H0 + 7 * X.ROUND + 50, prev());
+  const f = path.join(r.out, "W003.json"), j = JSON.parse(fs.readFileSync(f, "utf8"));
+  j.targets[j.targets.length - 1].time = r.now;            // the newest real round, its time pushed to the job's clock
+  fs.writeFileSync(f, JSON.stringify(j));
+  publish(r);
+  for (const k of [8, 9, 10]) { r = await rec(H0 + k * X.ROUND + 50, prev()); const p = publish(r); assert.equal(p.status, 0, `honest run ${k}: ` + p.stdout); }
 });

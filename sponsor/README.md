@@ -230,9 +230,9 @@ claim's Mana with the answers' 1 Mana limit, not `rcLimitOther`.
   action, and never sets a limit after a run-out at the per-transaction cap; other actions ask 1 Mana (the cap); exact
   Mana values; the network is decided by chain id and the testnet keeps its own files; v2 stays allowed as a rollback.
 
-Release candidate sha256 (v3 with the above and round 4: `game_has_vault`, `would_pay` games): `b61ac238da27c4a71c01127f39a7b95f19fabf15e35df9f9715546d221e256e4` (35,052 bytes)
-(34,558 bytes; 167 contract tests). Superseded: `21bec825…` (33,210 bytes). Not yet fix-checked: the upload tool
-allows it on the testnet only. Rollback: v2 `fa4659e6…` stays an allowed build.
+Release sha256 (v3 with the above and round 4: `game_has_vault`, `would_pay` games): `b61ac238da27c4a71c01127f39a7b95f19fabf15e35df9f9715546d221e256e4` (35,052 bytes;
+182 contract tests). Repo Lens round 6 (2026-10-30): **GO** for the mainnet upload; the tool allows it on mainnet,
+with v2 `fa4659e6…` still allowed as the rollback. Superseded: `21bec825…` (33,210 bytes).
 
 ## Build
 

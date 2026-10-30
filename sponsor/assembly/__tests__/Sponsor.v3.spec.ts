@@ -770,7 +770,7 @@ describe("F6-S1-3: the vault switch, every entry point", () => {
     new Sponsor().would_pay(a);
     expect(MockVM.getCallContractArguments().length).toBe(1);
   });
-  it("while off, a v5 answer and deposit_vhp are still paid", () => {
+  it("while off, a v5 answer is still paid", () => {   // (audit SP-58: the auditor's name also said deposit_vhp, which it doesn't test)
     start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
     READS = [activePlayer(0, 0, 5 * MANA)];
     OPS = [call(GAME, 0x0db52f40, new Uint8Array(0))];

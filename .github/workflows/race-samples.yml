@@ -100,7 +100,7 @@ jobs:
           j = json.load(open(sys.argv[1], encoding="utf-8"))
           now = int(time.time() * 1000)
           addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}"); iso = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
-          assert type(j) is dict and set(j) == {"v", "updated", "samples"} and j["v"] == 1 and iso.fullmatch(str(j["updated"]))
+          assert type(j) is dict and set(j) == {"v", "updated", "samples"} and type(j["v"]) is int and j["v"] == 1 and iso.fullmatch(str(j["updated"]))
           s = j["samples"]
           assert type(s) is list and len(s) <= 120
           for x in s:
@@ -124,7 +124,8 @@ jobs:
           for x in old:
               if type(x) is dict and type(x.get("at")) is int and now - 8 * 3600000 + 600000 < x["at"] <= now + 600000:
                   assert (x["at"], x.get("height")) in mine, "a published sample of the last 8 hours would be dropped"
-                  assert mine[(x["at"], x.get("height"))] == x, "a published sample of the last 8 hours would be changed"
+                  y = mine[(x["at"], x.get("height"))]
+                  assert json.dumps(y, sort_keys=True) == json.dumps(x, sort_keys=True), "a published sample of the last 8 hours would be changed"   # (types too: 1 != true)
           print("samples ok")
           PY
           cd work

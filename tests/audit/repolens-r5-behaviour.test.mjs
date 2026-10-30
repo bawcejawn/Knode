@@ -106,7 +106,7 @@ test("BX-89: a primary node whose head is 5 minutes ahead of this computer's clo
 });
 
 // Blind review of round 5 (#3, #4): a transfer with explicit defaults (koilib writes value 0 as `18 00`, an empty memo
-// as `22 00`) is read like any decoder reads it; any other non-canonical transfer voids the target AT ONCE (the bytes
+// as `22 00` (koilib 9.4.1 leaves an empty memo out; audit BX-104) is read like any decoder reads it; any other non-canonical transfer voids the target AT ONCE (the bytes
 // never change), instead of holding it for 3 days.
 test("BX-72 (review): explicit defaults are read (value 0, empty memo); non-canonical bytes throw NonCanonicalTransfer", async () => {
   const zero = await koilibArgs({ from: B, to: A, value: "0" });
@@ -115,4 +115,28 @@ test("BX-72 (review): explicit defaults are read (value 0, empty memo); non-cano
   assert.equal(BX.vhpInflows(receipt(Buffer.from(b).toString("base64"), A, B), VHP, A), 7n);
   const bad = [...Buffer.from(await koilibArgs({ from: B, to: A, value: "7" }), "base64"), 0x7a, 0x00];   // unknown field 15
   assert.throws(() => BX.vhpInflows(receipt(Buffer.from(bad).toString("base64"), A, B), VHP, A), (e) => e instanceof BX.NonCanonicalTransfer);
+});
+
+// Audit BX-101 (round 6): a check node lagging more than the card's bound gives no sample (not disputes).
+test("BX-101: a check node 15 minutes behind gives no sample this time", async () => {
+  const P = addr("r6b-p"), out = tmp(), now = Date.now();
+  const node = (time, h) => ({ getHeadInfo: async () => ({ head_topology: { height: String(h), id: "h" }, head_block_time: String(time), last_irreversible_block: String(h - 60) }),
+    call: async (_m, q) => ({ block_items: Array.from({ length: q.num_blocks }, (_, i) => ({ block_height: String(Number(q.ancestor_start_height) + i), block: { header: { signer: P, timestamp: String(now) } } })) }) });
+  const r = await R.sample({ p: node(now, 1_000_000), check: node(now - 15 * 60000, 999_700), prev: tmp(), out, spreadMs: 0, wait: async () => {}, clock: () => now,
+    vhpOf: async (w) => Object.fromEntries(w.map((x) => [x, sat(1000)])) });
+  assert.ok(r.problems.some((x) => /no sample this time/.test(x)));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, "vhp-samples.json"), "utf8")).samples.length, 0);
+});
+
+// Round-6 blind review (#3): a tiny honest dispute (0.6%) on a producer that isn't the top shifts a floored producer
+// by a few satoshi; that alone must not hold the whole card (0.5% tolerance), though the producer is flagged.
+test("BX-99 (review): a 0.6% dispute on a mid producer flags it but doesn't put the whole card in doubt", async () => {
+  const now = Date.now(), prev = tmp(), out = tmp();
+  const V = { [A]: 3000, [B]: 1000, [C]: 2000 };
+  const read = (bump) => async (w) => Object.fromEntries(w.map((x) => [x, x === "network" ? sat(1e8) : String(BigInt(Math.round((V[x] ?? 0) * (x === C ? bump : 1) * 1e8)))]));
+  const r = await R.run({ p: chain({ head: 1_000_000, lib: 999_940, time: now }), check: chain({ head: 1_000_000, lib: 999_940, time: now }), prev, out, vhpOf: read(1), vhpCheckOf: read(1.006), raceContract: null, clock: () => now });
+  const c = cardsOf(out).at(-1);
+  assert.ok(c, "no card: " + r.problems.join("; "));
+  assert.deepEqual(c.flagged, [C]);
+  assert.ok(!c.topInDoubt, "a 0.6% dispute on a mid producer held the whole card");
 });

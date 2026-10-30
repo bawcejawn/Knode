@@ -37,7 +37,11 @@ const honest = { lw: 1, players: [[A, 30, 1], [B, 20, 1], [F, 25, 0]], prizes: [
 test("F5-K-1: a run's own board can't vouch for a vault file that differs from the published board", () => {
   const w = world();
   assert.equal(w.run({ ...honest, vault: null, P: true }).status, 0);          // the honest board is published
-  w.run({ lw: 1, players: [[Z, 99, 1], ...honest.players], prizes: [[F, 1]], vault: "honest" });
+  // (Audit BX-94, round 6: the honest P file too, so the vault file is judged on its rows, not held as "not yet".)
+  w.run({ ...honest, upd_h: 14, vault: null, P: true });
+  assert.equal(w.show("P001.json").status, 0);
+  const bad = w.run({ lw: 1, upd_h: 21, players: [[Z, 99, 1], ...honest.players], prizes: [[F, 1]], vault: "honest" });
+  assert.match(bad.stdout, /rows aren't the published Staked board's players/);
   const v = w.show("vault/W1.json");
   assert.ok(v.status !== 0 || !v.stdout.includes(Z), "vault/W1.json must be checked against the PUBLISHED board (and its points recomputed), not the run's own");
 });
@@ -53,7 +57,11 @@ test("F5-K-2: a P file can't be planted before its week is final", () => {
 });
 test("F5-K-3: a bad published vault file doesn't stop the honest run publishing everything else", () => {
   const w = world();
-  w.run({ ...honest, vault: { rows: [[B, 255]], first: [F], second: [] }, P: true });   // a bad run got in first
+  w.run({ ...honest, vault: null, P: true });
+  w.run({ ...honest, upd_h: 14, vault: null, P: true });                             // board and P published
+  // (Audit BX-94, round 6: the bad vault file is now judged on its rows: held with an alert, not as "not yet".)
+  const badRun = w.run({ ...honest, upd_h: 20, vault: { rows: [[B, 200]], first: [F], second: [] } });   // a bad run
+  assert.notEqual(badRun.status, 0); assert.match(badRun.stdout, /rows aren't the published Staked board's players|points don't follow/);
   const r = w.run({ ...honest, upd_h: 30, vault: "honest" });
   const b = JSON.parse(w.show("board.json").stdout);
   assert.equal(b.updated.slice(0, 13), "2026-11-03T06", `the honest board must still be published (exit ${r.status}): hold only the vault file and alert`);
@@ -80,6 +88,6 @@ test("BX-65: Staked players left out of the vault rows are named in an alert; th
   w.run({ ...honest, upd_h: 14, vault: null, P: true });
   const r = w.run({ ...honest, upd_h: 21, vault: { rows: [[A, 255]], first: [F], second: [] } });
   assert.equal(r.status, 1, "the job fails so you are emailed");
-  assert.match(r.stdout, new RegExp(`::error::\\(published; check it\\) blockx/vault/W1\\.json: 1 of 2 Staked-board players.*${B}`));
+  assert.match(r.stdout, new RegExp(`::error::\\(published unless held below; check it\\) blockx/vault/W1\\.json: 1 of 2 Staked-board players.*${B}`));
   assert.equal(w.show("vault/W1.json").status, 0, "still published");
 });

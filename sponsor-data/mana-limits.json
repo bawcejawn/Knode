@@ -1,0 +1,20 @@
+{
+  "v": 1,
+  "updated": "2026-10-30T20:44:03.939Z",
+  "margin": 2,
+  "rows": [
+    {
+      "name": "KnodeGames Picks pick",
+      "contract": "1LmgqBGctL9F2YkyjTXgieTXwnYHh8Y6Pm",
+      "entry_point": 2363702380,
+      "max_mana": "20000000",
+      "observed": {
+        "count": 1,
+        "max": "11600000",
+        "typical": "11600000",
+        "source": "testnet sponsored Block X pick 2026-10-30",
+        "at": "2026-10-30T20:44:03.939Z"
+      }
+    }
+  ]
+}

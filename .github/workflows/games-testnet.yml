@@ -122,7 +122,7 @@ jobs:
             id="${d##*/blockx-}"; mkdir -p "$PUB/blockx-$id"
             if [ -n "$parent" ]; then
               { git ls-tree --name-only "$parent:blockx-$id" 2>/dev/null || true; } | while IFS= read -r f; do
-                if [[ "$f" =~ ^(board|P[0-9]{3}|W[0-9]{3})\.json$ ]]; then git show "$parent:blockx-$id/$f" > "$PUB/blockx-$id/$f"; fi
+                if [[ "$f" =~ ^(board|index|P[0-9]{3}|W[0-9]{3})\.json$ ]]; then git show "$parent:blockx-$id/$f" > "$PUB/blockx-$id/$f"; fi
               done
             fi
             ro=$(/usr/bin/python3 -I -c 'import json,sys
@@ -133,35 +133,63 @@ jobs:
           import json, os, re, sys
           d = sys.argv[1]; gid = int(sys.argv[2]); addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
           iso = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{3})?Z"); ymd = re.compile(r"\d{4}-\d\d-\d\d")
-          num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
-          nat = lambda x: type(x) is int and 0 <= x < 10**16
+          # Audit BX-95 (round 6): the recorder is JavaScript, which rounds integers above 2^53 - 1, so nothing larger is
+          # ever published (a number it can't read back exactly would make every honest run look like a rewrite).
+          # Audit BX-112 (round 7): an address is a JSON string, never a number made of 1s (which JavaScript rounds).
+          isaddr = lambda v: type(v) is str and addr.fullmatch(v) is not None
+          SAFE = 2**53 - 1
+          num = lambda x: type(x) in (int, float) and x == x and abs(x) <= SAFE
+          nat = lambda x: type(x) is int and 0 <= x <= SAFE
           WEEK = 7 * 86400000
+          # Round-7 blind review: JavaScript compares with ===, Python's == says True == 1 and 3.0 == 3. So every check of
+          # a file's header is type-strict (v, week, game), and published content is compared with same() (types too).
+          def same(a, b):
+              if type(a) is not type(b): return False
+              if type(a) is dict: return a.keys() == b.keys() and all(same(a[k], b[k]) for k in a)
+              if type(a) is list: return len(a) == len(b) and all(same(x, y) for x, y in zip(a, b))
+              return a == b
+          one = lambda x: type(x) is int and x == 1
+          # Audit BX-95 / BX-112 / BX-113 (rounds 6-7), the root cause: the recorders are JavaScript. Every value of every
+          # incoming file must be one JavaScript reads back exactly (integers and numbers within 2^53 - 1, finite), so a
+          # bad run can never publish a value that makes every honest run after it look like a rewrite.
+          def js_safe(o, depth=0):
+              if depth > 64: return False
+              if o is None or type(o) in (bool, str): return True
+              if type(o) is int: return abs(o) <= 2**53 - 1
+              if type(o) is float: return o == o and abs(o) <= 2**53 - 1
+              if type(o) is list: return all(js_safe(x, depth + 1) for x in o)
+              if type(o) is dict: return all(type(k) is str and js_safe(v, depth + 1) for k, v in o.items())
+              return False
+          for _root, _dirs, _files in os.walk(d):
+              for _f in _files:
+                  if _f.endswith(".json"):
+                      assert js_safe(json.load(open(os.path.join(_root, _f), encoding="utf-8"))), "a value the recorder (JavaScript) can't read back exactly: " + _f
           def target_ok(t):
               if type(t) is not dict or not set(t) <= {"round", "height", "final", "checked", "signer", "time", "lockTime", "card", "void", "picks"}: return False
               if not ({"round", "height", "final", "checked", "signer", "time", "lockTime", "card", "picks"} <= set(t)): return False
-              if not (nat(t.get("round")) and nat(t.get("height")) and t["height"] >= t["round"] and t.get("final") is True and t.get("checked") in (0, 1, 2)): return False
-              if not (t.get("signer") is None or addr.fullmatch(str(t["signer"]))) or not nat(t.get("time")) or not nat(t.get("lockTime")): return False
+              if not (nat(t.get("round")) and nat(t.get("height")) and t["height"] >= t["round"] and t.get("final") is True and type(t.get("checked")) is int and t["checked"] in (0, 1, 2)): return False
+              if not (t.get("signer") is None or isaddr(t["signer"])) or not nat(t.get("time")) or not nat(t.get("lockTime")): return False
               c = t.get("card")
               if c is not None and (type(c) is not dict or set(c) not in ({"at", "top", "signerVhp"}, {"at", "top", "signerVhp", "afterAt"}) or not num(c["at"]) or not num(c["top"]) or not (c["signerVhp"] is None or num(c["signerVhp"])) or ("afterAt" in c and not (num(c["afterAt"]) and c["afterAt"] > c["at"]))): return False
               if "void" in t and (type(t["void"]) is not str or len(t["void"]) > 200): return False
               pk = t.get("picks")
-              return type(pk) is list and len(pk) <= 100000 and all(type(x) is list and len(x) == 5 and addr.fullmatch(str(x[0])) and addr.fullmatch(str(x[1]))
-                  and nat(x[2]) and type(x[3]) is int and 0 <= x[3] <= 300 and x[4] in (0, 1) for x in pk)
+              return type(pk) is list and len(pk) <= 100000 and all(type(x) is list and len(x) == 5 and isaddr(x[0]) and isaddr(x[1])
+                  and nat(x[2]) and type(x[3]) is int and 0 <= x[3] <= 300 and type(x[4]) is int and x[4] in (0, 1) for x in pk)
           def rows_ok(rows):
-              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "place", "boardPlace", "pts", "correct", "picks", "days", "lastCorrect", "ranked"} and addr.fullmatch(str(x["a"]))
+              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "place", "boardPlace", "pts", "correct", "picks", "days", "lastCorrect", "ranked"} and isaddr(x["a"])
                   and all(nat(x[k]) for k in ("place", "boardPlace", "pts", "correct", "picks", "days", "lastCorrect")) and type(x["ranked"]) is bool for x in rows)
           def prizes_ok(p):
-              return type(p) is list and len(p) <= 50 and all(type(x) is dict and set(x) == {"player", "place", "vhp"} and addr.fullmatch(str(x["player"])) and nat(x["place"]) and num(x["vhp"]) and 0 < x["vhp"] <= 2 for x in p)
+              return type(p) is list and len(p) <= 50 and all(type(x) is dict and set(x) == {"player", "place", "vhp"} and isaddr(x["player"]) and nat(x["place"]) and num(x["vhp"]) and 0 < x["vhp"] <= 2 for x in p)
           def card_ok(c):
               if type(c) is not dict or set(c) != {"at", "blocksPerRace", "c", "fairness", "field", "paddock"} or not num(c["at"]) or not num(c["blocksPerRace"]) or not num(c["c"]): return False
               if not (c["fairness"] is None or (type(c["fairness"]) is list and len(c["fairness"]) == 2 and all(num(v) for v in c["fairness"]))): return False
               if type(c["field"]) is not list or type(c["paddock"]) is not list or len(c["field"]) + len(c["paddock"]) > 500: return False
-              return all(type(r) is dict and set(r) == {"a", "vhp", "k", "h"} and addr.fullmatch(str(r["a"])) and all(num(r[k]) for k in ("vhp", "k", "h")) for r in c["field"]) and \
-                  all(type(r) is dict and set(r) == {"a", "vhp", "k"} and addr.fullmatch(str(r["a"])) and all(num(r[k]) for k in ("vhp", "k")) for r in c["paddock"])
+              return all(type(r) is dict and set(r) == {"a", "vhp", "k", "h"} and isaddr(r["a"]) and all(num(r[k]) for k in ("vhp", "k", "h")) for r in c["field"]) and \
+                  all(type(r) is dict and set(r) == {"a", "vhp", "k"} and isaddr(r["a"]) and all(num(r[k]) for k in ("vhp", "k")) for r in c["paddock"])
           def vault_ok(j, f):
               # The Vault (v6) results file: staked players' points (1-255) in rows, the free board's 1st and 2nd (at
               # most 10 per place); every wallet once.
-              if type(j) is not dict or set(j) != {"game", "week", "final", "rows", "first", "second"} or j["game"] != gid or j["final"] is not True: return False
+              if type(j) is not dict or set(j) != {"game", "week", "final", "rows", "first", "second"} or not (type(j["game"]) is int and j["game"] == gid) or j["final"] is not True: return False
               if not nat(j["week"]) or f != "W%d.json" % j["week"]: return False
               rows = j["rows"]
               if type(rows) is not list or len(rows) > 100000 or not all(type(x) is dict and set(x) == {"player", "points"} and type(x["player"]) is str and addr.fullmatch(x["player"])
@@ -197,13 +225,13 @@ jobs:
           for f in sorted(os.listdir(d)):
               if not re.fullmatch(r"P\d{3}\.json", f): continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
-              assert set(j) == {"v", "week", "game", "at", "prizes"} and j["v"] == 1 and j["game"] == gid and f == "P%03d.json" % j["week"], f
+              assert set(j) == {"v", "week", "game", "at", "prizes"} and one(j["v"]) and (type(j["game"]) is int and j["game"] == gid) and nat(j["week"]) and f == "P%03d.json" % j["week"], f
               assert iso.fullmatch(str(j["at"])) and prizes_ok(j["prizes"]), f
               w = j["week"]
               # (A week not over yet, or not final on the published board yet: simply not yet. An older week: an alert.)
               if w < cw - 1: hold(pre + "/" + f, "an older week than the one that just ended, by this job's clock", True)
               elif w > cw - 1 or not week_final(w): hold(pre + "/" + f, "its week isn't over and final on the published board yet", False)
-              elif j["prizes"] != plw["prizes"]: hold(pre + "/" + f, "its prizes differ from the published final board", True)
+              elif not same(j["prizes"], plw["prizes"]): hold(pre + "/" + f, "its prizes differ from the published final board", True)
           vdir = os.path.join(d, "vault")
           for f in (sorted(os.listdir(vdir)) if os.path.isdir(vdir) else []):
               name = pre + "/vault/" + f
@@ -233,40 +261,67 @@ jobs:
               # named in an error that fails the job (so you are emailed, once: the file is written once) and checked
               # within the vault's 3 days.
               out = [a for a in order if a not in st]
-              if out: held.append("!alert"); print("::error::(published; check it) " + name + ": " + str(len(out)) + " of " + str(len(order)) + " Staked-board players with points are not in the vault rows (not staked all week, by the recorder's two-node read): " + ", ".join(out[:20]) + (" ..." if len(out) > 20 else ""))
+              if out: held.append("!alert"); print("::error::(published unless held below; check it) " + name + ": " + str(len(out)) + " of " + str(len(order)) + " Staked-board players with points are not in the vault rows (not staked all week, by the recorder's two-node read): " + ", ".join(out[:20]) + (" ..." if len(out) > 20 else ""))
           # Audit BX-88 (round 5): published targets are append-only. A week file may add rounds but never change or drop
           # one that is already published (an honest run never rewrites a recorded target: bot/games/blockx.ts keeps them).
           # A run that tries is held WHOLE, with an alert: its board, prize and vault files were all built from that file.
           rewrote = []
+          # Published targets, by week file.
+          pubt = {}
+          for f in (sorted(os.listdir(pub)) if pub and os.path.isdir(pub) else []):
+              if re.fullmatch(r"W\d{3}\.json", f):
+                  o = pubjson(f)
+                  pubt[f] = [t for t in o["targets"] if type(t) is dict and type(t.get("round")) is int] if type(o) is dict and type(o.get("targets")) is list else None
           for f in sorted(os.listdir(d)):
               if not re.fullmatch(r"W\d{3}\.json", f): continue
               new = json.load(open(os.path.join(d, f), encoding="utf-8"))
               nt = new.get("targets") if type(new) is dict else None
-              rounds = [t.get("round") for t in nt if type(t) is dict] if type(nt) is list else None
-              if rounds is None or len(rounds) != len(nt) or len(set(rounds)) != len(rounds): rewrote.append(f + " (its rounds aren't a list of distinct targets)"); continue
-              # Review (round 5): NEW rounds must be real past targets, so a bad run can't pre-publish a round (the honest
-              # recorder would then keep it and never record the real one), nor one the recorder would drop on load (that
-              # would hold every later honest run): its block time is before this job's clock and inside its week, the week
-              # isn't in the future, and its height is the game's target height for the round (as bot/games/blockx.ts loadWeek).
+              # (BX-106: validated before anything is compared, so a crafted file can't crash the check.)
+              if type(nt) is not list or not all(type(t) is dict and type(t.get("round")) is int for t in nt) or len({t["round"] for t in nt}) != len(nt):
+                  rewrote.append(f + " (its rounds aren't a list of distinct targets)"); continue
+              # Review (round 5) and audit BX-97 / BX-98 (round 6): NEW rounds must be real past targets of a week that is
+              # still open, so a bad run can't pre-publish a round (the honest recorder would keep it and never record the
+              # real one), add one the recorder would drop on load (that would hold every later honest run), or add one to
+              # a week whose prize file is published or that has ended for good:
+              # - the week is the current one or the one just ended (by this job's clock), and its P file isn't published;
+              # - the height is the game's target height for the round (as bot/games/blockx.ts loadWeek);
+              # - the block time is before this job's clock and inside the week.
+              # (Round-6 blind review: a rule tying a new round's time to its published neighbours let one bad run, or an
+              # honest void row's estimated time, hold every later honest run, so it is gone. A future round given a past
+              # time (BX-97) is caught before prizes by the week-end re-read of every target on both nodes.)
               wk = new.get("week")
               wstart = GENESIS + wk * WEEK if type(wk) is int else None
-              pubrounds = set()
-              old = pubjson(f)
-              if type(old) is dict and type(old.get("targets")) is list: pubrounds = {t.get("round") for t in old["targets"] if type(t) is dict}
+              ot = pubt.get(f)
+              if f in pubt and ot is None: rewrote.append(f + " (the published file can't be read)"); continue
+              pubrounds = {t["round"] for t in (ot or [])}
               fresh = [t for t in nt if t["round"] not in pubrounds]
-              if fresh and (wstart is None or new.get("start") != wstart or wk > cw): rewrote.append(f + " (new targets for a week that isn't this one or an earlier one, by this job's clock)"); continue
-              if fresh and (GROUND is None or GOFFSET is None): rewrote.append(f + " (this job doesn't know the game's round size, so it can't check new targets)"); continue
-              badnew = [t["round"] for t in fresh if not (type(t.get("time")) is int and wstart <= t["time"] < wstart + WEEK and t["time"] <= now
-                  and type(t["round"]) is int and t.get("height") == t["round"] * GROUND + GOFFSET)]
-              if badnew: rewrote.append(f + " (new rounds " + ", ".join(str(r) for r in badnew[:10]) + " aren't past target blocks of this week)"); continue
-              if old is None: continue
-              ot = old.get("targets") if type(old) is dict else None
-              if type(ot) is not list: rewrote.append(f + " (the published file can't be read)"); continue
+              if fresh:
+                  why = None
+                  if wstart is None or new.get("start") != wstart or not (cw - 1 <= wk <= cw): why = "new targets for a week that isn't this one or the one just ended, by this job's clock"
+                  elif pubjson("P%03d.json" % wk) is not None: why = "new targets for a week whose prize file is already published"
+                  elif GROUND is None or GOFFSET is None: why = "this job doesn't know the game's round size, so it can't check new targets"
+                  else:
+                      bad = []
+                      for t in fresh:
+                          h, tm = t.get("height"), t.get("time")
+                          ok = type(tm) is int and type(h) is int and h == t["round"] * GROUND + GOFFSET and wstart <= tm < wstart + WEEK and tm <= now
+                          if not ok: bad.append(t["round"])
+                      if bad: why = "new rounds " + ", ".join(str(r) for r in bad[:10]) + " aren't past target blocks of this week"
+                  if why: rewrote.append(f + " (" + why + ")"); continue
+              if ot is None: continue
               mine = {t["round"]: t for t in nt}
-              changed = [t.get("round") if type(t) is dict else "?" for t in ot if type(t) is not dict or mine.get(t.get("round")) != t]
+              changed = [t["round"] for t in ot if not same(mine.get(t["round"]), t)]
               if changed: rewrote.append(f + " (rounds " + ", ".join(str(r) for r in changed[:10]) + " differ from the published targets)")
+          # Audit BX-96 (round 6): index.json's week list is append-only too (the all-time board is built from it).
+          pi = pubjson("index.json")
+          if type(pi) is dict and type(pi.get("weeks")) is list and os.path.isfile(os.path.join(d, "index.json")):
+              ni = json.load(open(os.path.join(d, "index.json"), encoding="utf-8"))
+              lost = [w for w in pi["weeks"] if not (type(ni) is dict and type(ni.get("weeks")) is list and w in ni["weeks"])]
+              if lost: rewrote.append("index.json (published weeks " + ", ".join(str(w) for w in lost[:10]) + " are missing)")
+              added = [w for w in (ni.get("weeks") if type(ni) is dict and type(ni.get("weeks")) is list else []) if w not in pi["weeks"] and not (type(w) is int and cw - 1 <= w <= cw)]
+              if added: rewrote.append("index.json (new weeks " + ", ".join(str(w) for w in added[:10]) + " aren't this week or the one just ended)")
           if rewrote:
-              print("::error::this run changes already-published Block X targets: " + "; ".join(rewrote) + ". Nothing from it is published (audit BX-88).")
+              print("::error::this run changes or adds to already-published Block X history: " + "; ".join(rewrote) + ". Nothing from it is published (audit BX-88).")
               for f in sorted(os.listdir(d)):
                   if os.path.isfile(os.path.join(d, f)): hold(pre + "/" + f, "the run changes a published target", True)
               for f in (sorted(os.listdir(vdir)) if os.path.isdir(vdir) else []): hold(pre + "/vault/" + f, "the run changes a published target", True)
@@ -277,7 +332,7 @@ jobs:
               if f == "vault" or re.fullmatch(r"P\d{3}\.json", f): continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "board.json":
-                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and j["v"] == 1 and iso.fullmatch(str(j["updated"])), f
+                  assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and one(j["v"]) and iso.fullmatch(str(j["updated"])), f
                   assert type(j["today"]) is dict and set(j["today"]) == {"day", "rows"} and ymd.fullmatch(str(j["today"]["day"])) and rows_ok(j["today"]["rows"]), f
                   assert type(j["week"]) is dict and set(j["week"]) == {"week", "start", "rows"} and nat(j["week"]["week"]) and nat(j["week"]["start"]) and rows_ok(j["week"]["rows"]), f
                   assert type(j["allTime"]) is dict and set(j["allTime"]) == {"rows"} and rows_ok(j["allTime"]["rows"]), f
@@ -287,16 +342,16 @@ jobs:
                       and ("frozenAt" not in lw or iso.fullmatch(str(lw["frozenAt"])))), f
                   continue
               if f == "cards.json":
-                  assert set(j) == {"v", "updated", "startHeight", "cards"} and j["v"] == 1 and iso.fullmatch(str(j["updated"])) and nat(j["startHeight"]), f
+                  assert set(j) == {"v", "updated", "startHeight", "cards"} and one(j["v"]) and iso.fullmatch(str(j["updated"])) and nat(j["startHeight"]), f
                   assert type(j["cards"]) is list and len(j["cards"]) <= 500 and all(card_ok(c) for c in j["cards"]), f
                   continue
               if f == "index.json":
-                  assert set(j) == {"v", "updated", "weeks", "contract", "game", "prizesFromWeek"} and j["v"] == 1 and iso.fullmatch(str(j["updated"])), f
+                  assert set(j) == {"v", "updated", "weeks", "contract", "game", "prizesFromWeek"} and one(j["v"]) and iso.fullmatch(str(j["updated"])), f
                   assert type(j["weeks"]) is list and len(j["weeks"]) <= 10000 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
-                  assert j["game"] == gid and (j["prizesFromWeek"] is None or nat(j["prizesFromWeek"])), f
-                  assert j["contract"] is None or addr.fullmatch(str(j["contract"])), f
+                  assert (type(j["game"]) is int and j["game"] == gid) and (j["prizesFromWeek"] is None or nat(j["prizesFromWeek"])), f
+                  assert j["contract"] is None or isaddr(j["contract"]), f
                   continue
-              assert set(j) == {"v", "week", "start", "end", "game", "targets"} and j["v"] == 1 and j["game"] == gid and f == "W%03d.json" % j["week"], f
+              assert set(j) == {"v", "week", "start", "end", "game", "targets"} and one(j["v"]) and (type(j["game"]) is int and j["game"] == gid) and nat(j["week"]) and f == "W%03d.json" % j["week"], f
               assert nat(j["start"]) and nat(j["end"]) and j["end"] - j["start"] == WEEK, f
               assert type(j["targets"]) is list and len(j["targets"]) <= 1000 and all(target_ok(t) for t in j["targets"]), f
           print("testnet games files ok:", d)
