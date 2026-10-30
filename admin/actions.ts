@@ -1,7 +1,7 @@
 /**
  * Everything the admin page can do, for the whole Knode Games platform.
  *
- * Each action runs one of the existing, tested commands (npm run bot / desk / sponsor / picks / racepicks) with
+ * Each action runs one of the existing, tested commands (npm run bot / desk / sponsor / picks / racepicks / names) with
  * checked arguments: the page adds no new way to sign anything. Actions that send always run as a dry run first; the
  * page can send only the exact same action and values that were just previewed.
  *
@@ -18,6 +18,7 @@ export const KINDS = {
   settings: { title: "Adjustable rules and settings", blurb: "The numbers and switches you tune while the game runs." },
   emergency: { title: "Emergency stop", blurb: "Use these if something looks wrong. Stopping is always allowed, at once." },
   money: { title: "Money in and out", blurb: "Fees, seed funds and withdrawals." },
+  weekly: { title: "Weekly results", blurb: "Posting, sealing and finalizing a week's results. The hourly bot does these; run one by hand only if the bot missed it." },
   launch: { title: "Launch steps", blurb: "Done once (or once per new game), in the order shown." },
   upgrade: { title: "Upgrade the contract code", blurb: "New contract code. Game and Swap upgrades give players 48 hours' notice first; each card says what it needs." },
   ownership: { title: "Keys and ownership", blurb: "Hand-overs and changing which wallet does what. Rare; take your time." },
@@ -42,9 +43,12 @@ export const AREAS: Area[] = [
   { id: "sponsor", name: "Mana sponsor", section: "Platform", status: "live",
     what: "The wallet that pays players' Mana (transaction fees) for every Knode game, within daily caps. Free players share a pool released by the hour; players with a stake in a game get more.",
     contract: "Mana sponsor contract on the sponsor wallet (SPONSOR_WIF)", docs: "sponsor/README.md" },
-  { id: "vault", name: "Knode Vault (v6)", section: "Platform", status: "planned",
-    what: "The one vault that holds every staked VHP, produces blocks with it, and pays each week's prizes after the flat 5% fee.",
-    later: "Its controls (game registry, minimum stakes, weekly finalize, prizes) arrive here when Vault v6 launches (branch vault-v6)." },
+  { id: "vault", name: "Knode Vault (v6)", section: "Platform", status: "launching",
+    what: "The one vault that holds every staked VHP, produces blocks with it, and pays each week's prizes after the flat 5% fee. Each game (2 and up) is added here once; the game's own chat then posts its weekly results.",
+    contract: "The question game contract (1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr) after the v6 upgrade; owner OWNER_WIF, bot OPERATOR_WIF", docs: "docs/UPGRADE-V6.md" },
+  { id: "names", name: "Wallet names", section: "Platform", status: "launching",
+    what: "The names players and producers give their wallets on knodegames.com (and the Koinos @nicknames shown when a wallet has none). Claims come in on GitHub and the hourly workflow adds them; these controls are for a claim someone sent you directly, or to hide a name.",
+    contract: "No contract: names-data/names.json on GitHub (needs your git login on this PC)", docs: "docs/NAMES.md" },
 
   { id: "question", name: "Question game", section: "Games", status: "live", gameId: 1,
     what: "The weekly block-producer questions. Players answer free or with a stake; correct answers climb the weekly board.",
@@ -78,6 +82,9 @@ export const AREAS: Area[] = [
     what: "The VHP → KOIN swap desk, funded by the node. Players swap VHP for KOIN at the fee you set.",
     contract: "Desk contract v2 (owner wallet OWNER_WIF)", docs: "bot/README.md" },
 
+  { id: "t-vault", name: "Vault v6 trial", section: "Testnet", status: "testnet",
+    what: "Vault v6 on the testnet (1MXay5pSvPNzc8sBcZAMWfqaY4T9DkBvLn) with test VHP only. Add a game, stake from the testnet staking page, post a week, finalize, claim.",
+    contract: "Testnet vault (OWNER_WIF / OPERATOR_WIF in .env.testnet)", docs: "docs/UPGRADE-V6.md" },
   { id: "t-sponsor", name: "Sponsor v3 trial", section: "Testnet", status: "testnet",
     what: "Sponsor v3 on the Koinos Foundation testnet with test KOIN only, played from the testnet Block X page. Do the numbered steps in order.",
     contract: "Testnet sponsor wallet (SPONSOR_WIF in .env.testnet)", docs: "docs/blockx/SPONSOR-TESTNET.md" },
@@ -94,7 +101,7 @@ export type Action = {
   effect: "none" | "chain" | "files";   // read-only / changes the blockchain / changes files on this PC
   timing?: string;         // when the change takes effect
   step?: number;           // for a numbered sequence inside an area
-  tool: "bot" | "desk" | "sponsor" | "picks" | "racepicks";
+  tool: "bot" | "desk" | "sponsor" | "picks" | "racepicks" | "names";
   args: string[];          // {name} is replaced by the parameter's value
   params?: Param[];
   sends: boolean;          // false = read-only, never takes --send
@@ -111,10 +118,20 @@ const GAMEID: Omit<Param, "name" | "label"> = { pattern: /^[1-9]\d{0,2}$/, hint:
 // No word may start with "-", so a reason can never pass an option such as --send to the command.
 const REASON: Omit<Param, "name" | "label"> = { pattern: /^(?!(.*\s)?-)[A-Za-z0-9 .,'()\-]{0,120}$/, hint: "letters, numbers and basic punctuation (no word starting with -)" };
 
+const WEEK: Omit<Param, "name" | "label"> = { pattern: /^\d{1,5}$/, hint: "the vault week number (week 0 began Mon 19 Oct 2026)" };
+const VGAME: Omit<Param, "name" | "label"> = { pattern: /^([2-9]|[1-9]\d{1,2})$/, hint: "the game id, 2 or more (7 = Race, 2 = Block X, 13 = Last Node Standing)" };
+const GAMENAME: Omit<Param, "name" | "label"> = { pattern: /^[A-Za-z0-9][A-Za-z0-9 .'&]{0,39}$/, hint: "the game's name, up to 40 letters" };
+// A claim as it is pasted into one line: the claim line, then "Signature: ..." (the line break becomes a space).
+const CLAIM: Omit<Param, "name" | "label"> = { pattern: /^Knode Games name: [^\n]{1,40} \| 1[1-9A-HJ-NP-Za-km-z]{25,34} \| \d{4}-\d{2}-\d{2}\s+Signature: [A-Za-z0-9_-]{80,96}={0,2}$/, hint: "the two lines the player sent you, starting Knode Games name:" };
+
 const RO = "Nobody (read-only)";
 const FILES = "Nobody: it only edits files on this PC";
 const OWNER = "Owner wallet (OWNER_WIF)";
 const SPONSOR = "Sponsor wallet (SPONSOR_WIF)";
+const OPERATOR = "Bot wallet (OPERATOR_WIF)";
+const GIT = "Nobody on chain: your git login pushes names.json";
+const TOWNER = "Testnet owner (OWNER_WIF in .env.testnet)";
+const TOPERATOR = "Testnet bot wallet (OPERATOR_WIF in .env.testnet)";
 const TSPONSOR = "Testnet sponsor wallet (SPONSOR_WIF in .env.testnet)";
 const NEWOWNER = "The NEW owner (NEW_OWNER_WIF in .env, for this step only)";
 const AT_ONCE = "At once";
@@ -208,6 +225,35 @@ export const ACTIONS: Action[] = [
   { id: "desk-owner-propose", area: "desk", kind: "ownership", label: "Hand over the Desk, step 1: propose", what: "Proposes a new Desk owner.", signer: OWNER, effect: "chain", timing: "The new owner can accept after 48 hours", step: 1, tool: "desk", args: ["owner", "propose", "{address}"], params: [{ name: "address", label: "New owner address", ...ADDRESS }], sends: true },
   { id: "desk-owner-accept", area: "desk", kind: "ownership", label: "Hand over the Desk, step 2: accept", what: "The new owner accepts and takes over the Desk.", signer: NEWOWNER, effect: "chain", timing: AT_ONCE, step: 2, tool: "desk", args: ["owner", "accept"], sends: true },
   { id: "desk-owner-cancel", area: "desk", kind: "ownership", label: "Hand over the Desk: cancel", what: "Drops a proposed owner change.", signer: OWNER, effect: "chain", timing: AT_ONCE, tool: "desk", args: ["owner", "cancel"], sends: true },
+
+  // ════════ Knode Vault (v6) ════════
+  { id: "vault-games", area: "vault", kind: "check", label: "Vault and games status", what: "Every game in the vault: its stake, this week's state, prizes waiting and the 5% fee owed.", signer: RO, effect: "none", tool: "bot", args: ["games"], sends: false },
+  { id: "vault-game-add", area: "vault", kind: "launch", label: "Add a game, step 1: announce it", what: "Announces a game in the vault with a stake bucket and the free 2 + 1 VHP prize. Players get 48 hours' notice.", when: "Once per game, after its own chat says it is ready. Ids: 2 Block X, 3 Survivor, 4 Fantasy, 6 Golf, 7 Race, 8 Combo, 9 Bracket, 13 Last Node Standing.", signer: OWNER, effect: "chain", timing: "Starts the 48-hour notice", step: 1, tool: "bot", args: ["game-add", "{game}", "{name}", "--staked", "--free"], params: [{ name: "game", label: "Game id", ...VGAME, value: "7" }, { name: "name", label: "Game name", ...GAMENAME, value: "Producer Race" }], sends: true },
+  { id: "vault-game-apply", area: "vault", kind: "launch", label: "Add a game, step 2: switch it on", what: "Puts the announced game in force: players can stake in it from the staking page.", when: "After the 48 hours, within 7 days.", signer: OWNER, effect: "chain", timing: "At once; stakes count from the next Monday", step: 2, tool: "bot", args: ["game-apply", "{game}"], params: [{ name: "game", label: "Game id", ...VGAME }], sends: true },
+  { id: "vault-game-stop", area: "vault", kind: "emergency", label: "Stop a game", what: "The game takes no new stakes from now and earns through this week. Players keep full access to their stake and can still claim what they won.", signer: OWNER, effect: "chain", timing: AT_ONCE, tool: "bot", args: ["game-stop", "{game}"], params: [{ name: "game", label: "Game id", ...VGAME }], sends: true },
+  { id: "vault-game-post", area: "vault", kind: "weekly", label: "Post a week's results", what: "Posts a game's week from its published results file, then seals it.", when: "Only if the hourly bot missed it.", signer: OPERATOR, effect: "chain", timing: AT_ONCE, step: 1, tool: "bot", args: ["game-post", "{game}", "{week}"], params: [{ name: "game", label: "Game id", ...VGAME }, { name: "week", label: "Week", ...WEEK }], sends: true },
+  { id: "vault-game-seal", area: "vault", kind: "weekly", label: "Seal a week's results", what: "Seals a posted week so its results can no longer be added to (corrections stay possible until it is finalized).", signer: OPERATOR, effect: "chain", timing: AT_ONCE, step: 2, tool: "bot", args: ["game-seal", "{game}", "{week}"], params: [{ name: "game", label: "Game id", ...VGAME }, { name: "week", label: "Week", ...WEEK }], sends: true },
+  { id: "vault-game-finalize", area: "vault", kind: "weekly", label: "Finalize a week", what: "Fixes the week's prizes so players can claim them.", when: "After the correction window.", signer: OPERATOR, effect: "chain", timing: AT_ONCE, step: 3, tool: "bot", args: ["game-finalize", "{game}", "{week}"], params: [{ name: "game", label: "Game id", ...VGAME }, { name: "week", label: "Week", ...WEEK }], sends: true },
+  { id: "vault-game-correct", area: "vault", kind: "settings", label: "Correct a player's points", what: "Changes one player's points for a sealed week (0 removes them). Only before the week is finalized.", when: "Only if a result was wrong.", signer: OWNER, effect: "chain", timing: AT_ONCE, tool: "bot", args: ["game-correct", "{game}", "{week}", "{player}", "{points}"], params: [{ name: "game", label: "Game id", ...VGAME }, { name: "week", label: "Week", ...WEEK }, { name: "player", label: "Player address", ...ADDRESS }, { name: "points", label: "Points (0 removes them)", ...INT }], sends: true },
+  { id: "vault-game-unprize", area: "vault", kind: "settings", label: "Remove a player's free prize", what: "Takes a free-game prize away from one player for a week (for example a farmed wallet). Only before the week is finalized.", signer: OWNER, effect: "chain", timing: AT_ONCE, tool: "bot", args: ["game-unprize", "{game}", "{week}", "{player}"], params: [{ name: "game", label: "Game id", ...VGAME }, { name: "week", label: "Week", ...WEEK }, { name: "player", label: "Player address", ...ADDRESS }], sends: true },
+  { id: "vault-game-void", area: "vault", kind: "settings", label: "Void a game's week", what: "Cancels a week in one game: its bucket rolls over within the game and its free prize goes back to the pool.", when: "Only if the whole week was broken.", signer: OWNER, effect: "chain", timing: AT_ONCE, tool: "bot", args: ["game-void", "{game}", "{week}"], params: [{ name: "game", label: "Game id", ...VGAME }, { name: "week", label: "Week", ...WEEK }], sends: true },
+  { id: "vault-fee-vhp", area: "vault", kind: "money", label: "Collect the 5% fee (VHP)", what: "Sends all of the vault's fee owed in VHP to the owner wallet.", signer: OWNER, effect: "chain", timing: AT_ONCE, tool: "bot", args: ["claim-fee-vhp", "all"], sends: true },
+
+  // ════════ Wallet names (docs/NAMES.md) ════════
+  { id: "names-list", area: "names", kind: "check", label: "Names on the site", what: "Every wallet name and hidden address now published, plus how many Koinos @nicknames are shown.", signer: RO, effect: "none", tool: "names", args: ["list"], sends: false },
+  { id: "names-check", area: "names", kind: "check", label: "Check a claim", what: "Checks a claim someone sent you: the signature, the name rules and that the wallet stakes (or produces). Changes nothing.", signer: RO, effect: "none", tool: "names", args: ["check", "{claim}"], params: [{ name: "claim", label: "Their claim (paste both lines)", ...CLAIM }], sends: false },
+  { id: "names-add", area: "names", kind: "settings", label: "Add a claim someone sent you", what: "Checks the claim, then publishes the name to names-data. The site shows it within a few minutes.", when: "For players who sent their claim by message instead of GitHub.", signer: GIT, effect: "files", tool: "names", args: ["add", "{claim}"], params: [{ name: "claim", label: "Their claim (paste both lines)", ...CLAIM }], sends: true },
+  { id: "names-hide", area: "names", kind: "emergency", label: "Hide a name", what: "The site shows that wallet's short address instead of its name and @nickname, and refuses new claims from it. The reason is public.", when: "For a rude or misleading name.", signer: GIT, effect: "files", tool: "names", args: ["hide", "{address}", "{reason}"], params: [{ name: "address", label: "Wallet address", ...ADDRESS }, { name: "reason", label: "Reason (public)", ...REASON }], sends: true },
+  { id: "names-unhide", area: "names", kind: "settings", label: "Show a hidden name again", what: "Undoes Hide a name.", signer: GIT, effect: "files", tool: "names", args: ["unhide", "{address}"], params: [{ name: "address", label: "Wallet address", ...ADDRESS }], sends: true },
+  { id: "names-nicknames", area: "names", kind: "settings", label: "Refresh Koinos @nicknames now", what: "Reads the @nicknames of every player and producer from the Koinos Nicknames contract (two nodes must agree) and publishes them. The workflow does this every hour.", signer: GIT, effect: "files", tool: "names", args: ["nicknames"], sends: true },
+
+  // ════════ Testnet: vault v6 trial ════════
+  { id: "t-vault-games", area: "t-vault", kind: "check", label: "Testnet vault status", what: "Every game in the testnet vault, its stake and this week's state.", signer: RO, effect: "none", tool: "bot", args: ["games", "--testnet"], sends: false },
+  { id: "t-vault-game-add", area: "t-vault", kind: "launch", label: "Trial, step 1: announce a game", what: "Announces a test game (both a stake bucket and the free prize).", signer: TOWNER, effect: "chain", timing: "Starts the testnet notice", step: 1, tool: "bot", args: ["game-add", "{game}", "{name}", "--staked", "--free", "--testnet"], params: [{ name: "game", label: "Game id", ...VGAME, value: "7" }, { name: "name", label: "Game name", ...GAMENAME, value: "Producer Race" }], sends: true },
+  { id: "t-vault-game-apply", area: "t-vault", kind: "launch", label: "Trial, step 2: switch the game on", what: "Puts the announced test game in force. Then stake from testnet/stake.html.", signer: TOWNER, effect: "chain", timing: AT_ONCE, step: 2, tool: "bot", args: ["game-apply", "{game}", "--testnet"], params: [{ name: "game", label: "Game id", ...VGAME, value: "7" }], sends: true },
+  { id: "t-vault-game-post", area: "t-vault", kind: "launch", label: "Trial, step 3: post a week", what: "Posts and seals a test week from the game's results file.", signer: TOPERATOR, effect: "chain", timing: AT_ONCE, step: 3, tool: "bot", args: ["game-post", "{game}", "{week}", "--testnet"], params: [{ name: "game", label: "Game id", ...VGAME, value: "7" }, { name: "week", label: "Week", ...WEEK }], sends: true },
+  { id: "t-vault-game-finalize", area: "t-vault", kind: "launch", label: "Trial, step 4: finalize the week", what: "Fixes the test week's prizes; then claim them from the testnet staking page.", signer: TOPERATOR, effect: "chain", timing: AT_ONCE, step: 4, tool: "bot", args: ["game-finalize", "{game}", "{week}", "--testnet"], params: [{ name: "game", label: "Game id", ...VGAME, value: "7" }, { name: "week", label: "Week", ...WEEK }], sends: true },
+  { id: "t-vault-game-stop", area: "t-vault", kind: "emergency", label: "Stop a test game", what: "The test game takes no new stakes.", signer: TOWNER, effect: "chain", timing: AT_ONCE, tool: "bot", args: ["game-stop", "{game}", "--testnet"], params: [{ name: "game", label: "Game id", ...VGAME }], sends: true },
 
   // ════════ Testnet: sponsor v3 trial (docs/blockx/SPONSOR-TESTNET.md) ════════
   { id: "t-sponsor-status", area: "t-sponsor", kind: "check", label: "Testnet sponsor status", what: "On or off, caps, test KOIN and Mana, today's use.", signer: RO, effect: "none", tool: "sponsor", args: ["status", "--testnet"], sends: false },

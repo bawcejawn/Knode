@@ -50,7 +50,9 @@ const catalog = JSON.stringify({
 
 function run(tool: string, argv: string[]): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
-    const script = tool === "desk" ? "bot/desk.ts" : tool === "sponsor" ? "bot/sponsor.ts" : tool === "picks" ? "bot/picks.ts" : tool === "racepicks" ? "bot/race-picks.ts" : "bot/bot.ts";
+    const script = tool === "desk" ? "bot/desk.ts" : tool === "sponsor" ? "bot/sponsor.ts" : tool === "picks" ? "bot/picks.ts" : tool === "racepicks" ? "bot/race-picks.ts" : tool === "names" ? "bot/names.ts" : "bot/bot.ts";
+    // A control whose command is on a branch not merged here yet (names, vault v6) says so instead of failing oddly.
+    if (!fs.existsSync(path.join(ROOT, script))) return resolve({ code: 1, output: `${script} is not on this copy yet. Run: git pull (it arrives when its pull request is merged).` });
     const child = spawn(process.execPath, ["--import", "tsx", script, ...argv], { cwd: ROOT, env: process.env });
     let out = "";
     const add = (b: Buffer) => { out += b.toString(); if (out.length > 400_000) out = out.slice(-400_000); };
