@@ -43,7 +43,7 @@ test("F6-K-1 (testnet): same for testnet-data blockx-<id>/ without vault/", () =
 test("F6-K-3: the testnet publish step publishes a game folder that is not on testnet-data yet", () => {
   const { d, remote } = branchWith({ "blockx-1/index.json": "{}\n" }, "testnet-data");
   const inn = path.join(d, "in"); fs.mkdirSync(path.join(inn, "blockx-3"), { recursive: true });
-  fs.writeFileSync(path.join(inn, "blockx-3/index.json"), JSON.stringify({ v: 1, updated: "2026-11-02T13:00:00.000Z", weeks: [1], contract: null, game: 3, prizesFromWeek: null }));
+  fs.writeFileSync(path.join(inn, "blockx-3/index.json"), JSON.stringify({ v: 1, updated: "2026-11-02T13:00:00.000Z", weeks: [1], contract: null, game: 3, prizesFromWeek: null }) + "\n");
   const sh = path.join(d, "pub.sh"); fs.writeFileSync(sh, step("games-testnet.yml", "Push testnet-data (and nothing else)"));
   const w = fs.mkdtempSync(path.join(d, "w"));
   const r = spawnSync("bash", [sh], { cwd: w, env: { ...ENV, REMOTE: remote, IN: inn }, encoding: "utf8" });

@@ -279,7 +279,8 @@ test("workflow: the recorder holds no secret and no write token; only the publis
   assert.doesNotMatch(yml, /\n\s*(pull_request|push):/);
   assert.match(rec, /permissions:\s*\n\s*contents:\s*read/); assert.match(rec, /persist-credentials:\s*false/); assert.match(rec, /npm ci\b[^\n]*--ignore-scripts/);
   assert.match(pub, /permissions:\s*\n\s*contents:\s*write/);
-  assert.doesNotMatch(pub, /actions\/checkout|\bnpm\b|\bnpx\b|\btsx\b|node\s/, "publish runs no repository code");
+  // (Round 8: the publish job runs one inline `node -e` check, the recorders' own JSON form; never a repository file.)
+  assert.doesNotMatch(pub, /actions\/checkout|\bnpm\b|\bnpx\b|\btsx\b|node\s+(--import|--require|-r\s|[\w./-]+\.(m?js|cjs|ts)\b)/, "publish runs no repository code");
   const pushes = pub.split("\n").filter((l) => /git push/.test(l));
   assert.equal(pushes.length, 1); assert.match(pushes[0], /"\$commit:refs\/heads\/race-data"$/); assert.doesNotMatch(pub, /--force/);
   assert.match(pub, /-type l/, "symlinks refused");

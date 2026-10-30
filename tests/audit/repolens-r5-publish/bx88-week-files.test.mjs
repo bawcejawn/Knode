@@ -32,7 +32,7 @@ function raceDir() {
   for (const w of [2, 3, 4]) {
     const races = [];
     for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) races.push({ id: M.raceId(M.raceIndex(t)), start: t, end: t + M.RACE, cards: Array.from({ length: 6 }, (_, l) => ({ ...CARD, samples: 36, at: t + l * 3600000 + 37 * 60000 })), result: null });
-    fs.writeFileSync(path.join(d, `W${String(w).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), races }));
+    fs.writeFileSync(path.join(d, `W${String(w).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: w, start: M.weekStart(w), end: M.weekStart(w + 1), races }) + "\n");
   }
   return d;
 }
@@ -86,7 +86,7 @@ test("BX-88: a rewritten published week file is refused whole, and the recorder 
   const r3 = await record(H0 + 10 * X.ROUND + 50, branchPrev());
   const wf = JSON.parse(fs.readFileSync(path.join(r3.out, "W003.json"), "utf8"));
   for (const t of wf.targets) t.picks = t.picks.map((x) => (x[0] === ALICE && x[3] > 0 ? [ALICE, x[1], x[2], 0, x[4]] : x)).concat(t.signer === MID ? [[Z, MID, t.time - 3600000, 200, 1]] : []);
-  fs.writeFileSync(path.join(r3.out, "W003.json"), JSON.stringify(wf));
+  fs.writeFileSync(path.join(r3.out, "W003.json"), JSON.stringify(wf) + "\n");
   const boardBefore = show("board.json").stdout;
   p = publish(r3.inn, r3.now);
   assert.notEqual(p.status, 0, "the job must fail (alert) on a run that changes a published target");
@@ -121,7 +121,7 @@ test("BX-88 (review): a bad run can't pre-publish a future round, a round at a w
   };
   const publish = (inn) => spawnSync("bash", [sh], { env: { ...ENV, IN: inn, REMOTE: remote, CHECK_NOW_MS: String(now) }, encoding: "utf8" });
   const show = (f) => spawnSync("git", ["--git-dir", remote, "show", `games-data:blockx/${f}`], { encoding: "utf8" });
-  const edit = (out, f, fn) => { const p = path.join(out, f), j = JSON.parse(fs.readFileSync(p, "utf8")); fn(j); fs.writeFileSync(p, JSON.stringify(j)); };
+  const edit = (out, f, fn) => { const p = path.join(out, f), j = JSON.parse(fs.readFileSync(p, "utf8")); fn(j); fs.writeFileSync(p, JSON.stringify(j) + "\n"); };
   const last = (j) => j.targets[j.targets.length - 1];
 
   // a round three rounds ahead of the head (its block doesn't exist yet), Z given 300
@@ -140,7 +140,7 @@ test("BX-88 (review): a bad run can't pre-publish a future round, a round at a w
   // next week's file
   r = await fresh();
   const w3 = JSON.parse(fs.readFileSync(path.join(r.out, "W003.json"), "utf8"));
-  fs.writeFileSync(path.join(r.out, "W004.json"), JSON.stringify({ ...w3, week: 4, start: w3.start + 7 * 86400000, end: w3.end + 7 * 86400000 }));
+  fs.writeFileSync(path.join(r.out, "W004.json"), JSON.stringify({ ...w3, week: 4, start: w3.start + 7 * 86400000, end: w3.end + 7 * 86400000 }) + "\n");
   p = publish(r.inn);
   assert.notEqual(p.status, 0); assert.match(p.stdout, /isn.t this one or the one just ended/);
 
@@ -199,7 +199,7 @@ test("BX-95: a new round with lockTime 2^53 + 1 is refused; the next honest run 
   const t = j.targets.find((x) => !before.includes(x.round));
   assert.ok(t, "setup: the run has a new round");
   t.lockTime = 9007199254740992;
-  fs.writeFileSync(f, JSON.stringify(j).replace("9007199254740992", "9007199254740993"));
+  fs.writeFileSync(f, JSON.stringify(j).replace("9007199254740992", "9007199254740993") + "\n");
   assert.notEqual(publish(r).status, 0, "refused");
   assert.ok(!show("W003.json").stdout.includes("9007199254740993"));
   r = await rec(H0 + 8 * X.ROUND + 50, prev());
@@ -220,7 +220,7 @@ test("BX-96: index.json can't drop a published week; a run that tries is held", 
   let r = await rec(H0 + 6 * X.ROUND + 50);
   assert.equal(publish(r).status, 0);
   r = await rec(H0 + 6 * X.ROUND + 50);
-  const f = path.join(r.out, "index.json"), j = JSON.parse(fs.readFileSync(f, "utf8")); j.weeks = []; fs.writeFileSync(f, JSON.stringify(j));
+  const f = path.join(r.out, "index.json"), j = JSON.parse(fs.readFileSync(f, "utf8")); j.weeks = []; fs.writeFileSync(f, JSON.stringify(j) + "\n");
   const p = publish(r);
   assert.notEqual(p.status, 0); assert.match(p.stdout, /published weeks 2, 3 are missing/);
 });
@@ -258,7 +258,7 @@ test("review #1: an inflated time on a new round doesn't hold the honest runs af
   r = await rec(H0 + 7 * X.ROUND + 50, prev());
   const f = path.join(r.out, "W003.json"), j = JSON.parse(fs.readFileSync(f, "utf8"));
   j.targets[j.targets.length - 1].time = r.now;            // the newest real round, its time pushed to the job's clock
-  fs.writeFileSync(f, JSON.stringify(j));
+  fs.writeFileSync(f, JSON.stringify(j) + "\n");
   publish(r);
   for (const k of [8, 9, 10]) { r = await rec(H0 + k * X.ROUND + 50, prev()); const p = publish(r); assert.equal(p.status, 0, `honest run ${k}: ` + p.stdout); }
 });

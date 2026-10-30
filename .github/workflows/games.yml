@@ -94,6 +94,12 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "$IN" ]; then echo "Nothing to publish."; exit 0; fi
+          # Round 8 (BX-122) and the class behind BX-95 / BX-112 / BX-113: every incoming file must be EXACTLY what the
+          # JavaScript recorder writes for its own content (JSON.stringify of its parse, plus a newline). Then the next
+          # recorder run reads back the same values and writes the same bytes, whatever Python thinks of them: no 5.0, no
+          # -0, no 1e2, no big integer, no spacing or escaping a recorder never writes.
+          command -v node >/dev/null || { echo "::error::node is missing on this runner; nothing published"; exit 1; }
+          node -e 'const fs=require("fs"),p=require("path"),bad=[];(function w(d){for(const f of fs.readdirSync(d)){const q=p.join(d,f),s=fs.lstatSync(q);if(s.isDirectory())w(q);else if(f.endsWith(".json")){const t=fs.readFileSync(q,"utf8");let ok=false;try{ok=JSON.stringify(JSON.parse(t))+"\n"===t}catch(e){}if(!ok)bad.push(p.relative(process.argv[1],q))}}})(process.argv[1]);if(bad.length){console.log("::error::not in the recorders own JSON form (JSON.stringify of its parse), nothing published: "+bad.join(", "));process.exit(1)}' "$IN"
           bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/blockx" ! -path "$IN/blockx/vault" \) -o \( -type f ! -regex "$IN/blockx/\(index\|board\|W[0-9][0-9][0-9]\|P[0-9][0-9][0-9]\)\.json" ! -regex "$IN/blockx/vault/W[0-9][0-9]*\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
           big=$(find "$IN" -type f -size +2048k -print)
@@ -139,7 +145,7 @@ jobs:
               if depth > 64: return False
               if o is None or type(o) in (bool, str): return True
               if type(o) is int: return abs(o) <= 2**53 - 1
-              if type(o) is float: return o == o and abs(o) <= 2**53 - 1
+              if type(o) is float: return o == o and abs(o) <= 2**53 - 1 and not o.is_integer()   # BX-122: JSON.stringify never writes 5.0
               if type(o) is list: return all(js_safe(x, depth + 1) for x in o)
               if type(o) is dict: return all(type(k) is str and js_safe(v, depth + 1) for k, v in o.items())
               return False

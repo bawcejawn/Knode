@@ -21,10 +21,10 @@ def view(rows):
 prizes = [{"player": a, "place": pl_, "vhp": 2 if pl_ == 1 else 1} for a, pl_ in spec.get("prizes", [])]
 lastWeek = {"week": lw, "start": start, "final": spec.get("final", True), "rows": view(pl), "prizes": prizes}
 board = {"v": 1, "updated": iso(upd), "today": {"day": iso(upd)[:10], "rows": []}, "week": {"week": lw + 1, "start": end, "rows": []}, "lastWeek": lastWeek, "allTime": {"rows": view(pl)}}
-json.dump(board, open(os.path.join(d, "board.json"), "w"))
-json.dump({"v": 1, "updated": iso(upd), "weeks": [lw, lw + 1], "contract": None, "game": 2, "prizesFromWeek": None}, open(os.path.join(d, "index.json"), "w"))
+open(os.path.join(d, "board.json"), "w").write(json.dumps(board, separators=(",", ":")) + "\n")
+open(os.path.join(d, "index.json"), "w").write(json.dumps({"v": 1, "updated": iso(upd), "weeks": [lw, lw + 1], "contract": None, "game": 2, "prizesFromWeek": None}, separators=(",", ":")) + "\n")
 if spec.get("P"):
-    json.dump({"v": 1, "week": lw, "game": 2, "at": iso(upd), "prizes": prizes}, open(os.path.join(d, "P%03d.json" % lw), "w"))
+    open(os.path.join(d, "P%03d.json" % lw), "w").write(json.dumps({"v": 1, "week": lw, "game": 2, "at": iso(upd), "prizes": prizes}, separators=(",", ":")) + "\n")
 v = spec.get("vault")
 if v is not None:
     vw = spec.get("vault_week", lw)
