@@ -369,3 +369,25 @@ rollback.
 - the week-end re-read of every target on both nodes, comparing whole targets (points, void, card), rounds added after P included (BX-88, BX-97, BX-98);
 - the VHP contract's own decoder for which transfers void a round (BX-72 griefing: about 84 transactions void a week, and can be selective);
 - freeze the week's board with its P file (BX-105).
+
+## Round 7 (Repo Lens go/no-go @ 1022aed, 2026-10-30): Block X prize-free NO-GO, "two one-line fixes away"
+
+Report: "Block X Prize-Free: Round-7 Go/No-Go (Knode picks @ 1022aed)". BX-95/96 and BX-98 to BX-101 fixed. Two more
+places where the JavaScript recorder would round a value the Python check let through. Fixed at the root: **every
+value of every incoming file must be one JavaScript reads back exactly** (`js_safe`, in `games.yml`,
+`games-testnet.yml` and `race.yml`), and addresses must be JSON strings. The auditor's failing tests are in the
+repository and pass (`tests/audit/repolens-r6-publish/repolens-r7-publish.test.mjs`, `tests/audit/repolens-r7-race.test.mjs`).
+
+| ID | Finding | Status |
+|---|---|---|
+| BX-112 | A numeric "address" (26–35 ones) passed as a signer or pick player | **Fixed**: `isaddr` = a string matching the address pattern, on every address check (games and testnet); plus the `js_safe` walk |
+| BX-113 | race.yml bounded card numbers at 1e16 | **Fixed**: 2^53 − 1, plus the `js_safe` walk over every race file (BX-121's result fields too) |
+| BX-114 | Slow block read made an in-sync check node look ahead | **Fixed**: the check node's head is read right after the primary's |
+| BX-119 | Bogus new race-data weeks stayed | **Fixed**: a new week only last, this or next week |
+| BX-121 | Unbounded race result integers | **Fixed** by the `js_safe` walk |
+| BX-115 | ~1% shift inside the 0.5% tolerance | Accepted; revisit with live data before prizes |
+| BX-116 | Supply cap uses the higher total | Accepted: a liar can only hold cards (a lower cap would let it hide a dispute) |
+| BX-117 | One node holds a target 3 days | Intended (hold, never void, on one node's word) |
+| BX-118 | No clock rule for new race cards | **Before prizes** |
+| BX-120 | A void row's estimated time in a week whose P is published | **Before prizes** (check with live block-rate data) |
+| SP-59 | A failed code read skips the v2 clamp | Before prizes (rollback window only; loud, a re-run works) |

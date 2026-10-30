@@ -135,32 +135,49 @@ jobs:
           iso = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{3})?Z"); ymd = re.compile(r"\d{4}-\d\d-\d\d")
           # Audit BX-95 (round 6): the recorder is JavaScript, which rounds integers above 2^53 - 1, so nothing larger is
           # ever published (a number it can't read back exactly would make every honest run look like a rewrite).
+          # Audit BX-112 (round 7): an address is a JSON string, never a number made of 1s (which JavaScript rounds).
+          isaddr = lambda v: type(v) is str and addr.fullmatch(v) is not None
           SAFE = 2**53 - 1
           num = lambda x: type(x) in (int, float) and x == x and abs(x) <= SAFE
           nat = lambda x: type(x) is int and 0 <= x <= SAFE
           WEEK = 7 * 86400000
+          # Audit BX-95 / BX-112 / BX-113 (rounds 6-7), the root cause: the recorders are JavaScript. Every value of every
+          # incoming file must be one JavaScript reads back exactly (integers and numbers within 2^53 - 1, finite), so a
+          # bad run can never publish a value that makes every honest run after it look like a rewrite.
+          def js_safe(o, depth=0):
+              if depth > 64: return False
+              if o is None or type(o) in (bool, str): return True
+              if type(o) is int: return abs(o) <= 2**53 - 1
+              if type(o) is float: return o == o and abs(o) <= 2**53 - 1
+              if type(o) is list: return all(js_safe(x, depth + 1) for x in o)
+              if type(o) is dict: return all(type(k) is str and js_safe(v, depth + 1) for k, v in o.items())
+              return False
+          for _root, _dirs, _files in os.walk(d):
+              for _f in _files:
+                  if _f.endswith(".json"):
+                      assert js_safe(json.load(open(os.path.join(_root, _f), encoding="utf-8"))), "a value the recorder (JavaScript) can't read back exactly: " + _f
           def target_ok(t):
               if type(t) is not dict or not set(t) <= {"round", "height", "final", "checked", "signer", "time", "lockTime", "card", "void", "picks"}: return False
               if not ({"round", "height", "final", "checked", "signer", "time", "lockTime", "card", "picks"} <= set(t)): return False
               if not (nat(t.get("round")) and nat(t.get("height")) and t["height"] >= t["round"] and t.get("final") is True and type(t.get("checked")) is int and t["checked"] in (0, 1, 2)): return False
-              if not (t.get("signer") is None or addr.fullmatch(str(t["signer"]))) or not nat(t.get("time")) or not nat(t.get("lockTime")): return False
+              if not (t.get("signer") is None or isaddr(t["signer"])) or not nat(t.get("time")) or not nat(t.get("lockTime")): return False
               c = t.get("card")
               if c is not None and (type(c) is not dict or set(c) not in ({"at", "top", "signerVhp"}, {"at", "top", "signerVhp", "afterAt"}) or not num(c["at"]) or not num(c["top"]) or not (c["signerVhp"] is None or num(c["signerVhp"])) or ("afterAt" in c and not (num(c["afterAt"]) and c["afterAt"] > c["at"]))): return False
               if "void" in t and (type(t["void"]) is not str or len(t["void"]) > 200): return False
               pk = t.get("picks")
-              return type(pk) is list and len(pk) <= 100000 and all(type(x) is list and len(x) == 5 and addr.fullmatch(str(x[0])) and addr.fullmatch(str(x[1]))
+              return type(pk) is list and len(pk) <= 100000 and all(type(x) is list and len(x) == 5 and isaddr(x[0]) and isaddr(x[1])
                   and nat(x[2]) and type(x[3]) is int and 0 <= x[3] <= 300 and type(x[4]) is int and x[4] in (0, 1) for x in pk)
           def rows_ok(rows):
-              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "place", "boardPlace", "pts", "correct", "picks", "days", "lastCorrect", "ranked"} and addr.fullmatch(str(x["a"]))
+              return type(rows) is list and len(rows) <= 100000 and all(type(x) is dict and set(x) == {"a", "place", "boardPlace", "pts", "correct", "picks", "days", "lastCorrect", "ranked"} and isaddr(x["a"])
                   and all(nat(x[k]) for k in ("place", "boardPlace", "pts", "correct", "picks", "days", "lastCorrect")) and type(x["ranked"]) is bool for x in rows)
           def prizes_ok(p):
-              return type(p) is list and len(p) <= 50 and all(type(x) is dict and set(x) == {"player", "place", "vhp"} and addr.fullmatch(str(x["player"])) and nat(x["place"]) and num(x["vhp"]) and 0 < x["vhp"] <= 2 for x in p)
+              return type(p) is list and len(p) <= 50 and all(type(x) is dict and set(x) == {"player", "place", "vhp"} and isaddr(x["player"]) and nat(x["place"]) and num(x["vhp"]) and 0 < x["vhp"] <= 2 for x in p)
           def card_ok(c):
               if type(c) is not dict or set(c) != {"at", "blocksPerRace", "c", "fairness", "field", "paddock"} or not num(c["at"]) or not num(c["blocksPerRace"]) or not num(c["c"]): return False
               if not (c["fairness"] is None or (type(c["fairness"]) is list and len(c["fairness"]) == 2 and all(num(v) for v in c["fairness"]))): return False
               if type(c["field"]) is not list or type(c["paddock"]) is not list or len(c["field"]) + len(c["paddock"]) > 500: return False
-              return all(type(r) is dict and set(r) == {"a", "vhp", "k", "h"} and addr.fullmatch(str(r["a"])) and all(num(r[k]) for k in ("vhp", "k", "h")) for r in c["field"]) and \
-                  all(type(r) is dict and set(r) == {"a", "vhp", "k"} and addr.fullmatch(str(r["a"])) and all(num(r[k]) for k in ("vhp", "k")) for r in c["paddock"])
+              return all(type(r) is dict and set(r) == {"a", "vhp", "k", "h"} and isaddr(r["a"]) and all(num(r[k]) for k in ("vhp", "k", "h")) for r in c["field"]) and \
+                  all(type(r) is dict and set(r) == {"a", "vhp", "k"} and isaddr(r["a"]) and all(num(r[k]) for k in ("vhp", "k")) for r in c["paddock"])
           def vault_ok(j, f):
               # The Vault (v6) results file: staked players' points (1-255) in rows, the free board's 1st and 2nd (at
               # most 10 per place); every wallet once.
@@ -324,7 +341,7 @@ jobs:
                   assert set(j) == {"v", "updated", "weeks", "contract", "game", "prizesFromWeek"} and j["v"] == 1 and iso.fullmatch(str(j["updated"])), f
                   assert type(j["weeks"]) is list and len(j["weeks"]) <= 10000 and all(type(w) is int and 0 <= w < 10000 for w in j["weeks"]), f
                   assert j["game"] == gid and (j["prizesFromWeek"] is None or nat(j["prizesFromWeek"])), f
-                  assert j["contract"] is None or addr.fullmatch(str(j["contract"])), f
+                  assert j["contract"] is None or isaddr(j["contract"]), f
                   continue
               assert set(j) == {"v", "week", "start", "end", "game", "targets"} and j["v"] == 1 and j["game"] == gid and f == "W%03d.json" % j["week"], f
               assert nat(j["start"]) and nat(j["end"]) and j["end"] - j["start"] == WEEK, f

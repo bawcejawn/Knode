@@ -105,7 +105,22 @@ jobs:
           import json, os, re, sys
           d = sys.argv[1]; pub = sys.argv[2] if len(sys.argv) > 2 else ""; addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
           isaddr = lambda v: type(v) is str and addr.fullmatch(v) is not None
-          num = lambda x: type(x) in (int, float) and x == x and abs(x) < 1e16
+          num = lambda x: type(x) in (int, float) and x == x and abs(x) <= 2**53 - 1   # audit BX-113: JavaScript's exact range
+          # Audit BX-95 / BX-112 / BX-113 (rounds 6-7), the root cause: the recorders are JavaScript. Every value of every
+          # incoming file must be one JavaScript reads back exactly (integers and numbers within 2^53 - 1, finite), so a
+          # bad run can never publish a value that makes every honest run after it look like a rewrite.
+          def js_safe(o, depth=0):
+              if depth > 64: return False
+              if o is None or type(o) in (bool, str): return True
+              if type(o) is int: return abs(o) <= 2**53 - 1
+              if type(o) is float: return o == o and abs(o) <= 2**53 - 1
+              if type(o) is list: return all(js_safe(x, depth + 1) for x in o)
+              if type(o) is dict: return all(type(k) is str and js_safe(v, depth + 1) for k, v in o.items())
+              return False
+          for _root, _dirs, _files in os.walk(d):
+              for _f in _files:
+                  if _f.endswith(".json"):
+                      assert js_safe(json.load(open(os.path.join(_root, _f), encoding="utf-8"))), "a value the recorder (JavaScript) can't read back exactly: " + _f
           def card_ok(c):
               # Audit BX-44: exact keys (cards feed Block X's scores). "samples" (how many VHP samples it used) is new.
               if c is None: return True
@@ -159,6 +174,11 @@ jobs:
                   if pi and os.path.isfile(pi):
                       pw = json.load(open(pi, encoding="utf-8")).get("weeks", [])
                       assert type(pw) is not list or all(w in j["weeks"] for w in pw), f + ": a published week would be dropped"
+                      # Audit BX-119 (round 7): a new week only around now (the recorder keeps last week, this week and,
+                      # near the end of a week, next week's first card).
+                      import time
+                      cw = (int(os.environ.get("CHECK_NOW_MS") or time.time() * 1000) - 1792368000000) // (7 * 86400000)
+                      assert type(pw) is not list or all(w in pw or cw - 1 <= w <= cw + 1 for w in j["weeks"]), f + ": a new week that isn't around this one"
                   continue
               assert set(j) == {"v", "week", "start", "end", "races"} and j["v"] == 1 and f == "W%03d.json" % j["week"], f
               assert type(j["races"]) is list and len(j["races"]) == 28, f

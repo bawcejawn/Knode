@@ -571,6 +571,9 @@ export async function sample({ p, check, prev, out, vhpOf, vhpCheckOf, spreadMs 
   const delay = spreadMs > 0 ? randomInt(0, spreadMs) : 0;
   await wait(delay);
   const head: any = await withRetry("head", () => p.getHeadInfo());
+  // Audit BX-114 (round 7): the check node's head is read right after the primary's, before the long block read, so a
+  // slow read can't make an in-sync check node look "ahead".
+  const chHead: any = check ? await withRetry("check head", () => check.getHeadInfo()) : null;
   const headH = Number(head.head_topology.height), now = Number(head.head_block_time);
   const problems: string[] = [];
   // Audit BX-56: a head time in the future is judged against this computer's clock only, so a check node a few minutes
@@ -588,7 +591,7 @@ export async function sample({ p, check, prev, out, vhpOf, vhpCheckOf, spreadMs 
   // Audit BX-101 (round 6): the same lag bounds as a card: a check node more than LAG_MS behind (or HEAD_GAP_MS ahead,
   // or LIB_GAP_MAX blocks away) gives no sample this time, rather than disputes that flag producers for 6 hours.
   if (!problems.length && check && readCheck) {
-    const ch: any = await withRetry("check head", () => check.getHeadInfo());
+    const ch: any = chHead;
     const chTime = Number(ch.head_block_time), chH = Number(ch.head_topology.height);
     if (chTime - now > HEAD_GAP_MS || now - chTime > LAG_MS || Math.abs(chH - headH) > LIB_GAP_MAX)
       problems.push(`the check node is ${Math.round((now - chTime) / 1000)} s / ${headH - chH} blocks from the primary (at most ${LAG_MS / 60000} min behind, ${HEAD_GAP_MS / 1000} s ahead, ${LIB_GAP_MAX} blocks); no sample this time`);
