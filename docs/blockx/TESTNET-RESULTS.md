@@ -56,3 +56,15 @@ Played from a brand-new Test wallet (`1B8C5TZf…`) holding **no test KOIN**: 4 
   On mainnet the game is the live question game, which exists.
 - From launch step 6 each pick counts its 0.2 Mana row (owner, 2026-10-30; audit SP-58), so a wallet gets about 125
   sponsored picks a day within its 25 Mana (Block X allows 30 picks a day); other actions count 1 Mana until step 10.
+
+## Mainnet upload (2026-10-30)
+
+- **Sponsor v3** `b61ac238da27c4a71c01127f39a7b95f19fabf15e35df9f9715546d221e256e4` on `1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8`.
+  `status` shows it "as uploaded", the switches right, switched ON and Vault (v6) not live yet. The caps are still
+  v2's (3 / 10 / 65 / 1,000) until step 6's `config`.
+- **Picks** `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594` at `1LmgqBGctL9F2YkyjTXgieTXwnYHh8Y6Pm`.
+  Upload transaction `0x12207d672926d9feca7f08f44b19083c6ca9d7c3607788ac52f69b78bfba3e33d809`, 24.46 Mana, paid by
+  the bot wallet. `status --mainnet` on 2 nodes (both agree): Code ✔, all three overrides ✔, Owner
+  `1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717` ✔, no games yet. `PICKS_WIF` deleted from `.env` (audit BX-9).
+- **Note:** the Picks tool's first mainnet Mana limit (17, from testnet prices) was refused "insufficient rc" twice,
+  and nothing was charged. The tool now uses the mainnet estimate (1.2 Mana per KB + 10, about 49).
