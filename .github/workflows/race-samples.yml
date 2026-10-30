@@ -76,6 +76,10 @@ jobs:
         with:
           name: race-samples
           path: ${{ runner.temp }}/incoming
+      # Audit BX-131 (round 9): the same Node as the recorders (22), for the recorders'-own-JSON check below.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
       - name: Push race-samples (and nothing else)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -105,7 +109,7 @@ jobs:
           import json, re, sys, time
           j = json.load(open(sys.argv[1], encoding="utf-8"))
           now = int(time.time() * 1000)
-          addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}"); iso = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
+          addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}"); iso = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z")
           assert type(j) is dict and set(j) == {"v", "updated", "samples"} and type(j["v"]) is int and j["v"] == 1 and iso.fullmatch(str(j["updated"]))
           s = j["samples"]
           assert type(s) is list and len(s) <= 120
@@ -113,13 +117,13 @@ jobs:
               # Audit BX-38: never a sample from the future. Round-8 review: 60 s, the same as bot/race.ts loadSamples (FUTURE_MS),
               # so a sample the recorder would drop on load is never published.
               assert type(x) is dict and set(x) in ({"at", "height", "vhp"}, {"at", "height", "vhp", "flagged", "high"}) and type(x["at"]) is int and 0 < x["at"] <= now + 60000 and type(x["height"]) is int and 0 < x["height"] < 10**10
-              assert type(x["vhp"]) is dict and len(x["vhp"]) <= 500 and all(addr.fullmatch(a) and type(v) is str and re.fullmatch(r"\d{1,20}", v) for a, v in x["vhp"].items())
+              assert type(x["vhp"]) is dict and len(x["vhp"]) <= 500 and all(addr.fullmatch(a) and type(v) is str and re.fullmatch(r"[0-9]{1,20}", v) for a, v in x["vhp"].items())
               # Audit BX-86 (round 5): producers the two nodes still disagreed on: sampled at the LOWER read, listed in
               # `flagged` (sorted, once each) with the higher read in `high` (never below the stored one).
               if "flagged" in x:
                   f, h = x["flagged"], x["high"]
                   assert type(f) is list and 0 < len(f) <= 500 and f == sorted(set(f)) and all(type(a) is str and a in x["vhp"] for a in f)
-                  assert type(h) is dict and set(h) == set(f) and all(type(v) is str and re.fullmatch(r"\d{1,20}", v) and int(v) >= int(x["vhp"][a]) for a, v in h.items())
+                  assert type(h) is dict and set(h) == set(f) and all(type(v) is str and re.fullmatch(r"[0-9]{1,20}", v) and int(v) >= int(x["vhp"][a]) for a, v in h.items())
           assert all(s[i]["at"] < s[i + 1]["at"] for i in range(len(s) - 1))
           # Audit BX-38: a new file never drops a published sample of the last 8 hours (only older ones age out).
           try:

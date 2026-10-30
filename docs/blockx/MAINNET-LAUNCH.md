@@ -237,7 +237,9 @@ npm run picks -- apply 2 --send --mainnet
 npm run picks -- status --mainnet
 ```
 
-The last `status` must list **2 Who Signs Block X: ON, every 2400 blocks, locks 100 before**.
+The last `status` must list **2 Who Signs Block X: ON, every 2400 blocks, locks 100 before … 30 picks a day, 1
+changes** (audit BX-129: the page already says "change it once"; the contract enforces it only from the apply, so the
+Block X page is published only after this `status` shows 1).
 
 **Then check the 0.2 Mana pick row against mainnet prices (audit BX-123).** The 0.2 comes from testnet, and mainnet
 can cost more (the Picks upload cost 8.7 × its testnet cost; storage-heavy uploads differ most). Before step 9, run

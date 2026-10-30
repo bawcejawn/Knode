@@ -427,3 +427,18 @@ findings, all fixed:
 Tested directly: `tests/audit/repolens-r8-canonical.test.mjs` runs the exact line from each of the four workflows
 against honest and crafted files. Testnet only, accepted: a bad run could set testnet `cards.json` `startHeight` high
 and quietly stop that testnet game recording (it doesn't stall publishing).
+
+## Round 9 (Repo Lens go/no-go @ 6990323, 2026-10-30): NO-GO, "one fix in one file, then GO"
+
+Report: "Block X Prize-Free: Round-9 Go/No-Go (Knode picks @ 6990323)". The round-8 byte check is confirmed for
+everything it targets, in all four workflows. The blind verifier found no other place where a value Python accepts can
+make an honest run be refused, except this one:
+
+| ID | Finding | Status |
+|---|---|---|
+| BX-128 | Python's `\d` matches every Unicode digit (`٤٠٠`, `４００`); `loadSamples` (JavaScript `\d`, 0–9 only) drops such a sample, so one bad run stalls race-samples for ~7 h 50 min | **Fixed**: every `\d` in the four publish steps' Python is `[0-9]`; the auditor's test passes, and a guard test refuses any `\d` there again |
+| BX-129 | The page says "change it once" before the announced config is applied | Runbook: publish only after step 8's `status` shows 1 change |
+| BX-130 | The other `\d` regexes (iso, ymd, race id) | **Fixed** with BX-128 |
+| BX-131 | Publish jobs used the runner's own Node | **Fixed**: `setup-node` 22 (pinned) in all four publish jobs |
+| BX-132 | Old samples between +60 s and +10 min | One-time transition; none needed |
+| BX-133 | Two commits after the package (announce record, testnet sponsor option) | In the next fix-check's scope |

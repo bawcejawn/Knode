@@ -41,3 +41,14 @@ test("race-samples.yml: a sample 5 minutes in the future is refused; one 30 s ah
   assert.equal(run(30000), 0);
   assert.notEqual(run(5 * 60000), 0);
 });
+
+// Audit BX-128 / BX-130 (round 9): Python's \d matches every Unicode digit; the recorders' JavaScript \d is 0-9 only.
+// No publish-step Python uses \d, so nothing the check accepts can be a "number" the recorder drops.
+test("the publish steps' Python never uses \\d (ASCII [0-9] only), and every publish job pins Node 22", () => {
+  for (const wf of ["games.yml", "games-testnet.yml", "race.yml", "race-samples.yml"]) {
+    const y = fs.readFileSync(path.join(APP, ".github/workflows", wf), "utf8");
+    for (const m of y.matchAll(/<<'PY'\n([\s\S]*?)\n\s*PY\n/g)) assert.ok(!m[1].includes("\\d"), `${wf}: \\d in the publish Python`);
+    const pub = y.slice(y.indexOf("\n  publish:"));
+    assert.match(pub, /actions\/setup-node@[0-9a-f]{40}[^\n]*\n\s*with:\n\s*node-version: 22/, `${wf}: publish job pins Node 22`);
+  }
+});

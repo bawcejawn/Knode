@@ -87,6 +87,10 @@ jobs:
         with:
           name: games-data
           path: ${{ runner.temp }}/incoming
+      # Audit BX-131 (round 9): the same Node as the recorders (22), for the recorders'-own-JSON check below.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
       - name: Push games-data (and nothing else)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -121,7 +125,7 @@ jobs:
           /usr/bin/python3 - "$IN/blockx" 2 "$PUB/blockx" "$HELD" blockx 2400 0 <<'PY'
           import json, os, re, sys
           d = sys.argv[1]; gid = int(sys.argv[2]); addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
-          iso = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{3})?Z"); ymd = re.compile(r"\d{4}-\d\d-\d\d")
+          iso = re.compile(r"[0-9]{4}-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9](\.[0-9]{3})?Z"); ymd = re.compile(r"[0-9]{4}-[0-9][0-9]-[0-9][0-9]")
           # Audit BX-95 (round 6): the recorder is JavaScript, which rounds integers above 2^53 - 1, so nothing larger is
           # ever published (a number it can't read back exactly would make every honest run look like a rewrite).
           # Audit BX-112 (round 7): an address is a JSON string, never a number made of 1s (which JavaScript rounds).
@@ -198,8 +202,8 @@ jobs:
           pub = sys.argv[3] if len(sys.argv) > 3 else ""; heldf = sys.argv[4] if len(sys.argv) > 4 else ""
           pre = sys.argv[5] if len(sys.argv) > 5 else "blockx"   # the folder on the published branch
           # The game's round size and offset (a target's height is round * size + offset), for the new-target check.
-          GROUND = int(sys.argv[6]) if len(sys.argv) > 6 and re.fullmatch(r"[1-9]\d{0,6}", sys.argv[6]) else None
-          GOFFSET = int(sys.argv[7]) if len(sys.argv) > 7 and re.fullmatch(r"\d{1,7}", sys.argv[7]) else None
+          GROUND = int(sys.argv[6]) if len(sys.argv) > 6 and re.fullmatch(r"[1-9][0-9]{0,6}", sys.argv[6]) else None
+          GOFFSET = int(sys.argv[7]) if len(sys.argv) > 7 and re.fullmatch(r"[0-9]{1,7}", sys.argv[7]) else None
           held = []
           def hold(name, why, alert):
               held.append(name); print(("::error::" if alert else "::notice::") + "held, not published: " + name + ": " + why)
@@ -212,7 +216,7 @@ jobs:
               return type(plw) is dict and plw.get("week") == w and plw.get("final") is True and plw.get("start") == GENESIS + w * WEEK \
                   and type(plw.get("prizes")) is list and type(plw.get("rows")) is list and now >= GENESIS + (w + 1) * WEEK + 12 * 3600000
           for f in sorted(os.listdir(d)):
-              if not re.fullmatch(r"P\d{3}\.json", f): continue
+              if not re.fullmatch(r"P[0-9]{3}\.json", f): continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               assert set(j) == {"v", "week", "game", "at", "prizes"} and one(j["v"]) and (type(j["game"]) is int and j["game"] == gid) and nat(j["week"]) and f == "P%03d.json" % j["week"], f
               assert iso.fullmatch(str(j["at"])) and prizes_ok(j["prizes"]), f
@@ -258,11 +262,11 @@ jobs:
           # Published targets, by week file.
           pubt = {}
           for f in (sorted(os.listdir(pub)) if pub and os.path.isdir(pub) else []):
-              if re.fullmatch(r"W\d{3}\.json", f):
+              if re.fullmatch(r"W[0-9]{3}\.json", f):
                   o = pubjson(f)
                   pubt[f] = [t for t in o["targets"] if type(t) is dict and type(t.get("round")) is int] if type(o) is dict and type(o.get("targets")) is list else None
           for f in sorted(os.listdir(d)):
-              if not re.fullmatch(r"W\d{3}\.json", f): continue
+              if not re.fullmatch(r"W[0-9]{3}\.json", f): continue
               new = json.load(open(os.path.join(d, f), encoding="utf-8"))
               nt = new.get("targets") if type(new) is dict else None
               # (BX-106: validated before anything is compared, so a crafted file can't crash the check.)
@@ -318,7 +322,7 @@ jobs:
           elif held: sys.exit("held: " + ", ".join(x for x in held if x != "!alert"))
 
           for f in os.listdir(d):
-              if f == "vault" or re.fullmatch(r"P\d{3}\.json", f): continue
+              if f == "vault" or re.fullmatch(r"P[0-9]{3}\.json", f): continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "board.json":
                   assert set(j) == {"v", "updated", "today", "week", "lastWeek", "allTime"} and one(j["v"]) and iso.fullmatch(str(j["updated"])), f

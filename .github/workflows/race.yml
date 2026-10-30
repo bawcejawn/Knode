@@ -78,6 +78,10 @@ jobs:
         with:
           name: race-data
           path: ${{ runner.temp }}/incoming
+      # Audit BX-131 (round 9): the same Node as the recorders (22), for the recorders'-own-JSON check below.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
       - name: Push race-data (and nothing else)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -205,7 +209,7 @@ jobs:
                   assert type(r) is dict and r.get("start") == st and type(r.get("start")) is int and r.get("end") == st + 21600000 and type(r.get("end")) is int and \
                       r.get("id") == datetime.datetime.fromtimestamp(st / 1000, datetime.timezone.utc).strftime("%Y-%m-%dT%H"), f + ": race " + str(i) + " isn't the week's race " + str(i)
               for r in j["races"]:
-                  assert set(r) == {"id", "start", "end", "cards", "result"} and re.fullmatch(r"\d{4}-\d{2}-\d{2}T(00|06|12|18)", r["id"]), f
+                  assert set(r) == {"id", "start", "end", "cards", "result"} and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T(00|06|12|18)", r["id"]), f
                   assert type(r["cards"]) is list and len(r["cards"]) in (3, 6) and all(card_ok(c) for c in r["cards"]) and result_ok(r["result"]), f + " " + r["id"]
                   # Audit BX-54: a card's time fits its leg: taken at most 2 hours before the leg starts and before it ends.
                   leg = (r["end"] - r["start"]) // len(r["cards"]) if type(r.get("start")) is int and type(r.get("end")) is int else 0
