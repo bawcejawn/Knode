@@ -103,3 +103,31 @@ The reviewer's fixtures were adapted, each change commented: real addresses (koi
 that also speaks koilib's provider interface, and the publish Python cut from combo.yml instead of a copy.
 
 **Tests:** contract 71; site and audit suite 664 passing (5 todo, 5 skipped); browser 7; workflow guard 8.
+
+## Fix-check 2 (Repo Lens, 2026-10-30, at c8bd49f) and the fixes
+
+Verdict "fix first": the round-1 fixes mostly hold (FC-1, FC-3, FC-4, FC-5, FC-6; the Python recount matched the
+JavaScript in 63,602 cases), but keeping published final cards opened a silent path, and missed races were not
+"unresolved". `picks` merged again (rounds 8-9, the mainnet Block X announce).
+
+| ID | Sev | Finding | Done |
+|---|---|---|---|
+| FC2-1 | High | A forged final card was kept by every honest run; the Vault paid it. | Every run re-checks each kept card against the race-data and Block X files (same results; race worths equal; Block X worths at most the worth without moved VHP). A mismatch: error, the card left out of the boards, no Vault file for its week. The publish job re-checks every NEW final card's leg results against the published race-data and Block X files, and holds its day (alert) on a mismatch or when the sources can't be read. Tests E-C-1a, E-C-1b. |
+| FC2-2 | High | A missed race dropped the leg. | A race that is missed, void, or not checked on two nodes is "unresolved" (FC2-9 too), in `legResult` and the publish recount. Test E-S-1. |
+| FC2-3 | Medium | One node could hold a card past the Vault window; cards that missed were held. | A card with a miss is final as soon as its slot is fixed; a held leg ends 6 hours before its week's Vault window closes. Tests E-S-2a, E-S-2b. |
+| FC2-4 | Medium | A lagging check node rewound the recorder silently. | The recorder refuses to record (nothing written, the run fails) when a node's head is more than 30 minutes behind the runner's clock; the publish job holds a board for another week than the job's. Test E-R-1. |
+| FC2-5 | Medium | Day files had no size bound. | A day is written in parts of at most 1,000 cards (`D<day>.json`, `D<day>-1.json`, ...), read back and checked as one day; last week's board capped at 10,000 rows. Test E-C-2. |
+| FC2-6 | Low | The published index.json was never copied in. | Copied; the append-only check runs. Test E-C-3. |
+| FC2-7 | Low | A published final card was never looked at again. | FC2-1's re-check. |
+| FC2-8 | Low | The page priced legs on a card that flags their producer. | The page prices each leg as the recorder does (`priceCard(races, now, producer)`). |
+| FC2-9 | Info | One-node race results decided legs. | Unresolved unless `checked === 2`. |
+| FC2-10 | Info | Unicode digits in regexes. | ASCII `[0-9]`. |
+| FC2-11 | Info | An empty Vault file could still be written before v6. | Liveness read on both nodes before any Vault file. |
+| FC2-12 | Info | Stake agreement compared amounts. | Compares staked-or-not per node, as Block X. |
+| FC2-13 | Info | Nothing records v2 after the upgrade. | Open: the upgrade step must write `wasmSha256` in picks-data/deployment.json (runbook). |
+| FC2-14 | Info | Shared concurrency group with games.yml. | Open: measure a live run (FC-11) first. |
+| FC2-15 | Info | Stale header comment. | Updated. |
+| FC2-16 | Info | Behind picks round 8. | Merged; Block X's exact-JSON (byte-form) check ported to combo.yml, with Node pinned in the publish job. |
+
+The reviewer's stricter tests (D-S-1 strict, E-S-2b, E-R-T3, E-R-T4, D-C-1 corrected) pass. C-R-1 runs with the true
+clock again: a clock set past the lie now makes the honest node "days behind" and the run is refused (FC2-4).

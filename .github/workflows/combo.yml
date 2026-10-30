@@ -99,6 +99,10 @@ jobs:
     permissions:
       contents: write         # push the games-data branch (never main)
     steps:
+      # Node, pinned as in games.yml (Block X BX-131), only for the byte-form check below; no repository code runs here.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:
@@ -113,6 +117,10 @@ jobs:
           if [ ! -d "$IN/combo" ]; then echo "Nothing to publish."; exit 0; fi
           bad=$(find "$IN" -mindepth 1 \( -type l -o \( -type d ! -path "$IN/combo" ! -path "$IN/combo/vault" \) -o \( -type f ! -regex "$IN/combo/\(index\|board\|D[0-9][0-9][0-9][0-9][0-9]\(-[0-9][0-9]*\)?\)\.json" ! -regex "$IN/combo/vault/W[0-9][0-9]*\.json" \) \) -print)
           if [ -n "$bad" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
+          # Block X round 8 (BX-122), ported for Combo (fix-check 2 FC2-16): every incoming file must be EXACTLY what the
+          # JavaScript recorder writes for its own content (JSON.stringify of its parse, plus a newline).
+          command -v node >/dev/null || { echo "::error::node is missing on this runner; nothing published"; exit 1; }
+          node -e 'const fs=require("fs"),p=require("path"),bad=[];(function w(d){for(const f of fs.readdirSync(d)){const q=p.join(d,f),s=fs.lstatSync(q);if(s.isDirectory()){w(q);continue}if(!f.endsWith(".json"))continue;if(!s.isFile()){bad.push(p.relative(process.argv[1],q));continue}const raw=fs.readFileSync(q);let ok=false;try{ok=Buffer.compare(Buffer.from(JSON.stringify(JSON.parse(raw.toString("utf8")))+"\n","utf8"),raw)===0}catch(e){}if(!ok)bad.push(p.relative(process.argv[1],q))}})(process.argv[1]);if(bad.length){console.log("::error::not in the recorders own JSON form (JSON.stringify of its parse), nothing published: "+bad.join(", "));process.exit(1)}' -- "$IN"
           # The published branch first (read only here): write-once and fixed files are judged against what is ALREADY
           # published and this job's own clock, never against this run's own files (as Block X: BX-79/80/81/88).
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
