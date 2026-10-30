@@ -74,9 +74,8 @@ test("ABI: every entry point is the first 4 bytes of sha256(name)", () => {
   }
 });
 
-// The repo's ABI becomes v6 when the vault-v6 branch is merged; until then point STAKE_PANEL_ABI at that branch's
-// game/abi/kpred.koilib.json to run this check (it was run that way when the panel was written).
-const abiPath = process.env.STAKE_PANEL_ABI || `${APP}/game/abi/kpred.koilib.json`;
+// Audit BX-85: the committed vault (v6) ABI, game/abi/kpred-v6.koilib.json (BX-61), so this check always runs.
+const abiPath = process.env.STAKE_PANEL_ABI || `${APP}/game/abi/kpred-v6.koilib.json`;
 const real = JSON.parse(fs.readFileSync(abiPath, "utf8"));
 test("ABI: the panel's methods and field numbers match the vault's own ABI (v6)", { skip: !real.methods.deposit_to && "the repository's ABI is not v6 yet" }, () => {
   const types = real.koilib_types.nested.kpred.nested;

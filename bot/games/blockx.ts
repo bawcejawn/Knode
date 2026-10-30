@@ -168,7 +168,7 @@ export const STATE_ABI = {
   koilib_types: { nested: { kpred: { nested: {
     get_state_arguments: { fields: {} },
     get_state_result: { fields: { config: { type: "config_object", id: 1 } } },
-    config_object: { fields: { min_stake: U64(9), min_stake_next: U64(13), min_stake_next_week: U64(14), v6_rule_week_plus_one: U64(21) } },
+    config_object: { fields: { owner: { type: "bytes", id: 1, options: { "(koinos.btype)": "ADDRESS" } }, min_stake: U64(9), min_stake_next: U64(13), min_stake_next_week: U64(14), v6_rule_week_plus_one: U64(21) } },
   } } } },
 };
 export type VaultView = { live: boolean; min: bigint; players: Map<string, { week: bigint; peak: bigint }> };
@@ -197,7 +197,8 @@ export function vaultReader(vault: string | null, game: number, abi: () => any =
       s = (async () => {
         const c = new Contract({ id: vault!, abi: STATE_ABI as any, provider: node });
         const st: any = await withRetry("vault state", () => (c.functions as any).get_state({}));
-        if (!st || !("result" in st)) throw new Error("no answer reading the vault's state");
+        // Audit BX-82: koilib always returns `result`; an answer without the game's owner is no answer.
+        if (!st?.result?.config?.owner) throw new Error("no answer reading the vault's state (no owner in it)");
         return st.result?.config ?? {};
       })();
       s.catch(() => state.delete(node));
@@ -273,14 +274,24 @@ export function withMoved(card: Card | null, who: string, vhp: bigint): Card | n
  *  the receiver (events are read from the block receipts, 200 blocks per call). Moves out are ignored: the card already
  *  counts the highest VHP. Exported for the tests. */
 export async function scoringVhpMoves(node: any, headId: string, vhp: string, who: string, from: number, to: number): Promise<bigint> {
-  let moved = 0n;
-  for (let s = Math.max(1, from); s <= to; s += 200) {
-    const res: any = await withRetry(`receipts at ${s}`, () => node.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(s), num_blocks: Math.min(200, to - s + 1), return_block: false, return_receipt: true }));
-    for (const it of res?.block_items ?? []) moved += vhpInflows(it?.receipt, vhp, who);
-  }
-  return moved;
+  // Audit BX-77 / BX-84: every block of the range, contiguous, checked; 200 blocks a call, 4 calls at a time.
+  const starts: number[] = [];
+  for (let s = Math.max(1, from); s <= to; s += 200) starts.push(s);
+  const parts = await pool(starts, 4, async (s) => {
+    const n = Math.min(200, to - s + 1);
+    const res: any = await withRetry(`receipts at ${s}`, () => node.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(s), num_blocks: n, return_block: false, return_receipt: true }));
+    const items = res?.block_items ?? [];
+    if (items.length !== n || items.some((it: any, k: number) => Number(it?.block_height) !== s + k)) throw new Error(`receipts ${s}-${s + n - 1}: the node returned ${items.length} of ${n} blocks, or out of order`);
+    let sum = 0n;
+    for (const it of items) sum += vhpInflows(it?.receipt, vhp, who);
+    return sum;
+  });
+  return parts.reduce((x, y) => x + y, 0n);
 }
-/** From one block receipt: VHP received by `who` (transfer: to = field 2, value = 3; mint: to = 1, value = 2). */
+/** From one block receipt: VHP received by `who`. Audit BX-72: read exactly as the VHP contract does. The event's
+ *  data is the call's own arguments, which the contract decodes with as-proto: the LAST copy of a field wins and
+ *  unknown fields are skipped. The receiver is the event's impacted[0] (the contract's decoded `to`), so bytes that
+ *  read differently can't credit or hide a move. transfer: value = field 3; mint: value = field 2. */
 export function vhpInflows(receipt: any, vhp: string, who: string): bigint {
   const events = [...(receipt?.events ?? []), ...((receipt?.transaction_receipts ?? []) as any[]).flatMap((t) => t?.events ?? [])];
   let sum = 0n;
@@ -288,26 +299,30 @@ export function vhpInflows(receipt: any, vhp: string, who: string): bigint {
     if (!e || e.source !== vhp || typeof e.name !== "string") continue;
     const mint = /mint/i.test(e.name), transfer = /transfer/i.test(e.name);
     if (!mint && !transfer) continue;
-    const f = pbFields(e.data);
-    const to = f.get(mint ? 1 : 2), value = f.get(mint ? 2 : 3);
-    if (to instanceof Uint8Array && typeof value === "bigint" && kutils.encodeBase58(to) === who) sum += value;
+    if (!Array.isArray(e.impacted) || e.impacted[0] !== who) continue;
+    const value = lastVarint(e.data, mint ? 2 : 3);
+    if (value !== null) sum += value;
   }
   return sum;
 }
-function pbFields(data: unknown): Map<number, Uint8Array | bigint> {
-  const out = new Map<number, Uint8Array | bigint>();
+/** The last varint of field `want` in protobuf bytes (base64), skipping every other field as as-proto does (wire types
+ *  0, 1, 2 and 5); null when the bytes don't parse. Exported for the tests. */
+export function lastVarint(data: unknown, want: number): bigint | null {
   let b: Uint8Array;
-  try { b = typeof data === "string" ? new Uint8Array(Buffer.from(data, "base64")) : new Uint8Array(0); } catch { return out; }
-  let i = 0;
-  const vint = (): bigint | null => { let r = 0n, sh = 0n; for (let k = 0; k < 10; k++) { if (i >= b.length) return null; const x = b[i++]; r |= BigInt(x & 0x7f) << sh; if (!(x & 0x80)) return r; sh += 7n; } return null; };
+  try { b = typeof data === "string" ? new Uint8Array(Buffer.from(data, "base64")) : new Uint8Array(0); } catch { return null; }
+  let i = 0, last: bigint | null = null;
+  const vint = (): bigint | null => { let r = 0n, sh = 0n; for (let k = 0; k < 10; k++) { if (i >= b.length) return null; const x = b[i++]; r |= BigInt(x & 0x7f) << sh; if (!(x & 0x80)) return r & 0xffffffffffffffffn; sh += 7n; } return null; };
   while (i < b.length) {
-    const tag = vint(); if (tag === null) break;
+    const tag = vint(); if (tag === null) return null;
     const f = Number(tag >> 3n), w = Number(tag & 7n);
-    if (w === 0) { const v = vint(); if (v === null) break; if (!out.has(f)) out.set(f, v); }
-    else if (w === 2) { const n = vint(); if (n === null || i + Number(n) > b.length) break; if (!out.has(f)) out.set(f, b.slice(i, i + Number(n))); i += Number(n); }
-    else break;
+    if (w === 0) { const v = vint(); if (v === null) return null; if (f === want) last = v; }
+    else if (w === 1) { i += 8; }
+    else if (w === 2) { const n = vint(); if (n === null || i + Number(n) > b.length) return null; i += Number(n); }
+    else if (w === 5) { i += 4; }
+    else return null;
+    if (i > b.length) return null;
   }
-  return out;
+  return last;
 }
 
 // ── cards ──
@@ -356,7 +371,7 @@ function raceCardAfter(raceDir: string | undefined, t: number, signer = ""): Car
   return firstCardAfter(raceCards(raceDir, [t, t + M.RACE]), t, true, signer);
 }
 /** Audit BX-55: the race recorder lists on a card the producers whose VHP the two nodes read differently. */
-export const flags = (c: Card | null | undefined, who: string) => !!c && Array.isArray(c.flagged) && c.flagged.includes(who);
+export const flags = (c: Card | null | undefined, who: string) => !!c && ((Array.isArray(c.flagged) && c.flagged.includes(who)) || c.topInDoubt === true);   // round 4, BX-73: the top in doubt holds every target
 function raceCardAt(raceDir: string | undefined, t: number): Card | null {
   const all: (Card | null)[] = [];
   for (const at of [t, t - M.RACE]) {
@@ -521,7 +536,9 @@ export async function run(o: Opts) {
       let moved = 0n;
       // (Tests that serve fake blocks with blockOf and no vhpMovesOf have no receipts to read: nothing moved.)
       if (card && after && !lockFlagged && isAddr(b.signer) && (o.vhpMovesOf || !o.blockOf)) {
-        const from = Math.max(1, h - Math.ceil(Math.max(0, b.time - Number(card.at)) / 3000) - MOVE_MARGIN), to = h;
+        // Audit BX-77: from the block the lock card's window ended at, when the card records it.
+        const cardH = Number.isInteger(card.height) && card.height > 0 && card.height <= h ? card.height : h - Math.ceil(Math.max(0, b.time - Number(card.at)) / 3000);
+        const from = Math.max(1, cardH - MOVE_MARGIN), to = h;
         const read = o.vhpMovesOf ?? ((node: any, who: string, f: number, t: number) => scoringVhpMoves(node, node === o.p ? headId : checkHeadId, VHP, who, f, t));
         const mp = await read(o.p, b.signer, from, to), mc = o.check ? await read(o.check, b.signer, from, to) : mp;
         moved = mp > mc ? mp : mc;

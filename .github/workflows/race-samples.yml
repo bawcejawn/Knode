@@ -48,7 +48,7 @@ jobs:
           # (read only; nothing from race-data is published by this job).
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-data 2>/dev/null; then
             for f in $(git ls-tree --name-only FETCH_HEAD | grep -E '^W[0-9]{3}\.json$' | sort | tail -n 2); do git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; done
-          fi
+          else echo "::warning::couldn't read race-data: this sample covers only the last hour's producers (audit BX-78)"; fi
       - name: Take a sample (at a random moment in the next 4 minutes)
         run: npm run race -- --sample
         env:

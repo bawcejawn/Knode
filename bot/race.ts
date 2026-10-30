@@ -40,7 +40,9 @@ const CARD_AHEAD = 60 * 60000;
 // Audit BX-54: how far an irreversible block may trail its head, how far the two nodes' irreversible blocks may differ,
 // and how far their head times may differ, before no card is made (Koinos makes a block about every 3 s; irreversible
 // trails the head by about 60 blocks).
-export const LIB_LAG_MAX = 200, LIB_GAP_MAX = 30, HEAD_GAP_MS = 60000;            // a card for the next leg is taken by the last hourly run before it starts
+// Round 4 (audit BX-75): an honest check node may lag (up to LAG_MS behind and LIB_GAP_MAX blocks), but may be at most
+// HEAD_GAP_MS AHEAD of the primary, so it can't date a card later than that.
+export const LIB_LAG_MAX = 200, LIB_GAP_MAX = 200, HEAD_GAP_MS = 15000, LAG_MS = 10 * 60000;            // a card for the next leg is taken by the last hourly run before it starts
 const LOOKBACK = 3 * M.DAY;               // races older than this that never got final are left as they are
 const isAddr = (a: unknown) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
 
@@ -67,23 +69,42 @@ export function loadSamples(now = Date.now()): Sample[] {
   return f.samples.filter((x: any) => x && Number.isFinite(x.at) && x.at <= now + FUTURE_MS && Number.isInteger(x.height) && x.vhp && typeof x.vhp === "object"
     && Object.entries(x.vhp).every(([a, v]) => isAddr(a) && typeof v === "string" && /^\d{1,20}$/.test(v as string))).sort((a: Sample, b: Sample) => a.at - b.at);
 }
-/** Audit BX-37 / BX-55: two nodes' reads of every producer's VHP, combined producer by producer (never all or
- *  nothing). Reads within 0.5% of each other count at the higher one. A producer whose reads differ by more counts at
- *  the LOWER read and is FLAGGED on the card: one node can then neither lift a producer to the top (turning ×3 into
- *  ×1 for the players who picked it) nor quietly make it small, because Block X holds any target whose signer is
- *  flagged (bot/games/blockx.ts) until a card without the flag exists. (Round 2 used the higher read, capped at the
- *  top both agree on; round 3 showed one node could still lift any producer to that top.)
+/** Audit BX-37 / BX-55 / BX-73 / BX-74: two nodes' reads of every producer's VHP, combined producer by producer.
+ *  Reads within 0.5% of each other count at the higher one. A producer whose reads differ by more is FLAGGED on the
+ *  card (Block X holds a target it signs) and counts at the LOWER read when both nodes read at the same block (so one
+ *  node can't lift it), or at the HIGHER read when they didn't (a lagging node: VHP that moved between the two blocks
+ *  can't make it look small). Round 4 (BX-73): when a flagged producer is, or at its higher read would be, the card's
+ *  top, every multiplier on the card is in doubt: `topInDoubt` (not enumerable) is then true, and Block X holds every
+ *  target on that card. (BX-74: with same-block reads a producer can't flag itself by moving VHP out and back.)
  *  Returns the combined values and the producers that differed. */
-export function combineReads(a: Record<string, string>, b: Record<string, string> | null, who: string[]): { values: Record<string, string>; differ: string[] } {
-  if (!b) return { values: Object.fromEntries(who.map((x) => [x, String(a[x] || "0")])), differ: [] };
-  const differ: string[] = [];
+export function combineReads(a: Record<string, string>, b: Record<string, string> | null, who: string[], sameBlock = true): { values: Record<string, string>; differ: string[] } {
   const values: Record<string, string> = {};
+  if (!b) { for (const x of who) values[x] = String(a[x] || "0"); return { values, differ: [] }; }
+  const differ: string[] = [], hiOf: Record<string, bigint> = {};
   for (const x of who) {
     const u = BigInt(a[x] || "0"), v = BigInt(b[x] || "0"), hi = u > v ? u : v, lo = u < v ? u : v;
-    if (hi - lo > hi / 200n) { differ.push(x); values[x] = String(lo); }
+    hiOf[x] = hi;
+    if (hi - lo > hi / 200n) { differ.push(x); values[x] = String(sameBlock ? lo : hi); }
     else values[x] = String(hi);
   }
+  const top = Object.values(values).reduce((m, v) => (BigInt(v) > m ? BigInt(v) : m), 0n);
+  const inDoubt = differ.some((x) => hiOf[x] >= top);
+  Object.defineProperty(values, "__topInDoubt", { value: inDoubt, enumerable: false });
   return { values, differ };
+}
+/** Both nodes' VHP reads taken at the same head block (audit BX-74): read the heads, read both in parallel, read the
+ *  heads again; tried 3 times. sameBlock is false when the two never matched (a lagging node). */
+async function readBoth(p: any, check: any, read: (w: string[]) => Promise<Record<string, string>>, readCheck: (w: string[]) => Promise<Record<string, string>>, who: string[], wait: (ms: number) => Promise<unknown> = sleep) {
+  let mine: Record<string, string> = {}, theirs: Record<string, string> = {}, same = false;
+  const hOf = async (n: any) => Number((await withRetry("head", () => n.getHeadInfo())).head_topology.height);
+  for (let k = 0; k < 3 && !same; k++) {
+    if (k) await wait(1500);
+    const [a0, b0] = await Promise.all([hOf(p), hOf(check)]);
+    [mine, theirs] = await Promise.all([read(who), readCheck(who)]);
+    const [a1, b1] = await Promise.all([hOf(p), hOf(check)]);
+    same = a0 === b0 && a1 === b1 && a0 === a1;
+  }
+  return { mine, theirs, same };
 }
 /** Rule 2: each producer's VHP (1e-8 units) = the highest of `now` (read at card time) and its samples taken in
  *  (t - SAMPLE_WINDOW, t]. Samples after t never count (a card only uses what was known when it was taken). */
@@ -133,7 +154,7 @@ export function productionFloor(vhp: Record<string, bigint>, counts: Map<string,
   return { vhp: out, raised };
 }
 
-type Card = { at: number; blocksPerRace: number; c: number; fairness: number[] | null; field: { a: string; vhp: number; k: number; h: number }[]; paddock: { a: string; vhp: number; k: number }[]; samples?: number; flagged?: string[] };
+type Card = { at: number; blocksPerRace: number; c: number; fairness: number[] | null; field: { a: string; vhp: number; k: number; h: number }[]; paddock: { a: string; vhp: number; k: number }[]; samples?: number; flagged?: string[]; topInDoubt?: boolean; height?: number };
 type Race = { id: string; start: number; end: number; cards: (Card | null)[]; result: any | null };
 type WeekFile = { v: 1; week: number; start: number; end: number; races: Race[] };
 
@@ -308,7 +329,7 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
       // recent (at most LIB_LAG_MAX behind their heads) and within LIB_GAP_MAX of each other, and the two head times
       // within HEAD_GAP_MS; the card is then dated by the later head (never back-dated, and at most HEAD_GAP_MS ahead).
       if (chHead - chLib > LIB_LAG_MAX || Math.abs(libH - chLib) > LIB_GAP_MAX) { nodesOk = false; problems.push(`the two nodes' irreversible blocks (${libH}, ${chLib}) are too far apart or behind (check node head ${chHead}); no handicap card this run`); }
-      if (Math.abs(chTime - now) > HEAD_GAP_MS) { nodesOk = false; problems.push(`the two nodes' head times differ by ${Math.round(Math.abs(chTime - now) / 1000)} s; no handicap card this run`); }
+      if (chTime - now > HEAD_GAP_MS || now - chTime > LAG_MS) { nodesOk = false; problems.push(`the check node's head time is ${Math.round((chTime - now) / 1000)} s from the primary's (at most ${HEAD_GAP_MS / 1000} s ahead or ${LAG_MS / 60000} min behind); no handicap card this run`); }
       winEnd = Math.min(libH, chLib);
       cardTime = Math.max(now, chTime);    // never back-dated by one node
       chId = ch.head_topology.id;
@@ -327,10 +348,14 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
       const span = recent.ts[recent.ts.length - 1] - recent.ts[0];
       const blocksPerRace = span > 0 ? (recent.ts.length - 1) * M.RACE / span : 7200;
       const producers = recent.signers.filter(isAddr);
-      const mine = await vhpRead([...producers, "network"]);
-      const theirs = vhpCheck ? await vhpCheck([...producers, "network"]) : null;
+      // Audit BX-74: both nodes read at the same block when they can (else the higher read of a disagreement counts).
+      const both = vhpCheck ? await readBoth(p, check, vhpRead, vhpCheck, [...producers, "network"]) : { mine: await vhpRead([...producers, "network"]), theirs: null, same: true };
+      const mine = both.mine, theirs = both.theirs;
+      if (vhpCheck && !both.same) problems.push("the two nodes were at different blocks while reading VHP (a lagging node): a producer they disagree on counts at the higher read, flagged");
       // Audit BX-37: producer by producer, never the whole card for one address.
-      const { values, differ } = combineReads(mine, theirs, producers);
+      const { values, differ } = combineReads(mine, theirs, producers, both.same);
+      const topInDoubt = (values as any).__topInDoubt === true;
+      if (topInDoubt) problems.push("the two nodes disagree on the VHP of the producer at (or near) the top: the whole card is flagged; Block X holds its targets");
       for (const a of differ) problems.push(`the two nodes disagree on ${a}'s VHP; it counts at the lower read and is flagged on the card (Block X holds a target it signs)`);
       const sup = (x: Record<string, string> | null) => { const v = x && x.network; return v && /^\d+$/.test(v) ? BigInt(v) : null; };
       // Audit BX-57: the HIGHER of the two nodes' totals (one node reporting "1" can't switch the samples off).
@@ -342,13 +367,19 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
       for (const a of raised) console.log(`card: ${a} signed more blocks than its VHP allows; raised to ${Number(fair[a]) / 1e8} VHP for the card`);
       const used = samplesIn(samples, cardTime);
       const vhp: [string, number][] = producers.map((a) => [a, Number(fair[a] || 0n) / 1e8]);
-      const card: Card = { ...M.makeCard(vhp, blocksPerRace, cardTime), samples: used, ...(differ.length ? { flagged: [...differ].sort() } : {}) };
+      // Audit BX-77: the card also records the block its window ends at (Block X reads VHP moves from there).
+      const card: Card = { ...M.makeCard(vhp, blocksPerRace, cardTime), samples: used, height: winEnd, ...(differ.length ? { flagged: [...differ].sort() } : {}), ...(topInDoubt ? { topInDoubt: true } : {}) };
       // Audit BX-38: a card made from too few samples is published but flagged; Block X doesn't score with it.
       // Audit BX-58: the Producer Race still runs on such a card (its picks were made against it), and says so on the
       // card (`samples`, shown on the race page); Block X never scores with it.
       if (used < MIN_SAMPLES) problems.push(`handicap card from only ${used} VHP sample(s) in the last 6 hours (want ${MIN_SAMPLES}); the race uses it as is (its card shows the sample count); Block X waits for a card with enough samples`);
       console.log(`card VHP: effective, highest of ${used} sample(s) in the last 6 hours and the read now`);
-      for (const { race, leg } of want) { race.cards[leg] = card; console.log(`card for ${race.id} leg ${leg + 1}: ${card.field.length} horses, c = ${card.c}${check ? ", blocks and VHP checked on 2 nodes" : ""}`); }
+      for (const { race, leg } of want) {
+        // Audit BX-76: a card never carries a time at or after the end of its leg (a late run, a node a little ahead).
+        const legEnd = race.start + (leg + 1) * Math.round((race.end - race.start) / race.cards.length);
+        race.cards[leg] = card.at >= legEnd ? { ...card, at: legEnd - 1 } : card;
+        console.log(`card for ${race.id} leg ${leg + 1}: ${card.field.length} horses, c = ${card.c}${check ? ", blocks and VHP checked on 2 nodes" : ""}`);
+      }
     }
   }
 
@@ -474,7 +505,7 @@ async function leaderboards(weeks: Map<number, WeekFile>, now: number, player: (
 /** The producers (field and paddock) on the newest card in the published week files of the last day (audit BX-53). */
 function latestCardProducers(now: number): string[] {
   let best: Card | null = null;
-  for (const w of new Set([M.weekOf(now - M.DAY), M.weekOf(now)])) {
+  for (const w of new Set([M.weekOf(now - M.DAY), M.weekOf(now), M.weekOf(now + M.LEG)])) {   // audit BX-78: next week's first card too
     const wf = readPrev(`W${String(w).padStart(3, "0")}.json`);
     for (const r of (wf && Array.isArray(wf.races) ? wf.races : [])) for (const c of (Array.isArray(r?.cards) ? r.cards : [])) {
       if (c && Number.isFinite(c.at) && c.at <= now + FUTURE_MS && (!best || c.at > best.at)) best = c;
@@ -512,9 +543,11 @@ export async function sample({ p, check, prev, out, vhpOf, vhpCheckOf, spreadMs 
   const readCheck = !check ? null : vhpCheckOf || vhpOf || (async (w: string[]) => (await readVhp(check, MAINNET_VHP, w, { effective: true })).values);
   let keep = old.filter((x) => x.at > Math.min(now, clock()) - SAMPLE_KEEP);
   if (!problems.length) {
-    const mine = await read(who);
-    const theirs = readCheck ? await readCheck(who) : null;
-    const { values, differ } = combineReads(mine, theirs, who);
+    // Audit BX-74: both nodes at the same block when they can.
+    const both = readCheck ? await readBoth(p, check, read, readCheck, who) : { mine: await read(who), theirs: null, same: true };
+    const mine = both.mine;
+    const theirs = both.theirs;
+    const { values, differ } = combineReads(mine, theirs, who, both.same);
     for (const a of differ) problems.push(`the two nodes disagree on ${a}'s effective VHP; it is sampled at the higher read (capped at the top both agree on)`);
     if (!keep.length || now > keep[keep.length - 1].at) keep = keep.concat([{ at: now, height: headH, vhp: values }]).slice(-SAMPLE_MAX);
   }

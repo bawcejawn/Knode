@@ -110,7 +110,10 @@ jobs:
               # Audit BX-44: exact keys (cards feed Block X's scores). "samples" (how many VHP samples it used) is new.
               if c is None: return True
               # Audit BX-55: "flagged", the producers whose VHP the two nodes read differently (Block X holds their targets).
-              if type(c) is not dict or set(c) - {"samples", "flagged"} != {"at", "blocksPerRace", "c", "fairness", "field", "paddock"}: return False
+              # Round 4: "topInDoubt" (BX-73: the nodes disagreed at the top; Block X holds every target on it), "height" (BX-77).
+              if type(c) is not dict or set(c) - {"samples", "flagged", "topInDoubt", "height"} != {"at", "blocksPerRace", "c", "fairness", "field", "paddock"}: return False
+              if "topInDoubt" in c and c["topInDoubt"] is not True: return False
+              if "height" in c and not (type(c["height"]) is int and 0 < c["height"] < 10**12): return False
               if "samples" in c and not (type(c["samples"]) is int and 0 <= c["samples"] <= 1000): return False
               if "flagged" in c and not (type(c["flagged"]) is list and 0 < len(c["flagged"]) <= 500 and all(isaddr(a) for a in c["flagged"]) and len(set(c["flagged"])) == len(c["flagged"])): return False
               if not num(c["at"]) or not num(c["c"]) or not num(c["blocksPerRace"]): return False

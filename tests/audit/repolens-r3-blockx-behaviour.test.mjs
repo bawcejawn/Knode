@@ -17,9 +17,9 @@ const BIG = addr("b-big"), MID = addr("b-mid"), ALICE = addr("b-alice"), VHP = a
 const W3 = M.weekStart(3), H0 = 48_000_000;
 const T = (h) => W3 + 3600000 + (h - H0) * 3000;
 
-function raceDir({ flagged } = {}) {
+function raceDir({ flagged, topInDoubt } = {}) {
   const rd = fs.mkdtempSync(path.join(os.tmpdir(), "r3b-race-"));
-  const CARD = { at: 0, c: 1, blocksPerRace: 7200, fairness: null, field: [{ a: BIG, vhp: 2000, k: 600, h: 1 }, { a: MID, vhp: 1000, k: 300, h: 2 }], paddock: [], ...(flagged ? { flagged } : {}) };
+  const CARD = { at: 0, c: 1, blocksPerRace: 7200, fairness: null, field: [{ a: BIG, vhp: 2000, k: 600, h: 1 }, { a: MID, vhp: 1000, k: 300, h: 2 }], paddock: [], ...(flagged ? { flagged } : {}), ...(topInDoubt ? { topInDoubt: true } : {}) };
   for (const w of [2, 3, 4]) {
     const races = [];
     for (let t = M.weekStart(w); t < M.weekStart(w + 1); t += M.RACE) { const i = M.raceIndex(t); races.push({ id: M.raceId(i), start: t, end: t + M.RACE, cards: Array.from({ length: 6 }, (_, l) => ({ ...CARD, samples: 36, at: t + l * 3600000 + 37 * 60000 })), result: null }); }
@@ -27,11 +27,11 @@ function raceDir({ flagged } = {}) {
   }
   return rd;
 }
-async function go({ moved = 0n, flagged, lateBy = 0 } = {}) {
+async function go({ moved = 0n, flagged, topInDoubt, lateBy = 0 } = {}) {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "r3b-bx-")), lib = H0 + 2 * X.ROUND + 50;
   const log = console.log; console.log = () => {};
   try {
-    return await BX.run({ p: {}, check: null, out, raceDir: raceDir({ flagged }), picksContract: addr("b-picks"), knodeGame: null, vhpContract: VHP,
+    return await BX.run({ p: {}, check: null, out, raceDir: raceDir({ flagged, topInDoubt }), picksContract: addr("b-picks"), knodeGame: null, vhpContract: VHP,
       blockOf: async (_n, h) => ({ signer: MID, time: T(h) }),
       picksOf: async (_n, rr) => [{ player: ALICE, producer: MID, time: T(rr * X.ROUND) - 3600000 }],
       vhpMovesOf: async () => moved,
@@ -51,11 +51,12 @@ test("BX-53: vhpInflows reads the VHP contract's transfer and mint events to the
   const vint = (n) => { n = BigInt(n); const o = []; do { let b = Number(n & 0x7fn); n >>= 7n; if (n) b |= 0x80; o.push(b); } while (n); return o; };
   const bytesF = (f, b) => [(f << 3) | 2, b.length, ...b], numF = (f, v) => [(f << 3), ...vint(v)];
   const to = [...utils.decodeBase58(MID)], other = [...utils.decodeBase58(BIG)];
-  const ev = (name, data, source = VHP) => ({ source, name, data: Buffer.from(Uint8Array.from(data)).toString("base64"), impacted: [MID] });
-  const receipt = { events: [ev("vhp.mint", [...bytesF(1, to), ...numF(2, 5)])], transaction_receipts: [{ events: [
-    ev("vhp.transfer", [...bytesF(1, other), ...bytesF(2, to), ...numF(3, 7)]),
-    ev("vhp.transfer", [...bytesF(1, to), ...bytesF(2, other), ...numF(3, 100)]),           // out of MID: ignored
-    ev("vhp.transfer", [...bytesF(1, other), ...bytesF(2, to), ...numF(3, 1000)], BIG),     // another contract: ignored
+  // impacted = [to, from] as the VHP contract emits it (audit BX-72: the receiver is impacted[0]).
+  const ev = (name, data, impacted, source = VHP) => ({ source, name, data: Buffer.from(Uint8Array.from(data)).toString("base64"), impacted });
+  const receipt = { events: [ev("token.mint_event", [...bytesF(1, to), ...numF(2, 5)], [MID])], transaction_receipts: [{ events: [
+    ev("token.transfer_event", [...bytesF(1, other), ...bytesF(2, to), ...numF(3, 7)], [MID, BIG]),
+    ev("token.transfer_event", [...bytesF(1, to), ...bytesF(2, other), ...numF(3, 100)], [BIG, MID]),          // out of MID: ignored
+    ev("token.transfer_event", [...bytesF(1, other), ...bytesF(2, to), ...numF(3, 1000)], [MID, BIG], BIG),    // another contract: ignored
   ] }] };
   assert.equal(BX.vhpInflows(receipt, VHP, MID), 12n);
 });
@@ -101,4 +102,11 @@ test("BX-62 / BX-65 / BX-79 (round 4): judged against the PUBLISHED final board 
   assert.notEqual(make(good, { pubBoard: board(wk, false) }), 0, "the published board isn't final yet");
   assert.notEqual(make(good, { pubBoard: null }), 0, "nothing published to check against");
   assert.notEqual(make(good, { pubP: false }), 0, "the prize file isn't published yet");
+});
+
+test("BX-73 (round 4): a card whose top producer is in doubt holds every target on it, whoever signs", async () => {
+  const r = await go({ topInDoubt: true, lateBy: 4 * 3600000 });
+  const ts = [...r.weeks.values()].flatMap((w) => w.targets);
+  assert.ok(ts.length > 0 && ts.every((t) => t.void), "every target voided after the wait, none scored");
+  assert.equal(scored(await go({ topInDoubt: true })).length, 0);
 });
