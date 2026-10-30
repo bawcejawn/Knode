@@ -73,24 +73,32 @@ test("BX-55: a lock card on which the two nodes disagreed about the signer is ne
 
 // The publish job's check, run as it is in the workflow.
 function py(yml) { const y = fs.readFileSync(path.join(APP, yml), "utf8"); const s = y.indexOf("<<'PY'\n") + 7, e = y.indexOf("\n          PY\n", s); return y.slice(s, e).split("\n").map((l) => l.slice(10)).join("\n"); }
-test("BX-62 / BX-65: the honest vault file for the week that just ended passes; reordered rows, a stranger or a late file fail", () => {
+test("BX-62 / BX-65 / BX-79 (round 4): judged against the PUBLISHED final board and prize file and the job's clock", () => {
   const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "r3b-py-")), "check.py"); fs.writeFileSync(f, py(".github/workflows/games.yml"));
   const S1 = addr("s1"), S2 = addr("s2"), F1 = addr("f1");
   const row = (a, place, ranked) => ({ a, place, boardPlace: place, pts: 100, correct: 1, picks: 1, days: 3, lastCorrect: 0, ranked });
-  const W = 7 * 86400000, start = M.weekStart(40);
-  const make = (vault, updated = start + W + 13 * 3600000) => {
-    const d = fs.mkdtempSync(path.join(os.tmpdir(), "r3b-")), b = path.join(d, "blockx"); fs.mkdirSync(path.join(b, "vault"), { recursive: true });
-    const empty = { rows: [] };
-    fs.writeFileSync(path.join(b, "board.json"), JSON.stringify({ v: 1, updated: new Date(updated).toISOString(), today: { day: "2026-12-01", rows: [] }, week: { week: 41, start: start + W, rows: [] },
-      lastWeek: { week: 40, start, final: true, rows: [row(S1, 1, true), row(S2, 2, true), row(F1, 1, false)], prizes: [{ player: F1, place: 1, vhp: 2 }] }, allTime: empty }));
+  const W = 7 * 86400000, GEN = 1792368000000, wk = 40, start = GEN + wk * W, end = start + W;
+  const prizes = [{ player: F1, place: 1, vhp: 2 }];
+  const board = (w = wk, final = true) => ({ v: 1, updated: new Date(end + 13 * 3600000).toISOString(), today: { day: "2026-12-01", rows: [] }, week: { week: w + 1, start: end, rows: [] },
+    lastWeek: { week: w, start: GEN + w * W, final, rows: [row(S1, 1, true), row(S2, 2, true), row(F1, 1, false)], prizes }, allTime: { rows: [] } });
+  const make = (vault, { now = end + 13 * 3600000, pubBoard = board(), pubP = true } = {}) => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "r3b-")), b = path.join(d, "blockx"), pub = path.join(d, "pub");
+    fs.mkdirSync(path.join(b, "vault"), { recursive: true }); fs.mkdirSync(pub);
+    fs.writeFileSync(path.join(b, "board.json"), JSON.stringify(board()));   // this run's own board (not trusted)
     fs.writeFileSync(path.join(b, "vault", `W${vault.week}.json`), JSON.stringify(vault));
-    return spawnSync("python3", ["-I", f, b, "2"], { encoding: "utf8" }).status;
+    if (pubBoard) fs.writeFileSync(path.join(pub, "board.json"), JSON.stringify(pubBoard));
+    if (pubP) fs.writeFileSync(path.join(pub, `P${String(wk).padStart(3, "0")}.json`), JSON.stringify({ v: 1, week: wk, game: 2, at: new Date(end).toISOString(), prizes }));
+    return spawnSync("python3", ["-I", f, b, "2", pub], { encoding: "utf8", env: { ...process.env, CHECK_NOW_MS: String(now) } }).status;
   };
-  const good = { game: 2, week: 40, final: true, rows: [{ player: S1, points: 255 }, { player: S2, points: 254 }], first: [F1], second: [] };
+  const good = { game: 2, week: wk, final: true, rows: [{ player: S1, points: 255 }, { player: S2, points: 254 }], first: [F1], second: [] };
   assert.equal(make(good), 0, "the honest file");
   assert.notEqual(make({ ...good, rows: [{ player: S2, points: 255 }, { player: S1, points: 254 }] }), 0, "rows out of board order");
-  assert.notEqual(make({ ...good, rows: [{ player: addr("x"), points: 255 }] }), 0, "a wallet not on the Staked board");
+  assert.notEqual(make({ ...good, rows: [{ player: S1, points: 255 }, { player: S2, points: 1 }] }), 0, "points not recomputed from the places");
+  assert.notEqual(make({ ...good, rows: [{ player: addr("x"), points: 255 }] }), 0, "a wallet not on the published Staked board");
   assert.notEqual(make({ ...good, first: [S1], rows: [{ player: S2, points: 255 }] }), 0, "a staked player as a free winner");
   assert.notEqual(make({ ...good, week: 39 }), 0, "another week");
-  assert.notEqual(make(good, start + W + 8 * 86400000), 0, "more than 7 days after the week");
+  assert.notEqual(make(good, { now: end + 4 * 86400000 }), 0, "more than 3 days after the week (the vault's window)");
+  assert.notEqual(make(good, { pubBoard: board(wk, false) }), 0, "the published board isn't final yet");
+  assert.notEqual(make(good, { pubBoard: null }), 0, "nothing published to check against");
+  assert.notEqual(make(good, { pubP: false }), 0, "the prize file isn't published yet");
 });
