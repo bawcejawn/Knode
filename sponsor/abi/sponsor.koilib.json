@@ -40,7 +40,7 @@
       "argument": "sponsor.would_pay_arguments",
       "return": "sponsor.would_pay_result",
       "read_only": true,
-      "description": "Would the sponsor pay a transaction from this player with this Mana limit (on/off, caps and the player rule; the operations themselves are checked when it is sent). answer_only = the transaction is only free play (game answers and race picks)."
+      "description": "Would the sponsor pay a transaction from this player with this Mana limit (on/off, caps and the player rule; the operations themselves are checked when it is sent). game = the call's game, so a wallet staked only in that game counts as a real player, as authorize does."
     },
     "set_config": {
       "entry_point": 1269140617,
@@ -137,6 +137,72 @@
                 "options": {
                   "(koinos.btype)": "ADDRESS"
                 }
+              },
+              "allowed": {
+                "rule": "repeated",
+                "type": "allowed_call",
+                "id": 13
+              },
+              "mana_caps": {
+                "rule": "repeated",
+                "type": "mana_cap",
+                "id": 14
+              },
+              "game_has_vault": {
+                "type": "bool",
+                "id": 15
+              }
+            }
+          },
+          "mana_cap": {
+            "fields": {
+              "contract": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "entry_point": {
+                "type": "uint32",
+                "id": 2
+              },
+              "max_mana": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "allowed_call": {
+            "fields": {
+              "contract": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "entry_point": {
+                "type": "uint32",
+                "id": 2
+              },
+              "free_play": {
+                "type": "bool",
+                "id": 3
+              },
+              "arg_types": {
+                "type": "bytes",
+                "id": 4,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              },
+              "game_arg": {
+                "type": "uint32",
+                "id": 5
               }
             }
           },
@@ -251,6 +317,15 @@
               "answer_only": {
                 "type": "bool",
                 "id": 3
+              },
+              "game": {
+                "type": "uint32",
+                "id": 4
+              },
+              "games": {
+                "rule": "repeated",
+                "type": "uint32",
+                "id": 5
               }
             }
           },
@@ -335,6 +410,39 @@
               }
             }
           },
+          "game_get_game_player_args": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "game": {
+                "type": "uint32",
+                "id": 2
+              },
+              "week": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "game_get_game_player_result": {
+            "fields": {
+              "week_stake": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
           "game_player": {
             "fields": {
               "stake": {
@@ -358,6 +466,13 @@
               "player": {
                 "type": "game_player",
                 "id": 1
+              },
+              "active_stake": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
               }
             }
           },

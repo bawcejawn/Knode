@@ -1,0 +1,781 @@
+{
+  "methods": {
+    "pick": {
+      "entry_point": 2363702380,
+      "argument": "picks.pick_arguments",
+      "return": "picks.empty_object",
+      "read_only": false,
+      "description": "Make or change your pick for a round of a game. Needs the player's signature. Refused when the game is off, the round is locked or not open yet, the choice doesn't fit the game, it is already your pick, changes or today's picks are used up."
+    },
+    "authorize": {
+      "entry_point": 1244511632,
+      "argument": "koinos.chain.authorize_arguments",
+      "return": "koinos.chain.authorize_result",
+      "read_only": false,
+      "description": "Check if authorized"
+    },
+    "get_pick": {
+      "entry_point": 4083214051,
+      "argument": "picks.get_pick_arguments",
+      "return": "picks.get_pick_result",
+      "read_only": true,
+      "description": "One wallet's pick for one round of a game (empty if none)."
+    },
+    "list_picks": {
+      "entry_point": 2118033200,
+      "argument": "picks.list_picks_arguments",
+      "return": "picks.list_picks_result",
+      "read_only": true,
+      "description": "Every pick for a round of a game, in address order, up to limit (at most 100) at a time. Pass the last address you got as start_after for the next page."
+    },
+    "get_usage": {
+      "entry_point": 1236253562,
+      "argument": "picks.get_usage_arguments",
+      "return": "picks.get_usage_result",
+      "read_only": true,
+      "description": "Picks a wallet has made today (UTC) in a game, and the daily limit."
+    },
+    "get_config": {
+      "entry_point": 3159346644,
+      "argument": "picks.get_config_arguments",
+      "return": "picks.config",
+      "read_only": true,
+      "description": "The owner, a proposed new owner and an announced upgrade."
+    },
+    "get_game": {
+      "entry_point": 1871540943,
+      "argument": "picks.get_game_arguments",
+      "return": "picks.get_game_result",
+      "read_only": true,
+      "description": "One game's rules and any announced change to them."
+    },
+    "list_games": {
+      "entry_point": 49260435,
+      "argument": "picks.list_games_arguments",
+      "return": "picks.list_games_result",
+      "read_only": true,
+      "description": "Every registered game, in id order."
+    },
+    "list_pending": {
+      "entry_point": 1809552309,
+      "argument": "picks.list_pending_arguments",
+      "return": "picks.list_pending_result",
+      "read_only": true,
+      "description": "Announced game changes that can still be applied, in game id order, up to limit (at most 50) at a time. Pass next as start_after for the next page."
+    },
+    "announce_game": {
+      "entry_point": 4158087113,
+      "argument": "picks.announce_game_arguments",
+      "return": "picks.eta_result",
+      "read_only": false,
+      "description": "Announce a new game, or new settings for a game (owner only). Takes effect with apply_game 48 hours later. A game's shape can't change once registered."
+    },
+    "apply_game": {
+      "entry_point": 1543470019,
+      "argument": "picks.apply_game_arguments",
+      "return": "picks.empty_object",
+      "read_only": false,
+      "description": "Put an announced game change in force, from 48 hours after it was announced and for 7 days. Anyone may call it."
+    },
+    "tighten_game": {
+      "entry_point": 2491882306,
+      "argument": "picks.tighten_game_arguments",
+      "return": "picks.empty_object",
+      "read_only": false,
+      "description": "Make a game stricter at once (owner only): switch it off, lower its caps, lock earlier or open later. Nothing looser is allowed. It also drops any announced change for that game."
+    },
+    "cancel_game_change": {
+      "entry_point": 3590283698,
+      "argument": "picks.cancel_game_change_arguments",
+      "return": "picks.empty_object",
+      "read_only": false,
+      "description": "Drop an announced game change (owner only)."
+    },
+    "propose_owner": {
+      "entry_point": 198312784,
+      "argument": "picks.propose_owner_arguments",
+      "return": "picks.eta_result",
+      "read_only": false,
+      "description": "Propose a new owner (owner only). They can accept from 48 hours later. Proposing again replaces it; an empty owner cancels."
+    },
+    "accept_owner": {
+      "entry_point": 3668871220,
+      "argument": "picks.accept_owner_arguments",
+      "return": "picks.empty_object",
+      "read_only": false,
+      "description": "Become the owner (the proposed owner, 48 hours after the proposal). Every game change the previous owner announced can no longer be applied, and any announced upgrade is cleared."
+    },
+    "schedule_upgrade": {
+      "entry_point": 2777493725,
+      "argument": "picks.schedule_upgrade_arguments",
+      "return": "picks.eta_result",
+      "read_only": false,
+      "description": "Announce new code by its sha256 (owner only). It can be uploaded, signed by the owner, from 48 hours later and for 7 days. An all-zero or empty hash cancels."
+    }
+  },
+  "koilib_types": {
+    "nested": {
+      "picks": {
+        "nested": {
+          "config": {
+            "fields": {
+              "owner": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "pending_owner": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "pending_owner_eta": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "upgrade_hash": {
+                "type": "bytes",
+                "id": 4,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              },
+              "upgrade_eta": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "generation": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "game_config": {
+            "fields": {
+              "id": {
+                "type": "uint32",
+                "id": 1
+              },
+              "name": {
+                "type": "string",
+                "id": 2
+              },
+              "kind": {
+                "type": "uint32",
+                "id": 3
+              },
+              "list_size": {
+                "type": "uint32",
+                "id": 4
+              },
+              "number_min": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "number_max": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "lock_mode": {
+                "type": "uint32",
+                "id": 7
+              },
+              "round_size": {
+                "type": "uint64",
+                "id": 8,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "round_offset": {
+                "type": "uint64",
+                "id": 9,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "lead": {
+                "type": "uint64",
+                "id": 10,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "ahead": {
+                "type": "uint64",
+                "id": 11,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "max_picks_per_day": {
+                "type": "uint32",
+                "id": 12
+              },
+              "max_changes": {
+                "type": "uint32",
+                "id": 13
+              },
+              "enabled": {
+                "type": "bool",
+                "id": 14
+              }
+            }
+          },
+          "pending_game": {
+            "fields": {
+              "game": {
+                "type": "game_config",
+                "id": 1
+              },
+              "eta": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "generation": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "pick_object": {
+            "fields": {
+              "producers": {
+                "rule": "repeated",
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "number": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "height": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "time": {
+                "type": "uint64",
+                "id": 4,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "changes": {
+                "type": "uint32",
+                "id": 5
+              }
+            }
+          },
+          "day_count": {
+            "fields": {
+              "day": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "count": {
+                "type": "uint32",
+                "id": 2
+              }
+            }
+          },
+          "empty_object": {
+            "fields": {}
+          },
+          "eta_result": {
+            "fields": {
+              "eta": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "pick_arguments": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "game": {
+                "type": "uint32",
+                "id": 2
+              },
+              "round": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "producers": {
+                "rule": "repeated",
+                "type": "bytes",
+                "id": 4,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "number": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "pick_event": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "game": {
+                "type": "uint32",
+                "id": 2
+              },
+              "round": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "producers": {
+                "rule": "repeated",
+                "type": "bytes",
+                "id": 4,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "number": {
+                "type": "uint64",
+                "id": 5,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "height": {
+                "type": "uint64",
+                "id": 6,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "time": {
+                "type": "uint64",
+                "id": 7,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "change": {
+                "type": "bool",
+                "id": 8
+              }
+            }
+          },
+          "get_pick_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              },
+              "round": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "player": {
+                "type": "bytes",
+                "id": 3,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "get_pick_result": {
+            "fields": {
+              "pick": {
+                "type": "pick_object",
+                "id": 1
+              }
+            }
+          },
+          "list_picks_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              },
+              "round": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "start_after": {
+                "type": "bytes",
+                "id": 3,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "limit": {
+                "type": "uint32",
+                "id": 4
+              }
+            }
+          },
+          "pick_row": {
+            "fields": {
+              "player": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "pick": {
+                "type": "pick_object",
+                "id": 2
+              }
+            }
+          },
+          "list_picks_result": {
+            "fields": {
+              "rows": {
+                "rule": "repeated",
+                "type": "pick_row",
+                "id": 1
+              }
+            }
+          },
+          "get_usage_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              },
+              "player": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "get_usage_result": {
+            "fields": {
+              "day": {
+                "type": "uint64",
+                "id": 1,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              },
+              "picks_today": {
+                "type": "uint32",
+                "id": 2
+              },
+              "max_picks_per_day": {
+                "type": "uint32",
+                "id": 3
+              }
+            }
+          },
+          "get_config_arguments": {
+            "fields": {}
+          },
+          "get_game_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "get_game_result": {
+            "fields": {
+              "game": {
+                "type": "game_config",
+                "id": 1
+              },
+              "pending": {
+                "type": "pending_game",
+                "id": 2
+              }
+            }
+          },
+          "list_games_arguments": {
+            "fields": {}
+          },
+          "list_games_result": {
+            "fields": {
+              "games": {
+                "rule": "repeated",
+                "type": "game_config",
+                "id": 1
+              }
+            }
+          },
+          "list_pending_arguments": {
+            "fields": {
+              "start_after": {
+                "type": "uint32",
+                "id": 1
+              },
+              "limit": {
+                "type": "uint32",
+                "id": 2
+              }
+            }
+          },
+          "list_pending_result": {
+            "fields": {
+              "pending": {
+                "rule": "repeated",
+                "type": "pending_game",
+                "id": 1
+              },
+              "next": {
+                "type": "uint32",
+                "id": 2
+              }
+            }
+          },
+          "announce_game_arguments": {
+            "fields": {
+              "game": {
+                "type": "game_config",
+                "id": 1
+              }
+            }
+          },
+          "apply_game_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "tighten_game_arguments": {
+            "fields": {
+              "game": {
+                "type": "game_config",
+                "id": 1
+              }
+            }
+          },
+          "cancel_game_change_arguments": {
+            "fields": {
+              "game": {
+                "type": "uint32",
+                "id": 1
+              }
+            }
+          },
+          "propose_owner_arguments": {
+            "fields": {
+              "owner": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              }
+            }
+          },
+          "accept_owner_arguments": {
+            "fields": {}
+          },
+          "schedule_upgrade_arguments": {
+            "fields": {
+              "hash": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              }
+            }
+          },
+          "game_event": {
+            "fields": {
+              "action": {
+                "type": "string",
+                "id": 1
+              },
+              "game": {
+                "type": "game_config",
+                "id": 2
+              },
+              "eta": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "owner_event": {
+            "fields": {
+              "action": {
+                "type": "string",
+                "id": 1
+              },
+              "owner": {
+                "type": "bytes",
+                "id": 2,
+                "options": {
+                  "(koinos.btype)": "ADDRESS"
+                }
+              },
+              "eta": {
+                "type": "uint64",
+                "id": 3,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          },
+          "upgrade_event": {
+            "fields": {
+              "hash": {
+                "type": "bytes",
+                "id": 1,
+                "options": {
+                  "(koinos.btype)": "HEX"
+                }
+              },
+              "eta": {
+                "type": "uint64",
+                "id": 2,
+                "options": {
+                  "jstype": "JS_STRING"
+                }
+              }
+            }
+          }
+        }
+      },
+      "koinos": {
+        "nested": {
+          "chain": {
+            "options": {
+              "go_package": "github.com/koinos/koinos-proto-golang/koinos/chain"
+            },
+            "nested": {
+              "authorization_type": {
+                "values": {
+                  "contract_call": 0,
+                  "transaction_application": 1,
+                  "contract_upload": 2
+                }
+              },
+              "call_target": {
+                "fields": {
+                  "contract_id": {
+                    "type": "bytes",
+                    "id": 1,
+                    "options": {
+                      "(btype)": "ADDRESS"
+                    }
+                  },
+                  "entry_point": {
+                    "type": "uint32",
+                    "id": 2
+                  }
+                }
+              },
+              "authorize_arguments": {
+                "oneofs": {
+                  "_call": {
+                    "oneof": [
+                      "call"
+                    ]
+                  }
+                },
+                "fields": {
+                  "type": {
+                    "type": "authorization_type",
+                    "id": 1
+                  },
+                  "call": {
+                    "type": "call_target",
+                    "id": 2,
+                    "options": {
+                      "proto3_optional": true
+                    }
+                  }
+                }
+              },
+              "authorize_result": {
+                "fields": {
+                  "value": {
+                    "type": "bool",
+                    "id": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
