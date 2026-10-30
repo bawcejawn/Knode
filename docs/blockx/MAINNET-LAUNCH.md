@@ -6,7 +6,7 @@ because changing a contract after upload means a new upload.
 | # | Step | Who | Wait |
 |---|---|---|---|
 | 1 | Repo Lens audit → Claude fixes → Repo Lens fix-check (Part A Block X, Part B sponsor v3) | you + Claude | – |
-| 2 | Claude allows the v3 build on mainnet in the tool (only after the fix-check) | Claude, with your OK | – |
+| 2 | Claude allows the v3 build on mainnet in the tool (only after the fix-check) | **done** (Repo Lens round 6 "GO", 2026-10-30; v2 stays allowed as the rollback) | – |
 | 3 | Build in a clean copy with no keys (audit BX-6) | you | – |
 | 4a | Knode Swap pays its own Mana: `payer sponsor --send`, a pull request to `main` | you + Claude | a few minutes |
 | 4 | Upgrade the Mana sponsor to v3 (dry-run its settings) | you | – |
