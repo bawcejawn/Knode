@@ -409,7 +409,7 @@ them. `js_safe` also refuses integer-valued floats (belt and braces). The test f
 | ID | Finding | Status |
 |---|---|---|
 | BX-122 | Integer-valued floats stalled publishing | **Fixed** (the canonical-form check, plus `js_safe`) |
-| BX-123 | 0.2 Mana pick row from a testnet number | Runbook: after game 2 is applied, make one mainnet pick, then set the row to about 2 × its measured Mana |
+| BX-123 | 0.2 Mana pick row from a testnet number | Runbook: before step 9, `mana-report` on mainnet sponsored transactions; raise the row for launch if mainnet is dearer (at most 1 Mana), then step 10 sets it from real picks |
 | BX-124 | The re-typed card test stopped at the shape check | **Fixed**: the test now reaches the published-card compare |
 | BX-125 | No test for BX-119 | **Added** |
 | BX-126 | A primary node 2 weeks stale: one run refused | Accepted (clears on the next run) |
