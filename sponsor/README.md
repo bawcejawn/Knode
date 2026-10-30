@@ -74,7 +74,8 @@ website says: the page then falls back to the player's own Mana.
    `git commit -m "Mana sponsor on"`, `git push`.
 8. **Check**: `npm run sponsor -- status`.
 
-To stop it: `npm run sponsor -- disable --send` (instant), and `payer self` for the website. To take the KOIN out, send
+To stop it: `npm run sponsor -- disable --send` (instant), and `payer self` for the website. If the preview says the
+second node doesn't agree, it sends only with `disable --rebuilt --send` (caps never looser, see round 5 below). To take the KOIN out, send
 it from the sponsor wallet in Kondor, like any wallet.
 
 ## Sizing
@@ -132,8 +133,9 @@ v3 adds three things. With no `allowed` rows it behaves as v2, except for the tw
   first and once, and every other field has its listed wire type, in field-number order (race audit S-1, for any
   contract: the sponsor and the target contract can't read different players). Free-play rows count like answers. The
   KnodeGames Picks contract's `pick` is added automatically once `picks-data/deployment.json` exists.
-- **Free players' prize claims**: a game `claim` for the payee's own wallet (canonical arguments) is free play, so a
-  free player (a guest too) can collect a free-game prize.
+- **Free players' prize claims**: a game `claim` is free play, so a free player (a guest too) can collect a free-game
+  prize. (Audit SP-23, round 5: the sponsor doesn't check whose claim it is; that is harmless, because the game's
+  `claim` needs the player's own signature and pays only that player.)
 - **Fixcheck L-3**: a stake counts as a real player from `min_vhp` up (active and pending together), like held VHP.
 
 Allowlisted calls and free claims are refused above 640 argument bytes (400 before the Combo Card; the largest Block X pick is 317).
@@ -197,6 +199,14 @@ claim's Mana with the answers' 1 Mana limit, not `rcLimitOther`.
 - **Free Mana on any covered call** (owner, 2026-10-28: "the wallet can use their available free mana as they wish"):
   a wallet that isn't a real player is no longer refused for staking, swapping or approving; it spends the free pool
   (released by the hour) within its own caps. Real players spend the rest of the day's total.
+- **Round 5 (2026-10-30, tool only; the contract is unchanged)**: `enable` keeps every cap exactly as on chain, a 0
+  included (SP-44); the emergency `disable`, when the second node doesn't agree, rebuilds the settings with caps never
+  looser than the chain's or the defaults and no per-action limits, and sends that only with `--rebuilt` (what you
+  previewed is what is signed: SP-44, SP-47); the sponsor's code is read on both nodes (SP-48); the swap-page check
+  applies once v3 is on chain (SP-50); `status` warns when the game is v6 but the vault switch is off (SP-49); the v2
+  rollback names caps v2 accepts (SP-13). Accepted for launch: SP-45 (`would_pay.games` is read unpacked only: the
+  site sends it unpacked; a koilib caller with the published ABI gets a wrong answer, never a payment) and SP-46
+  (nothing on chain ties `game_has_vault` to v6 code: the tool reads it from two nodes).
 - **Round 4 (2026-10-30)**: `config.game_has_vault` (audit SP-37). The live game (v5) has no `get_game_player`, and on
   Koinos a callee's revert aborts the calling contract, so v3 asks for a stake in another game, and pays for the
   vault's own calls, only once the game is the vault (v6). The tool reads that from the game's state on two nodes;
@@ -204,8 +214,8 @@ claim's Mana with the answers' 1 Mana limit, not `rcLimitOther`.
 - **Round 3 (2026-10-29)**: a real player is read from the game's `active_stake` for the current week (audit SP-28:
   the raw `stake` stays 0 for a player who deposited once and only answered since); `would_pay` takes the call's game,
   as `authorize` does (SP-22); **Knode Swap is never sponsored** (owner): swaps and approves to the Desk are refused,
-  and the swap page uses players' own Mana; enable/disable change only the switch (SP-29); default caps 25 a day and
-  150 a week per wallet (owner).
+  and the swap page uses players' own Mana; enable keeps the caps on chain and disable changes only the switch when
+  two nodes agree (SP-29; see round 5); default caps 25 a day and 150 a week per wallet (owner).
 - **Repeated fields** (audit SP-16): `arg_types` marks a repeated field with 0x10; any other field may appear once.
   The Picks row is `0x0301011301` (producers repeated), `game_arg` 2.
 - **640 argument bytes** (was 400) so Combo cards up to 10 legs fit. Combo cards (field 6, legs) are a settings change

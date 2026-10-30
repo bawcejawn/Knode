@@ -24,11 +24,14 @@ function world() {
   const run = (spec) => {
     const inn = path.join(d, `in${n++}`);
     assert.equal(spawnSync("python3", ["-I", GEN, inn, JSON.stringify(spec)]).status, 0);
-    return spawnSync("bash", [sh], { env: { ...process.env, IN: inn, REMOTE: remote, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" }, encoding: "utf8" });
+    return spawnSync("bash", [sh], { env: { ...process.env, IN: inn, REMOTE: remote, CHECK_NOW_MS: String(NOW), GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" }, encoding: "utf8" });
   };
   const show = (f) => spawnSync("git", ["--git-dir", remote, "show", `games-data:blockx/${f}`], { encoding: "utf8" });
   return { run, show };
 }
+// Audit BX-94 (round 5): a fixed clock, 20 hours after week 1 ends (final, and inside the vault's 3 days), so each
+// test passes for its own reason and not a wall-clock "not yet".
+const NOW = 1792368000000 + 2 * 7 * 86400000 + 20 * 3600000;
 const honest = { lw: 1, players: [[A, 30, 1], [B, 20, 1], [F, 25, 0]], prizes: [[F, 1]] };
 
 test("F5-K-1: a run's own board can't vouch for a vault file that differs from the published board", () => {
@@ -54,4 +57,28 @@ test("F5-K-3: a bad published vault file doesn't stop the honest run publishing 
   const r = w.run({ ...honest, upd_h: 30, vault: "honest" });
   const b = JSON.parse(w.show("board.json").stdout);
   assert.equal(b.updated.slice(0, 13), "2026-11-03T06", `the honest board must still be published (exit ${r.status}): hold only the vault file and alert`);
+});
+
+// Audit BX-94 (round 5): the honest path under the fixed clock: the final board first, then P, then the vault file, all published.
+test("BX-94: the honest board + P, then the honest vault file, are all published", () => {
+  const w = world();
+  assert.equal(w.run({ ...honest, vault: null, P: true }).status, 0);            // the board (its P waits: "not yet")
+  assert.equal(w.run({ ...honest, upd_h: 14, vault: null, P: true }).status, 0);
+  assert.equal(w.show("P001.json").status, 0, "the honest P file is published once the published board is final");
+  const r = w.run({ ...honest, upd_h: 21, vault: "honest" });   // (the recorder never writes P again)
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const v = JSON.parse(w.show("vault/W1.json").stdout);
+  assert.deepEqual(v.rows.map((x) => x.player), [A, B]);
+  assert.deepEqual(v.first, [F]);
+});
+
+// Audit BX-65 (round 5): a vault file that leaves out Staked-board players is published (the job can't re-read stakes)
+// but names them in a warning.
+test("BX-65: Staked players left out of the vault rows are named in a warning", () => {
+  const w = world();
+  w.run({ ...honest, vault: null, P: true });
+  w.run({ ...honest, upd_h: 14, vault: null, P: true });
+  const r = w.run({ ...honest, upd_h: 21, vault: { rows: [[A, 255]], first: [F], second: [] } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, new RegExp(`::warning::blockx/vault/W1\\.json: 1 of 2 Staked-board players.*${B}`));
 });

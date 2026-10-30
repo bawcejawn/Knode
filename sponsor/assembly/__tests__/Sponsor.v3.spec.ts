@@ -733,3 +733,47 @@ describe("Round 4 SP-38: would_pay reads every game of a batch", () => {
     expect(new Sponsor().would_pay(a).ok).toBe(true);
   });
 });
+
+// ── Repo Lens round 5 (reviewer F6-S1), appended 2026-10-30 ──
+// F6-S1-1 (SP-45, Low): would_pay.games sent PACKED (as koilib with the published ABI encodes it) is misread. Accepted for
+// launch by the owner (the contract is frozen at b61ac238 for this release): the site sends games unpacked
+// (wallet.js sponsorAnswer), and a misread only changes would_pay's advisory answer, never what authorize pays.
+// SP-51 (Info): the auditor's specs below pin the vault switch for every entry point, would_pay and v5 legit use.
+// Test gaps behind SP-37 (pass today; they pin the gate for every vault entry point, would_pay and v5 legit use).
+describe("F6-S1-3: the vault switch, every entry point", () => {
+  it("withdraw_from, move_stake, claim_game, finalize_game_week are refused while off", () => {
+    const eps: u32[] = [0x5b0aaef8, 0x7c268e69, 0x4107e3ab];
+    for (let i = 0; i < eps.length; i++) {
+      start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+      READS = [activePlayer(0, 0, 5 * MANA)];
+      OPS = [call(GAME, eps[i], vaultArgs(USER, eps[i] == 0x7c268e69 ? [2, 3, MANA] : [2, MANA]))];
+      refused(VAULT_NOT_LIVE);
+    }
+    start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 5 * MANA)];
+    OPS = [call(GAME, 0xec300c11, new Uint8Array(0))];
+    refused(VAULT_NOT_LIVE);
+  });
+  it("while off, an empty wallet's race pick IS paid (from the free pool) and asks only get_player", () => {
+    start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 0)];
+    OPS = [call(RACE, PICK, raceArgs(USER))];
+    expect(pays()).toBe(true);
+    const asked = MockVM.getCallContractArguments();
+    expect(asked.length).toBe(1);
+    MockVM.rollbackTransaction();
+  });
+  it("while off, would_pay with games asks only get_player", () => {
+    start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    MockVM.setCallContractResults(padReads([activePlayer(0, 0, 0)]));
+    const a = new sponsor.would_pay_arguments(USER, MANA, false, 7); a.games = [2, 7];
+    new Sponsor().would_pay(a);
+    expect(MockVM.getCallContractArguments().length).toBe(1);
+  });
+  it("while off, a v5 answer and deposit_vhp are still paid", () => {
+    start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 5 * MANA)];
+    OPS = [call(GAME, 0x0db52f40, new Uint8Array(0))];
+    expect(pays()).toBe(true);
+  });
+});

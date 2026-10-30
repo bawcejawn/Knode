@@ -153,6 +153,12 @@ async function status() {
   log(`  Pays for       game ${cfg.game === game.contract ? "✔" : `✖ (${cfg.game ?? "not set"})`}, Knode Swap ${cfg.desk === desk.contract ? "✔ (v2 only: sponsor v3 never pays swaps)" : `✖ (${cfg.desk ?? "not set"})`}, approves on ${(cfg.tokens ?? []).length} token(s)`);
   if (cfg.allowed?.length) log(`  Allowlisted    ${cfg.allowed.map((x: any) => `${x.contract} (entry ${x.entry_point})`).join(", ")}`);
   if ("game_has_vault" in cfg || cfg.allowed) log(`  Vault (v6)     ${cfg.game_has_vault ? "live: a stake in any Knode game counts" : "not live yet: only a question-game stake counts"}`);
+  // Audit SP-49 (round 5): the game is already v6 but the sponsor's vault switch is still off (the "config on v6 day"
+  // step was missed). One node is enough for a warning.
+  if (cfg.allowed && !cfg.game_has_vault && !TESTNET) {
+    const live = await vaultLiveOn(rpc, game.contract, false).catch(() => false);
+    if (live) log(`  ⚠ the game is Vault v6 now, but the sponsor still treats it as v5: run config with your caps (docs/blockx/MAINNET-LAUNCH.md, "On Vault v6 day")`);
+  }
   log(`  Caps           ${mana(cfg.max_mana_per_tx)} per transaction, ${mana(cfg.max_mana_per_account_day)} per player per day, ${mana(cfg.max_mana_per_account_week)} per player per week, ${mana(cfg.max_mana_per_day)} for everyone per day`);
   log(`  Race picks     ${cfg.race ? `free play, on ${cfg.race}` : "not sponsored"}`);
   log(`  Players        ${cfg.allowed ? `any covered call for any wallet within its caps; wallets without at least ${showKoin(cfg.min_vhp ?? "0")} VHP STAKED this week draw from the free pool (v3)` : `answers: any wallet; everything else: wallets holding at least ${showKoin(cfg.min_vhp ?? "0")} VHP, or with a stake in the game (v2)`}`);
@@ -201,7 +207,8 @@ async function watch() {
   alerts.push(...manaAlerts(mana, cfg, t));
   for (const w of alerts) console.log(`::warning::Mana sponsor: ${w.replace(/[\r\n]+/g, " ").replace(/::/g, ": ")}`);
   if (!alerts.length) log(`Mana sponsor: under 80% of today's caps; the wallet has ${showKoin(mana)} Mana.`);
-  // Audit SP-31: a warning fails the run, so GitHub emails the owner (the workflow step is not continue-on-error).
+  // Audit SP-31 / SP-52: an alert ends this step with exit code 1; the workflow's last step ("Mana sponsor alert") then
+  // fails the run, so GitHub emails you (the other steps still run).
   if (alerts.length) process.exitCode = 1;
 }
 
@@ -307,10 +314,12 @@ export async function deployedSite(fetcher: (u: string) => Promise<any> = async 
   return { game, desk };
 }
 /** What the deployed site asks for, against the chain's rows and cap (its answers' fallback and its other actions'). */
-export function siteProblems(site: { game: any; desk: any }, rows: { contract: string; entry_point: number; max_mana: string }[], perTx: bigint): string[] {
+export function siteProblems(site: { game: any; desk: any }, rows: { contract: string; entry_point: number; max_mana: string }[], perTx: bigint, v3 = true): string[] {
   const out: string[] = [];
   // Owner, 2026-10-29: sponsor v3 refuses swaps, so the live Knode Swap page must already use players' own Mana.
-  if (site.desk?.payer === "sponsor") out.push("Knode Swap still asks the sponsor to pay for swaps, which sponsor v3 refuses (npm run sponsor -- payer sponsor --send, then a pull request to main)");
+  // Audit SP-50 (round 5): only once v3 is the code on chain (v2 still pays swaps, so enable after an emergency
+  // disable must not be blocked by it).
+  if (v3 && site.desk?.payer === "sponsor") out.push("Knode Swap still asks the sponsor to pay for swaps, which sponsor v3 refuses (npm run sponsor -- payer sponsor --send, then a pull request to main)");
   for (const [name, d] of [["game pages", site.game], ["Knode Swap", site.desk]] as const) {
     const sp = d?.sponsor;
     if (!sp) continue;
@@ -347,9 +356,9 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
   // deployment files, exactly like config, keeping only the CAPS as they are on chain (both nodes agreeing), and shows
   // every line old → new: so neither a lowered cap is lost nor a setting one node once fed to disable is re-signed.
   if (enabledArg !== undefined && !(cur.max_mana_per_day && cur.max_mana_per_day !== "0")) throw new Error("The sponsor has no settings yet: run config first (npm run sponsor -- config, then --send).");
-  if (enabledArg === false) return setSwitch(rpc, provider, s, A, cur, false, send, mainnet);
+  if (enabledArg === false) return setSwitch(rpc, provider, s, A, cur, false, send, mainnet, a.includes("--rebuilt"));
   // Audit SP-5: on mainnet a second node must hold the same settings (one node can't feed values you then re-sign).
-  // (Never for switching off: enabledArg !== false always holds here, disable returned above.)
+  // (Audit SP-52: disable has already gone to setSwitch above; `enabledArg !== false` only keeps that order explicit.)
   if (mainnet && enabledArg !== false) {
     const other = await configOn(secondNode(), A);
     if (JSON.stringify(other) !== JSON.stringify(cur)) throw new Error(`The two nodes (${rpc}, ${CHECK_RPC()}) show different sponsor settings. Nothing was sent; try again in a minute.`);
@@ -370,8 +379,7 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
   const enabled = enabledArg ?? !!cur.enabled;
   const limits = readLimits();
   // Audit SP-14: v3 settings only to v3 code; never silently drop the Picks row.
-  const meta = await contractMetadata(provider, A);
-  const code = String(meta.hash || "").replace(/^0x1220/, "");
+  const code = await codeOn(rpc, provider, A, mainnet);
   const v3 = V3_BUILDS.includes(code);
   const hadPicks = Array.isArray(cur.allowed) && cur.allowed.length > 0;
   if (hadPicks && !picks) throw new Error(`The sponsor pays for KnodeGames picks now, but ${PICKS_DEP} is missing here, so the new settings would drop them. Nothing was sent.`);
@@ -405,7 +413,7 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
   const stopping = enabledArg === false;
   let siteBad: string[] = [];
   if (!stopping && mainnet) {
-    try { siteBad = siteProblems(await deployedSite(), chainRows(config.mana_caps ? limits.rows : []), BigInt(units(caps.perTx))); }
+    try { siteBad = siteProblems(await deployedSite(), chainRows(config.mana_caps ? limits.rows : []), BigInt(units(caps.perTx)), v3); }
     catch (e) { siteBad = [`couldn't read the deployed website (${(e as Error).message})`]; }
     for (const x of siteBad) log(`  ⚠ website: ${x}`);
   }
@@ -419,12 +427,42 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
   if (mainnet && config.mana_caps && syncSiteLimits(limits.rows)) log(`Updated the per-action limits in ${GAME_DEP} and ${DESK_DEP} to the new ones: open a pull request to main with them (any limit that went up is used once the site updates).`);
 }
 
-/** The caps as they are on chain, in Mana (enable keeps them; audit SP-29). Exported for the tests. */
+/** The caps as they are on chain, in Mana (enable keeps them; audit SP-29). Audit SP-44 (round 5): a cap that is on
+ *  chain is kept exactly, 0 included (koilib reads a 0 as "0": a free pool you switched off stays off); only a field
+ *  the chain doesn't have at all takes the default. Exported for the tests. */
 export function capsOf(cur: any) {
-  const m = (x: any, d: string) => (x && x !== "0" ? toMana(String(x)) : d);
+  const m = (x: any, d: string) => (x !== undefined && x !== null && x !== "" ? toMana(String(x)) : d);
   return { perTx: m(cur?.max_mana_per_tx, DEFAULT_CAPS.perTx), perPlayerDay: m(cur?.max_mana_per_account_day, DEFAULT_CAPS.perPlayerDay),
     perPlayerWeek: m(cur?.max_mana_per_account_week, DEFAULT_CAPS.perPlayerWeek), perDay: m(cur?.max_mana_per_day, DEFAULT_CAPS.perDay),
     minVhp: m(cur?.min_vhp, DEFAULT_CAPS.minVhp), freePerDay: m(cur?.max_mana_free_day, DEFAULT_CAPS.freePerDay) };
+}
+/** Audit SP-44 (round 5): the disable fallback never loosens a cap. Each cap is the LOWER of the chain's (as this node
+ *  shows it) and the owner's default, the minimum stake the HIGHER, then only lowered further so they stay in order
+ *  (per transaction ≤ per player per day ≤ per player per week; per player per day and free ≤ everyone per day).
+ *  Unreadable chain caps: all 0 (switched off, nothing is paid; run config with your caps before enable).
+ *  Exported for the tests. */
+export function tighterCaps(cur: any): { caps: typeof DEFAULT_CAPS; unreadable: boolean } {
+  const sat = (x: string) => BigInt(units(x));
+  let c: typeof DEFAULT_CAPS;
+  try { c = capsOf(cur); for (const v of Object.values(c)) if (!/^\d+(\.\d+)?$/.test(v)) throw new Error("not a number"); }
+  catch { return { caps: { perTx: "0", perPlayerDay: "0", perPlayerWeek: "0", perDay: "0", minVhp: DEFAULT_CAPS.minVhp, freePerDay: "0" }, unreadable: true }; }
+  const lo = (a: string, b: string) => (sat(a) < sat(b) ? a : b), hi = (a: string, b: string) => (sat(a) > sat(b) ? a : b);
+  const perDay = lo(c.perDay, DEFAULT_CAPS.perDay);
+  const perPlayerWeek = lo(c.perPlayerWeek, DEFAULT_CAPS.perPlayerWeek);
+  const perPlayerDay = lo(lo(lo(c.perPlayerDay, DEFAULT_CAPS.perPlayerDay), perPlayerWeek), perDay);
+  const perTx = lo(lo(c.perTx, DEFAULT_CAPS.perTx), perPlayerDay);
+  const freePerDay = lo(lo(c.freePerDay, DEFAULT_CAPS.freePerDay), perDay);
+  const minVhp = hi(sat(c.minVhp) > 0n ? c.minVhp : DEFAULT_CAPS.minVhp, DEFAULT_CAPS.minVhp);
+  return { caps: { perTx, perPlayerDay, perPlayerWeek, perDay, minVhp, freePerDay }, unreadable: false };
+}
+/** Audit SP-48 (round 5): the sponsor's code hash, from this node and, on mainnet, the second node (they must agree). */
+async function codeOn(rpc: string, provider: Provider, A: string, mainnet: boolean): Promise<string> {
+  const a = String((await contractMetadata(provider, A)).hash || "").replace(/^0x1220/, "");
+  if (mainnet) {
+    const b = String((await contractMetadata(new Provider([secondNode()]), A)).hash || "").replace(/^0x1220/, "");
+    if (a !== b) throw new Error(`The two nodes (${rpc}, ${CHECK_RPC()}) show different sponsor code. Nothing was sent; try again in a minute.`);
+  }
+  return a;
 }
 /** Audit SP-37: is the game already the vault (v6)? Its get_state config.v6_rule_week_plus_one > 0, read on this node and,
  *  on mainnet, the second node (they must agree). The testnet trial has no Knode game: never. Exported for the tests. */
@@ -444,15 +482,17 @@ export async function vaultLiveOn(rpc: string, game: string, mainnet: boolean, r
   if (mainnet) { const b = await read(secondNode()); if (a !== b) throw new Error("The two nodes disagree about whether the game is the vault (v6) yet. Nothing was sent; try again in a minute."); }
   return a;
 }
-/** disable (audit SP-30, SP-39): the emergency stop. With a second node that shows the same settings, only the switch
- *  changes. Otherwise (no second node, or the two differ) the settings are rebuilt from this PC's deployment files with
- *  the owner's default caps (buildConfig), switched off: a node that lied about the settings can't get them signed.
- *  Exported for the tests. */
+/** disable (audit SP-30, SP-39, SP-44, SP-47): the emergency stop. With a second node that shows the same settings,
+ *  only the switch changes. Otherwise (no second node, or the two differ) the settings are rebuilt from this PC's
+ *  deployment files, switched off, with caps that are never looser than the chain's or your defaults (tighterCaps) and
+ *  no per-action rows (nothing is paid while off; enable rebuilds them): a node that lied can't get settings signed,
+ *  and the stop can't fail on a row. Audit SP-44: that rebuilt path is sent only with --rebuilt, which its preview
+ *  asks for, so what you approve is what is signed. Exported for the tests. */
 export function switchedConfig(cur: any, on: boolean): any {
   if (!cur || !(cur.max_mana_per_day && cur.max_mana_per_day !== "0")) throw new Error("The sponsor has no settings yet: run config first (npm run sponsor -- config, then --send).");
   return { ...cur, enabled: on };
 }
-async function setSwitch(rpc: string, provider: Provider, s: Signer, A: string, cur: any, on: false, send: boolean, mainnet: boolean) {
+async function setSwitch(rpc: string, provider: Provider, s: Signer, A: string, cur: any, on: false, send: boolean, mainnet: boolean, rebuiltOk = false) {
   let agreed = !mainnet;
   if (mainnet) {
     try { const other = await configOn(secondNode(), A); agreed = JSON.stringify(other) === JSON.stringify(cur); } catch { agreed = false; }
@@ -460,20 +500,39 @@ async function setSwitch(rpc: string, provider: Provider, s: Signer, A: string, 
   let config: any;
   if (agreed) config = switchedConfig(cur, on);
   else {
-    // Rebuilt from the files: what the tool would send for config, switched off (no vault reads: the safe setting).
+    // Rebuilt from the files: game, Knode Swap, tokens, race and the Picks row as config would send them, switched off,
+    // no vault reads (the safe setting), no per-action rows (audit SP-47), caps never loosened (audit SP-44).
     const { game, desk, race, picks, picksCards } = knode();
-    const code = String((await contractMetadata(provider, A).catch(() => ({ hash: "" } as any))).hash || "").replace(/^0x1220/, "");
+    let code = "";
+    try { code = String((await contractMetadata(provider, A)).hash || "").replace(/^0x1220/, ""); } catch { /* treated as not v3: no Picks row while off */ }
     const v3 = V3_BUILDS.includes(code);
-    const expected = buildConfig(game, desk, DEFAULT_CAPS, false, race, v3 ? picks : undefined, v3 ? readLimits().rows : [], picksCards, false);
-    config = expected;
-    log("  ⚠ no second node agrees with this node's settings: switching off with the settings rebuilt from this PC's files");
+    const { caps, unreadable } = tighterCaps(cur);
+    config = buildConfig(game, desk, caps, false, race, v3 ? picks : undefined, [], picksCards, false);
+    log("  ⚠ no second node agrees with this node's settings: switching off with the settings rebuilt from this PC's files,");
+    log(unreadable ? "    and every cap 0 (this node's caps couldn't be read): before enable, run config with your caps"
+      : "    each cap the LOWER of the chain's and your default (never looser), and no per-action limits until enable or config");
   }
   const fromSat = (x: any) => (x && x !== "0" ? toMana(String(x)) : "0");
+  const ids = (x: any) => (x ?? []).map((r: any) => `${r.contract}:${r.entry_point}`).join(", ") || "(none)";
+  const row = (label: string, was: string, now: string) => log(`  ${label.padEnd(28)} ${was === now ? now : `${was} → ${now}`}`);
   log(`To the sponsor contract ${A} on ${rpc}${mainnet ? "   ⚠ MAINNET" : ""}, signed and paid by the sponsor wallet:`);
-  log(`  switched                     ${cur.enabled ? "ON" : "off"} → off`);
-  for (const k of ["max_mana_per_tx", "max_mana_per_account_day", "max_mana_per_account_week", "max_mana_per_day", "max_mana_free_day", "min_vhp"])
-    log(`  ${k.padEnd(28)} ${fromSat(cur[k]) === fromSat(config[k]) ? fromSat(config[k]) : `${fromSat(cur[k])} → ${fromSat(config[k])}`}`);
-  if (!send) { log("\nDry run only. Nothing was sent. Add --send to send it."); return; }
+  // Audit SP-52: every setting the send can change, as config prints them.
+  row("switched", cur.enabled ? "ON" : "off", "off");
+  for (const [label, k] of [["per transaction", "max_mana_per_tx"], ["per player per day", "max_mana_per_account_day"], ["per player per week", "max_mana_per_account_week"],
+    ["everyone per day", "max_mana_per_day"], ["free players per day", "max_mana_free_day"], ["real player: stake of", "min_vhp"]] as const) row(label, fromSat(cur[k]), fromSat(config[k]));
+  for (const [label, k] of [["game", "game"], ["Knode Swap (never paid)", "desk"], ["VHP", "vhp"], ["race", "race"]] as const) row(label, String(cur[k] ?? "(none)"), String(config[k] ?? "(none)"));
+  row("tokens", (cur.tokens ?? []).join(", "), (config.tokens ?? []).join(", "));
+  row("allowlisted calls", ids(cur.allowed), ids(config.allowed));
+  row("per-action limits", `${(cur.mana_caps ?? []).length} row(s)`, `${(config.mana_caps ?? []).length} row(s)`);
+  row("vault (v6) live", cur.game_has_vault ? "yes" : "no", config.game_has_vault ? "yes" : "no");
+  if (!send) {
+    log(agreed ? "\nDry run only. Nothing was sent. Add --send to send it (only the switch changes)."
+      : "\nDry run only. Nothing was sent. These rebuilt settings are sent only with: npm run sponsor -- disable --rebuilt --send");
+    return;
+  }
+  // Audit SP-44 (round 5): never sign a different path from the one previewed.
+  if (!agreed && !rebuiltOk) throw new Error("Not sent: the second node doesn't agree with this node's settings now, so switching off would also rebuild the settings (see the preview without --send). If that is what you want: npm run sponsor -- disable --rebuilt --send");
+  if (agreed && rebuiltOk) log("  (the two nodes agree now: only the switch changes, less than the rebuilt preview showed)");
   const chain = new KoinosChain(rpc, A);
   const r = await chain.send([{ contract: A, abi: loadAbi(), method: "set_config", args: { config } }], [s], { payer: A, rcLimitKoin: 2 });
   log(r.ok ? `✔ done (Mana used ${showKoin(r.rcUsed)})  transaction ${r.txId}` : `✖ ${r.error}`);
@@ -496,11 +555,15 @@ export function syncSiteLimits(rows: ReturnType<typeof readLimits>["rows"], file
 /** One action measured elsewhere (the testnet, before it is sponsored on mainnet): adds it with the manual margin (3 ×). */
 async function manaLimit(a: string[]) {
   const source = flag(a, "--source", "");
-  const pos = a.filter((x, i) => !x.startsWith("--") && a[i - 1] !== "--source");
+  const pos = a.filter((x, i) => !x.startsWith("--") && a[i - 1] !== "--source" && a[i - 1] !== "--limit");
+  // Owner, 2026-10-30: --limit sets the row to an exact number (the Picks pick at 0.2 Mana for 10-leg Combo cards),
+  // instead of 3 × the measured number; still at least 1.25 × the measured number and at most the per-transaction cap.
+  const exact = flag(a, "--limit", "");
   const [what, most] = pos;
   const m = /^(game|desk|race|picks):([a-z_]+)$/.exec(what ?? "");
   if (!m || !/^\d+(\.\d{1,8})?$/.test(most ?? "") || !(Number(most) > 0) || !source)
-    throw new Error('Usage: npm run sponsor -- mana-limit picks:pick 0.0477 --source "testnet 2026-10-28" [--save]');
+    throw new Error('Usage: npm run sponsor -- mana-limit picks:pick 0.0477 --source "testnet 2026-10-28" [--limit 0.2] [--save]');
+  if (exact && !(/^\d+(\.\d{1,8})?$/.test(exact) && Number(exact) > 0)) throw new Error(`--limit ${exact}: a number of Mana, like 0.2`);
   // Review L3: a missing zero would set a limit far too low; a Knode action uses at least about 0.01 Mana.
   if (Number(most) < 0.01 && !a.includes("--force")) throw new Error(`${most} Mana is less than any Knode action uses (about 0.01 and up). Check the number; add --force only if it is right.`);
   const k = knode();
@@ -515,7 +578,13 @@ async function manaLimit(a: string[]) {
   for (const x of skipped) log(`⚠ ${x}`);
   const r = rows.find((x) => x.contract === contract && x.entry_point === entry);
   if (!r) return;
-  log(`${r.name}: has used up to ${toMana(r.observed!.max)} Mana (${source}) → limit ${toMana(r.max_mana)} Mana (3 × for a number measured elsewhere, at least 0.05).`);
+  if (exact) {
+    const want = BigInt(units(exact)), measured = BigInt(units(String(most)));
+    if (want * 4n < measured * 5n) throw new Error(`--limit ${exact} is less than 1.25 × the ${most} Mana measured: too little room. Nothing saved.`);
+    if (want > perTx) throw new Error(`--limit ${exact} is above the ${toMana(perTx)} Mana per-transaction cap. Nothing saved.`);
+    r.max_mana = want.toString();
+  }
+  log(`${r.name}: has used up to ${toMana(r.observed!.max)} Mana (${source}) → limit ${toMana(r.max_mana)} Mana (${exact ? "as you set it with --limit" : "3 × for a number measured elsewhere, at least 0.05"}).`);
   if (!a.includes("--save")) { log("Nothing saved. Add --save."); return; }
   writeJson(LIMITS_FILE, { v: 1, updated: at, margin: MARGIN, rows });
   log(`✔ saved ${LIMITS_FILE}. Next: npm run sponsor -- site-limits --send (pull request to main, merge, wait), then config --send.`);

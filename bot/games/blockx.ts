@@ -43,6 +43,7 @@ const E = process.env;
 const LOOKBACK_BLOCKS = 3 * 28800;          // targets older than ~3 days: void if they still can't be recorded
 const MAX_TARGETS_PER_RUN = 48;             // so a long outage catches up over a few runs
 const CORRECTION_MS = 12 * 3600000;         // a week's results are final 12 hours after it ends
+const VAULT_WINDOW_MS = 3 * 86400000;       // the vault takes a week's results file within 3 days of its end (games.yml)
 const CARD_BLOCKS = 7200;                   // a self-made card looks at the last ~6 hours of blocks
 const CARD_KEEP_MS = 8 * 86400000;          // and cards.json keeps 8 days of them
 const ONE_VHP = 100000000n;
@@ -279,8 +280,16 @@ export async function scoringVhpMoves(node: any, headId: string, vhp: string, wh
   for (let s = Math.max(1, from); s <= to; s += 200) starts.push(s);
   const parts = await pool(starts, 4, async (s) => {
     const n = Math.min(200, to - s + 1);
-    const res: any = await withRetry(`receipts at ${s}`, () => node.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(s), num_blocks: n, return_block: false, return_receipt: true }));
-    const items = res?.block_items ?? [];
+    // Audit BX-90 (round 5): a node may return fewer blocks than asked; read on from where it stopped (as readBlocks
+    // does), and still require every block of the range, in order.
+    const items: any[] = [];
+    while (items.length < n) {
+      const at = s + items.length;
+      const res: any = await withRetry(`receipts at ${at}`, () => node.call("block_store.get_blocks_by_height", { head_block_id: headId, ancestor_start_height: String(at), num_blocks: n - items.length, return_block: false, return_receipt: true }));
+      const page = res?.block_items ?? [];
+      if (!page.length) break;
+      items.push(...page.slice(0, n - items.length));
+    }
     if (items.length !== n || items.some((it: any, k: number) => Number(it?.block_height) !== s + k)) throw new Error(`receipts ${s}-${s + n - 1}: the node returned ${items.length} of ${n} blocks, or out of order`);
     let sum = 0n;
     for (const it of items) sum += vhpInflows(it?.receipt, vhp, who);
@@ -288,10 +297,13 @@ export async function scoringVhpMoves(node: any, headId: string, vhp: string, wh
   });
   return parts.reduce((x, y) => x + y, 0n);
 }
-/** From one block receipt: VHP received by `who`. Audit BX-72: read exactly as the VHP contract does. The event's
- *  data is the call's own arguments, which the contract decodes with as-proto: the LAST copy of a field wins and
- *  unknown fields are skipped. The receiver is the event's impacted[0] (the contract's decoded `to`), so bytes that
- *  read differently can't credit or hide a move. transfer: value = field 3; mint: value = field 2. */
+/** From one block receipt: VHP received by `who`. The receiver is the event's impacted[0] (the contract's own decoded
+ *  `to`). Audit BX-72 (round 5): the amount of a TRANSFER is taken only from the one canonical encoding of
+ *  {from, to: impacted[0], value[, memo]} (fields 1-4 in order, each at most once, the right wire types, shortest
+ *  varints, defaults left out: what koilib, Kondor and as-proto contracts write). Any other bytes for a transfer to
+ *  `who` THROW, so the target is held (and voided if it never clears): a copy of the contract's decoder would have to
+ *  follow every quirk of its library version, and "refuse to guess" can never count a different number. Mints are
+ *  written by the PoB contract itself (canonical): their value is field 2. */
 export function vhpInflows(receipt: any, vhp: string, who: string): bigint {
   const events = [...(receipt?.events ?? []), ...((receipt?.transaction_receipts ?? []) as any[]).flatMap((t) => t?.events ?? [])];
   let sum = 0n;
@@ -300,13 +312,62 @@ export function vhpInflows(receipt: any, vhp: string, who: string): bigint {
     const mint = /mint/i.test(e.name), transfer = /transfer/i.test(e.name);
     if (!mint && !transfer) continue;
     if (!Array.isArray(e.impacted) || e.impacted[0] !== who) continue;
-    const value = lastVarint(e.data, mint ? 2 : 3);
+    if (transfer) { sum += canonicalTransferValue(e.data, who); continue; }
+    const value = lastVarint(e.data, 2);
     if (value !== null) sum += value;
   }
   return sum;
 }
+const b64 = (data: unknown): Uint8Array => {
+  if (typeof data !== "string" || !/^[A-Za-z0-9+/_-]*={0,2}$/.test(data)) throw new Error("a VHP transfer's event data isn't base64");
+  return new Uint8Array(Buffer.from(data, "base64"));
+};
+/** The shortest varint of v. */
+function varintBytes(v: bigint): number[] {
+  const o: number[] = [];
+  do { let x = Number(v & 0x7fn); v >>= 7n; if (v) x |= 0x80; o.push(x); } while (v);
+  return o;
+}
+/** Audit BX-72: the value of a VHP transfer event to `to`, ONLY when its bytes are exactly the canonical encoding of
+ *  {from, to, value[, memo]}; anything else throws (the target is held). Exported for the tests. */
+export function canonicalTransferValue(data: unknown, to: string): bigint {
+  const b = b64(data);
+  const bad = (why: string) => new Error(`a VHP transfer to ${to} isn't in the standard encoding (${why}): not scored this run`);
+  let i = 0;
+  const vint = (): bigint => {
+    let r = 0n, sh = 0n;
+    for (let k = 0; k < 10; k++) { if (i >= b.length) throw bad("cut short"); const x = b[i++]; r |= BigInt(x & 0x7f) << sh; if (!(x & 0x80)) return r; sh += 7n; }
+    throw bad("a varint over 10 bytes");
+  };
+  const lenField = (tag: number): Uint8Array | null => {
+    if (b[i] !== tag) return null;
+    i++;
+    const n = vint();
+    if (n > BigInt(b.length - i)) throw bad("a length past the end");
+    const out = b.subarray(i, i + Number(n)); i += Number(n);
+    return out;
+  };
+  const from = lenField(0x0a) ?? new Uint8Array(0);
+  const toB = lenField(0x12) ?? new Uint8Array(0);
+  let value = 0n;
+  if (b[i] === 0x18) { i++; value = vint(); }
+  const memo = lenField(0x22) ?? new Uint8Array(0);
+  if (i !== b.length) throw bad("unexpected fields");
+  let want: Uint8Array;
+  try { want = kutils.decodeBase58(to); } catch { throw bad("not an address"); }
+  if (toB.length !== want.length || toB.some((x, k) => x !== want[k])) throw bad("its `to` isn't the event's receiver");
+  if (value > 0xffffffffffffffffn) throw bad("a value over 64 bits");
+  // Re-encode and require the same bytes (shortest varints, defaults left out).
+  const enc: number[] = [];
+  const put = (tag: number, x: Uint8Array) => { if (x.length) enc.push(tag, ...varintBytes(BigInt(x.length)), ...x); };
+  put(0x0a, from); put(0x12, toB);
+  if (value) enc.push(0x18, ...varintBytes(value));
+  put(0x22, memo);
+  if (enc.length !== b.length || enc.some((x, k) => x !== b[k])) throw bad("not the shortest encoding");
+  return value;
+}
 /** The last varint of field `want` in protobuf bytes (base64), skipping every other field as as-proto does (wire types
- *  0, 1, 2 and 5); null when the bytes don't parse. Exported for the tests. */
+ *  0, 1, 2 and 5); null when the bytes don't parse. Used for the PoB contract's own mint events. Exported for the tests. */
 export function lastVarint(data: unknown, want: number): bigint | null {
   let b: Uint8Array;
   try { b = typeof data === "string" ? new Uint8Array(Buffer.from(data, "base64")) : new Uint8Array(0); } catch { return null; }
@@ -530,7 +591,7 @@ export async function run(o: Opts) {
       // Audit BX-55: a lock card on which the two nodes disagreed about the signer's VHP is never scored: the target
       // waits (the lock card can't change, so it is voided at the usual 3-hour limit).
       const lockFlagged = !!card && flags(card, b.signer);
-      if (lockFlagged && !old && !afterNever) { problems.push(`block ${h}: the two nodes disagreed about ${b.signer}'s VHP on its lock card; held (voided after 3 hours)`); continue; }
+      if (lockFlagged && !old && !afterNever) { problems.push(`block ${h}: the two nodes disagreed about ${card.topInDoubt === true ? "the top producer's" : b.signer + "'s"} VHP on its lock card; held (voided after 3 hours)`); continue; }
       // Audit BX-53: VHP moved INTO the signer between its lock card and block X (a "flash" stake that neither card
       // sees) counts for the signer on both cards, read on both nodes (the higher of the two), so it can't look small.
       let moved = 0n;
@@ -554,7 +615,10 @@ export async function run(o: Opts) {
         card: scoring ? { at: Number(card.at) || 0, top, signerVhp: m.get(b.signer) ?? null, afterAt: Number(after!.at) || 0 } : null, picks,
       };
       if (!card) t.void = "no handicap card was recorded for this target's lock; no points";
-      else if (lockFlagged) t.void = "the two nodes disagreed about the signer's VHP on the lock's handicap card; no points";
+      // (Audit BX-93: the reason says which flag held it.)
+      else if (lockFlagged) t.void = card.topInDoubt === true && !(Array.isArray(card.flagged) && card.flagged.includes(b.signer))
+        ? "the two nodes disagreed about the VHP of the top producer on the lock's handicap card, so every multiplier on it was in doubt; no points"
+        : "the two nodes disagreed about the signer's VHP on the lock's handicap card; no points";
       else if (!after) t.void = "no handicap card was taken within 3 hours after the block; no points";
       const wf = weekFor(M.weekOf(b.time));
       wf.targets = wf.targets.filter((x) => x.round !== r).concat([t]).sort((x, y) => x.round - y.round);
@@ -644,7 +708,13 @@ export async function run(o: Opts) {
   // rows: the Staked board's players the vault counts as staked for the whole week (its lowest stake that week at
   // least the minimum; read on both nodes), with at least 1 point, as 1-255 in board order. A disagreement or a failed
   // read writes no file this run (tried again next run).
-  if (lastWeek && lastWeek.final && !(PREV && fs.existsSync(path.join(PREV, "vault", `W${lastWeek.week}.json`)))) {
+  // Audit BX-92 (round 5): the vault takes a week's results only within 3 days of the week's end (the publish job holds a
+  // later file with an alert), so past that window no file is written: one warning in the run right after the window
+  // closes, then nothing (no red runs every hour until the week rolls).
+  const vaultEnd = lastWeek ? M.weekStart(lastWeek.week + 1) + VAULT_WINDOW_MS : 0;
+  const vaultMissing = !!lastWeek && lastWeek.final && !(PREV && fs.existsSync(path.join(PREV, "vault", `W${lastWeek.week}.json`)));
+  if (vaultMissing && head.time > vaultEnd && head.time <= vaultEnd + 2 * 3600000) problems.push(`vault week ${lastWeek.week}: no results file was published within the vault's 3 days; none is written now (the vault no longer takes it)`);
+  if (vaultMissing && head.time <= vaultEnd) {
     try {
       const board = lastWeek.rows.filter((x: any) => x.ranked && x.pts > 0);
       const who = board.map((x: any) => x.a);

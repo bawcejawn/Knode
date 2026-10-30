@@ -44,14 +44,14 @@ jobs:
           mkdir -p "$RUNNER_TEMP/prev"
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" testnet-data 2>/dev/null; then
             # (audit BX-34: names read line by line, never word-split; only expected names are taken)
-            git ls-tree --name-only FETCH_HEAD | while IFS= read -r d; do
+            { git ls-tree --name-only FETCH_HEAD 2>/dev/null || true; } | while IFS= read -r d; do
               [[ "$d" =~ ^blockx-[0-9]{1,3}$ ]] || continue
               mkdir -p "$RUNNER_TEMP/prev/$d"
-              git ls-tree --name-only "FETCH_HEAD:$d" | while IFS= read -r f; do
+              { git ls-tree --name-only "FETCH_HEAD:$d" 2>/dev/null || true; } | while IFS= read -r f; do
                 if [[ "$f" =~ ^(index|board|cards|W[0-9]{3}|P[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$d/$f" > "$RUNNER_TEMP/prev/$d/$f"; fi
               done
               mkdir -p "$RUNNER_TEMP/prev/$d/vault"   # audit BX-81: published vault files, so they aren't written again
-              git ls-tree --name-only "FETCH_HEAD:$d/vault" 2>/dev/null | while IFS= read -r f; do
+              { git ls-tree --name-only "FETCH_HEAD:$d/vault" 2>/dev/null || true; } | while IFS= read -r f; do
                 if [[ "$f" =~ ^W[0-9]+\.json$ ]]; then git show "FETCH_HEAD:$d/vault/$f" > "$RUNNER_TEMP/prev/$d/vault/$f"; fi
               done
             done
@@ -114,8 +114,8 @@ jobs:
           for d in "$IN"/blockx-*; do
             id="${d##*/blockx-}"; mkdir -p "$PUB/blockx-$id"
             if [ -n "$parent" ]; then
-              git ls-tree --name-only "$parent:blockx-$id" 2>/dev/null | while IFS= read -r f; do
-                if [[ "$f" =~ ^(board|P[0-9]{3})\.json$ ]]; then git show "$parent:blockx-$id/$f" > "$PUB/blockx-$id/$f"; fi
+              { git ls-tree --name-only "$parent:blockx-$id" 2>/dev/null || true; } | while IFS= read -r f; do
+                if [[ "$f" =~ ^(board|P[0-9]{3}|W[0-9]{3})\.json$ ]]; then git show "$parent:blockx-$id/$f" > "$PUB/blockx-$id/$f"; fi
               done
             fi
             /usr/bin/python3 - "$d" "$id" "$PUB/blockx-$id" "$PUB/held-$id" "blockx-$id" <<'PY'
@@ -214,6 +214,33 @@ jobs:
               first = [] if len(first) > 10 else first; second = [] if len(second) > 10 else second
               st = set(who); first = [a for a in first if a not in st]; second = [a for a in second if a not in st]
               if j["first"] != first or j["second"] != second: hold(name, "first/second aren't the published prize file's winners", True); continue
+              # Audit BX-65 (round 5): Staked-board players left out of the rows (the vault counts only wallets whose
+              # LOWEST stake that week met the minimum, read on two nodes, which this job can't re-read): published, but
+              # named in a warning so a short list never goes by unseen.
+              out = [a for a in order if a not in st]
+              if out: print("::warning::" + name + ": " + str(len(out)) + " of " + str(len(order)) + " Staked-board players with points are not in the vault rows (not staked all week, by the recorder's two-node read): " + ", ".join(out[:20]) + (" ..." if len(out) > 20 else ""))
+          # Audit BX-88 (round 5): published targets are append-only. A week file may add rounds but never change or drop
+          # one that is already published (an honest run never rewrites a recorded target: bot/games/blockx.ts keeps them).
+          # A run that tries is held WHOLE, with an alert: its board, prize and vault files were all built from that file.
+          rewrote = []
+          for f in sorted(os.listdir(d)):
+              if not re.fullmatch(r"W\d{3}\.json", f): continue
+              new = json.load(open(os.path.join(d, f), encoding="utf-8"))
+              nt = new.get("targets") if type(new) is dict else None
+              rounds = [t.get("round") for t in nt if type(t) is dict] if type(nt) is list else None
+              if rounds is None or len(rounds) != len(nt) or len(set(rounds)) != len(rounds): rewrote.append(f + " (its rounds aren't a list of distinct targets)"); continue
+              old = pubjson(f)
+              if old is None: continue
+              ot = old.get("targets") if type(old) is dict else None
+              if type(ot) is not list: rewrote.append(f + " (the published file can't be read)"); continue
+              mine = {t["round"]: t for t in nt}
+              changed = [t.get("round") if type(t) is dict else "?" for t in ot if type(t) is not dict or mine.get(t.get("round")) != t]
+              if changed: rewrote.append(f + " (rounds " + ", ".join(str(r) for r in changed[:10]) + " differ from the published targets)")
+          if rewrote:
+              print("::error::this run changes already-published Block X targets: " + "; ".join(rewrote) + ". Nothing from it is published (audit BX-88).")
+              for f in sorted(os.listdir(d)):
+                  if os.path.isfile(os.path.join(d, f)): hold(pre + "/" + f, "the run changes a published target", True)
+              for f in (sorted(os.listdir(vdir)) if os.path.isdir(vdir) else []): hold(pre + "/vault/" + f, "the run changes a published target", True)
           if heldf: open(heldf, "w").write("".join(x + "\n" for x in held))
           elif held: sys.exit("held: " + ", ".join(x for x in held if x != "!alert"))
 

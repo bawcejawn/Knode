@@ -24,19 +24,23 @@ const receipt = (data, impactedTo, impactedFrom) => ({ events: [], transaction_r
   data: Buffer.from(Uint8Array.from(data)).toString("base64"), impacted: [impactedTo, impactedFrom] }] }] });
 const BIG = 1_500_000n * 100_000_000n;
 
+// Round 5 (BX-72, owner's record): a non-canonical VHP transfer is now HELD (vhpInflows throws, so the target waits and
+// is voided if it never clears) instead of decoded; the round-5 acceptance rule is "count exactly what moved, or hold,
+// never a different number". These round-4 tests keep their vectors and accept either.
+const countsOrHolds = (got, want, msg) => { let v; try { v = got(); } catch { return; } assert.equal(v, want, msg); };
 test("BX-72: a transfer to the signer is counted when its args repeat `to` (the contract uses the last one)", () => {
   const d = [...bytesF(1, raw(B)), ...bytesF(2, raw(B)), ...bytesF(2, raw(A)), ...numF(3, BIG)];
-  assert.equal(BX.vhpInflows(receipt(d, A, B), VHP, A), BIG, "the VHP contract moved BIG to A; Block X saw nothing");
+  countsOrHolds(() => BX.vhpInflows(receipt(d, A, B), VHP, A), BIG, "the VHP contract moved BIG to A; Block X saw nothing");
 });
 test("BX-72: a transfer to the signer is counted when its args start with an unknown fixed32 field", () => {
   const d = [(15 << 3) | 5, 0, 0, 0, 0, ...bytesF(1, raw(B)), ...bytesF(2, raw(A)), ...numF(3, BIG)];
-  assert.equal(BX.vhpInflows(receipt(d, A, B), VHP, A), BIG);
+  countsOrHolds(() => BX.vhpInflows(receipt(d, A, B), VHP, A), BIG);
 });
 test("BX-72: the counted value is the one the contract moved (last `value`), both ways", () => {
   const up = [...bytesF(1, raw(B)), ...bytesF(2, raw(A)), ...numF(3, 1), ...numF(3, BIG)];
-  assert.equal(BX.vhpInflows(receipt(up, A, B), VHP, A), BIG, "BIG moved, 1e-8 counted");
+  countsOrHolds(() => BX.vhpInflows(receipt(up, A, B), VHP, A), BIG, "BIG moved, 1e-8 counted");
   const down = [...bytesF(1, raw(B)), ...bytesF(2, raw(RIVAL)), ...numF(3, BIG), ...numF(3, 1)];
-  assert.equal(BX.vhpInflows(receipt(down, RIVAL, B), VHP, RIVAL), 1n, "1e-8 moved, BIG counted: any wallet makes RIVAL x1");
+  countsOrHolds(() => BX.vhpInflows(receipt(down, RIVAL, B), VHP, RIVAL), 1n, "1e-8 moved, BIG counted: any wallet makes RIVAL x1");
 });
 test("BX-72: an inflow is never credited to an address the contract did not pay (impacted[0] is the real `to`)", () => {
   const d = [...bytesF(1, raw(B)), ...bytesF(2, raw(RIVAL)), ...bytesF(2, raw(OWN2)), ...numF(3, 1)];

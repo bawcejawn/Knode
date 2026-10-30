@@ -57,7 +57,9 @@ const isAddr = (a: unknown) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{
 export const SAMPLE_WINDOW = 6 * 3600000;          // samples count for 6 hours
 export const SAMPLE_KEEP = 8 * 3600000;            // and are kept 8 hours
 export const SAMPLE_MAX = 120;            // 8 hours at one sample every ~5 minutes
-export type Sample = { at: number; height: number; vhp: Record<string, string> };
+/** One VHP sample. Audit BX-86 (round 5): `flagged` names the producers the two nodes still disagreed on after the
+ *  re-reads (their `vhp` is the LOWER read; `high` keeps the higher one), so a card that uses the sample flags them. */
+export type Sample = { at: number; height: number; vhp: Record<string, string>; flagged?: string[]; high?: Record<string, string> };
 export type SampleFile = { v: 1; updated: string; samples: Sample[] };
 const SAMPLES = "vhp-samples.json";
 /** The previous run's samples: only well-formed ones, never from the future (audit BX-38: a sample dated after `now`
@@ -67,7 +69,16 @@ export function loadSamples(now = Date.now()): Sample[] {
   const f = readPrev(SAMPLES);
   if (!f || f.v !== 1 || !Array.isArray(f.samples)) return [];
   return f.samples.filter((x: any) => x && Number.isFinite(x.at) && x.at <= now + FUTURE_MS && Number.isInteger(x.height) && x.vhp && typeof x.vhp === "object"
-    && Object.entries(x.vhp).every(([a, v]) => isAddr(a) && typeof v === "string" && /^\d{1,20}$/.test(v as string))).sort((a: Sample, b: Sample) => a.at - b.at);
+    && Object.entries(x.vhp).every(([a, v]) => isAddr(a) && typeof v === "string" && /^\d{1,20}$/.test(v as string)) && disputesOk(x)).sort((a: Sample, b: Sample) => a.at - b.at);
+}
+/** Audit BX-86: a sample's disputes are well formed: both or neither of `flagged` / `high`; every flagged producer is
+ *  in the sample, once, with a higher read at least its stored (lower) one. */
+export function disputesOk(x: any): boolean {
+  if (x.flagged === undefined && x.high === undefined) return true;
+  if (!Array.isArray(x.flagged) || !x.flagged.length || !x.high || typeof x.high !== "object" || Array.isArray(x.high)) return false;
+  const f: string[] = x.flagged;
+  if (new Set(f).size !== f.length || Object.keys(x.high).length !== f.length) return false;
+  return f.every((a) => typeof a === "string" && x.vhp[a] !== undefined && typeof x.high[a] === "string" && /^\d{1,20}$/.test(x.high[a]) && BigInt(x.high[a]) >= BigInt(x.vhp[a]));
 }
 /** Audit BX-37 / BX-55 / BX-73 / BX-74: two nodes' reads of every producer's VHP, combined producer by producer.
  *  Reads within 0.5% of each other count at the higher one. A producer whose reads differ by more is FLAGGED on the
@@ -77,20 +88,20 @@ export function loadSamples(now = Date.now()): Sample[] {
  *  top, every multiplier on the card is in doubt: `topInDoubt` (not enumerable) is then true, and Block X holds every
  *  target on that card. (BX-74: with same-block reads a producer can't flag itself by moving VHP out and back.)
  *  Returns the combined values and the producers that differed. */
-export function combineReads(a: Record<string, string>, b: Record<string, string> | null, who: string[], sameBlock = true): { values: Record<string, string>; differ: string[] } {
-  const values: Record<string, string> = {};
-  if (!b) { for (const x of who) values[x] = String(a[x] || "0"); return { values, differ: [] }; }
+export function combineReads(a: Record<string, string>, b: Record<string, string> | null, who: string[], sameBlock = true): { values: Record<string, string>; differ: string[]; high: Record<string, string> } {
+  const values: Record<string, string> = {}, high: Record<string, string> = {};
+  if (!b) { for (const x of who) values[x] = String(a[x] || "0"); return { values, differ: [], high }; }
   const differ: string[] = [], hiOf: Record<string, bigint> = {};
   for (const x of who) {
     const u = BigInt(a[x] || "0"), v = BigInt(b[x] || "0"), hi = u > v ? u : v, lo = u < v ? u : v;
     hiOf[x] = hi;
-    if (hi - lo > hi / 200n) { differ.push(x); values[x] = String(sameBlock ? lo : hi); }
+    if (hi - lo > hi / 200n) { differ.push(x); values[x] = String(sameBlock ? lo : hi); high[x] = String(hi); }
     else values[x] = String(hi);
   }
   const top = Object.values(values).reduce((m, v) => (BigInt(v) > m ? BigInt(v) : m), 0n);
   const inDoubt = differ.some((x) => hiOf[x] >= top);
   Object.defineProperty(values, "__topInDoubt", { value: inDoubt, enumerable: false });
-  return { values, differ };
+  return { values, differ, high };
 }
 /** Both nodes' VHP reads taken at the same head block (audit BX-74): read the heads, read both in parallel, read the
  *  heads again; tried 3 times. sameBlock is false when the two never matched (a lagging node). */
@@ -239,6 +250,9 @@ type Opts = {
   raceContract?: string | null;                                       // the picks contract (default: race-data/deployment.json)
   picksOf?: (node: any, race: number) => Promise<Pick[]>;             // for the tests
   playerOf?: (node: any, who: string, week: number) => Promise<PlayerInfo>;
+  /** Audit BX-89 (round 5): this computer's clock; a card is never dated more than FUTURE_MS after it. The command line
+   *  passes Date.now; the offline tests (fake chains in the future) leave it out. */
+  clock?: () => number;
 };
 
 // ── the picks contract and the game (read only) ──
@@ -270,7 +284,7 @@ async function readPlayer(node: any, who: string, week: number): Promise<PlayerI
   return { stake: BigInt(p.stake || "0") + BigInt(p.pending || "0"), answers: Array.isArray(e.answers) ? e.answers.length : 0, points: Number(e.points || 0) };
 }
 /** One run. Exported for the tests, which pass fake nodes. */
-export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract, picksOf, playerOf }: Opts) {
+export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract, picksOf, playerOf, clock }: Opts) {
   if (prev !== undefined) PREV = prev;
   if (out !== undefined) OUT = out;
   // Cards: effective VHP (audit BX-3 b). Who may be ranked (holds 1 VHP): the plain balance, as before.
@@ -334,6 +348,8 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
       cardTime = Math.max(now, chTime);    // never back-dated by one node
       chId = ch.head_topology.id;
     }
+    // Audit BX-89 (round 5): nor dated late by a node whose head is ahead of this computer's clock.
+    if (clock && cardTime - clock() > FUTURE_MS) { nodesOk = false; problems.push(`a node's head time is ${Math.round((cardTime - clock()) / 1000)} s ahead of this computer's clock (at most ${FUTURE_MS / 1000} s); no handicap card this run`); }
     if (!nodesOk) want.length = 0;
   }
   if (want.length) {
@@ -353,10 +369,17 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
       const mine = both.mine, theirs = both.theirs;
       if (vhpCheck && !both.same) problems.push("the two nodes were at different blocks while reading VHP (a lagging node): a producer they disagree on counts at the higher read, flagged");
       // Audit BX-37: producer by producer, never the whole card for one address.
-      const { values, differ } = combineReads(mine, theirs, producers, both.same);
-      const topInDoubt = (values as any).__topInDoubt === true;
-      if (topInDoubt) problems.push("the two nodes disagree on the VHP of the producer at (or near) the top: the whole card is flagged; Block X holds its targets");
-      for (const a of differ) problems.push(`the two nodes disagree on ${a}'s VHP; it counts at the lower read and is flagged on the card (Block X holds a target it signs)`);
+      const { values, differ: readDiffer, high: readHigh } = combineReads(mine, theirs, producers, both.same);
+      for (const a of readDiffer) problems.push(`the two nodes disagree on ${a}'s VHP now; it is flagged on the card (Block X holds a target it signs)`);
+      // Audit BX-86 (round 5): every producer disputed in a sample this card uses is flagged too, with its higher read.
+      const hiOf = new Map<string, bigint>();
+      for (const a of readDiffer) hiOf.set(a, BigInt(readHigh[a]));
+      for (const smp of samples) {
+        if (!(smp.at <= cardTime && smp.at > cardTime - SAMPLE_WINDOW) || !smp.flagged) continue;
+        for (const a of smp.flagged) if (producers.includes(a)) { const h = BigInt(smp.high![a]); if (!hiOf.has(a) || h > hiOf.get(a)!) hiOf.set(a, h); }
+      }
+      const differ = [...hiOf.keys()];
+      for (const a of differ) if (!readDiffer.includes(a)) problems.push(`the two nodes disagreed on ${a}'s VHP in a sample of the last 6 hours; it is flagged on the card (Block X holds a target it signs)`);
       const sup = (x: Record<string, string> | null) => { const v = x && x.network; return v && /^\d+$/.test(v) ? BigInt(v) : null; };
       // Audit BX-57: the HIGHER of the two nodes' totals (one node reporting "1" can't switch the samples off).
       const supply = [sup(mine), sup(theirs)].filter((x): x is bigint => x !== null).reduce<bigint | null>((m, x) => (m === null || x > m ? x : m), null);
@@ -367,6 +390,11 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
       for (const a of raised) console.log(`card: ${a} signed more blocks than its VHP allows; raised to ${Number(fair[a]) / 1e8} VHP for the card`);
       const used = samplesIn(samples, cardTime);
       const vhp: [string, number][] = producers.map((a) => [a, Number(fair[a] || 0n) / 1e8]);
+      // Audit BX-73 / BX-86: the top is in doubt when a disputed producer, at its higher read, would reach the top of
+      // the card's FINAL values (after the 6-hour highs and the production floor): every multiplier then depends on it.
+      const top = producers.reduce((m, a) => ((fair[a] || 0n) > m ? fair[a] || 0n : m), 0n);
+      const topInDoubt = differ.some((a) => { const f = fair[a] || 0n, h = hiOf.get(a)!; return (h > f ? h : f) >= top; });
+      if (topInDoubt) problems.push("a producer the two nodes disagree on is at (or, at its higher read, would reach) the top: the whole card is flagged; Block X holds its targets");
       // Audit BX-77: the card also records the block its window ends at (Block X reads VHP moves from there).
       const card: Card = { ...M.makeCard(vhp, blocksPerRace, cardTime), samples: used, height: winEnd, ...(differ.length ? { flagged: [...differ].sort() } : {}), ...(topInDoubt ? { topInDoubt: true } : {}) };
       // Audit BX-38: a card made from too few samples is published but flagged; Block X doesn't score with it.
@@ -544,12 +572,29 @@ export async function sample({ p, check, prev, out, vhpOf, vhpCheckOf, spreadMs 
   let keep = old.filter((x) => x.at > Math.min(now, clock()) - SAMPLE_KEEP);
   if (!problems.length) {
     // Audit BX-74: both nodes at the same block when they can.
-    const both = readCheck ? await readBoth(p, check, read, readCheck, who) : { mine: await read(who), theirs: null, same: true };
+    const both = readCheck ? await readBoth(p, check, read, readCheck, who, wait) : { mine: await read(who), theirs: null, same: true };
     const mine = both.mine;
     const theirs = both.theirs;
-    const { values, differ } = combineReads(mine, theirs, who, both.same);
-    for (const a of differ) problems.push(`the two nodes disagree on ${a}'s effective VHP; it is sampled at the higher read (capped at the top both agree on)`);
-    if (!keep.length || now > keep[keep.length - 1].at) keep = keep.concat([{ at: now, height: headH, vhp: values }]).slice(-SAMPLE_MAX);
+    // Audit BX-86 (round 5): a sample NEVER keeps one node's higher read ("different blocks" is only each node's own
+    // word). The disputed producers alone are read again on both nodes (twice, a second apart); one still disputed is
+    // sampled at the LOWER read and recorded in the sample (flagged, with its higher read), so every card that uses the
+    // sample flags it, and the top is in doubt when its higher read would reach the top.
+    const { values, differ: d0, high } = combineReads(mine, theirs, who, true);
+    let differ = d0;
+    for (let k = 0; k < 2 && differ.length && readCheck; k++) {
+      await wait(1000);
+      const again = await readBoth(p, check, read, readCheck, differ, wait);
+      const c = combineReads(again.mine, again.theirs, differ, true);
+      for (const a of differ) {
+        if (!c.differ.includes(a)) { values[a] = c.values[a]; delete high[a]; continue; }
+        if (BigInt(c.values[a]) < BigInt(values[a])) values[a] = c.values[a];
+        if (BigInt(c.high[a]) > BigInt(high[a])) high[a] = c.high[a];
+      }
+      differ = differ.filter((a) => c.differ.includes(a));
+    }
+    for (const a of differ) problems.push(`the two nodes disagree on ${a}'s effective VHP; it is sampled at the lower read and flagged in the sample (cards that use it flag ${a})`);
+    const disputes = differ.length ? { flagged: [...differ].sort(), high: Object.fromEntries([...differ].sort().map((a) => [a, high[a]])) } : {};
+    if (!keep.length || now > keep[keep.length - 1].at) keep = keep.concat([{ at: now, height: headH, vhp: values, ...disputes }]).slice(-SAMPLE_MAX);
   }
   fs.mkdirSync(OUT, { recursive: true });
   const file: SampleFile = { v: 1, updated: new Date(Math.min(now, clock())).toISOString(), samples: keep };
@@ -564,5 +609,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (!RPC_CHECK && E.ALLOW_ONE_NODE !== "yes") { console.error(`error: no second node (RPC_CHECK is off, missing or the same as RPC): the race needs two. Set RPC_CHECK, or ALLOW_ONE_NODE=yes to run on one node.`); process.exit(1); }
   if (!RPC_CHECK) console.log("::warning::running on ONE node (ALLOW_ONE_NODE=yes): cards and results are not cross-checked");
   const nodes = { p: new Provider([RPC]), check: RPC_CHECK ? new Provider([RPC_CHECK]) : null };
-  (process.argv.includes("--sample") ? sample(nodes) : run(nodes)).catch((e) => { console.error(`error: ${String((e && e.message) || e).replace(/[\r\n]+/g, " ").replace(/::/g, ": ").slice(0, 500)}`); process.exit(1); });
+  (process.argv.includes("--sample") ? sample(nodes) : run({ ...nodes, clock: Date.now })).catch((e) => { console.error(`error: ${String((e && e.message) || e).replace(/[\r\n]+/g, " ").replace(/::/g, ": ").slice(0, 500)}`); process.exit(1); });
 }

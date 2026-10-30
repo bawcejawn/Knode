@@ -105,18 +105,26 @@ jobs:
           assert type(s) is list and len(s) <= 120
           for x in s:
               # Audit BX-38: never a sample from the future (10 minutes of clock slack).
-              assert type(x) is dict and set(x) == {"at", "height", "vhp"} and type(x["at"]) is int and 0 < x["at"] <= now + 600000 and type(x["height"]) is int and 0 < x["height"] < 10**10
+              assert type(x) is dict and set(x) in ({"at", "height", "vhp"}, {"at", "height", "vhp", "flagged", "high"}) and type(x["at"]) is int and 0 < x["at"] <= now + 600000 and type(x["height"]) is int and 0 < x["height"] < 10**10
               assert type(x["vhp"]) is dict and len(x["vhp"]) <= 500 and all(addr.fullmatch(a) and type(v) is str and re.fullmatch(r"\d{1,20}", v) for a, v in x["vhp"].items())
+              # Audit BX-86 (round 5): producers the two nodes still disagreed on: sampled at the LOWER read, listed in
+              # `flagged` (sorted, once each) with the higher read in `high` (never below the stored one).
+              if "flagged" in x:
+                  f, h = x["flagged"], x["high"]
+                  assert type(f) is list and 0 < len(f) <= 500 and f == sorted(set(f)) and all(type(a) is str and a in x["vhp"] for a in f)
+                  assert type(h) is dict and set(h) == set(f) and all(type(v) is str and re.fullmatch(r"\d{1,20}", v) and int(v) >= int(x["vhp"][a]) for a, v in h.items())
           assert all(s[i]["at"] < s[i + 1]["at"] for i in range(len(s) - 1))
           # Audit BX-38: a new file never drops a published sample of the last 8 hours (only older ones age out).
           try:
               old = json.load(open(sys.argv[2], encoding="utf-8")).get("samples", [])
           except Exception:
               old = []
-          mine = {(x["at"], x["height"]) for x in s}
+          # Round 5 (the BX-88 rule for samples): a published sample is never changed either (values and disputes).
+          mine = {(x["at"], x["height"]): x for x in s}
           for x in old:
               if type(x) is dict and type(x.get("at")) is int and now - 8 * 3600000 + 600000 < x["at"] <= now + 600000:
                   assert (x["at"], x.get("height")) in mine, "a published sample of the last 8 hours would be dropped"
+                  assert mine[(x["at"], x.get("height"))] == x, "a published sample of the last 8 hours would be changed"
           print("samples ok")
           PY
           cd work

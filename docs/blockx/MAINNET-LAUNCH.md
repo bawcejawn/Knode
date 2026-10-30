@@ -105,18 +105,45 @@ npm run sponsor -- config --per-tx 1 --per-player-day 25 --per-player-week 150 -
 
 (25 a day and 150 a week for every wallet, free or staked: owner, 2026-10-29.) These are also the defaults, so a plain `config` gives the same (audit SP-1: the tool never keeps old values just
 because they are on chain); every line shows `old → new`. **No per-action Mana limit yet** (owner, 2026-10-28; audit
-SP-4): every action may ask up to 1 Mana until a full day of real mainnet use has been measured (step 10). The `--send`
+SP-4) except the Picks `pick` at 0.2 Mana, set in step 6 (owner, 2026-10-30): every other action may ask up to 1 Mana
+until a full day of real mainnet use has been measured (step 10). The `--send`
 comes in step 6, once the Picks contract exists. The dry run also shows **vault (v6) live: no** (audit SP-37: until
 the vault is live the sponsor asks the game only for a question-game stake).
 
-**The day Vault v6 goes live:** run `npm run sponsor -- config`, check it now says **vault (v6) live: yes**, then
-`config --send`, so a stake in Block X, the Race and the other games counts and the vault's own calls are paid.
+**On Vault v6 day (audit SP-49):** right after the v6 upload the game still answers "not live" until **v6's first
+transaction** (its first write sets the rule). So, after that first v6 transaction, run `config` **with your caps**
+(a plain `config` resets them to the defaults):
+
+```powershell
+cd C:\kprediction
+npm run sponsor -- status
+npm run sponsor -- config --per-tx 1 --per-player-day 25 --per-player-week 150 --per-day 5000 --free-per-day 2000 --min-vhp 1
+```
+
+(Use the caps `status` shows, if you changed them.) Check it says **vault (v6) live: no → yes** and that every cap
+line is unchanged, then run the same line with `--send`. A stake in Block X, the Race and the other games then counts
+and the vault's own calls are paid. If this is missed, `status` warns: "the game is Vault v6 now, but the sponsor
+still treats it as v5". The Vault v6 chat has the same step for its upgrade runbook (project doc `claude/handoff-sponsor-v6-day.md`).
 
 **Rollback (audit SP-13):** if anything ever goes wrong with v3, put the v2 build `fa4659e6…` into
-`sponsor\build\release\contract.wasm`, then `npm run sponsor -- upload --send` and `npm run sponsor -- config --send`
-(the tool sees v2 code and sends v2's settings, without the Picks row and per-action limits). The website keeps working
-with v2: it still marks free play for v2 (audit SP-40). Block X picks are then not sponsored (players pay their own
-Mana) until v3 is back.
+`sponsor\build\release\contract.wasm`, then upload it and send v2's settings with caps v2 accepts (v2 refuses an
+everyone-per-day cap above 1,000 Mana, and the free pool can't be above it):
+
+```powershell
+cd C:\kprediction
+npm run sponsor -- upload --send
+npm run sponsor -- config --per-tx 1 --per-player-day 25 --per-player-week 150 --per-day 1000 --free-per-day 1000 --min-vhp 1
+npm run sponsor -- config --per-tx 1 --per-player-day 25 --per-player-week 150 --per-day 1000 --free-per-day 1000 --min-vhp 1 --send
+```
+
+(The tool sees v2 code and sends v2's settings, without the Picks row and per-action limits.) The website keeps
+working with v2: it still marks free play for v2 (audit SP-40). Block X picks are then not sponsored (players pay their
+own Mana) until v3 is back.
+
+**Emergency stop (audit SP-44):** `npm run sponsor -- disable`, then `disable --send`, switches the sponsor off and
+changes nothing else when the second node shows the same settings. If the preview says the second node doesn't agree,
+it shows the settings it would rebuild (caps never looser than now, no per-action limits while off) and sends them only
+with `npm run sponsor -- disable --rebuilt --send`. Before switching back on (`enable`), check the caps with `status`.
 
 ## 5. Upload the Picks contract
 
@@ -152,14 +179,22 @@ Open `.env` in Notepad, delete the `PICKS_WIF=` line, save. Send Claude the cont
 
 ## 6. The sponsor covers Block X picks (audit BX-12)
 
+First the Picks `pick` row: **0.2 Mana per pick** (owner, 2026-10-30, from the testnet Combo Card measurements: a
+single Block X pick 0.0477, a 10-leg card 0.0916; 0.1 left too little room for a 10-leg card). This needs the
+`picks-data/deployment.json` the Picks upload (step 5) wrote:
+
 ```powershell
 cd C:\kprediction
+npm run sponsor -- mana-limit picks:pick 0.0916 --source "testnet Combo Card 10 legs 2026-10-30" --limit 0.2
+npm run sponsor -- mana-limit picks:pick 0.0916 --source "testnet Combo Card 10 legs 2026-10-30" --limit 0.2 --save
 npm run sponsor -- payer sponsor
 npm run sponsor -- payer sponsor --send
 ```
 
-That edits `game-data/deployment.json` and `desk-data/deployment.json` on your PC: the sponsor block now covers the
-Picks contract, and other actions ask 1 Mana (audit SP-17). The live site is served from `main`, so these two files
+The first line must say **limit 0.2 Mana (as you set it with --limit)**. That writes `sponsor-data/mana-limits.json`,
+then `game-data/deployment.json` and `desk-data/deployment.json` on your PC: the sponsor block now covers the Picks
+contract, its `rcLimits` asks 0.2 Mana for a pick, and other actions ask 1 Mana (audit SP-17). Every other action has
+no row of its own yet (it may ask up to the 1 Mana cap) until step 10. The live site is served from `main`, so these two files
 go there by a pull request: tell Claude "payer files ready" and Claude opens it for your OK (or push them on a branch
 and open it yourself). Once it is merged, wait 5 minutes, then:
 
@@ -169,8 +204,9 @@ npm run sponsor -- status
 ```
 
 `config --send` reads the website **as deployed on knodegames.com** and refuses while it would ask for more Mana than
-the sponsor allows (audit SP-8); if it does, wait a few more minutes and run it again. `status` must show the caps,
-the Picks `pick` row, and "free players share 2000 Mana a day, released by the hour".
+the sponsor allows (audit SP-8); if it does, wait a few more minutes and run it again. Its preview must show the
+per-action limit **KnodeGames Picks pick 0.2 Mana**. `status` must show the caps, the Picks `pick` row, and "free
+players share 2000 Mana a day, released by the hour". Commit `sponsor-data/mana-limits.json` with the payer files.
 
 ## 7–8. Register Who Signs Block X (game 2)
 
