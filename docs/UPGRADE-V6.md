@@ -7,7 +7,7 @@ mainnet also needs `CONFIRM_MAINNET=yes` in `.env`. Run everything in PowerShell
 |---|---|
 | Contract | `1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr` (the game; it becomes the vault, same address) |
 | Live code | `c17066ae988d204fd43d43f662ad87fcdc38170419943c20b5164a5bd34dd784` (v5, uploaded 2026-10-28) |
-| **New code** | **set after the audits' fixes** (after the second fix-check's fixes: `eed38f7ce130d9d2e0dfafa8ddd5c4a6f383e2c7ce12ab87b02c584f43920b3d`, 86,114 bytes; final once the audits are clean). Emergency withdrawals-only build: `e84fec492d47e08f583c352bb26e3d36dc0149926c0482d0820b0dbd97af9fe3`, 84,688 bytes (pinned in `game-data/deployment.json` as `safeWasmSha256`; the bot refuses any other) |
+| **New code** | `eed38f7ce130d9d2e0dfafa8ddd5c4a6f383e2c7ce12ab87b02c584f43920b3d`, 86,114 bytes (final: audited, rehearsed on 2026-10-29 and run on testnet). Emergency withdrawals-only build: `e84fec492d47e08f583c352bb26e3d36dc0149926c0482d0820b0dbd97af9fe3`, 84,688 bytes (pinned in `game-data/deployment.json` as `safeWasmSha256`; the bot refuses any other) |
 | Timelock | 48 h after `schedule`, then 7 days to upload |
 | Upload paid by | the owner wallet: about **91 KOIN of Mana** (the tool checks it) |
 | Design | `docs/V6-PLAN.md`; owner explainer: the Docs page "KnodeGames Vault: how it works" |
