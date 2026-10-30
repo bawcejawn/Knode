@@ -387,7 +387,7 @@
       }
       drafts.delete(r);
       if (onChain) pickModal("ok", "Pick confirmed", [el("p", {}, "Your pick: ", el("b", { text: nameOf(producer) }), ` for block ${fmt(h)}.`),
-        `It locks ${G.LEAD} blocks (about ${Math.round(G.LEAD * 3 / 60)} minutes) before the block. Until then you can change it (up to ${G.MAX_CHANGES} times; changes count toward today's ${G.PICKS_PER_DAY}).`,
+        `It locks ${G.LEAD} blocks (about ${Math.round(G.LEAD * 3 / 60)} minutes) before the block. Until then you can change it ${G.MAX_CHANGES === 1 ? "once" : `up to ${G.MAX_CHANGES} times`} (a change counts toward today's ${G.PICKS_PER_DAY}).`,
         id ? el("p", { class: "ago mono", text: `Transaction ${String(id).slice(0, 18)}…` }) : null].filter(Boolean), [okBtn()]);
       else pickModal("info", "Sent, not seen on the chain yet", ["Your wallet sent it. It usually shows within a minute; this list updates by itself."], [okBtn("OK")]);
     } catch (e) {
@@ -395,7 +395,7 @@
       const why = /locked/i.test(m) ? `That block is locked: picks close ${G.LEAD} blocks before it.`
         : /not open yet/i.test(m) ? "That block isn't open yet."
         : /used up/i.test(m) ? "Today's picks are used up (changes count). More after 00:00 UTC."
-        : /changed again/i.test(m) ? `That pick has been changed ${G.MAX_CHANGES} times already.`
+        : /changed again/i.test(m) ? `That pick has been changed ${G.MAX_CHANGES === 1 ? "once" : `${G.MAX_CHANGES} times`} already: it can't be changed again.`
         : /already your pick/i.test(m) ? "That is already your pick."
         : /closed/i.test(m) ? "This game is switched off right now."
         : /pending account resources|insufficient.*(rc|mana|resources)/i.test(m) ? "Your Mana is still held by your last pick. It frees up within a few minutes of each pick; try again in a minute."
@@ -545,7 +545,7 @@
   (async () => {
     try { await setupNet(); }
     catch (e) { say(TESTNET ? `Testnet settings problem: ${String((e && e.message) || e)}` : "Couldn't load the game settings."); return; }
-    $("game-rules").textContent = `A target every ${fmt(G.ROUND)} blocks (${(() => { const m = Math.round(G.ROUND * X.BLOCK_MS / 60000); return m >= 90 ? `about ${Math.round(m / 60)} hours` : `about ${m} minutes`; })()}). Picks lock ${G.LEAD} blocks before it. ${G.PICKS_PER_DAY} picks a day, ${G.MAX_CHANGES} changes per pick.`;
+    $("game-rules").textContent = `A target every ${fmt(G.ROUND)} blocks (${(() => { const m = Math.round(G.ROUND * X.BLOCK_MS / 60000); return m >= 90 ? `about ${Math.round(m / 60)} hours` : `about ${m} minutes`; })()}). Picks lock ${G.LEAD} blocks before it. ${G.PICKS_PER_DAY} picks a day, ${G.MAX_CHANGES === 1 ? "1 change" : `${G.MAX_CHANGES} changes`} per pick.`;
     if (W && W.subscribe) W.subscribe(onWallet);
     if ($("wallet-btn")) $("wallet-btn").addEventListener("click", walletMenu);
     if ($("cta")) $("cta").addEventListener("click", () => (me() ? goPick() : startPlaying()));
