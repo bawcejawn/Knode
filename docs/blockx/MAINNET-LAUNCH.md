@@ -239,6 +239,15 @@ npm run picks -- status --mainnet
 
 The last `status` must list **2 Who Signs Block X: ON, every 2400 blocks, locks 100 before**.
 
+**Then measure one mainnet pick (audit BX-123).** The 0.2 Mana row comes from testnet, and mainnet costs more. Make one
+Block X pick from your own wallet on the testnet-style page (or with Claude's help), then run
+`npm run sponsor -- mana-report`. If a pick used more than about 0.1 Mana, set the row to about 2 × that with
+`mana-limit picks:pick <measured> --source "mainnet pick" --limit <2 ×>` and redo step 6's `payer` and `config`. If
+the row is too low, every sponsored pick is refused, and players pay their own Mana.
+
+**Publish (step 9) only after game 2 is applied (audit BX-127):** with `picks-data/deployment.json` on `main`, the
+hourly Block X job reports an error every run until game 2 exists. Nothing is lost.
+
 ## 9. Publish (Claude, with your OK)
 
 - `PINNED_PICKS` in `wallet.js` set to the contract address (guest picks then go only there).

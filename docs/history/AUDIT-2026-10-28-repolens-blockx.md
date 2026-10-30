@@ -391,3 +391,28 @@ repository and pass (`tests/audit/repolens-r6-publish/repolens-r7-publish.test.m
 | BX-118 | No clock rule for new race cards | **Before prizes** |
 | BX-120 | A void row's estimated time in a week whose P is published | **Before prizes** (check with live block-rate data) |
 | SP-59 | A failed code read skips the v2 clamp | Before prizes (rollback window only; loud, a re-run works) |
+
+## Round 8 (Repo Lens go/no-go @ 572d86c, 2026-10-30): NO-GO, "one line, three files"
+
+Report: "Block X Prize-Free: Round-8 Go/No-Go (Knode picks @ 572d86c)". BX-112, BX-113, BX-114, BX-119 and BX-121 are fixed,
+and honest runs pass every new check. One new High, BX-122: whole numbers written as floats (`5.0`, `-0.0`, `1e2`)
+passed `js_safe`. The recorder rewrites them as `5`, which the round-7 type-strict compare then treats as a rewrite,
+so publishing stalls.
+
+**Fixed at the class level, not one shape at a time.** Every publish step (`games.yml`, `games-testnet.yml`,
+`race.yml`, `race-samples.yml`) first runs an inline `node -e` check. Each incoming JSON file must be **byte for byte**
+`JSON.stringify(JSON.parse(text)) + "\n"`, exactly what the recorders write. A published file is then a fixed point of
+the recorder's own reader and writer: the next honest run reads the same values and writes the same bytes. That rules
+out `5.0`, `-0`, `1e2`, big integers, spacing, key quoting and escapes a recorder never writes, whatever Python makes of
+them. `js_safe` also refuses integer-valued floats (belt and braces). The test fixtures now write the recorders' form.
+
+| ID | Finding | Status |
+|---|---|---|
+| BX-122 | Integer-valued floats stalled publishing | **Fixed** (the canonical-form check, plus `js_safe`) |
+| BX-123 | 0.2 Mana pick row from a testnet number | Runbook: after game 2 is applied, make one mainnet pick, then set the row to about 2 × its measured Mana |
+| BX-124 | The re-typed card test stopped at the shape check | **Fixed**: the test now reaches the published-card compare |
+| BX-125 | No test for BX-119 | **Added** |
+| BX-126 | A primary node 2 weeks stale: one run refused | Accepted (clears on the next run) |
+| BX-127 | Record job red until game 2 is registered | Runbook: publish (step 9) only after game 2 is applied |
+| BX-128, BX-129, BX-130 | Info | Noted |
+| BX-118 | No clock rule for new race cards (future races) | **Before prizes** |
