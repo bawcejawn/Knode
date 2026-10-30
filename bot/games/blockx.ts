@@ -608,14 +608,21 @@ export async function run(o: Opts) {
         const cardH = Number.isInteger(card.height) && card.height > 0 && card.height <= h ? card.height : h - Math.ceil(Math.max(0, b.time - Number(card.at)) / 3000);
         const from = Math.max(1, cardH - MOVE_MARGIN), to = h;
         const read = o.vhpMovesOf ?? ((node: any, who: string, f: number, t: number) => scoringVhpMoves(node, node === o.p ? headId : checkHeadId, VHP, who, f, t));
-        try {
-          const mp = await read(o.p, b.signer, from, to), mc = o.check ? await read(o.check, b.signer, from, to) : mp;
-          moved = mp > mc ? mp : mc;
-        } catch (e) {
-          if (!(e instanceof NonCanonicalTransfer)) throw e;
-          nonCanonical = e.message.slice(0, 120);
-          problems.push(`block ${h}: ${nonCanonical}; the target is void (no points)`);
+        // Audit BX-100 (round 6): each node on its own. Only when BOTH report the non-canonical transfer (or the one node,
+        // on a one-node run) is the target voided at once; when only one does, the nodes disagree: held, and voided at the
+        // 3-day edge like any other disagreement.
+        const one = async (node: any): Promise<bigint | NonCanonicalTransfer> => { try { return await read(node, b.signer, from, to); } catch (e) { if (e instanceof NonCanonicalTransfer) return e; throw e; } };
+        const mp = await one(o.p), mc = o.check ? await one(o.check) : mp;
+        const ncP = mp instanceof NonCanonicalTransfer, ncC = mc instanceof NonCanonicalTransfer;
+        if (ncP !== ncC) {
+          problems.push(`block ${h}: only one node reports a non-standard VHP transfer to ${b.signer}; not recorded this run`);
+          if (old) voidAt(r, h, b.time, lock.time, "the two nodes disagreed about the VHP moved to its signer until it left the 3-day window");
+          continue;
         }
+        if (ncP) {
+          nonCanonical = (mp as NonCanonicalTransfer).message.slice(0, 120);
+          problems.push(`block ${h}: ${nonCanonical} (on ${o.check ? "both nodes" : "the node"}); the target is void (no points)`);
+        } else moved = (mp as bigint) > (mc as bigint) ? (mp as bigint) : (mc as bigint);
         if (moved > 0n) console.log(`block ${h}: ${Number(moved) / 1e8} VHP moved into ${b.signer} between its card and the block; counted on both cards`);
       }
       const lockC = withMoved(card, b.signer, moved), afterC = withMoved(after, b.signer, moved);

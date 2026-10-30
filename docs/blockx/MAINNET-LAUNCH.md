@@ -130,12 +130,16 @@ line is unchanged, then run the same line with `--send`. A stake in Block X, the
 and the vault's own calls are paid. If this is missed, `status` warns: "the game is Vault v6 now, but the sponsor
 still treats it as v5". The Vault v6 chat has the same step for its upgrade runbook (project doc `claude/handoff-sponsor-v6-day.md`).
 
-**Rollback (audit SP-13):** if anything ever goes wrong with v3, put the v2 build `fa4659e6…` into
-`sponsor\build\release\contract.wasm`, then upload it and send v2's settings with caps v2 accepts (v2 refuses an
-everyone-per-day cap above 1,000 Mana, and the free pool can't be above it):
+**Rollback (audit SP-13):** (and SP-53) if anything ever goes wrong with v3, first switch the sponsor **off while v3 is
+still on chain** (after the v2 upload, v2 refuses the 5,000-a-day settings v3 stored until `config` runs, so a stop
+then would fail). Then put the v2 build `fa4659e6…` into `sponsor\build\release\contract.wasm`, upload it, and send
+v2's settings with caps v2 accepts (v2 refuses an everyone-per-day cap above 1,000 Mana, and the free pool can't be
+above it):
 
 ```powershell
 cd C:\kprediction
+npm run sponsor -- disable
+npm run sponsor -- disable --send
 npm run sponsor -- upload --send
 npm run sponsor -- config --per-tx 1 --per-player-day 25 --per-player-week 150 --per-day 1000 --free-per-day 1000 --min-vhp 1
 npm run sponsor -- config --per-tx 1 --per-player-day 25 --per-player-week 150 --per-day 1000 --free-per-day 1000 --min-vhp 1 --send
@@ -185,13 +189,16 @@ Open `.env` in Notepad, delete the `PICKS_WIF=` line, save. Send Claude the cont
 ## 6. The sponsor covers Block X picks (audit BX-12)
 
 First the Picks `pick` row: **0.2 Mana per pick** (owner, 2026-10-30, from the testnet Combo Card measurements: a
-single Block X pick 0.0477, a 10-leg card 0.0916; 0.1 left too little room for a 10-leg card). This needs the
-`picks-data/deployment.json` the Picks upload (step 5) wrote:
+single Block X pick 0.0477, a 10-leg card 0.0916; 0.1 left too little room for a 10-leg card). The number the tool
+checks it against is what a **sponsored** pick used on testnet, 0.116 (the sponsor's own reads add about 0.05 to 0.07;
+audit SP-54): 0.2 is 1.7 × that. The mainnet Picks release has no Combo cards yet; **before Combo cards go live, measure
+one sponsored 10-leg card on testnet** (about 0.145 to 0.16 expected) and, if it is above 0.16, set the row to 0.25.
+This needs the `picks-data/deployment.json` the Picks upload (step 5) wrote:
 
 ```powershell
 cd C:\kprediction
-npm run sponsor -- mana-limit picks:pick 0.0916 --source "testnet Combo Card 10 legs 2026-10-30" --limit 0.2
-npm run sponsor -- mana-limit picks:pick 0.0916 --source "testnet Combo Card 10 legs 2026-10-30" --limit 0.2 --save
+npm run sponsor -- mana-limit picks:pick 0.116 --source "testnet sponsored Block X pick 2026-10-30" --limit 0.2
+npm run sponsor -- mana-limit picks:pick 0.116 --source "testnet sponsored Block X pick 2026-10-30" --limit 0.2 --save
 npm run sponsor -- payer sponsor
 npm run sponsor -- payer sponsor --send
 ```
@@ -263,6 +270,16 @@ opens the pull request to `main`; once merged and live, `npm run sponsor -- conf
 The hourly bot run shows a warning when the free pool (as released so far today) or everyone's total passes 80%
 (`npm run sponsor -- watch`; owner, 2026-10-28). Check it now and then: if free Mana drains fast, lower
 `--per-player-day` or `--free-per-day`.
+
+## Correcting published Block X history by hand (audit BX-108)
+
+Published week files are append-only: the publish job holds any run that changes a published target. If a target
+ever has to be corrected (a recorder bug, say), that is a manual, reviewed edit of the `games-data` branch: Claude
+prepares the corrected `blockx/W<week>.json` (and the board), you check the difference, and it is pushed to
+`games-data` by hand. The next hourly run then builds on it. Never weaken the publish check for this.
+
+**Deploying recorder changes (audit BX-103):** merge them outside the 6 hours before a Block X target's lock that
+matters to you; samples written by an older recorder still count for up to 6 hours.
 
 ## If something looks wrong
 

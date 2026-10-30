@@ -65,9 +65,9 @@ export const PICKS_ARG_TYPES_CARDS = "0x030101130113";
 export const PICKS_GAME_ARG = 2;
 /** Suggested caps (Mana): per transaction, per player per day, per player per week, everyone per day.
  *  Owner's decisions 2026-10-28: everyone 5,000 a day (the sponsor wallet holds at least 25,000 KOIN, whose Mana refills
- *  in about 5 days), of which free players (no VHP, no stake; guests too) share at most 2,000, so staked players always
- *  have 3,000 or more (2026-10-29: 25 per wallet per day, 150 a week). The caps count each transaction's Mana limit, and with the
- *  per-action limits (mana-report) a Block X pick counts about 0.1, not 1. */
+ *  in about 5 days), of which free players (no stake this week; guests too) share at most 2,000 (2026-10-29: 25 per
+ *  wallet per day, 150 a week); the caps are first come, first served (audit SP-23). The caps count each transaction's
+ *  Mana limit: a Picks pick counts its 0.2 row (launch step 6), other actions 1 until step 10's measured rows. */
 // Owner, 2026-10-29: 25 Mana a day (150 a week) for every wallet, free or staked; a pick uses a small part of 1 Mana.
 export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "25", perPlayerWeek: "150", perDay: "5000", minVhp: "1", freePerDay: "2000" };
 // (Audit SP-2 wording: "staked players always have 3,000 or more" held only while the free pool was the only shared
@@ -76,12 +76,12 @@ export const DEFAULT_CAPS = { perTx: "1", perPlayerDay: "25", perPlayerWeek: "15
 /** The audited sponsor build (sponsor/README.md "Build"). upload refuses any other wasm. v2 (race picks), audited
  *  2026-10-27 (docs/history/AUDIT-2026-10-27-race-picks.md); v1 was 8cfeff6209b8d5cbc3b3e5fa30751e995767f5904b77693ed8a41e323ea2a8ed. */
 export const SPONSOR_SHA256 = "fa4659e65c6156da3dde34238e0545a489a8b7f00cdf51df9bf79517a0019f33";
-/** v3 release candidate (allowlist, free claims, 5,000 ceiling, per-action Mana limits): NOT yet audited, so it may go
- *  only on the testnet. After the audit and fix-check it replaces SPONSOR_SHA256. */
+/** v3 (allowlist, free claims, 5,000 ceiling, per-action Mana limits, the vault switch). Repo Lens round 6
+ *  (2026-10-30): "GO" for the mainnet upload (launch step 2): mainnet takes v3, and v2 stays allowed as the rollback. */
 export const SPONSOR_V3_CANDIDATE = "b61ac238da27c4a71c01127f39a7b95f19fabf15e35df9f9715546d221e256e4";
 /** The builds this network may receive. Audit SP-13: v2 stays allowed as the documented rollback target. */
 // The testnet trial is for v3: only the v3 candidate goes on there (2026-10-30: a v2 build was about to be uploaded).
-export const allowedBuilds = (mainnet: boolean) => (mainnet ? [SPONSOR_SHA256] : TESTNET ? [SPONSOR_V3_CANDIDATE] : [SPONSOR_SHA256, SPONSOR_V3_CANDIDATE]);
+export const allowedBuilds = (mainnet: boolean) => (mainnet ? [SPONSOR_V3_CANDIDATE, SPONSOR_SHA256] : TESTNET ? [SPONSOR_V3_CANDIDATE] : [SPONSOR_SHA256, SPONSOR_V3_CANDIDATE]);
 /** v3 code on chain (the per-action and allowlist fields mean nothing to v2). */
 const V3_BUILDS = [SPONSOR_V3_CANDIDATE];
 
@@ -409,6 +409,11 @@ async function setConfig(a: string[], send: boolean, enabledArg?: boolean) {
     log(`  per-action Mana limits (${LIMITS_FILE}; any other action: ${caps.perTx} per transaction):`);
     for (const r of limits.rows) log(`    ${r.name.padEnd(32)} ${toMana(r.max_mana)} Mana${r.observed ? `   (has used up to ${toMana(r.observed.max)}, ${r.observed.count} seen, ${r.observed.source})` : ""}`);
   } else log(`  per-action Mana limits: none (every action may ask for up to ${caps.perTx})`);
+  // Audit SP-56 (round 6): say so when a per-action limit on chain isn't in this PC's file (it would be dropped).
+  const rowKey = (x: any) => `${x.contract}:${x.entry_point}`;
+  const kept = new Set((config.mana_caps ?? []).map(rowKey));
+  const dropped = (cur.mana_caps ?? []).filter((x: any) => !kept.has(rowKey(x)));
+  if (dropped.length) log(`  ⚠ drops ${dropped.length} per-action limit(s) now on chain (${dropped.map((x: any) => `${rowKey(x)} ${toMana(String(x.max_mana))} Mana`).join(", ")}): ${LIMITS_FILE} on this PC doesn't have them (pull the branch first if that's not intended)`);
   // Audit SP-5: switching OFF is the emergency stop: no website checks may block it.
   const stopping = enabledArg === false;
   let siteBad: string[] = [];
@@ -441,7 +446,7 @@ export function capsOf(cur: any) {
  *  (per transaction ≤ per player per day ≤ per player per week; per player per day and free ≤ everyone per day).
  *  Unreadable chain caps: all 0 (switched off, nothing is paid; run config with your caps before enable).
  *  Exported for the tests. */
-export function tighterCaps(cur: any, other: any = null): { caps: typeof DEFAULT_CAPS; unreadable: boolean } {
+export function tighterCaps(cur: any, other: any = null, code = ""): { caps: typeof DEFAULT_CAPS; unreadable: boolean } {
   const sat = (x: string) => BigInt(units(x));
   const lo = (a: string, b: string) => (sat(a) < sat(b) ? a : b), hi = (a: string, b: string) => (sat(a) > sat(b) ? a : b);
   const read = (x: any): typeof DEFAULT_CAPS => { const c = capsOf(x); for (const v of Object.values(c)) if (!/^\d+(\.\d+)?$/.test(v)) throw new Error("not a number"); return c; };
@@ -463,6 +468,12 @@ export function tighterCaps(cur: any, other: any = null): { caps: typeof DEFAULT
   const perTx = lo(lo(c.perTx, DEFAULT_CAPS.perTx), perPlayerDay);
   const freePerDay = lo(lo(c.freePerDay, DEFAULT_CAPS.freePerDay), perDay);
   const minVhp = hi(sat(c.minVhp) > 0n ? c.minVhp : DEFAULT_CAPS.minVhp, DEFAULT_CAPS.minVhp);
+  // Audit SP-53 (round 6): v2 code (a rollback) refuses a daily cap above 1,000 Mana and a weekly one above 7,000, so
+  // the stop must fit those too (only ever lower).
+  if (code === SPONSOR_SHA256) {
+    const d = lo(perDay, "1000"), wk = lo(perPlayerWeek, "7000"), pd = lo(lo(perPlayerDay, wk), d);
+    return { caps: { perTx: lo(perTx, pd), perPlayerDay: pd, perPlayerWeek: wk, perDay: d, minVhp, freePerDay: lo(freePerDay, d) }, unreadable: false };
+  }
   return { caps: { perTx, perPlayerDay, perPlayerWeek, perDay, minVhp, freePerDay }, unreadable: false };
 }
 /** Audit SP-48 (round 5): the sponsor's code hash, from this node and, on mainnet, the second node (they must agree). */
@@ -516,7 +527,7 @@ async function setSwitch(rpc: string, provider: Provider, s: Signer, A: string, 
     let code = "";
     try { code = String((await contractMetadata(provider, A)).hash || "").replace(/^0x1220/, ""); } catch { /* treated as not v3: no Picks row while off */ }
     const v3 = V3_BUILDS.includes(code);
-    const { caps, unreadable } = tighterCaps(cur, other);
+    const { caps, unreadable } = tighterCaps(cur, other, code);
     config = buildConfig(game, desk, caps, false, race, v3 ? picks : undefined, [], picksCards, false);
     log("  ⚠ no second node agrees with this node's settings: switching off with the settings rebuilt from this PC's files,");
     log(unreadable ? "    and every cap 0 (this node's caps couldn't be read): before enable, run config with your caps"
@@ -589,10 +600,14 @@ async function manaLimit(a: string[]) {
   const r = rows.find((x) => x.contract === contract && x.entry_point === entry);
   if (!r) return;
   if (exact) {
-    const want = BigInt(units(exact)), measured = BigInt(units(String(most)));
-    if (want * 4n < measured * 5n) throw new Error(`--limit ${exact} is less than 1.25 × the ${most} Mana measured: too little room. Nothing saved.`);
+    // Audit SP-55 (round 6): against the most this action has EVER used (the row's merged maximum, which includes
+    // earlier reports), not only the number typed now, so re-running this can't cut a row below what it needs.
+    const want = BigInt(units(exact)), most_ = BigInt(r.observed!.max);
+    if (want * 4n < most_ * 5n) throw new Error(`--limit ${exact} is less than 1.25 × the ${toMana(most_)} Mana this action has used: too little room. Nothing saved.`);
     if (want > perTx) throw new Error(`--limit ${exact} is above the ${toMana(perTx)} Mana per-transaction cap. Nothing saved.`);
+    if (BigInt(r.max_mana) > want) log(`⚠ the row was ${toMana(r.max_mana)} Mana; --limit lowers it to ${exact}`);
     r.max_mana = want.toString();
+    checkRows(rows, perTx);
   }
   log(`${r.name}: has used up to ${toMana(r.observed!.max)} Mana (${source}) → limit ${toMana(r.max_mana)} Mana (${exact ? "as you set it with --limit" : "3 × for a number measured elsewhere, at least 0.05"}).`);
   if (!a.includes("--save")) { log("Nothing saved. Add --save."); return; }
