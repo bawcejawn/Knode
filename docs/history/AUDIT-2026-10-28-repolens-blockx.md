@@ -201,3 +201,54 @@ failing tests (`knode-fixcheck-r3-failing-tests.zip`) are in `tests/audit/repole
 The guest wallets made on the old `bawcejawn.github.io` address before 28 October were the owner's and testers' test
 wallets and hold nothing. The move page (`tools/old-origin-guest/`) is deleted and never published; those keys are
 left to expire in the testers' browsers. BX-66, BX-70 and BX-71 (about that page and the old address) no longer apply.
+
+## Round 4 (Repo Lens fix-check @ cc524eb, 2026-10-30): verdict "fix first" for both parts
+
+Report: the owner's Claude Docs page "Block X + Sponsor v3: Round-4 Fix-Check (Knode picks @ cc524eb)". The auditor's
+failing tests (`knode-fixcheck-r4-failing-tests.zip`) are in the repository and pass:
+`tests/audit/repolens-r4-race.test.mjs`, `tests/audit/repolens-r4-publish/`, `tests/audit/repolens-r4-sponsor-tool-site.test.mjs`
+and the sponsor specs appended to `Sponsor.v3.spec.ts`.
+
+### Owner decisions (2026-10-30)
+
+- SP-37: a **"vault live" switch** in sponsor v3 (`config.game_has_vault`), off until Vault v6 is live, rather than waiting
+  for v6 or keeping v2. The tool reads it from the game's own state on two nodes.
+- The old-address guest move page is deleted (2026-10-29): the pre-move guest wallets were empty test wallets. BX-39,
+  BX-66, BX-70 and BX-71 are closed by that.
+
+### Part A, Block X and race cards
+
+| ID | Finding | Status |
+|---|---|---|
+| BX-72 | Receipt decoder differed from the VHP contract | **Fixed**: the receiver is the event's `impacted[0]`; the value is the LAST copy of its field, every other field skipped as as-proto does (`vhpInflows`, `lastVarint`) |
+| BX-73 | One node lowers the top, every multiplier moves unheld | **Fixed**: when a flagged producer is, or at its higher read would be, the card's top, the card carries `topInDoubt`; Block X holds every target on it (and skips it as an after-card) |
+| BX-74 | A producer can flag itself | **Fixed** while both nodes are at the same block: VHP is read on both nodes in parallel between two head reads (3 tries); only same-block disagreements count at the lower read. With a lagging node the higher read counts (flagged), so moving VHP out and back can't make a producer look small |
+| BX-75 | A lagging check node stops cards | **Fixed**: the check node may be up to 10 minutes and 200 blocks behind; it may be at most 15 s ahead (it can't date a card later than that) |
+| BX-76 | A card in a leg's last minute fails the publish | **Fixed**: a card's time is clamped below its leg's end |
+| BX-77 | Receipt range by time; reads unchecked | **Fixed**: cards record `height` (their window's end); receipt reads must return every block, in order |
+| BX-78 | Next week's first card; silent fetch failure | **Fixed** |
+| BX-79 | The run's own board vouched for the vault file | **Fixed**: the publish job reads the PUBLISHED branch first; a vault file must be for the week that just ended by the job's own clock, within the vault's 3 days, with the week final and its prize file already published; rows are the published Staked board's players in order with points recomputed from its places; first/second are the published prize file's winners |
+| BX-80 | A planted prize file made the week final | **Fixed** for prize files: a `P<w>.json` is published only when the published board shows that week final, 12 h after it ended by the job's clock, with the same prizes. Residual: week files (`W<w>.json`) are not write-once and are still trusted from the published branch; planting one needs a compromised record run (repository code), and before prizes they can only order the Staked points |
+| BX-81 | One differing file stopped all publishing | **Fixed**: a failing or differing prize/vault file is held (not published) with an error, everything else is published, and the job fails at the end so you are emailed; the recorder gets the published vault files, so it doesn't write one again |
+| BX-82 | Empty state read as "v6 not live" | **Fixed**: the answer must include the game's owner |
+| BX-83 | No timeout on chain reads | **Fixed**: 30 s per call (`withRetry`) |
+| BX-84 | Receipt reads could exceed the job time | **Fixed**: 4 calls at a time, 200 blocks each |
+| BX-85 | Stake panel test skipped its v6 check | **Fixed**: it reads the committed v6 ABI |
+| BX-65 | Points never recomputed | **Fixed** with BX-79 (a file leaving out some stakers still passes: the vault only accepts wallets staked that week, and you can correct within its 3 days) |
+| BX-44, BX-47, BX-49, BX-58 | Earlier residuals | Unchanged (Low/Info, as recorded); BX-49: the publish tests now run the workflow's own script against a published branch |
+
+### Part B, sponsor v3 (new build `b61ac238…`, 35,052 bytes, 178 specs)
+
+| ID | Finding | Status |
+|---|---|---|
+| SP-37 | On the live v5 game, a `get_game_player` read aborts the sponsor | **Fixed** (owner decision above): `config.game_has_vault`; while off, no `get_game_player` call and the vault's own calls are refused; the tool sets it from the game's state on two nodes; runbook step on the day v6 goes live |
+| SP-39 | disable signed one node's settings; enable re-signed them | **Fixed**: disable uses the node's settings only when a second node shows the same, else the settings rebuilt from this PC's files switched off; enable rebuilds every setting from the files like config, keeping only the on-chain caps both nodes agree on, and shows every line old → new (and the website check) |
+| SP-38 | Site sent no game for vault calls, only the first of a batch | **Fixed**: `would_pay` takes `games` (field 5); the site sends every game (vault calls: field 2) |
+| SP-40 | The site dropped `answer_only`; a v2 rollback refused guests | **Fixed**: still sent for free play (v3 ignores it); rollback steps in the runbook |
+| SP-41 | enable didn't re-check the swap page | **Fixed** (enable runs the config path, website check included) |
+| SP-42 | The branch's swap page still asked the sponsor | **Fixed** on `picks` (`desk-data/deployment.json` payer self); step 4a still runs on `main` first |
+| SP-43 | Watch failure read as "80%"; "switched off" shown as "used up" | **Fixed** |
+| SP-23 | Stale docs | **Fixed** (README, tool text) |
+| SP-26 | check.ts didn't pin the vault calls | **Fixed**: pinned against the committed v6 ABI |
+| SP-11, SP-13 | Batches not counted in run-outs; rollback steps | SP-13 **fixed** (runbook); SP-11 Low, unchanged |
+| SP-2, SP-3 | Lock-outs by many wallets | Accepted for launch (owner) |
