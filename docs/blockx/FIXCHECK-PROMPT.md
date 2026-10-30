@@ -1,79 +1,70 @@
-# Fix-check prompt, round 5: Block X (BX-72 to BX-85) + sponsor v3 (SP-37 to SP-43)
+# Fix-check prompt, round 6 (short, scoped): the round-5 fixes only
 
-Copy everything below the line into Repo Lens. Give it the package `knode-fixcheck-6.zip` (the repository
+Copy everything below the line into Repo Lens. Give it the package `knode-fixcheck-7.zip` (the repository
 `bawcejawn/Knode` at the commit in `00-COMMIT.txt`, branch `picks`, with this prompt as `00-FIXCHECK-PROMPT.md`).
 
 ---
 
-You are an independent smart-contract and web security auditor. Your report "Block X + Sponsor v3: Round-4 Fix-Check
-(Knode picks @ cc524eb)" (verdict *fix first* for both parts) has been worked through. The owner's record, with the
-owner's decisions, is the "Round 4" section of `docs/history/AUDIT-2026-10-28-repolens-blockx.md`. Your round-4 failing
-tests are in the repository (`tests/audit/repolens-r4-race.test.mjs`, `tests/audit/repolens-r4-publish/`,
-`tests/audit/repolens-r4-sponsor-tool-site.test.mjs`, the SP-37/SP-28 specs at the end of
-`sponsor/assembly/__tests__/Sponsor.v3.spec.ts`) and pass, next to behaviour tests written with the fixes
-(`tests/audit/repolens-r3-blockx-behaviour.test.mjs`, `tests/audit/sponsor.tool.test.ts`). Check the code, not the
-comments. Send no transaction to mainnet. The repository's own tests can be run:
+You are an independent smart-contract and web security auditor. Your report "Block X + Sponsor v3: Round-5 Fix-Check
+(Knode picks @ d4c32de)" said the **sponsor contract is ready** and asked for fixes in the sponsor tool and Block X.
+They have been worked through. The owner's record is the "Round 5" section of
+`docs/history/AUDIT-2026-10-28-repolens-blockx.md`. Your round-5 failing tests are in the repository and pass. Behaviour
+tests were written with the fixes. Before this package, an independent blind review checked the diff with your
+checklist; its findings were fixed or recorded (same section).
+
+**This is a short, final check, scoped to the round-5 diff** (`git diff d4c32de HEAD`, about 20 files). Please don't
+re-audit unchanged code. Report **must-fix-before-mainnet** items only, and list everything else as Low/Info in one
+table. Check the code, not the comments. Send no transaction to mainnet.
 
 ```
 npm ci --ignore-scripts
 npm run test:audit:serial
-cd picks && npm ci --ignore-scripts && npm test && npm run check && cd ..
 cd sponsor && npm ci --ignore-scripts && npm test && npm run check && cd ..
+cd picks && npm ci --ignore-scripts && npm test && npm run check && cd ..
 ```
 
-Fingerprints: Picks release `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594` (unchanged); Picks
-testnet (`node picks/scripts/build-testnet.cjs --owner 1JZ5UoH4AU5roCgYEmtJ7G6mCvzE4jSTMC`)
-`39cc5e003c234b0e0b054376bdb53245e97157202ae971a11bc5cc490f7aa7ab` (unchanged); **sponsor v3
-`b61ac238da27c4a71c01127f39a7b95f19fabf15e35df9f9715546d221e256e4` (35,052 bytes, changed)**.
+**Fingerprints (all unchanged):**
+- sponsor v3 `b61ac238da27c4a71c01127f39a7b95f19fabf15e35df9f9715546d221e256e4` (35,052 bytes, now 182 specs);
+- Picks release `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594`;
+- Picks testnet `39cc5e003c234b0e0b054376bdb53245e97157202ae971a11bc5cc490f7aa7ab`.
 
 ## Owner decisions since your report (2026-10-30)
 
-1. SP-37: a "vault live" switch in sponsor v3 (`config.game_has_vault`, field 15), off until Vault v6 is live; the
-   tool reads it from the game's state (`get_state` config `v6_rule_week_plus_one`, owner required) on two nodes.
-2. The old-address guest move page was deleted on purpose (2026-10-29): the pre-move guest wallets were empty test
-   wallets. BX-39, BX-66, BX-70 and BX-71 are closed by that; the round-3 W-1 test now checks the page is gone.
-3. SP-2 and SP-3 remain accepted for launch.
-
-## What changed since cc524eb
-
-- **Sponsor contract**: `game_has_vault` gates the `get_game_player` loop in `isPlayer` and the vault's own calls in
-  `checkOperation` (`VAULT_NOT_LIVE`); `would_pay_arguments.games` (field 5, repeated) joins `game` (field 4).
-  `scripts/check.ts` pins the vault calls and `get_game_player` against `game/abi/kpred-v6.koilib.json`.
-- **Sponsor tool** (`bot/sponsor.ts`): `vaultLiveOn`, `capsOf`; enable now runs the config path (every setting from the
-  files, caps from the chain when both nodes agree, website check, every line printed); disable (`setSwitch`) uses the
-  node's settings only when a second node agrees, else the file-built settings switched off; status/README wording;
-  watch failure reported as such.
-- **Site** (`wallet.js`): `gamesOfOps` (vault calls: field 2; every game of a batch), `sponsorAnswer` sends
-  `answer_only` for free play and `games`; "switched off" guest message. `desk-data/deployment.json` on the branch:
-  players' own Mana (SP-42).
-- **Race cards** (`bot/race.ts`, `race.yml`, `race-samples.yml`): `combineReads(…, sameBlock)` with the non-enumerable
-  `__topInDoubt`; `readBoth` (both nodes between two head reads); card keys `topInDoubt` and `height`; `LIB_GAP_MAX`
-  200, `HEAD_GAP_MS` 15 s ahead, `LAG_MS` 10 min behind; leg-end clamp; next week's card in the sampler.
-- **Block X** (`bot/games/blockx.ts`): `vhpInflows` + `lastVarint` (BX-72); `flags` includes `topInDoubt`; receipt range
-  from `card.height`; `scoringVhpMoves` checks every block and runs 4 calls at a time; `STATE_ABI` owner required.
-- **Publish** (`games.yml`, `games-testnet.yml`): the published branch is read first; prize and vault files judged
-  against it and the job's clock (`GENESIS`, `CHECK_NOW_MS` only for tests); held files (`$HELD`) are skipped, the rest
-  published, the job fails at the end on an alert; PREV gets `vault/`.
-- `common.ts withRetry`: 30 s per call.
+1. **Split launch.** Sponsor v3 and Picks are uploaded once this check is clean. Who Signs Block X goes live
+   **prize-free**. Its scoring is off-chain (the recorder and the publish job), so any later scoring finding is fixed
+   there, without a new upload, before Vault v6 prizes start. So for Block X, please separate:
+   - "must fix before it goes live prize-free" (wrong published history, a stuck recorder, anything that needs a
+     contract change);
+   - "must fix before prizes".
+2. **Two root-cause rules** instead of case-by-case fixes:
+   - a VHP transfer is read only from its one canonical encoding; anything else is held;
+   - published history is append-only: a published week-file target or race sample never changes, and a run that
+     tries publishes nothing.
+3. **SP-45 and SP-46 are accepted for launch.** The contract is frozen. The site sends `games` unpacked, and a
+   misread changes only `would_pay`'s advisory answer.
+4. **New (owner):** the Picks `pick` row is 0.2 Mana, from the testnet Combo Card measurements (10 legs used 0.0916).
+   It is set through `sponsor mana-limit … --limit 0.2` (an exact limit, at least 1.25 × measured and at most the
+   per-transaction cap), the site's `sponsor.rcLimits`, and launch step 6.
 
 ## Look hardest at
 
-1. **SP-37**: can a wallet still make the sponsor call `get_game_player` while `game_has_vault` is off, or get a vault
-   call paid? Is reading v6-ness from `get_state` on two nodes safe, and is the "re-run config on v6 day" step enough?
-2. **SP-39**: can one node still get settings signed through enable or disable?
-3. **BX-72**: does `lastVarint` + `impacted[0]` now read every transfer and mint exactly as the VHP contract applies
-   it (including malformed bytes the contract would reject)?
-4. **BX-73 / BX-74 / BX-75**: the `topInDoubt` rule (is "higher read ≥ the combined top" the right test?), same-block
-   reads (can a liar fake "different blocks" to get the higher read for a producer it wants big?), and what one node can
-   still do with 10 minutes of allowed lag.
-5. **BX-79 / BX-80 / BX-81**: the publish job's new order of steps, the hold list, the clock rule, the recomputed points
-   and first/second; can a bad run still get a wrong prize or vault file published, or block the honest one? The W-file
-   residual in the record.
-6. Any new problem the round-4 fixes brought in (last round two Highs came from round-3 fixes).
+1. **BX-72** (`bot/games/blockx.ts` `canonicalTransferValue`): is any byte form the VHP contract accepts still counted
+   at a different value? Do koilib and Kondor transfers always pass? Is "a non-canonical transfer voids the target"
+   (griefing, one transaction per target) acceptable for a prize-free launch?
+2. **BX-86** (`bot/race.ts` `sample`, the card in `run`, `race-samples.yml`): can one node still lift a producer, or
+   lower the top, without a flag or `topInDoubt` on the card?
+3. **BX-88** (`games.yml` / `games-testnet.yml` publish): can a run still change a published target? Also the inverse:
+   can an honest run be held forever by it?
+4. **SP-44** (`bot/sponsor.ts` `capsOf`, `tighterCaps`, `setSwitch`, `--rebuilt`): can enable or disable still loosen a
+   cap? Is the emergency stop still always possible?
+5. **New problems from this round's fixes.** In each of the last two rounds, new findings came from the previous fixes.
 
 ## Report
 
-For every finding of your round-4 report (BX-72 to BX-85, SP-37 to SP-43, and the earlier items still open): fixed /
-partly / not fixed, with file:line, and anything new (BX-86…, SP-44…). Then a verdict per part: "ready for mainnet",
-"fix first" or "not ready", and what must be fixed before mainnet. Add a failing test for each new High or Medium where
-you can.
+- For each round-5 finding (BX-65, BX-72, BX-86 to BX-94, SP-13, SP-23, SP-44 to SP-52): fixed / partly / not fixed,
+  with file:line.
+- Anything new (BX-95…, SP-53…).
+- A verdict:
+  - for the **sponsor v3 + Picks uploads**: go / no-go;
+  - for **Block X live prize-free**: go / no-go.
+- What must be fixed before Vault v6 prizes.

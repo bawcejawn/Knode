@@ -18,6 +18,11 @@ because changing a contract after upload means a new upload.
 
 Prizes (2 / 1 VHP) start when the Knode Games vault (v6) is live; until then the boards run without prizes.
 
+**Split launch (owner, 2026-10-30):** the contracts go up once the short round-6 check of the round-5 fixes is clean
+(Repo Lens round 5: sponsor contract ready, unchanged). Block X goes live prize-free. Its scoring runs off-chain (the
+recorder and the publish job), so any later scoring finding is fixed there, without a new upload, before Vault v6
+prizes start.
+
 Every mainnet send needs `CONFIRM_MAINNET=yes` in `.env`; the Picks tool also needs `--mainnet` on the command line.
 
 ## 3. Build in a clean copy (no `.env` there)
