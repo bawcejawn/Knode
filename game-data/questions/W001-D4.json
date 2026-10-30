@@ -113,9 +113,17 @@
             "1UG4UUn7Da9JqE4PKbYUWgjbNwE5F9531": "144928282919973"
           },
           "seal": "4fd32e1efd8ab3bb902fc2bdd18e210ab000663a48c7943705a6ef752e490f6e"
+        },
+        {
+          "height": 40640896,
+          "readAt": "2026-10-30T05:41:26.787Z",
+          "values": {
+            "1UG4UUn7Da9JqE4PKbYUWgjbNwE5F9531": "144873972047893"
+          },
+          "seal": "d62db53af92cf5646324138037f83d79ee4da1e12a9e653c1508a04a0bebd89b"
         }
       ],
-      "vhpSeal": "9029b35d78c48430c0f79aaf242ec2302d208b01c19bfb3c667e16a0e15d6269"
+      "vhpSeal": "f91fb8d864d7e4fbc70c78b122afdb8a27dabc35dc6f73ef326799244083f817"
     },
     {
       "id": "W001-D4-2",
@@ -220,7 +228,33 @@
           "seal": "3fa9808ca812e62e9947fb40921f85379572f6a6d68737e55259f6eea85224e8"
         }
       ],
-      "vhpSeal": "281df87b567284d140ce8cad2a248711c2fa8174257b1628c459cf771c2082cb"
+      "vhpSeal": "281df87b567284d140ce8cad2a248711c2fa8174257b1628c459cf771c2082cb",
+      "result": {
+        "void": false,
+        "option": 0,
+        "value": "98.3%",
+        "dataHash": "60a49abdf790f898b19065f634cae566bfda4878cd29ab85711bb09edecc4d77",
+        "resolvedAt": "2026-10-30T05:38:28.370Z",
+        "vhpCheck": {
+          "limit": 0.1,
+          "releaseHeight": 40620412,
+          "decidedHeight": 40639406,
+          "readings": [
+            40636479,
+            40637469,
+            40638625
+          ],
+          "readingsInWindow": 4,
+          "values": {
+            "network": {
+              "release": "2233882793515859",
+              "end": "2234395633751004",
+              "change": "+0.02%",
+              "height": 40636479
+            }
+          }
+        }
+      }
     },
     {
       "id": "W001-D4-3",
@@ -330,9 +364,17 @@
             "1PcrAcNPXqAGHmLATxigqZJpmHBvVHDfPE": "10368830040660"
           },
           "seal": "f41bf3d5d88506ad19c30e9df3900d22e56edcf1c1205825814c74fbb6f1ad29"
+        },
+        {
+          "height": 40640896,
+          "readAt": "2026-10-30T05:41:26.787Z",
+          "values": {
+            "1PcrAcNPXqAGHmLATxigqZJpmHBvVHDfPE": "10365154868166"
+          },
+          "seal": "d6c4aef7bf58bab42a9f519d1651b84aec7ff718cac40ba7cb9b2df8d442cf4d"
         }
       ],
-      "vhpSeal": "4db64f32277137f4758f94771c33e2a00a4eb1c6ad9004eaa4bf1da1e951efd0"
+      "vhpSeal": "9862028b21720a75bf7c6765c13a0f8f202f9562473748fdbe7e1c1e1d6ab5f1"
     },
     {
       "id": "W001-D4-4",
@@ -437,7 +479,33 @@
           "seal": "725e48eabeae80c0cbc4e189a0313a72a377a647094c34f10a55f49e12e5abec"
         }
       ],
-      "vhpSeal": "4ba83e777f390999c6ce6e02011d0f2c41fd6d00311b81f05a5b28588b5db9a4"
+      "vhpSeal": "4ba83e777f390999c6ce6e02011d0f2c41fd6d00311b81f05a5b28588b5db9a4",
+      "result": {
+        "void": false,
+        "option": 3,
+        "value": "84",
+        "dataHash": "60a49abdf790f898b19065f634cae566bfda4878cd29ab85711bb09edecc4d77",
+        "resolvedAt": "2026-10-30T05:38:28.370Z",
+        "vhpCheck": {
+          "limit": 0.1,
+          "releaseHeight": 40620412,
+          "decidedHeight": 40639693,
+          "readings": [
+            40636479,
+            40637469,
+            40638625
+          ],
+          "readingsInWindow": 4,
+          "values": {
+            "network": {
+              "release": "2233882793515859",
+              "end": "2234395633751004",
+              "change": "+0.02%",
+              "height": 40636479
+            }
+          }
+        }
+      }
     },
     {
       "id": "W001-D4-5",
@@ -542,7 +610,34 @@
           "seal": "2ec1f4a58a547e59f95f95d31297ea43649458dcbc3f020b6b664486a94753fd"
         }
       ],
-      "vhpSeal": "676c4e483f80cef078867e631e689a03ea08e7515be7420242a8898677463f7f"
+      "vhpSeal": "676c4e483f80cef078867e631e689a03ea08e7515be7420242a8898677463f7f",
+      "result": {
+        "void": false,
+        "option": 3,
+        "value": "3.114 s",
+        "dataHash": "60a49abdf790f898b19065f634cae566bfda4878cd29ab85711bb09edecc4d77",
+        "resolvedAt": "2026-10-30T05:38:28.370Z",
+        "vhpCheck": {
+          "limit": 0.1,
+          "releaseHeight": 40620412,
+          "decidedHeight": 40640826,
+          "readings": [
+            40636479,
+            40637469,
+            40638625,
+            40639782
+          ],
+          "readingsInWindow": 4,
+          "values": {
+            "network": {
+              "release": "2233882793515859",
+              "end": "2234395633751004",
+              "change": "+0.02%",
+              "height": 40636479
+            }
+          }
+        }
+      }
     }
   ],
   "daySeal": "48d0b74a7cc7959a8bfca683b74f58c36f4887f5f29c5682ba1a66fde1a7604b"
