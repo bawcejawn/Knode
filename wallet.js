@@ -547,7 +547,7 @@
   // "sponsor": { address, covers: [game, desk, vhp, koin], rcLimit (answers), rcLimitOther (everything else) }. The sponsor contract decides on chain; the page
   // only picks it when every operation is one it pays for and its caps (would_pay) say yes, else the player's own Mana.
   // Answers are sponsored for any wallet (free play); everything else only for wallets with VHP or a stake.
-  const APPROVE = 0x74e21680, WOULD_PAY = 0xda1fd8f5, ANSWER = 0x0db52f40, CLAIM = 0xdd1b3c31, PICK = 0x8ce33c6c;
+  const APPROVE = 0x74e21680, MOVE_STAKE = 0x7c268e69, WOULD_PAY = 0xda1fd8f5, ANSWER = 0x0db52f40, CLAIM = 0xdd1b3c31, PICK = 0x8ce33c6c;
   /** The sponsor this transaction could use, or null. */
   function sponsorFor(ops) {
     const sp = W.sponsor;
@@ -557,6 +557,8 @@
       if (!c || !sp.covers.includes(c.contract_id)) return null;
       // Tokens: only approve (the contract checks spender and owner too).
       if (sp.tokens && sp.tokens.includes(c.contract_id) && Number(c.entry_point) !== APPROVE) return null;
+      // Owner, 2026-10-30: the sponsor pays for stake, withdraw and claim, never for moving stake between games.
+      if (c.contract_id === sp.covers[0] && Number(c.entry_point) === MOVE_STAKE) return null;
     }
     return sp;
   }

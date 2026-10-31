@@ -1571,6 +1571,8 @@
   async function start() {
     // Producer names (names.js): redraw once names.json arrives.
     if (window.KNames) window.KNames.onChange(() => { try { renderAll(); renderBoard().catch(() => {}); } catch { /* not ready yet */ } });
+    // Staked or free in Daily Questions, how much, and a link to the staking page (stake-panel.js).
+    if (window.KStake && !/[?&]demo\b/.test(location.search)) window.KStake.badge($("#stake-badge"), { game: 1, href: "stake.html" });
     const rs = $("#res-search");
     if (rs) rs.addEventListener("input", () => { RV.q = rs.value || ""; renderResults(); });
     const rm = $("#res-mine");
