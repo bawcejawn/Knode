@@ -28,10 +28,15 @@
   const W = () => K.wallet();
   const me = () => { const w = W(); return w && w.address && w.kind !== "guest" ? w.address : null; };
 
+  let gen = 0;   // only the latest load may show (a slow one from before the wallet connected never overwrites it)
   async function load() {
+    const my = ++gen;
     try {
-      S.data = await K.overview(me());
+      const d = await K.overview(me());
+      if (my !== gen) return;
+      S.data = d;
     } catch {
+      if (my !== gen) return;
       S.data = S.data || { live: false, error: true };
     }
     render();
@@ -47,8 +52,7 @@
       S.open = null;
       say(id ? `Done: ${done}.` : `Sent: ${done}. It may take a minute to show.`, "good");
     } catch (e) {
-      const m = String((e && e.message) || e);
-      say(/reject|denied|cancel/i.test(m) ? "Cancelled in your wallet. Nothing was sent." : `Not sent: ${((/"([^"]{6,140})"/.exec(m) || [, m])[1]).slice(0, 160)}`, "bad");
+      say(K.sayError(e), "bad");
     }
     S.busy = false;
     await load();

@@ -47,7 +47,7 @@
       player_object: { fields: { stake: u64(1), pending: u64(2), pending_week: u64(3) } },
       get_player_arguments: { fields: { player: addr(1), week: u64(2) } },
       get_player_result: { fields: { player: { type: "player_object", id: 1 }, active_stake: u64(3) } },
-      game_object: { fields: { id: u32(1), name: { type: "string", id: 2 }, staked: bool(3), free_prize: bool(4), active: bool(5), from_week: u64(6), last_week_plus_one: u64(7), stake: u64(10), week_stake: u64(11), week: u64(12), season_weeks: u32(15) } },
+      game_object: { fields: { id: u32(1), name: { type: "string", id: 2 }, staked: bool(3), free_prize: bool(4), active: bool(5), from_week: u64(6), last_week_plus_one: u64(7), stake: u64(10), week_stake: u64(11), week: u64(12), next_stake: u64(13), next_week: u64(14), season_weeks: u32(15) } },
       gweek_object: { fields: {
         closed: bool(1), bucket: u64(2), prize: u64(3), voided: bool(7), finalized: bool(8), rolled_over: bool(9), cutoff: u32(12),
         pot_a: u64(14), pot_b: u64(15), bw_hi: u64(17), bw_lo: u64(18), aw_hi: u64(19), aw_lo: u64(20),
@@ -116,12 +116,27 @@
     if (len < 86400000n) return new Date(ms).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC";
     return new Date(ms).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).replace(",", "");
   }
-  /** Last week's rewards per 100 VHP staked in a game: its bucket ÷ the stake counted for it (null = not known). */
-  function per100(gw) {
-    if (!gw || !gw.closed || !gw.weight_set) return null;
-    const w = big(gw.weight);
+  /** Last week's rewards per 100 VHP staked in a game: its bucket ÷ the stake counted for it (null = not known).
+   *  The vault saves a week's weight only once the game moves past it; until then it uses the live numbers, so this
+   *  does the same (the vault's weightFor; found by the Vault chat, 30 Oct). g = the game object, x = that week. */
+  function per100(gw, g, x) {
+    if (!gw || !gw.closed) return null;
+    let w;
+    if (gw.weight_set) w = big(gw.weight);
+    else if (g && x != null) w = big(x) > big(g.week) ? big(g.week_stake) + (big(g.next_stake) > 0n && big(g.next_week) <= big(x) ? big(g.next_stake) : 0n) : big(g.week_stake);
+    else return null;
     return w > 0n ? (big(gw.bucket) * 100n * UNIT) / w : null;
   }
+  /** "Your Mana is busy" (the node still holds the last transaction's Mana limit) and other wallet errors, in plain words. */
+  function sayError(e) {
+    const m = String((e && e.message) || e);
+    if (/reject|denied|cancel/i.test(m)) return "Cancelled in your wallet. Nothing was sent.";
+    if (/insufficient pending account resources|pending account resources|"code":\s*104/i.test(m)) return "Your Mana is still busy with your last transaction. Wait a minute and try again.";
+    return `Not sent: ${((/"([^"]{6,140})"/.exec(m) || [, m])[1]).slice(0, 160)}`;
+  }
+  /** Tell every part of the page (status bar, lists, panels) that a stake changed. */
+  const changed = () => { try { window.dispatchEvent(new Event("kstake:changed")); } catch { /* old browser */ } };
+  const onChanged = (f) => { try { window.addEventListener("kstake:changed", () => f()); } catch { /* no window */ } };
   const live = (state) => !!(state && state.config && big(state.config.v6_rule_week_plus_one) > 0n);
   /** What claim_game would pay for a week now (0n = nothing), the same rule as the vault's claimableG / rewardOfG. */
   function claimable(gw, e, buckets) {
@@ -130,7 +145,7 @@
     if (place === 1) return big(gw.prize_first);
     // The vault pays 2nd place its prize also when nobody placed 1st (audit V6-9; found by the Vault chat, 30 Oct).
     // A tie for 1st shares both prizes, so then nobody is 2nd.
-    if (place === 2) return Number(gw.first_n || 0) >= 2 ? 0n : big(gw.prize_second);
+    if (place === 2) return big(gw.prize_second);   // 0 when tied 1st places share the whole prize (the vault's claimableG)
     const points = Number(e.points || 0), cutoff = Number(gw.cutoff || 0);
     if (gw.rolled_over || cutoff < 1 || points < cutoff) return 0n;
     const b = (buckets || [])[points];
@@ -239,7 +254,7 @@
         counted = id === Q_GAME ? big(r.active_stake) : big(r.week_stake);
         if (id !== Q_GAME) claims = await findClaims(id, who, week);
       }
-      if (id !== Q_GAME && week > 0n) last = per100((await read("get_game", { game: id, week: (week - 1n).toString() })).week);
+      if (id !== Q_GAME && week > 0n) { const gx = await read("get_game", { game: id, week: (week - 1n).toString() }); last = per100(gx.week, gx.game || g, week - 1n); }
       return { id, name: g.name || `Game ${id}`, active: !!g.active, season: Number(g.season_weeks || 1), total, mine, counted, pending,
         pendingFrom: pending ? weekDate(cfg, pendingWeek) : "", share: total > 0n ? Number((mine * 1000000n) / total) / 1000000 : 0,
         staked: counted >= min && min > 0n, claims, last };
@@ -271,7 +286,9 @@
       ops = await buildOps(k, action, { ...a, player: W.address });
       label = action === "stake" ? `stake ${exact(a.units)} ${a.koin ? "KOIN" : "VHP"}` : action === "withdraw" ? `withdraw ${exact(a.units)} VHP` : `move ${exact(a.units)} VHP`;
     }
-    return W.send(label, ops);
+    const id = await W.send(label, ops);
+    changed();
+    return id;
   }
 
   function mount(root, opts = {}) {
@@ -281,25 +298,27 @@
     root.classList.add("kstake");
     const P = { state: null, game: null, games: [], me: null, claims: [], busy: false, note: "" };
 
+    let gen = 0;   // only the latest refresh may show: an older, slower one (before a wallet connected) never overwrites it
     async function refresh() {
+      const my = ++gen;
       try {
         await setup();
         const state = await read("get_state", {});
+        if (my !== gen) return;
         if (!live(state)) { root.hidden = true; return; }
         const week = big(state.week);
         const g = await read("get_game", { game, week: week.toString() });
+        if (my !== gen) return;
         if (!g.game || !g.game.staked) { root.hidden = true; return; }
-        P.state = state; P.game = g.game;
-        P.games = ((await read("list_games", {})).games || []).filter((x) => x.active && x.staked && Number(x.id) !== game);
+        const games = ((await read("list_games", {})).games || []).filter((x) => x.active && x.staked && Number(x.id) !== game);
         const who = Wallet() && Wallet().address;
-        P.me = null; P.claims = [];
+        let me = null, claims = [];
         if (who) {
-          P.me = await read("get_game_player", { player: who, game, week: week.toString() });
-          // Not from the game's from_week: a game restarted after a gap moves it forward, and the weeks it earned before
-          // stay claimable. The player's own entries first (8 at a time); a week's results only where there's an entry
-          // with something in it.
-          P.claims = await findClaims(game, who, week);
+          me = await read("get_game_player", { player: who, game, week: week.toString() });
+          claims = await findClaims(game, who, week);
         }
+        if (my !== gen) return;
+        Object.assign(P, { state, game: g.game, games, me, claims });
         render();
       } catch {
         // Not live, not reachable or not on this network: keep the panel out of the way (the game page still works).
@@ -318,9 +337,11 @@
         const ops = await buildOps({ lib, dep: shared.dep, provider: shared.provider }, action, { ...a, player: W.address, game });
         const id = await W.send(label, ops);
         P.note = id ? `Done: ${label}.` : `Sent: ${label}. It may take a minute to show.`;
+        P.busy = false;
+        changed();                      // the status bar and the lists refresh too (refresh() runs from the event)
+        return;
       } catch (e) {
-        const msg = String((e && e.message) || e);
-        P.note = /reject|denied|cancel/i.test(msg) ? "Cancelled in your wallet." : `Not sent: ${(/"([^"]{6,140})"/.exec(msg) || [, msg])[1].slice(0, 160)}`;
+        P.note = sayError(e);
       }
       P.busy = false;
       await refresh();
@@ -415,6 +436,7 @@
     }
 
     if (Wallet() && Wallet().subscribe) Wallet().subscribe(() => { P.note = ""; refresh(); });
+    onChanged(refresh);
     refresh();
     return { refresh };
   }
@@ -427,7 +449,9 @@
     root.hidden = true;
     root.classList.add("kstake");
     const links = opts.links || {};
+    let gen = 0;
     async function refresh() {
+      const my = ++gen;
       try {
         await setup();
         const state = await read("get_state", {});
@@ -440,13 +464,14 @@
         for (const g of games) {
           const id = Number(g.id);
           let last = null, mine = null;
-          if (id !== Q_GAME && week > 0n) last = per100((await read("get_game", { game: id, week: (week - 1n).toString() })).week);
+          if (id !== Q_GAME && week > 0n) { const gx = await read("get_game", { game: id, week: (week - 1n).toString() }); last = per100(gx.week, gx.game || g, week - 1n); }
           if (who) {
             const r = id === Q_GAME ? await read("get_player", { player: who, week: week.toString() }) : await read("get_game_player", { player: who, game: id, week: week.toString() });
             mine = r.player ? big(r.player.stake) + big(r.player.pending) : 0n;
           }
           rows.push({ id, name: g.name || `Game ${id}`, stake: big(g.stake), last, mine, active: !!g.active, href: links[id] || "" });
         }
+        if (my !== gen) return;
         root.replaceChildren(
           el("h3", {}, "Where to stake"),
           el("p", { class: "muted kstake-explain" }, `Stake VHP in any game, as many as you like (at least ${exact(minStakeFor(cfg, week))} VHP in a game to play it as a staked player). Each game's stakers share that game's part of the weekly rewards. You can withdraw any time, or move stake between games.`),
@@ -465,6 +490,7 @@
       }
     }
     if (Wallet() && Wallet().subscribe) Wallet().subscribe(() => refresh());
+    onChanged(refresh);
     refresh();
     return { refresh };
   }
@@ -509,10 +535,13 @@
     if (!root || !Number.isInteger(game) || game < Q_GAME) return null;
     const href = opts.href || `stake.html#g${game}`;
     root.classList.add("kbadge");
+    let gen = 0;
     async function refresh() {
+      const my = ++gen;
       const W = Wallet(), who = W && W.address;
       let st = { open: false, staked: false, amount: 0n, counted: 0n, pending: 0n, pendingFrom: "", min: UNIT };
       try { if (who && W.kind !== "guest") st = await status(game, who); else if (!who) st = await status(game, null); } catch { /* chain unreachable: show "free" without amounts */ }
+      if (my !== gen) return;
       const t = badgeText(st, !!who, !!(W && W.kind === "guest"));
       root.className = `kbadge ${t.cls}`;
       root.replaceChildren(
@@ -523,11 +552,12 @@
       root.hidden = false;
     }
     if (Wallet() && Wallet().subscribe) Wallet().subscribe(() => refresh());
+    onChanged(refresh);
     refresh();
     setInterval(() => { if (!document.hidden) refresh(); }, 120000);
     return { refresh };
   }
 
   window.KStake = { mount, mountList, badge, status, overview, send, fmt: { amount, exact, toUnits, weekDate, explain },
-    wallet: () => Wallet(), live: async () => { await setup(); return live(await read("get_state", {})); }, _test: { badgeText, VAULT_ABI, TOKEN_ABI, toUnits, minStakeFor, live, claimable, explain, buildOps, exact, weekDate, per100 } };
+    wallet: () => Wallet(), sayError, live: async () => { await setup(); return live(await read("get_state", {})); }, _test: { badgeText, VAULT_ABI, TOKEN_ABI, toUnits, minStakeFor, live, claimable, explain, buildOps, exact, weekDate, per100, sayError } };
 })();

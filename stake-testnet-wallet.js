@@ -17,7 +17,9 @@
   }
   const MAINNET_CHAIN_ID = "EiBZK_GGVP0H_fXVAM3j6EAuz3-B-l3ejxRSewi7qIBfSA==";
   const KEY = "kg-testnet-stake-wallet-v1", KIND = "kg-testnet-stake-kind-v1";
-  const MANA_CAP = 100000000n;   // at most 1 test Mana per transaction
+  // At most 0.5 test Mana per transaction (the heaviest player call measured on the test copy is 0.35). The node keeps a
+  // recent transaction's whole limit aside for a while, so a bigger limit blocks the next action (Vault chat, 30 Oct).
+  const MANA_CAP = 50000000n;
   const VAULT_CALLS = new Set([0x7bb5c436, 0x5b0aaef8, 0x7c268e69, 0x4107e3ab]);   // deposit_to, withdraw_from, move_stake, claim_game
   const DEPOSIT_TO = 0x7bb5c436, APPROVE = 0x74e21680;
   const ADDR = /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/;

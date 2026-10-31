@@ -131,7 +131,7 @@ test("claim math: prizes, cutoff and the two baskets, as the vault computes them
   assert.equal(T.claimable({ ...w, rolled_over: true }, e, buckets), 0n);
   assert.equal(T.claimable(w, { prize_place: 1 }, buckets), 2n * UNIT);
   assert.equal(T.claimable(w, { prize_place: 2 }, buckets), UNIT);
-  assert.equal(T.claimable({ ...w, first_n: 2 }, { prize_place: 2 }, buckets), 0n);  // 1st tied: they share all 3 VHP
+  assert.equal(T.claimable({ ...w, first_n: 2, prize_second: "0" }, { prize_place: 2 }, buckets), 0n);  // 1st tied: they share all 3 VHP (the vault sets prize_second 0)
   assert.equal(T.claimable({ ...w, first_n: 0 }, { prize_place: 2 }, buckets), UNIT);   // nobody 1st: 2nd is still paid (V6-9)
   assert.equal(T.claimable(w, null, buckets), 0n);
 });
@@ -260,8 +260,7 @@ test("a guest can't stake: the wallet's guest explanation shows instead", async 
 test("the panel sends only through the wallet, and only vault and token operations it builds itself", () => {
   const sends = [...src.matchAll(/\.send\(/g)];
   assert.equal(sends.length, 2, "two sends: the game-page panel and the staking hub, both the wallet's own");
-  assert.match(src, /const id = await W\.send\(label, ops\);/);
-  assert.match(src, /return W\.send\(label, ops\);/);
+  assert.equal([...src.matchAll(/const id = await W\.send\(label, ops\);/g)].length, 2);
   assert.doesNotMatch(src, /signTransaction|sendTransaction|privateKey|wif|innerHTML|outerHTML|insertAdjacentHTML|eval\(|new Function|localStorage|sessionStorage/i);
   assert.match(src, /new k\.lib\.Contract\(\{ id: k\.dep\.contract, abi: VAULT_ABI/, "the vault address comes from game-data/deployment.json");
 });
@@ -286,6 +285,12 @@ test("last week per 100 VHP: the game's bucket ÷ the stake counted for it, only
   assert.equal(T.per100({ closed: false, weight_set: true, weight: String(UNIT), bucket: String(UNIT) }), null);
   assert.equal(T.per100({ closed: true, weight_set: true, weight: "0", bucket: String(UNIT) }), null);
   assert.equal(T.per100(null), null);
+  // Not saved yet (the game hasn't moved past the week): the vault's live numbers (weightFor), as the Vault chat found.
+  const open = { closed: true, weight_set: false, bucket: String(UNIT) };
+  assert.equal(T.per100(open), null, "no game object: unknown");
+  assert.equal(T.per100(open, { week: "5", week_stake: String(200n * UNIT) }, 4n), 50000000n, "the week before the game's own: its week stake");
+  assert.equal(T.per100(open, { week: "4", week_stake: String(100n * UNIT), next_stake: String(100n * UNIT), next_week: "5" }, 5n), 50000000n, "pending stake that counts by then is added");
+  assert.equal(T.per100(open, { week: "4", week_stake: String(100n * UNIT), next_stake: String(100n * UNIT), next_week: "6" }, 5n), UNIT, "pending stake from later is not");
 });
 
 test("Where to stake: every staked game side by side with links to its page; hidden until live", async () => {
@@ -377,7 +382,7 @@ test("pages: Daily Questions shows the status bar; the staking page loads the pa
   assert.deepEqual([...page.matchAll(/\.send\(/g)].length, 1);
   assert.match(page, /await K\.send\(action, a\)/);
   assert.doesNotMatch(page, /innerHTML|localStorage|kondor|buildOps|Transaction|Contract\(/);
-  assert.match(page, /S\.data = await K\.overview\(me\(\)\)/);
+  assert.match(page, /const d = await K\.overview\(me\(\)\);/);
   assert.match(read("games.js"), /K\.status\(Number\(b\.dataset\.stake\), who\)/);
 });
 
@@ -414,4 +419,26 @@ test("the Mana sponsor never pays for moving stake (owner, 2026-10-30); stake, w
   const w = fs.readFileSync(`${APP}/wallet.js`, "utf8");
   assert.match(w, /MOVE_STAKE = 0x7c268e69/);
   assert.match(w, /if \(c\.contract_id === sp\.covers\[0\] && Number\(c\.entry_point\) === MOVE_STAKE\) return null;/);
+});
+
+test("plain-words errors: a busy-Mana refusal says to wait a minute", () => {
+  assert.match(T.sayError(new Error('{"code":104,"message":"insufficient pending account resources"}')), /Wait a minute and try again/);
+  assert.match(T.sayError(new Error("User rejected")), /Cancelled/);
+  assert.match(T.sayError(new Error('reverted: "game is paused right now"')), /^Not sent: game is paused right now/);
+});
+
+test("after an action the status bar, the list and the panels refresh (kstake:changed)", () => {
+  assert.match(src, /window\.dispatchEvent\(new Event\("kstake:changed"\)\)/);
+  assert.equal([...src.matchAll(/onChanged\(refresh\);/g)].length, 3, "panel, list and status bar listen");
+  assert.match(fs.readFileSync(`${APP}/stake-testnet-wallet.js`, "utf8"), /const MANA_CAP = 50000000n;/);
+});
+
+test("only the latest refresh shows: a slow first read can't overwrite the newly connected wallet", async () => {
+  const e = env({ state: LIVE(), game: GAME(), account: null, player: { player: { stake: String(9n * UNIT), pending: "0" }, week_stake: String(9n * UNIT) } });
+  e.K.mount(e.root, { game: 7 });          // first refresh: no wallet yet
+  e.ctx.KWallet.address = ME;              // the wallet connects while it is still reading
+  e.listener()();                           // the wallet's subscribe fires: second refresh
+  await e.tick();
+  assert.match(e.root.textContent, /9 VHP/);
+  assert.doesNotMatch(e.root.textContent, /Connect wallet to stake/);
 });
