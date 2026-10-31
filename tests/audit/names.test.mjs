@@ -291,17 +291,14 @@ test("every page that loads names.js may read names-data, and loads it before it
   assert.match(read("index.html"), /src="names\.js"[\s\S]*src="results\.js"/, "results.js (on index.html) can use it too");
 });
 
-test("names.html signs one message and never sends anything", () => {
+test("names.html creates a Koinos @name through the player's own wallet, and nothing else", () => {
   const js = read("names-page.js");
-  assert.match(js, /\.signMessage\(\$\("message"\)\.value\)/);
-  assert.doesNotMatch(js, /signTransaction|sendTransaction|\.send\(|KWallet\.send|localStorage|sessionStorage|privateKey|wif/i);
-  assert.match(js, /await R\.verifySignature\(c, lib\)/, "the signature is checked before the claim is shown");
+  assert.equal([...js.matchAll(/\.send\(/g)].length, 1, "one send");
+  assert.match(js, /const id = await w\.send\(`create @\$\{n\}`, \[op\]\);/);
+  assert.doesNotMatch(js, /signMessage|signTransaction|sendTransaction|localStorage|sessionStorage|privateKey|wif|innerHTML|github\.com/i);
   const h = read("names.html");
   assert.ok(h.indexOf('src="wallet.js"') < h.indexOf('src="names-page.js"'), "wallet.js (frame buster) first");
-  assert.match(h, /href="https:\/\/github\.com\/bawcejawn\/Knode\/issues\/new\?template=producer-name\.yml"/);
-  const form = fs.readFileSync(`${APP}/.github/ISSUE_TEMPLATE/producer-name.yml`, "utf8");
-  assert.match(form, /id: claim/, "the page prefills the form's claim field (&claim=)");
-  assert.match(js, /&claim=\$\{encodeURIComponent\(text\)\}/);
+  assert.doesNotMatch(h, /issues\/new|Sign with Kondor|Submit on GitHub/, "no Knode Games name claim on the page any more (owner, 30 Oct)");
 });
 
 test("the pages that show producers use KNames (with their old fallback if names.js is missing)", () => {
@@ -339,7 +336,7 @@ test("nicknames: only when both nodes agree; shown with @; a Knode Games name wi
   assert.equal(K.of(P), `@blocknode · ${K.short(P)}`);
   const named = await apply(db, await claim(A, "Blue Harbor", "2026-11-09"));
   K._test.use(named.db);
-  assert.equal(K.of(A.getAddress()), `Blue Harbor · ${K.short(A.getAddress())}`, "the Knode Games name wins over @jga");
+  assert.equal(K.of(A.getAddress()), `@jga · ${K.short(A.getAddress())}`, "the Koinos @name wins over an older Knode Games name (owner, 30 Oct)");
   K._test.use(R.hide(named.db, P, "test", NOW));
   assert.equal(K.of(P), K.short(P), "hidden: no nickname either");
   K._test.use(R.emptyDb());
@@ -380,12 +377,44 @@ test("names show on the leaderboards and on your own wallet button", () => {
   assert.match(read("header-wallet.js"), /window\.KNames\.name\(W\.address\)/);
 });
 
-test("Get a Koinos @name: mints only on the Nicknames contract, to the connected wallet, with its own Mana", () => {
+test("Get a Koinos @name: mints only on the Nicknames contract, to the connected wallet, never with the sponsor's Mana", () => {
   const src = fs.readFileSync(`${APP}/names-page.js`, "utf8");
   assert.match(src, /const NICKNAMES = "1KD9Es7LBBjA1FY3ViCgQJ7e6WH1ipKbhz"/);
   assert.match(src, /abi: lib\.utils\.nicknamesAbi/);
-  assert.match(src, /mint\(\{ to: who, token_id: nickHex\(n\) \}, \{ payer: who, rcLimit: limit \}\)/);
-  assert.match(src, /NICK_MANA = "1000000000"/);
-  const html = fs.readFileSync(`${APP}/names.html`, "utf8");
-  assert.match(html, /id="nick-mint"/);
+  assert.match(src, /mint\(\{ to: who, token_id: nickHex\(n\) \}, \{ onlyOperation: true \}\)/);
+  // The contract answers "@name is available" for a good name (checked live on mainnet, 30 Oct) and refuses others.
+  assert.match(src, /if \(!\/is available\$\/\.test\(text\)\)/);
+  const dep = JSON.parse(fs.readFileSync(`${APP}/game-data/deployment.json`, "utf8"));
+  assert.ok(!JSON.stringify(dep.sponsor || {}).includes("1KD9Es7LBBjA1FY3ViCgQJ7e6WH1ipKbhz"), "the Mana sponsor never covers the Nicknames contract");
+  assert.match(fs.readFileSync(`${APP}/names.html`, "utf8"), /id="nick-mint"/);
+});
+
+const J = (x) => JSON.parse(JSON.stringify(x));
+test("pool names: producers that run a pool show its name; checked like nicknames; never an imitation", async () => {
+  const P = "1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW", Q = "15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ", X = "1EPZaqve43k9Jq5mNeT2ydCjUiytTTU4U", Z = "1UG4UUn7Da9JqE4PKbYUWgjbNwE5F9531";
+  const names = { [P]: "JGA Pool #2", [Q]: "Armana", [X]: "Koinos Group", [Z]: null };
+  const node = (over = {}) => ({ vhp: async () => 0n, stake: async () => 0n, players: async () => [], nickname: async () => null, poolName: async (a) => (a in over ? over[a] : names[a] ?? null) });
+  const pools = await N.poolNames(new Set([P, Q, X, Z]), [node(), node({ [Q]: "Liar" })]);
+  assert.deepEqual(J(pools), { [P]: "JGA Pool #2", [X]: "", [Z]: "" }, "disagreement left out; an imitation (Koinos Group) and a non-pool are none");
+  const db = N.withPools(R.emptyDb(), pools, NOW);
+  assert.deepEqual(J(db.pools), { [P]: "JGA Pool #2" });
+  assert.equal(R.okPool("Koinos en español"), true);
+  assert.equal(R.okPool("Knode Games pool"), false);
+  assert.equal(R.okPool("x\u202eevil"), false, "no direction tricks");
+  K._test.use({ ...db, nicknames: { [P]: "jgapool" } });
+  assert.equal(K.of(Q), K.short(Q));
+  assert.equal(K.of(P), `@jgapool · ${K.short(P)}`, "an @name wins over the pool name");
+  K._test.use(db);
+  assert.equal(K.of(P), `JGA Pool #2 · ${K.short(P)}`);
+  K.setLocal(Q, "armana2");
+  assert.equal(K.of(Q), `@armana2 · ${K.short(Q)}`, "a just-created @name shows on this device at once");
+  assert.match(N.serialize(db), /"pools": \{/);
+});
+
+test("pool names: read from real get_pool_params replies (mainnet, 30 Oct)", () => {
+  assert.equal(N.poolNameFrom("CgtKR0EgUG9vbCAjMhIbaHR0cHM6Ly9paWxpLmlvL0gxNEVMbjIucG5n"), "JGA Pool #2");
+  assert.equal(N.poolNameFrom("ChJLb2lub3MgZW4gZXNwYcOxb2waMFBvb2wgcGFyYSBsYSBjb211bmlkYWQgaGlzcGFub2hhYmxhbnRlIGRlIEtvaW5vcyIeChkAgtlLLC-qztbZ3hsiTy0uFRXn-C6G9xeuEOgHKIDg5aQB"), "Koinos en español");
+  assert.equal(N.poolNameFrom(""), null);
+  assert.equal(N.poolNameFrom("EgA"), null, "no field 1");
+  assert.equal(N.poolNameFrom("CgVhYg"), null, "cut short");
 });

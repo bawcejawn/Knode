@@ -174,9 +174,13 @@ jobs:
           assert type(res) is dict and type(res.get("results")) is list and res.get("changed") is True, "results: nothing changed"
           b = res.get("base")
           assert type(b) is str and (b == "" or re.fullmatch(r"[0-9a-f]{40}", b)), "results: base"
-          assert type(db) is dict and set(db) == {"v", "updated", "names", "hidden", "nicknames"} and type(db["v"]) is int and db["v"] == 1 and type(db["updated"]) is str and len(db["updated"]) <= 40, "names.json: top level"
+          assert type(db) is dict and set(db) in ({"v", "updated", "names", "hidden", "nicknames"}, {"v", "updated", "names", "hidden", "nicknames", "pools"}) and type(db["v"]) is int and db["v"] == 1 and type(db["updated"]) is str and len(db["updated"]) <= 40, "names.json: top level"
           assert type(db["names"]) is dict and type(db["hidden"]) is dict and type(db["nicknames"]) is dict and len(db["names"]) <= 5000 and len(db["hidden"]) <= 5000 and len(db["nicknames"]) <= 5000, "names.json: sizes"
           nick = re.compile(r"[a-z0-9][a-z0-9.\-]{0,31}")
+          pools = db.get("pools", {})
+          assert type(pools) is dict and len(pools) <= 500, "names.json: pools"
+          for a, n in pools.items():
+              assert addr.fullmatch(a) and a not in builtin and type(n) is str and 1 <= len(n) <= 48 and n == n.strip() and not re.search(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069]", n), "names.json: pool " + a
           for a, n in db["nicknames"].items():
               assert addr.fullmatch(a) and a not in builtin and type(n) is str and nick.fullmatch(n), "names.json: nickname " + a
           for a, e in db["names"].items():

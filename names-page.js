@@ -1,251 +1,121 @@
-/* names.html: a player or producer names their wallet. The page connects Kondor only to read the address and to sign one
-   text message (signMessage: no transaction, no Mana). It checks the rules (names.js) and the signature before showing
-   the claim, then hands it to GitHub as a prefilled issue (or the wallet's owner copies it to the owner). It never sends
-   anything to the chain for the name and stores nothing. The separate "Get a Koinos @name" card mints a Koinos nickname
-   (Nicknames contract mint) from the player's own Kondor wallet, paying their own Mana. Names are only ever set as textContent. */
+/* names.html: get a Koinos @name. The player connects their own wallet (wallet.js: Kondor or KOIN Vault), types a
+   name, sees at once whether the Koinos Nicknames contract would accept it (verify_valid_name, a read), and creates
+   it with one transaction from that wallet (Nicknames mint, the player's own Mana; the Mana sponsor never pays for
+   it). The contract, the recipient and the Mana limit are fixed here. Names are only ever set as textContent. */
 (() => {
   "use strict";
   const K = window.KNames, R = K && K.rules;
   const lib = window.koilib || window.koinos || window;
-  if (!K || !document.getElementById("name")) return;
-
-  const RAW = "https://raw.githubusercontent.com/bawcejawn/Knode/";
-  const ISSUE = "https://github.com/bawcejawn/Knode/issues/new?template=producer-name.yml";
-  const DAY = 86400000;
   const $ = (id) => document.getElementById(id);
+  if (!K || !$("nick")) return;
+
+  const NICKNAMES = "1KD9Es7LBBjA1FY3ViCgQJ7e6WH1ipKbhz";   // the Koinos Nicknames contract
+  const W = () => window.KWallet;
   const say = (id, text, cls) => { const e = $(id); e.textContent = text || ""; e.className = `msg${cls ? ` ${cls}` : ""}`; };
-  const S = { address: "", signature: "", producers: null, eligible: {} };
-  const UNIT = 100000000n;
-  // Read-only chain reads for "may this wallet take a name?" (the check runs the same reads: bot/names.ts).
-  const lib0 = window.koilib || window.koinos || window;
-  const addrT = (id) => ({ type: "bytes", id, options: { "(koinos.btype)": "ADDRESS" } });
-  const u64T = (id) => ({ type: "uint64", id, options: { jstype: "JS_STRING" } });
-  const READ_ABI = {
-    methods: {
-      balance_of: { entry_point: 0x5c721497, argument: "r.balance_of_arguments", return: "r.balance_of_result", read_only: true },
-      get_player: { entry_point: 0x37ce3085, argument: "r.get_player_arguments", return: "r.get_player_result", read_only: true },
-    },
-    koilib_types: { nested: { r: { nested: {
-      balance_of_arguments: { fields: { owner: addrT(1) } }, balance_of_result: { fields: { value: u64T(1) } },
-      player_object: { fields: { stake: u64T(1), pending: u64T(2), stake_other: u64T(6) } },
-      get_player_arguments: { fields: { player: addrT(1), week: u64T(2) } }, get_player_result: { fields: { player: { type: "player_object", id: 1 } } },
-    } } } },
-  };
-  let reader = null;
-  async function holdsEnough(a) {
-    try {
-      if (!reader) {
-        const dep = await fetch("./game-data/deployment.json", { cache: "no-cache" }).then((r) => r.json());
-        const provider = new lib0.Provider([dep.rpc || "https://koinos.armana.io"]);
-        reader = { vhp: new lib0.Contract({ id: dep.vhp, provider, abi: READ_ABI }).functions, game: new lib0.Contract({ id: dep.contract, provider, abi: READ_ABI }).functions };
-      }
-      const v = BigInt((await reader.vhp.balance_of({ owner: a })).result?.value || 0);
-      if (v >= UNIT) return true;
-      const p = (await reader.game.get_player({ player: a, week: "0" })).result?.player || {};
-      return BigInt(p.stake || 0) + BigInt(p.pending || 0) + BigInt(p.stake_other || 0) >= UNIT;
-    } catch { return null; }   // unknown: the check decides
-  }
-  async function checkEligible(a) {
-    if (!a || a in S.eligible) return;
-    S.eligible[a] = null;
-    const ok = (S.producers && S.producers.has(a)) || (await holdsEnough(a));
-    S.eligible[a] = ok;
-    if (a === S.address) update();
-  }
-
-  // ── who counts as a producer (the same evidence the check uses: race cards of the last 30 days, recent blocks) ──
-  async function loadProducers() {
-    const out = new Set(), now = Date.now();
-    const add = (a) => { if (typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a)) out.add(a); };
-    const get = (u) => fetch(u, { cache: "no-cache" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    const idx = await get(`${RAW}race-data/index.json`);
-    const weeks = Array.isArray(idx && idx.weeks) ? idx.weeks.filter((w) => Number.isInteger(w)).slice(-6) : [];
-    const files = await Promise.all([...weeks.map((w) => get(`${RAW}race-data/W${String(w).padStart(3, "0")}.json`)), get(`${RAW}blocks-data/recent-blocks.json`)]);
-    for (const j of files) {
-      if (j && Array.isArray(j.races)) {
-        for (const r of j.races) for (const c of (r && Array.isArray(r.cards) ? r.cards : [])) {
-          if (!c || typeof c.at !== "number" || c.at < now - 30 * DAY) continue;
-          for (const x of [...(c.field || []), ...(c.paddock || [])]) add(x && x.a);
-        }
-      } else if (j && Array.isArray(j.signers)) j.signers.forEach(add);
-    }
-    return out;
-  }
-
-  const today = () => R.today(Date.now());
-  const claimNow = () => ({ name: $("name").value, address: S.address, date: today() });
-
-  /** Re-check everything after any change; drop a signature that no longer fits. */
-  function update() {
-    const c = claimNow();
-    const db = K.db();
-    $("message").value = S.address && c.name ? R.message(c.name, c.address, c.date) : "";
-    S.signature = "";
-    $("s-send").hidden = true;
-    say("sign-msg", "");
-    // Who
-    const elig = S.address ? S.eligible[S.address] : undefined;
-    if (S.address && !(S.address in S.eligible)) checkEligible(S.address);
-    if (!S.address) say("who", "Connect Kondor, or enter the wallet address.");
-    else if (elig === false) say("who", `${K.short(S.address)} can't take a name yet: it needs at least 1 VHP in the wallet or staked in Knode Games, or to be a block producer.`, "bad");
-    else if (db.names[S.address] && !db.hidden[S.address]) say("who", `${K.short(S.address)} is named “${db.names[S.address].name}” (since ${db.names[S.address].date}).`);
-    else if (db.nicknames[S.address] && !db.hidden[S.address]) say("who", `${K.short(S.address)} shows as @${db.nicknames[S.address]} (its Koinos nickname) until it takes a Knode Games name.`);
-    else say("who", elig ? `${K.short(S.address)} can take a name.` : K.short(S.address));
-    // Name
-    const preview = $("preview");
-    if (c.name) {
-      const b = document.createElement("b"); b.className = "kn-name"; b.textContent = c.name;
-      const a = document.createElement("span"); a.className = "kn-addr"; a.textContent = S.address ? K.short(S.address) : "1Abc12…wxyz";
-      preview.replaceChildren("How it shows: ", b, " ", a);
-      preview.hidden = false;
-    } else preview.hidden = true;
-    const why = c.name ? (S.address ? R.precheck(db, c, Date.now()) : R.checkName(c.name)) : null;
-    say("name-msg", why || (c.name && S.address ? "Looks good. Sign it below." : ""), why ? "bad" : c.name && S.address ? "good" : "");
-    const ready = !!(S.address && c.name && !why && elig !== false);
-    $("sign").disabled = !ready || !window.kondor;
-    $("sig-use").disabled = !ready;
-    return ready;
-  }
-
-  async function accept(signature) {
-    const c = { ...claimNow(), signature };
-    c.message = R.message(c.name, c.address, c.date);
-    if (!(await R.verifySignature(c, lib))) {
-      say("sign-msg", "The signature doesn't match this address. Sign with that wallet itself, and sign the exact message above.", "bad");
-      return;
-    }
-    S.signature = signature;
-    const text = R.claimText(c.name, c.address, c.date, signature);
-    $("claim").value = text;
-    $("gh").href = `${ISSUE}&title=${encodeURIComponent(`Knode Games name: ${c.name}`)}&claim=${encodeURIComponent(text)}`;
-    $("s-send").hidden = false;
-    say("sign-msg", "Signed. The signature matches the address.", "good");
-    $("s-send").scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }
-
-  // ── wiring ──
-  $("connect").addEventListener("click", async () => {
-    if (!window.kondor || typeof window.kondor.getAccounts !== "function") {
-      say("who", "Kondor isn't installed in this browser. Install it, or open “Signing with another tool?” below.", "bad");
-      return;
-    }
-    try {
-      const accounts = await Promise.race([window.kondor.getAccounts(), new Promise((_, no) => setTimeout(() => no(new Error("No answer from Kondor. Is it unlocked?")), 20000))]);
-      const list = (Array.isArray(accounts) ? accounts : []).filter((x) => x && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(x.address));
-      if (!list.length) { say("who", "Kondor shared no account. Allow this site in Kondor and try again.", "bad"); return; }
-      const sel = $("acct");
-      sel.replaceChildren(...list.map((x) => { const o = document.createElement("option"); o.value = x.address; o.textContent = `${x.name ? `${String(x.name).slice(0, 30)} · ` : ""}${K.short(x.address)}`; return o; }));
-      sel.value = list[0].address;
-      sel.hidden = list.length < 2;
-      S.address = sel.value;
-      $("addr").value = "";
-      update();
-    } catch (e) {
-      say("who", /reject|denied|cancel/i.test(String(e && e.message)) ? "Cancelled in Kondor." : String((e && e.message) || e).slice(0, 160), "bad");
-    }
-  });
-  $("acct").addEventListener("change", () => { S.address = $("acct").value; update(); });
-  $("addr").addEventListener("input", () => { const v = $("addr").value.trim(); S.address = /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(v) ? v : ""; $("acct").hidden = true; update(); });
-  $("name").addEventListener("input", update);
-  $("sign").addEventListener("click", async () => {
-    if (!update()) return;
-    try {
-      say("sign-msg", "Confirm in Kondor…");
-      const sig = await window.kondor.getSigner(S.address).signMessage($("message").value);
-      await accept(lib.utils.encodeBase64url(sig));
-    } catch (e) {
-      say("sign-msg", /reject|denied|cancel/i.test(String(e && e.message)) ? "Cancelled in Kondor." : `Couldn't sign: ${String((e && e.message) || e).slice(0, 160)}`, "bad");
-    }
-  });
-  $("sig-use").addEventListener("click", () => {
-    const v = $("sig-in").value.trim();
-    if (!update()) return;
-    if (!/^[A-Za-z0-9_-]{80,96}={0,2}$/.test(v)) { say("sign-msg", "That isn't a signature (65 bytes, base64url).", "bad"); return; }
-    accept(v);
-  });
-  $("copy").addEventListener("click", async () => {
-    try { await navigator.clipboard.writeText($("claim").value); $("copy").textContent = "Copied"; } catch { $("claim").select(); }
-  });
-
-  // ── Get a Koinos @name: mint on the Koinos Nicknames contract from the player's own Kondor wallet (own Mana) ──
-  const NICKNAMES = "1KD9Es7LBBjA1FY3ViCgQJ7e6WH1ipKbhz";
-  const NICK_MANA = "1000000000";   // at most 10 KOIN of Mana held for the mint (the Nicknames team's own advice)
-  const nickOf = () => $("nick").value.trim().toLowerCase().replace(/^@/, "");
   const nickHex = (n) => "0x" + Array.from(new TextEncoder().encode(n), (b) => b.toString(16).padStart(2, "0")).join("");
-  let nickProvider = null, minting = false;   // one mint at a time (audit PN-18)
-  async function nickContract(signer) {
-    if (!nickProvider) {
+  const nickOf = () => $("nick").value.trim().toLowerCase().replace(/^@/, "");
+  const S = { who: "", current: "", checked: "", ok: false, minting: false, seq: 0 };
+
+  let contract = null;
+  async function nick(signer) {
+    if (!contract) {
       const dep = await fetch("./game-data/deployment.json", { cache: "no-cache" }).then((r) => r.json()).catch(() => ({}));
-      nickProvider = new lib.Provider([dep.rpc || "https://koinos.armana.io"]);
+      contract = new lib.Contract({ id: NICKNAMES, abi: lib.utils.nicknamesAbi, provider: new lib.Provider([dep.rpc || "https://koinos.armana.io"]) });
     }
-    return new lib.Contract({ id: NICKNAMES, abi: lib.utils.nicknamesAbi, provider: nickProvider, ...(signer ? { signer } : {}) });
+    return contract.functions;
   }
-  function nickCheck() {
-    const n = nickOf(), viaKondor = !!(S.address && $("acct").options.length && !$("addr").value.trim());
-    let why = "";
-    if (!n) why = "";
-    else if (!/^[a-z0-9][a-z0-9.-]{0,31}$/.test(n)) why = "Up to 32 characters: lowercase letters, digits, dots and dashes (starting with a letter or digit).";
-    else if (!R.okNick(n)) why = "That one is reserved or looks like an address on Knode Games (it would never show here). Choose another.";
-    else if (!viaKondor) why = "Connect Kondor in step 1 first: the @name is minted from that wallet.";
-    say("nick-msg", why, why ? "bad" : "");
-    $("nick-mint").disabled = minting || !n || !!why || !window.kondor;
-    return !why && !!n;
+  /** The contract's own words for why a name can't be used (or null when it's available). */
+  function reason(e) {
+    const m = String((e && e.message) || e || "");
+    const j = /"message"\s*:\s*"([^"]{3,140})"/.exec(m);
+    const t = (j ? j[1] : m.replace(/^Error:\s*/, "")).trim();
+    return t && t.length <= 160 && !/[{}<>]/.test(t) ? t.charAt(0).toUpperCase() + t.slice(1) + (/[.!?]$/.test(t) ? "" : ".") : "That name can't be used.";
   }
-  $("nick").addEventListener("input", nickCheck);
-  $("acct").addEventListener("change", nickCheck);
-  $("connect").addEventListener("click", () => setTimeout(nickCheck, 0));
-  $("nick-mint").addEventListener("click", async () => {
-    if (minting || !nickCheck()) return;
-    const n = nickOf(), who = S.address;
-    minting = true;
-    $("nick-mint").disabled = true;
+
+  // ── 1. the wallet ──
+  async function showWallet() {
+    const w = W(), a = w && w.address;
+    S.who = a && w.kind !== "guest" ? a : "";
+    $("connect").hidden = !!S.who;
+    if (!a) { say("who", "Connect your wallet to start."); return check(); }
+    if (w.kind === "guest") { say("who", "Guest wallets can't hold an @name. Connect Kondor or KOIN Vault (the button above, or Connect wallet)."); $("connect").hidden = false; return check(); }
+    say("who", `${K.short(a)} connected. Checking for an @name…`);
     try {
-      say("nick-msg", "Checking the name on chain…");
-      const read = (await nickContract()).functions;
+      const t = (await (await nick()).get_main_token({ value: a })).result;
+      S.current = t && t.token_id ? new TextDecoder().decode(lib.utils.toUint8Array(String(t.token_id).replace(/^0x/, ""))) : "";
+    } catch { S.current = ""; }
+    say("who", S.current ? `${K.short(a)} is @${S.current}. You're all set; you can also create another one below.` : `${K.short(a)} has no @name yet.`, S.current ? "good" : "");
+    check();
+  }
+  $("connect").addEventListener("click", () => { const w = W(); if (w && w.connect) w.connect(); });
+  if (W() && W().subscribe) W().subscribe(() => showWallet());
+
+  // ── 2. the name: checked as you type ──
+  let timer = null;
+  function check() {
+    clearTimeout(timer);
+    const n = nickOf(), my = ++S.seq;
+    S.ok = false; S.checked = "";
+    $("nick-mint").textContent = n ? `Create @${n}` : "Create @name";
+    $("nick-mint").disabled = true;
+    if (!n) return say("nick-msg", "");
+    if (!/^[a-z][a-z0-9.-]{2,31}$/.test(n)) return say("nick-msg", "3 to 32 characters: lowercase letters, numbers, dots and dashes, starting with a letter.", "bad");
+    if (!R.okNick(n)) return say("nick-msg", "That one imitates Knode Games or Koinos, or looks like an address. Pick another.", "bad");
+    say("nick-msg", "Checking…");
+    timer = setTimeout(async () => {
       try {
-        const v = await read.verify_valid_name({ value: n });
-        const note = v && v.result && v.result.value;
-        if (note && note !== n) { say("nick-msg", `The Nicknames contract says: ${String(note).slice(0, 160)}`, "bad"); return; }
-      } catch (e) { say("nick-msg", `Not available: ${String((e && e.message) || e).replace(/^.*?:\s*/, "").slice(0, 160)}`, "bad"); return; }
-      const mana = BigInt(await nickProvider.getAccountRc(who));
-      if (mana < 50000000n) { say("nick-msg", "This wallet has almost no Mana. Mana comes from KOIN in the wallet; add some KOIN (or wait for it to refill) and try again.", "bad"); return; }
-      const limit = mana < BigInt(NICK_MANA) ? (mana * 9n / 10n).toString() : NICK_MANA;
-      say("nick-msg", `Confirm “Create @${n}” in Kondor…`);
-      const signer = window.kondor.getSigner(who);
-      const nick = await nickContract(signer);
-      const { transaction, receipt } = await nick.functions.mint({ to: who, token_id: nickHex(n) }, { payer: who, rcLimit: limit });
-      if (receipt && receipt.reverted) throw new Error("the Nicknames contract refused it");
+        // Valid names come back as "@name is available"; anything else is refused with the contract's reason.
+        const v = (await (await nick()).verify_valid_name({ value: n })).result;
+        if (my !== S.seq) return;
+        const text = String((v && v.value) || "");
+        if (!/is available$/.test(text)) return say("nick-msg", text || "That name can't be used.", "bad");
+        S.ok = true; S.checked = n;
+        say("nick-msg", `✓ @${n} is available.${S.who ? "" : " Connect your wallet to create it."}`, "good");
+        $("nick-mint").disabled = !S.who || S.minting;
+      } catch (e) {
+        if (my !== S.seq) return;
+        say("nick-msg", reason(e), "bad");
+      }
+    }, 350);
+  }
+  $("nick").addEventListener("input", check);
+
+  // ── 3. create it ──
+  $("nick-mint").addEventListener("click", async () => {
+    const w = W(), n = nickOf(), who = S.who;
+    if (S.minting || !S.ok || S.checked !== n || !who || !w) return;
+    S.minting = true; $("nick-mint").disabled = true;
+    try {
+      say("nick-msg", `Confirm “Create @${n}” in your wallet…`);
+      const op = (await (await nick()).mint({ to: who, token_id: nickHex(n) }, { onlyOperation: true })).operation;
+      const id = await w.send(`create @${n}`, [op]);
       say("nick-msg", "Sent. Waiting for the next block…");
-      let landed = false;
-      if (transaction && transaction.wait) { try { await transaction.wait("byBlock", 90000); landed = true; } catch { /* checked below */ } }
-      // Only the chain says whether it worked (audit PN-18): who owns @name now?
-      const got = await read.get_address({ value: n }).catch(() => null);
-      const owner = got?.result?.value;
-      if (!got) { say("nick-msg", landed ? `Sent, but the page couldn't check the result just now. Look in your wallet (or reload this page) before trying again.` : `Not confirmed yet. Wait a minute and check your wallet before trying again: the transaction may still land.`, "bad"); return; }
-      const main = (await read.get_main_token({ value: who }).catch(() => null))?.result;
-      if (owner !== who && !landed) { say("nick-msg", `Not confirmed yet. Wait a minute and check your wallet before trying again: the transaction may still land.`, "bad"); return; }
-      if (owner !== who) { say("nick-msg", `The transaction landed, but @${n} isn't this wallet's. It may have been taken first. Nothing else changed.`, "bad"); return; }
-      const isMain = main && String(main.token_id || "").toLowerCase() === nickHex(n);
-      say("nick-msg", isMain ? `Done: this wallet is @${n} on Koinos. Knode Games pages show it within the hour (until you take a Knode Games name).`
-        : `Created @${n}. Another @name is still this wallet's main one: set @${n} as main in a Koinos nickname app. Knode Games shows your main @name within the hour.`, "good");
+      // Only the chain says whether it worked: who owns @name now?
+      let owner = null;
+      for (let i = 0; i < 6 && owner !== who; i++) {
+        try { owner = (await (await nick()).get_address({ value: n })).result?.value || null; } catch { owner = null; }
+        if (owner !== who) await new Promise((r) => setTimeout(r, 5000));
+      }
+      if (owner === who) {
+        if (K.setLocal) K.setLocal(who, n);   // show it on this device at once; everyone else within the hour
+        S.current = S.current || n;
+        say("nick-msg", `Done! You're @${n} on Koinos. It shows on every Knode Games page within the hour.`, "good");
+        $("nick").value = ""; S.ok = false;
+        showWallet();
+      } else {
+        say("nick-msg", id ? "Sent, but it isn't confirmed yet. Check your wallet in a minute before trying again." : "Not confirmed yet. Check your wallet before trying again.", "bad");
+      }
     } catch (e) {
       const m = String((e && e.message) || e);
-      say("nick-msg", /reject|denied|cancel/i.test(m) ? "Cancelled in Kondor." : `Couldn't create it: ${m.slice(0, 160)}`, "bad");
-    } finally { minting = false; nickCheck(); }
+      say("nick-msg", /reject|denied|cancel/i.test(m) ? "Cancelled in your wallet. Nothing was sent."
+        : /pending account resources/i.test(m) ? "Your Mana is still busy with your last transaction. Wait a minute and try again."
+        : /mana|rc_limit|insufficient/i.test(m) ? "Your wallet doesn't have enough Mana right now. Mana comes from the KOIN in your wallet and refills by itself; try again later."
+        : `Couldn't create it: ${reason(e)}`, "bad");
+    } finally {
+      S.minting = false; $("nick-mint").disabled = !S.ok || !S.who;
+    }
   });
 
-  function renderList() {
-    const db = K.db();
-    const rows = Object.entries(db.names).filter(([a]) => !db.hidden[a]).sort((x, y) => x[1].name.localeCompare(y[1].name));
-    const tr = (cells) => { const r = document.createElement("tr"); r.append(...cells); return r; };
-    const td = (kid, cls) => { const d = document.createElement("td"); if (cls) d.className = cls; d.append(kid); return d; };
-    $("list").replaceChildren(...(rows.length
-      ? rows.map(([a, e]) => tr([td(K.node(a)), td(`since ${e.date}`, "d")]))
-      : [tr([td("No names yet. Be the first.", "help")])]));
-  }
-
-  K.onChange(() => { renderList(); update(); });
-  K.load().then(renderList);
-  loadProducers().then((p) => { S.producers = p; S.eligible = {}; update(); });
-  update();
+  K.load();
+  showWallet();
 })();

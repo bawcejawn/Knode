@@ -1,12 +1,24 @@
-# Knode Games names (players and producers)
+# Names on Knode Games (Koinos @names and pool names)
 
-Any player or producer can swap their long address for a name; it shows on Knode Games pages (leaderboards,
-results, Pulse, Producer lookup; not yet the race and games pages), always next to the short address (`Blue Harbor · 1JrsQX…sohh`), so a name can never
-pass for another wallet. The Knode Games name is free: a signed message, no contract, no transaction. Wallets without a Knode Games name show their on-chain
-Koinos nickname instead (`@jga · 1Abc12…wxyz`), from the Koinos Nicknames contract `1KD9Es7LBBjA1FY3ViCgQJ7e6WH1ipKbhz`.
-Your own wallet button in the header shows your name.
+**Owner, 30 Oct 2026: one name per wallet, the Koinos @name.** Pages show, for each address, in this order of preference:
+1. its **Koinos @name** (the main token on the Koinos Nicknames contract `1KD9Es7LBBjA1FY3ViCgQJ7e6WH1ipKbhz`), `@jga · 1Abc12…wxyz`;
+2. an older **Knode Games name** (the signed claims below; the site no longer offers them);
+3. for a block producer that runs a pool, the **pool's name** (the pool contract's `get_pool_params`, the same name
+   koinosscan.com shows), `JGA Pool #2 · 1MbsVf…8CzW`;
+4. otherwise the short address. A name is always shown next to the short address, so it can never pass for another wallet.
 
-## How someone takes a name
+**Get a Koinos @name:** knodegames.com/names.html. Connect the wallet (Kondor or KOIN Vault), type a name: the page asks
+the Nicknames contract live whether it's available (`verify_valid_name` answers "@name is available" or the reason),
+and **Create** mints it from the player's own wallet (`mint { to: the wallet, token_id: hex of the name }`, their own
+Mana; the Mana sponsor never pays for it). The page shows it at once on that device; every page has it after the next
+hourly refresh. Contract rules: 3 to 32 characters, lowercase letters, numbers, dots and dashes, each word starting
+with a letter, and not too close to an existing name.
+
+**Pool names** are read hourly for the producers seen in the last 30 days, from two nodes that must agree. A pool
+name that imitates Knode Games or Koinos (reserved words, lookalikes) or looks like an address is not shown.
+
+## Knode Games names (older; still processed, no longer offered on the site)
+### How someone took a name
 1. Open **https://knodegames.com/names.html**, connect the wallet in Kondor (or enter the address and sign with
    another tool), type a name. The page checks the rules and whether the wallet can take a name.
 2. Sign `Knode Games name: <name> | <address> | <YYYY-MM-DD>` (Kondor `signMessage`: no transaction, no Mana). The
@@ -48,7 +60,7 @@ removes unused names (`npm run names -- remove`).
 - A signed claim anyone has seen can be submitted again by anyone while it is at most 7 days old (it still only names
   the wallet that signed it).
 
-## Get a Koinos @name (names.html, bottom card)
+## Get a Koinos @name: details
 A Koinos nickname is not a Knode Games name: it is an NFT on the Koinos Nicknames contract
 (`1KD9Es7LBBjA1FY3ViCgQJ7e6WH1ipKbhz`), shown in other Koinos apps too. The card **mints** it: one transaction from
 the player's own Kondor wallet (`mint { to: the connected wallet, token_id: hex of the name }`), paid with the
