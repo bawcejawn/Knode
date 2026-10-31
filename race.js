@@ -445,4 +445,6 @@
 
   // Stake in the Race (vault game 7): the shared panel stays hidden until the Knode Games vault (v6) is live.
   if (window.KStake) window.KStake.mount(document.getElementById("stake"), { game: 7 });
+  // The staked / free status bar at the top of the page (Hub, PR #41): links to the full staking page.
+  if (window.KStake && window.KStake.badge) window.KStake.badge(document.getElementById("stake-badge"), { game: 7 });
 })();
