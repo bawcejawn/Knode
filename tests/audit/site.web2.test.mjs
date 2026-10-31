@@ -78,8 +78,9 @@ test("(guard) wallet pages load wallet.js before their page script", () => {
     const own = [...html.matchAll(/<script\b[^>]*\bsrc="([^":]+\.js)"/g)].map((m) => m[1]);
     const signs = own.some((f) => /KWallet|kondor/.test(read(`${f}`)) && f !== "wallet.js");
     if (!signs) continue;
-    // The testnet page signs with testnet-wallet.js (its own frame-buster, never the mainnet wallet).
-    const wi = /<meta name="kg-network" content="testnet">/.test(html) ? own.indexOf("testnet-wallet.js") : own.indexOf("wallet.js");
+    // Testnet pages sign with their own testnet wallet (testnet-wallet.js for Block X, stake-testnet-wallet.js for
+    // staking), each with its own frame-buster, never the mainnet wallet.
+    const wi = /<meta name="kg-network" content="testnet">/.test(html) ? own.findIndex((f) => /^(stake-)?testnet-wallet\.js$/.test(f)) : own.indexOf("wallet.js");
     if (wi < 0) { bad.push(`${p}: signs without wallet.js`); continue; }
     for (const f of own.slice(0, wi)) if (/addEventListener|onclick|KWallet|kondor|fetch\(/.test(read(`${f}`))) bad.push(`${p}: ${f} runs before the frame-buster`);
   }

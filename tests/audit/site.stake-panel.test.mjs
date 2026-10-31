@@ -53,7 +53,7 @@ function env({ state, game, player = null, qplayer = null, weeks = {}, account =
     KWallet: { address: account, kind, label: () => "Kondor", subscribe: (f) => { listener = f; }, connect: async () => {}, guestInfo: () => { ctx.guestInfoShown = true; },
       send: async (label, o) => { sent.push({ label, ops: o }); return "0xtx"; } },
     fetch: async () => ({ ok: true, json: async () => DEP }),
-    console, BigInt, Number, String, JSON, Promise, Object, Error,
+    setInterval: () => 0, console, BigInt, Number, String, JSON, Promise, Object, Error,
   };
   ctx.window = ctx;
   vm.createContext(ctx);
@@ -131,6 +131,7 @@ test("claim math: prizes, cutoff and the two baskets, as the vault computes them
   assert.equal(T.claimable(w, { prize_place: 1 }, buckets), 2n * UNIT);
   assert.equal(T.claimable(w, { prize_place: 2 }, buckets), UNIT);
   assert.equal(T.claimable({ ...w, first_n: 2 }, { prize_place: 2 }, buckets), 0n);  // 1st tied: they share all 3 VHP
+  assert.equal(T.claimable({ ...w, first_n: 0 }, { prize_place: 2 }, buckets), UNIT);   // nobody 1st: 2nd is still paid (V6-9)
   assert.equal(T.claimable(w, null, buckets), 0n);
 });
 
@@ -310,4 +311,67 @@ test("Where to stake: every staked game side by side with links to its page; hid
   e.K.mountList(e.root, { links: {} });
   await e.tick();
   assert.match(e.root.textContent, /Last week new: no full week yet/);
+});
+
+// ── the staked / free status bar (every game page) and the staking page ──
+const V5 = (o = {}) => ({ config: { genesis_time: String(DEP.genesisTime), week_length: "604800000", min_stake: String(UNIT), min_stake_next: "0", min_stake_next_week: "0", paused: false, ...o }, week: "1", time: "0" });
+
+test("status: Daily Questions works before the vault (v5); other games say closed until the vault is live", async () => {
+  let e = env({ state: V5(), qplayer: { player: { stake: String(25n * UNIT), pending: String(5n * UNIT), pending_week: "2" }, active_stake: String(25n * UNIT) } });
+  let st = await e.K.status(1, ME);
+  assert.deepEqual(J({ ...st, amount: String(st.amount), counted: String(st.counted), pending: String(st.pending), min: String(st.min) }),
+    { open: true, staked: true, amount: String(30n * UNIT), counted: String(25n * UNIT), pending: String(5n * UNIT), pendingFrom: "Mon 2 Nov", min: String(UNIT) });
+  st = await e.K.status(7, ME);
+  assert.equal(st.open, false); assert.equal(st.amount, 0n);
+  e = env({ state: LIVE(), game: GAME(), player: { player: { stake: String(3n * UNIT), pending: "0" }, week_stake: String(3n * UNIT) } });
+  st = await e.K.status(7, ME);
+  assert.equal(st.open, true); assert.equal(st.staked, true); assert.equal(st.amount, 3n * UNIT);
+  e = env({ state: LIVE(), game: GAME(), player: { player: { stake: "0", pending: String(2n * UNIT), pending_week: "6" }, week_stake: "0" } });
+  st = await e.K.status(7, ME);
+  assert.equal(st.staked, false); assert.equal(st.pending, 2n * UNIT); assert.equal(st.pendingFrom, "Mon 30 Nov");
+});
+
+test("status bar text: staked, waiting for next week, free, guest, not connected, closed", () => {
+  const S = (o) => ({ open: true, staked: false, amount: 0n, counted: 0n, pending: 0n, pendingFrom: "", min: UNIT, ...o });
+  let t = T.badgeText(S({ staked: true, amount: 25n * UNIT, counted: 25n * UNIT }), true, false);
+  assert.deepEqual(J(t), { cls: "staked", head: "Staked", amount: "25 VHP", sub: "You share this game's weekly rewards.", link: "Manage stake" });
+  t = T.badgeText(S({ staked: true, amount: 30n * UNIT, pending: 5n * UNIT, pendingFrom: "Mon 2 Nov" }), true, false);
+  assert.match(t.sub, /5 VHP more counts from Mon 2 Nov\./);
+  t = T.badgeText(S({ amount: 2n * UNIT, pending: 2n * UNIT, pendingFrom: "Mon 2 Nov" }), true, false);
+  assert.equal(t.head, "Playing free this week"); assert.equal(t.amount, "2 VHP staked"); assert.match(t.sub, /counts from Mon 2 Nov/);
+  t = T.badgeText(S({}), true, false);
+  assert.equal(t.head, "Playing free"); assert.equal(t.link, "Stake"); assert.match(t.sub, /Stake 1 VHP or more/);
+  assert.equal(T.badgeText(S({}), true, true).head, "Playing free (guest)");
+  assert.match(T.badgeText(S({}), false, false).sub, /Connect a wallet/);
+  assert.match(T.badgeText(S({ open: false }), true, false).sub, /opens when the Knode Games vault goes live/);
+});
+
+test("status bar: drawn with the amount and a link to the staking page; guests never trigger a stake read", async () => {
+  let e = env({ state: LIVE(), game: GAME(), player: { player: { stake: String(12n * UNIT), pending: "0" }, week_stake: String(12n * UNIT) } });
+  e.K.badge(e.root, { game: 7 });
+  await e.tick();
+  assert.equal(e.root.className, "kbadge staked");
+  assert.match(e.root.textContent, /^Staked · 12 VHP/);
+  const link = e.root.all().find((n) => n.tagName === "a");
+  assert.equal(link.attrs.href, "stake.html#g7"); assert.equal(link.textContent, "Manage stake →");
+  e = env({ state: LIVE(), game: GAME(), kind: "guest" });
+  e.K.badge(e.root, { game: 7 });
+  await e.tick();
+  assert.match(e.root.textContent, /Playing free \(guest\)/);
+  assert.ok(!e.reads.includes("get_game_player"));
+  assert.equal(e.sent.length, 0, "the status bar never sends anything");
+});
+
+test("pages: Daily Questions shows the status bar; the staking page loads the panel; the hub shows each game's chip", () => {
+  const read = (f) => fs.readFileSync(`${APP}/${f}`, "utf8");
+  const idx = read("index.html");
+  assert.match(idx, /<div id="stake-badge" hidden><\/div>/);
+  assert.ok(idx.indexOf('src="stake-panel.js"') < idx.indexOf('src="app.js"'));
+  assert.match(read("app.js"), /window\.KStake\.badge\(\$\("#stake-badge"\), \{ game: 1, href: "stake\.html" \}\)/);
+  const sk = read("stake.html");
+  assert.ok(sk.indexOf('src="wallet.js"') < sk.indexOf('src="stake-panel.js"') && sk.indexOf('src="stake-panel.js"') < sk.indexOf('src="stake-page.js"'));
+  const page = read("stake-page.js");
+  assert.doesNotMatch(page, /\.send\(|innerHTML|localStorage/);
+  assert.match(page, /K\.mount\(box, \{ game: id \}\)/);
+  assert.match(read("games.js"), /K\.status\(Number\(b\.dataset\.stake\), who\)/);
 });

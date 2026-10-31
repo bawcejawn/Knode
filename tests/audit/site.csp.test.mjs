@@ -90,14 +90,21 @@ test("(guard) every origin the pages fetch or load from is allowed (connect-src 
   for (const p of pages) {
     const html = read(p), c = cspOf(html);
     const conn = srcList(c, "connect-src");
-    // The testnet page reaches only the testnet node and its own data branch: never mainnet, never KOIN Vault.
-    if (/<meta name="kg-network" content="testnet">/.test(html)) {
+    // The Block X testnet page reaches only the testnet node and its own data branch: never mainnet, never KOIN Vault.
+    if (/<meta name="kg-network" content="testnet">/.test(html) && /blockx/.test(p)) {
       const tn = json("testnet/blockx.json");
       if (!allows(conn, tn.rpc + "/")) missing.push(`${p}: connect-src lacks the testnet node ${tn.rpc}`);
       if (!allows(conn, tn.data + "blockx-2/board.json")) missing.push(`${p}: connect-src lacks the testnet data branch`);
       for (const bad of ["https://api.koinos.io/", "https://koinos.armana.io/", "https://koinvault.app/api/dapp/status", "https://raw.githubusercontent.com/bawcejawn/Knode/games-data/x"])
         if (allows(conn, bad)) missing.push(`${p}: the testnet page may reach ${bad}`);
       for (const m of html.matchAll(/<script\b[^>]*\bsrc="(https:[^"]+)"/g)) if (!allows(srcList(c, "script-src"), m[1])) missing.push(`${p}: script-src blocks ${m[1]}`);
+      continue;
+    } else if (/<meta name="kg-network" content="testnet">/.test(html)) {
+      // The testnet staking page reaches only the testnet node: never mainnet, never KOIN Vault.
+      const tn = json("testnet/vault.json");
+      if (!allows(conn, tn.rpc + "/")) missing.push(`${p}: connect-src lacks the testnet node ${tn.rpc}`);
+      for (const bad of [...rpcs, "https://koinvault.app/api/dapp/status"]) if (allows(conn, bad)) missing.push(`${p}: the testnet page may reach ${bad}`);
+      if (/<script\b[^>]*\bsrc="(guest|wallet|header-wallet)\.js"/.test(html)) missing.push(`${p}: the testnet page loads a mainnet wallet script`);
       continue;
     }
     const usesChain = /koilib@/.test(html), usesWallet = /wallet\.js/.test(html);
