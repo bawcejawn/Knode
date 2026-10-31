@@ -442,3 +442,12 @@ test("only the latest refresh shows: a slow first read can't overwrite the newly
   assert.match(e.root.textContent, /9 VHP/);
   assert.doesNotMatch(e.root.textContent, /Connect wallet to stake/);
 });
+
+test("pages without their own wallet set-up still give it a network (owner's @name error, 30 Oct: getChainId of null)", () => {
+  const hw = fs.readFileSync(`${APP}/header-wallet.js`, "utf8");
+  assert.match(hw, /const lib = window\.koilib \|\| window\.koinos \|\| \(window\.Provider \? window : null\);/, "the koilib bundle puts Provider on window");
+  const sp = fs.readFileSync(`${APP}/stake-page.js`, "utf8");
+  assert.match(sp, /w\.init\(\{ provider: new lib\.Provider\(\[dep\.rpc \|\| "https:\/\/koinos\.armana\.io"\]\), chainId: dep\.chainId, payer: dep\.payer, sponsor: dep\.sponsor \}\)/, "the staking hub asks the Mana sponsor like the game pages");
+  const np = fs.readFileSync(`${APP}/names-page.js`, "utf8");
+  assert.match(np, /w\.init\(\{ provider: new lib\.Provider\(\[dep\.rpc \|\| "https:\/\/koinos\.armana\.io"\]\), chainId: dep\.chainId \}\)/, "names: a network, own Mana");
+});

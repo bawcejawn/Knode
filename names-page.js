@@ -116,6 +116,14 @@
     }
   });
 
+  // The wallet needs a network to send from this page (its own Mana: the Mana sponsor never pays for an @name).
+  (async () => {
+    const w = W();
+    try {
+      const dep = await fetch("./game-data/deployment.json", { cache: "no-cache" }).then((r) => r.json());
+      if (w && w.init && lib.Provider) w.init({ provider: new lib.Provider([dep.rpc || "https://koinos.armana.io"]), chainId: dep.chainId });
+    } catch { /* the header's defaults */ }
+  })();
   K.load();
   showWallet();
 })();
