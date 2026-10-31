@@ -239,7 +239,7 @@ jobs:
                   assert type(rs) is list and len(rs) <= 100000 and all(type(x) is dict and set(x) == {"player", "points"} and isa(x["player"]) and type(x["points"]) is int and 1 <= x["points"] <= 255 for x in rs), f
                   assert len({x["player"] for x in rs}) == len(rs) and all(rs[i]["points"] >= rs[i + 1]["points"] for i in range(len(rs) - 1)), f
                   # The rows themselves are checked in the push step (histcheck.py): exactly what last week's day files give.
-          open(os.path.join(os.environ["RUNNER_TEMP"], "vault-skip.txt"), "w").write("".join(x + "\n" for x in skip))
+          open(os.path.join(os.environ["RUNNER_TEMP"], "vault-skip.txt"), "w", newline="\n").write("".join(x + "\n" for x in skip))
           for f in os.listdir(d):
               if f == "vault": continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
@@ -723,7 +723,7 @@ jobs:
           ws = WEEK0 + now_w * WEEK
           if ws + 3 * DAY <= now < ws + 3 * DAY + 2 * H and any(r["pts"] >= 1 for r in want) and parent and show("lastnode/vault/W%d.json" % (now_w - 1)) is None and "W%d.json ok" % (now_w - 1) not in lines:   # L-6
               lines.append("W%d.json unfiled" % (now_w - 1))
-          open(status, "w").write("".join(x + "\n" for x in lines))
+          open(status, "w", newline="\n").write("".join(x + "\n" for x in lines))
           for e in errs: print("::error::" + e)
           sys.exit(1 if errs else 0)
           HIST
