@@ -30,7 +30,7 @@ class Node {
 }
 const buttons = (root, label) => root.all().filter((n) => n.tagName === "button" && n.textContent === label);
 
-function env({ state, game, player = null, weeks = {}, account = ME, kind = "kondor", games = [] } = {}) {
+function env({ state, game, player = null, qplayer = null, weeks = {}, account = ME, kind = "kondor", games = [] } = {}) {
   const sent = [], ops = [], reads = [];
   class Contract {
     constructor({ id }) { this.id = id; const self = this;
@@ -39,6 +39,7 @@ function env({ state, game, player = null, weeks = {}, account = ME, kind = "kon
         reads.push(m);
         if (m === "get_state") return { result: state };
         if (m === "list_games") return { result: { games } };
+        if (m === "get_player") return { result: qplayer || {} };
         if (m === "get_game") { const w = weeks[args.week]; return { result: { game, week: w && w.gw, buckets: w && w.buckets } }; }
         if (m === "get_game_player") { const w = weeks[args.week]; return { result: args.week === String(state.week) ? player || {} : { entry: w && w.e } }; }
         return { result: {} };
@@ -52,7 +53,7 @@ function env({ state, game, player = null, weeks = {}, account = ME, kind = "kon
     KWallet: { address: account, kind, label: () => "Kondor", subscribe: (f) => { listener = f; }, connect: async () => {}, guestInfo: () => { ctx.guestInfoShown = true; },
       send: async (label, o) => { sent.push({ label, ops: o }); return "0xtx"; } },
     fetch: async () => ({ ok: true, json: async () => DEP }),
-    console, BigInt, Number, String, JSON, Promise, Object, Error,
+    setInterval: () => 0, console, BigInt, Number, String, JSON, Promise, Object, Error,
   };
   ctx.window = ctx;
   vm.createContext(ctx);
@@ -64,7 +65,7 @@ function env({ state, game, player = null, weeks = {}, account = ME, kind = "kon
 const T = env({ state: {} }).K._test;
 const J = (x) => JSON.parse(JSON.stringify(x));   // values made inside the vm, compared as plain data
 
-const LIVE = (o = {}) => ({ config: { min_stake: String(UNIT), min_stake_next: "0", min_stake_next_week: "0", paused: false, v6_rule_week_plus_one: "3", ...o }, week: "5", time: "0" });
+const LIVE = (o = {}) => ({ config: { genesis_time: String(DEP.genesisTime), week_length: "604800000", min_stake: String(UNIT), min_stake_next: "0", min_stake_next_week: "0", paused: false, v6_rule_week_plus_one: "3", ...o }, week: "5", time: "0" });
 const GAME = (o = {}) => ({ id: 7, name: "Producer Race", staked: true, free_prize: true, active: true, from_week: "3", stake: String(250n * UNIT), season_weeks: 0, ...o });
 
 test("ABI: every entry point is the first 4 bytes of sha256(name)", () => {
@@ -74,9 +75,8 @@ test("ABI: every entry point is the first 4 bytes of sha256(name)", () => {
   }
 });
 
-// The repo's ABI becomes v6 when the vault-v6 branch is merged; until then point STAKE_PANEL_ABI at that branch's
-// game/abi/kpred.koilib.json to run this check (it was run that way when the panel was written).
-const abiPath = process.env.STAKE_PANEL_ABI || `${APP}/game/abi/kpred.koilib.json`;
+// Audit BX-85: the committed vault (v6) ABI, game/abi/kpred-v6.koilib.json (BX-61), so this check always runs.
+const abiPath = process.env.STAKE_PANEL_ABI || `${APP}/game/abi/kpred-v6.koilib.json`;
 const real = JSON.parse(fs.readFileSync(abiPath, "utf8"));
 test("ABI: the panel's methods and field numbers match the vault's own ABI (v6)", { skip: !real.methods.deposit_to && "the repository's ABI is not v6 yet" }, () => {
   const types = real.koilib_types.nested.kpred.nested;
@@ -131,6 +131,7 @@ test("claim math: prizes, cutoff and the two baskets, as the vault computes them
   assert.equal(T.claimable(w, { prize_place: 1 }, buckets), 2n * UNIT);
   assert.equal(T.claimable(w, { prize_place: 2 }, buckets), UNIT);
   assert.equal(T.claimable({ ...w, first_n: 2 }, { prize_place: 2 }, buckets), 0n);  // 1st tied: they share all 3 VHP
+  assert.equal(T.claimable({ ...w, first_n: 0 }, { prize_place: 2 }, buckets), UNIT);   // nobody 1st: 2nd is still paid (V6-9)
   assert.equal(T.claimable(w, null, buckets), 0n);
 });
 
@@ -204,12 +205,28 @@ test("finished weeks with something to claim get a Claim button that sends claim
     weeks: { 4: { gw, e: { prize_place: 1 } }, 3: { gw, e: { prize_place: 1, claimed: true } } } });
   e.K.mount(e.root, { game: 7 });
   await e.tick();
-  assert.match(e.root.textContent, /Week 4: 2 VHP/);
-  assert.doesNotMatch(e.root.textContent, /Week 3:/);
+  assert.match(e.root.textContent, /Week of 16 Nov: 2 VHP/);   // vault week 4 starts Monday 16 Nov 2026
+  assert.doesNotMatch(e.root.textContent, /Week of 9 Nov/);
   await buttons(e.root, "Claim")[0].on.click();
   await e.tick();
   assert.equal(e.sent.length, 1);
   assert.deepEqual(J(e.sent[0].ops.map((o) => [o._m, o._a])), [["claim_game", { player: ME, game: 7, week: "4" }]]);
+});
+
+test("claims: weeks before a restart (from_week moved forward) and up to 52 weeks back are still offered", async () => {
+  const gw = { finalized: true, cutoff: 1, first_n: 1, prize_first: String(2n * UNIT), prize_second: String(UNIT) };
+  // (Weeks show as dates: vault week 12 starts Mon 11 Jan 2027, week 9 Mon 21 Dec, week 7 Mon 7 Dec.)
+  // Now week 60; the Race was restarted and earns from week 50. Week 12 (before the restart) and week 9 (51 weeks
+  // back) still pay; week 7 (53 weeks back) is beyond the window.
+  const e = env({ state: { ...LIVE(), week: "60" }, game: GAME({ from_week: "50" }), player: { player: { stake: "0", pending: "0" }, week_stake: "0" },
+    weeks: { 12: { gw, e: { prize_place: 1 } }, 9: { gw, e: { prize_place: 1 } }, 7: { gw, e: { prize_place: 1 } } } });
+  e.K.mount(e.root, { game: 7 });
+  await e.tick();
+  assert.match(e.root.textContent, /Week of 11 Jan: 2 VHP/);
+  assert.match(e.root.textContent, /Week of 21 Dec: 2 VHP/);
+  assert.doesNotMatch(e.root.textContent, /Week of 7 Dec:/);
+  // Results are read only for weeks with something in the player's entry, not for all 52.
+  assert.equal(e.reads.filter((m) => m === "get_game").length, 1 + 2, "the current week, then weeks 12 and 9 only");
 });
 
 test("stake dialog: whole numbers only; a valid stake sends approve + deposit_to", async () => {
@@ -245,4 +262,116 @@ test("the panel sends only through the wallet, and only vault and token operatio
   assert.match(src, /const id = await W\.send\(label, ops\);/);
   assert.doesNotMatch(src, /signTransaction|sendTransaction|privateKey|wif|innerHTML|outerHTML|insertAdjacentHTML|eval\(|new Function|localStorage|sessionStorage/i);
   assert.match(src, /new k\.lib\.Contract\(\{ id: k\.dep\.contract, abi: VAULT_ABI/, "the vault address comes from game-data/deployment.json");
+});
+
+test("dates, not week numbers: a vault week is the Monday it starts (UTC)", () => {
+  const c = LIVE().config;
+  assert.equal(T.weekDate(c, 0), "Mon 19 Oct");
+  assert.equal(T.weekDate(c, 2), "Mon 2 Nov");
+  assert.equal(T.weekDate(c, 10), "Mon 28 Dec");
+});
+
+test("the status line says when a new stake starts counting, as a date", async () => {
+  const e = env({ state: LIVE(), game: GAME(), player: { player: { stake: String(12n * UNIT), pending: String(5n * UNIT), pending_week: "6" }, week_stake: String(12n * UNIT) } });
+  e.K.mount(e.root, { game: 7 });
+  await e.tick();
+  assert.match(e.root.textContent, /You're a staked player in this game this week, with 12 VHP counted\. 5 VHP more counts from Mon 30 Nov\./);
+  assert.doesNotMatch(e.root.textContent, /week 6/i);
+});
+
+test("last week per 100 VHP: the game's bucket ÷ the stake counted for it, only once that week closed", () => {
+  assert.equal(T.per100({ closed: true, weight_set: true, weight: String(500n * UNIT), bucket: String(2n * UNIT) }), 40000000n);   // 0.4 VHP
+  assert.equal(T.per100({ closed: false, weight_set: true, weight: String(UNIT), bucket: String(UNIT) }), null);
+  assert.equal(T.per100({ closed: true, weight_set: true, weight: "0", bucket: String(UNIT) }), null);
+  assert.equal(T.per100(null), null);
+});
+
+test("Where to stake: every staked game side by side with links to its page; hidden until live", async () => {
+  const games = [GAME({ id: 1, name: "Daily Questions", stake: String(900n * UNIT) }), GAME({ id: 7 }), GAME({ id: 2, name: "Who Signs Block X", stake: "0" }), GAME({ id: 4, name: "Fantasy Producers", staked: false })];
+  const weeks = { 4: { gw: { closed: true, weight_set: true, weight: String(200n * UNIT), bucket: String(1n * UNIT) } } };
+  let e = env({ state: LIVE({ v6_rule_week_plus_one: "0" }), games, weeks });
+  e.K.mountList(e.root, { links: { 1: "index.html#play", 7: "race.html#stake" } });
+  await e.tick();
+  assert.equal(e.root.hidden, true);
+  e = env({ state: LIVE(), games, weeks, player: { player: { stake: String(3n * UNIT), pending: "0" } }, qplayer: { player: { stake: String(10n * UNIT), pending: "0" } } });
+  e.K.mountList(e.root, { links: { 1: "index.html#play", 7: "race.html#stake" } });
+  await e.tick();
+  assert.equal(e.root.hidden, false);
+  const items = e.root.all().filter((n) => n.tagName === "li").map((n) => n.textContent);
+  assert.equal(items.length, 3, "only games that take stakes");
+  assert.match(items[0], /Daily Questions.*Staked 900 VHP.*Yours 10 VHP.*Last week see its page/);
+  assert.match(items[1], /Producer Race.*Staked 250 VHP.*Yours 3 VHP.*Last week 0\.5 VHP per 100/);
+  assert.match(items[2], /Who Signs Block X.*Page coming soon/);
+  const hrefs = e.root.all().filter((n) => n.tagName === "a" && /Stake/.test(n.textContent)).map((n) => n.attrs.href);
+  assert.deepEqual(J(hrefs), ["index.html#play", "race.html#stake"]);
+  assert.match(e.root.textContent, /week of 16 Nov/);
+  assert.equal(e.sent.length, 0, "the list never sends anything");
+  // A game with no closed week yet says so in words.
+  e = env({ state: LIVE(), games: [GAME()] });
+  e.K.mountList(e.root, { links: {} });
+  await e.tick();
+  assert.match(e.root.textContent, /Last week new: no full week yet/);
+});
+
+// ── the staked / free status bar (every game page) and the staking page ──
+const V5 = (o = {}) => ({ config: { genesis_time: String(DEP.genesisTime), week_length: "604800000", min_stake: String(UNIT), min_stake_next: "0", min_stake_next_week: "0", paused: false, ...o }, week: "1", time: "0" });
+
+test("status: Daily Questions works before the vault (v5); other games say closed until the vault is live", async () => {
+  let e = env({ state: V5(), qplayer: { player: { stake: String(25n * UNIT), pending: String(5n * UNIT), pending_week: "2" }, active_stake: String(25n * UNIT) } });
+  let st = await e.K.status(1, ME);
+  assert.deepEqual(J({ ...st, amount: String(st.amount), counted: String(st.counted), pending: String(st.pending), min: String(st.min) }),
+    { open: true, staked: true, amount: String(30n * UNIT), counted: String(25n * UNIT), pending: String(5n * UNIT), pendingFrom: "Mon 2 Nov", min: String(UNIT) });
+  st = await e.K.status(7, ME);
+  assert.equal(st.open, false); assert.equal(st.amount, 0n);
+  e = env({ state: LIVE(), game: GAME(), player: { player: { stake: String(3n * UNIT), pending: "0" }, week_stake: String(3n * UNIT) } });
+  st = await e.K.status(7, ME);
+  assert.equal(st.open, true); assert.equal(st.staked, true); assert.equal(st.amount, 3n * UNIT);
+  e = env({ state: LIVE(), game: GAME(), player: { player: { stake: "0", pending: String(2n * UNIT), pending_week: "6" }, week_stake: "0" } });
+  st = await e.K.status(7, ME);
+  assert.equal(st.staked, false); assert.equal(st.pending, 2n * UNIT); assert.equal(st.pendingFrom, "Mon 30 Nov");
+});
+
+test("status bar text: staked, waiting for next week, free, guest, not connected, closed", () => {
+  const S = (o) => ({ open: true, staked: false, amount: 0n, counted: 0n, pending: 0n, pendingFrom: "", min: UNIT, ...o });
+  let t = T.badgeText(S({ staked: true, amount: 25n * UNIT, counted: 25n * UNIT }), true, false);
+  assert.deepEqual(J(t), { cls: "staked", head: "Staked", amount: "25 VHP", sub: "You share this game's weekly rewards.", link: "Manage stake" });
+  t = T.badgeText(S({ staked: true, amount: 30n * UNIT, pending: 5n * UNIT, pendingFrom: "Mon 2 Nov" }), true, false);
+  assert.match(t.sub, /5 VHP more counts from Mon 2 Nov\./);
+  t = T.badgeText(S({ amount: 2n * UNIT, pending: 2n * UNIT, pendingFrom: "Mon 2 Nov" }), true, false);
+  assert.equal(t.head, "Playing free this week"); assert.equal(t.amount, "2 VHP staked"); assert.match(t.sub, /counts from Mon 2 Nov/);
+  t = T.badgeText(S({}), true, false);
+  assert.equal(t.head, "Playing free"); assert.equal(t.link, "Stake"); assert.match(t.sub, /Stake 1 VHP or more/);
+  assert.equal(T.badgeText(S({}), true, true).head, "Playing free (guest)");
+  assert.match(T.badgeText(S({}), false, false).sub, /Connect a wallet/);
+  assert.match(T.badgeText(S({ open: false }), true, false).sub, /opens when the Knode Games vault goes live/);
+});
+
+test("status bar: drawn with the amount and a link to the staking page; guests never trigger a stake read", async () => {
+  let e = env({ state: LIVE(), game: GAME(), player: { player: { stake: String(12n * UNIT), pending: "0" }, week_stake: String(12n * UNIT) } });
+  e.K.badge(e.root, { game: 7 });
+  await e.tick();
+  assert.equal(e.root.className, "kbadge staked");
+  assert.match(e.root.textContent, /^Staked · 12 VHP/);
+  const link = e.root.all().find((n) => n.tagName === "a");
+  assert.equal(link.attrs.href, "stake.html#g7"); assert.equal(link.textContent, "Manage stake →");
+  e = env({ state: LIVE(), game: GAME(), kind: "guest" });
+  e.K.badge(e.root, { game: 7 });
+  await e.tick();
+  assert.match(e.root.textContent, /Playing free \(guest\)/);
+  assert.ok(!e.reads.includes("get_game_player"));
+  assert.equal(e.sent.length, 0, "the status bar never sends anything");
+});
+
+test("pages: Daily Questions shows the status bar; the staking page loads the panel; the hub shows each game's chip", () => {
+  const read = (f) => fs.readFileSync(`${APP}/${f}`, "utf8");
+  const idx = read("index.html");
+  assert.match(idx, /<div id="stake-badge" hidden><\/div>/);
+  assert.ok(idx.indexOf('src="stake-panel.js"') < idx.indexOf('src="app.js"'));
+  assert.match(read("app.js"), /window\.KStake\.badge\(\$\("#stake-badge"\), \{ game: 1, href: "stake\.html" \}\)/);
+  const sk = read("stake.html");
+  assert.ok(sk.indexOf('src="wallet.js"') < sk.indexOf('src="stake-panel.js"') && sk.indexOf('src="stake-panel.js"') < sk.indexOf('src="stake-page.js"'));
+  const page = read("stake-page.js");
+  assert.doesNotMatch(page, /\.send\(|innerHTML|localStorage/);
+  assert.match(page, /K\.mount\(box, \{ game: id \}\)/);
+  assert.match(read("games.js"), /K\.status\(Number\(b\.dataset\.stake\), who\)/);
 });

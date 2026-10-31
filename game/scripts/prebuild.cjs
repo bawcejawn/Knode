@@ -5,5 +5,6 @@ for (const d of ["abi", "build/release", "build/debug"]) fs.mkdirSync(d, { recur
 // Pinned copies of the helper packages protobufjs would otherwise fetch unpinned at build time (see the script).
 require("../../tools/pbjs-helpers/install.cjs");
 
-// protoc 21.12, checked against its sha256, so the build never downloads the latest protoc unchecked (audit BX-6).
+// protoc 21.12, checked against its sha256, so the build never downloads the latest protoc unchecked (audit BX-6,
+// fix-check VN-4; the same file as on branch picks).
 require("../../tools/protoc-pin.cjs").main().catch((e) => { console.error(e.message || e); process.exit(1); });

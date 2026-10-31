@@ -5,7 +5,7 @@
 // =====================================================================
 
 import { Arrays, Base58, MockVM, Protobuf, authority, chain, protocol, system_calls } from "@koinos/sdk-as";
-import { Sponsor, argsPlayer, NOT_A_PLAYER, FREE_USED_UP, GAME_ANSWER, GAME_CLAIM } from "../Sponsor";
+import { Sponsor, argsPlayer, NOT_A_PLAYER, FREE_USED_UP, GAME_ANSWER, GAME_CLAIM, VAULT_NOT_LIVE } from "../Sponsor";
 import { sponsor } from "../proto/sponsor";
 import { picks } from "./picks_proto";
 import { F } from "./fixtures";
@@ -103,6 +103,7 @@ function stakedRow(): sponsor.allowed_call { return new sponsor.allowed_call(STA
 function v3Config(): sponsor.config {
   const c = new sponsor.config(true, GAME, DESK, [VHP, KOIN], MANA, 5 * MANA, 30 * MANA, 100 * MANA, VHP, MANA, 50 * MANA, RACE);
   c.allowed = [picksRow(), stakedRow()];
+  c.game_has_vault = true;   // these tests model the vault (v6) game; round 4's SP-37 tests switch it off
   return c;
 }
 let CFG: sponsor.config = new sponsor.config();
@@ -645,5 +646,134 @@ describe("Repo Lens round 3 (auditor's tests): SP-22", () => {
     MockVM.setCallContractResults(padReads([activePlayer(0, 0, 0), gameStake(2 * MANA)]));
     const r = new Sponsor().would_pay(new sponsor.would_pay_arguments(USER, MANA, true, 2));
     expect(r.ok).toBe(paid);
+  });
+});
+
+// ── Round 4: the auditor's tests (Sponsor.repolens-r4.spec-append.ts), with the switch the fix added ──
+// Repo Lens round 4, reviewer F5-S1. NOT RUN HERE (static review). Append to sponsor/assembly/__tests__/Sponsor.v3.spec.ts
+// (reuses its helpers: start, v3Config, setConfig, READS, OPS, call, pays, activePlayer, pickArgs, RACE, PICKS, GAME,
+// USER, MANA, padReads). activePlayer / gameWeekStake are defined further up in that file.
+
+// SP-37: on the live game (v5) get_game_player does not exist. A System.call to it runs v5's dispatcher default
+// (`System.exit(1)`, sdk-as-cli index template), i.e. a REVERSION; in a user-mode caller (the sponsor) koinos rethrows it
+// (host_api.cpp invoke_system_call: `user_mode && code >= reversion -> throw`), so the whole authorize aborts. The MockVM
+// can't model that propagation, so this test states the required design: while the configured game has no vault
+// (a config switch to be added, e.g. `game_has_vault`, default false), the sponsor must not call get_game_player.
+// Today it fails: the sponsor asks get_game_player(USER, 7, week) for an empty wallet's race pick.
+function raceArgs(player: Uint8Array): Uint8Array {
+  // race pick_arguments: player = 1 (bytes), then the producer fields as in the existing race tests; the player alone is
+  // canonical for the shape check used here.
+  const a = new Uint8Array(27); a[0] = 0x0a; a[1] = 25; a.set(player, 2); return a;
+}
+describe("Repo Lens round 4 (F5-S1): SP-37 no vault reads against a game without a vault (live v5)", () => {
+  it("an empty wallet's race pick on a v5 game reads only get_player (never get_game_player)", () => {
+    start();
+    CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();   // v5 live: no vault
+    READS = [activePlayer(0, 0, 0)];
+    OPS = [call(RACE, PICK, raceArgs(USER))];
+    pays();
+    const asked = MockVM.getCallContractArguments();
+    for (let i = 0; i < asked.length; i++) expect(asked[i].entry_point).not.toBe(0x0feb472b);   // get_game_player
+    MockVM.rollbackTransaction();
+  });
+  it("an empty wallet's Block X pick on a v5 game reads only get_player", () => {
+    start();
+    CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 0)];
+    OPS = [call(PICKS, PICK, pickArgs(USER))];
+    pays();
+    const asked = MockVM.getCallContractArguments();
+    for (let i = 0; i < asked.length; i++) expect(asked[i].entry_point).not.toBe(0x0feb472b);
+    MockVM.rollbackTransaction();
+  });
+});
+
+// SP-28 (coverage the owner's tests lack): the week sent to get_player is the vault week of the head block time.
+// T0 in the suite is in 2023 (before VAULT_GENESIS_MS), so every existing test sends week 0. Expected to PASS at cc524eb;
+// it pins the week arithmetic so a regression to week 0 (the round-3 bug) is caught.
+describe("Repo Lens round 4 (F5-S1): SP-28 get_player is asked for the current vault week", () => {
+  it("Wed 2026-10-28 12:00 UTC is vault week 1; Mon 2026-10-26 00:00:00.000 is week 1; Sun 23:59:59.999 is week 0", () => {
+    const cases: u64[] = [1792368000000 + 604800000 + 2 * 86400000 + 43200000, 1792368000000 + 604800000, 1792368000000 + 604800000 - 1];
+    const want: u64[] = [1, 1, 0];
+    for (let k = 0; k < cases.length; k++) {
+      start();
+      MockVM.setHeadInfo(new chain.head_info(null, cases[k], 0));
+      READS = [activePlayer(0, 0, MANA)];
+      OPS = [call(GAME, 0x0db52f40, new Uint8Array(0))];   // answer
+      expect(pays()).toBe(true);
+      const asked = MockVM.getCallContractArguments();
+      const a = Protobuf.decode<sponsor.game_get_player_args>(asked[0].args!, sponsor.game_get_player_args.decode);
+      expect(a.week).toBe(want[k]);
+      MockVM.rollbackTransaction();
+    }
+  });
+});
+
+describe("Round 4 SP-37: the vault's own calls only once the game is the vault", () => {
+  it("deposit_to on a v5 game (game_has_vault off) is refused; on the vault it is paid", () => {
+    start();
+    CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 5 * MANA)];
+    const args = vaultArgs(USER, [2, 3 * MANA, 0]);
+    OPS = [call(GAME, 0x7bb5c436, args)];
+    refused(VAULT_NOT_LIVE);
+    start();
+    READS = [activePlayer(0, 0, 5 * MANA)];
+    OPS = [call(GAME, 0x7bb5c436, args)];
+    expect(pays()).toBe(true);
+  });
+});
+
+describe("Round 4 SP-38: would_pay reads every game of a batch", () => {
+  it("staked only in game 7, asked about a batch of games 2 and 7: yes, as authorize would", () => {
+    start();
+    CFG = v3Config(); CFG.max_mana_free_day = 0; setConfig(); MockVM.commitTransaction();
+    MockVM.setCallContractResults(padReads([activePlayer(0, 0, 0), gameStake(0), gameStake(5 * MANA)]));
+    const a = new sponsor.would_pay_arguments(USER, MANA, true, 0); a.games = [2, 7];
+    expect(new Sponsor().would_pay(a).ok).toBe(true);
+  });
+});
+
+// ── Repo Lens round 5 (reviewer F6-S1), appended 2026-10-30 ──
+// F6-S1-1 (SP-45, Low): would_pay.games sent PACKED (as koilib with the published ABI encodes it) is misread. Accepted for
+// launch by the owner (the contract is frozen at b61ac238 for this release): the site sends games unpacked
+// (wallet.js sponsorAnswer), and a misread only changes would_pay's advisory answer, never what authorize pays.
+// SP-51 (Info): the auditor's specs below pin the vault switch for every entry point, would_pay and v5 legit use.
+// Test gaps behind SP-37 (pass today; they pin the gate for every vault entry point, would_pay and v5 legit use).
+describe("F6-S1-3: the vault switch, every entry point", () => {
+  it("withdraw_from, move_stake, claim_game, finalize_game_week are refused while off", () => {
+    const eps: u32[] = [0x5b0aaef8, 0x7c268e69, 0x4107e3ab];
+    for (let i = 0; i < eps.length; i++) {
+      start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+      READS = [activePlayer(0, 0, 5 * MANA)];
+      OPS = [call(GAME, eps[i], vaultArgs(USER, eps[i] == 0x7c268e69 ? [2, 3, MANA] : [2, MANA]))];
+      refused(VAULT_NOT_LIVE);
+    }
+    start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 5 * MANA)];
+    OPS = [call(GAME, 0xec300c11, new Uint8Array(0))];
+    refused(VAULT_NOT_LIVE);
+  });
+  it("while off, an empty wallet's race pick IS paid (from the free pool) and asks only get_player", () => {
+    start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 0)];
+    OPS = [call(RACE, PICK, raceArgs(USER))];
+    expect(pays()).toBe(true);
+    const asked = MockVM.getCallContractArguments();
+    expect(asked.length).toBe(1);
+    MockVM.rollbackTransaction();
+  });
+  it("while off, would_pay with games asks only get_player", () => {
+    start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    MockVM.setCallContractResults(padReads([activePlayer(0, 0, 0)]));
+    const a = new sponsor.would_pay_arguments(USER, MANA, false, 7); a.games = [2, 7];
+    new Sponsor().would_pay(a);
+    expect(MockVM.getCallContractArguments().length).toBe(1);
+  });
+  it("while off, a v5 answer is still paid", () => {   // (audit SP-58: the auditor's name also said deposit_vhp, which it doesn't test)
+    start(); CFG = v3Config(); CFG.game_has_vault = false; setConfig(); MockVM.commitTransaction();
+    READS = [activePlayer(0, 0, 5 * MANA)];
+    OPS = [call(GAME, 0x0db52f40, new Uint8Array(0))];
+    expect(pays()).toBe(true);
   });
 });

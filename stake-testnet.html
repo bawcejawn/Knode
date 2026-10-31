@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- TESTNET page. Only the Koinos Foundation testnet node may be reached; it never loads the mainnet wallet scripts.
+       'unsafe-eval' is needed by koilib; CDN scripts are pinned by their integrity hash. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://testnet.koinosfoundation.org; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="kg-network" content="testnet">
+  <title>Staking TESTNET · Knode Games</title>
+  <link rel="icon" href="media/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Archivo:wdth,wght@62..125,600;62..125,800;62..125,900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .sk { max-width: 760px; margin: 0 auto; padding: 20px 16px 60px; }
+    .sk h1 { font-family: var(--display); font-size: clamp(26px, 4vw, 34px); margin: 0 0 6px; }
+    .sk h2 { font-family: var(--display); font-size: 19px; margin: 0 0 8px; }
+    .sk > section { margin-bottom: 16px; }
+    .tn-flag { background: #b3261e; color: #fff; text-align: center; font-weight: 700; padding: 8px 16px; letter-spacing: .02em; }
+    .tn-steps li { margin: 8px 0; }
+    .tn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+    .tn-mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; word-break: break-all; }
+    .tw-modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 50; padding: 16px; }
+    .tw-modal[hidden] { display: none; }
+    .tw-box { background: var(--paper, #fff); border-radius: 14px; padding: 18px; max-width: 380px; width: 100%; display: grid; gap: 10px; }
+    .tw-box h3 { margin: 0; }
+    #tn-err { color: #b3261e; }
+  </style>
+</head>
+<body>
+  <div class="tn-flag">TESTNET · test KOIN only · nothing here is real money</div>
+  <main class="sk">
+    <h1>Staking (testnet trial)</h1>
+    <p class="muted">The Knode Games vault v6 test copy on the Koinos testnet. Weeks last 10 minutes here instead of 7 days, so a new stake counts from the next 10-minute week.</p>
+    <p id="tn-err" hidden></p>
+    <section class="card panel">
+      <h2>1. Your testnet wallet</h2>
+      <p class="tn-mono" id="tn-addr">not connected</p>
+      <div class="tn-row">
+        <button class="btn btn-primary" type="button" id="tn-connect">Connect a testnet wallet</button>
+        <button class="btn" type="button" id="tn-copy" hidden>Copy faucet command</button>
+      </div>
+    </section>
+    <section class="card panel">
+      <h2>2. Get test KOIN</h2>
+      <ol class="muted tn-steps">
+        <li>Open <a href="https://t.me/KoinosTestnetFaucetBot" target="_blank" rel="noopener">@KoinosTestnetFaucetBot</a> in Telegram.</li>
+        <li>Send it: <span class="tn-mono" id="tn-faucet-cmd">/faucet &lt;your address&gt;</span></li>
+        <li>Wait about a minute. Test KOIN pays your test Mana, and you can stake it directly (it is burned into test VHP 1:1).</li>
+      </ol>
+    </section>
+    <section class="card panel" id="tn-soon" hidden>
+      <h2>The test vault isn't live yet</h2>
+      <p class="muted">Its v6 rules aren't switched on, or no game is added yet. Use the admin page's Vault v6 trial steps first.</p>
+    </section>
+    <section class="card panel">
+      <h2>3. Stake in game <span id="tn-gid">7</span></h2>
+      <p class="muted" style="margin-top:0">The status bar every game page shows:</p>
+      <div id="tn-badge" hidden></div>
+      <div id="tn-game" style="margin-top:12px" hidden></div>
+    </section>
+    <section class="card panel" id="tn-list" hidden></section>
+    <p class="muted" style="font-size:13px">Test vault <span class="tn-mono" id="tn-vault">–</span>. <a href="stake.html">The real staking page →</a></p>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js" integrity="sha384-IAL9o3r4bQJvWhvszkorFINY2ct4LBA/LvyXE9NSOPCyYB25BsFV12JITA7Gxbk6" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js" integrity="sha384-WOeNFfSdOron0s4x9jdzLtA7Ic7RSqZCXZAaeQd6HRL6WezQp0KAtIF2XSa+11TL" crossorigin="anonymous"></script>
+  <script src="stake-testnet-wallet.js"></script>
+  <script src="stake-panel.js"></script>
+  <script src="stake-testnet.js"></script>
+</body>
+</html>

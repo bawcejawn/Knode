@@ -87,10 +87,10 @@ test("sampler: waits a random moment, reads effective VHP on both nodes, keeps 8
   assert.equal(ok(bad), false);
 });
 
-test("the race and Block X cards read effective VHP; the 'holds 1 VHP' ranking rule still reads the plain balance", () => {
+test("the race and Block X cards read effective VHP; ranking reads the vault stake, not a VHP balance", () => {
   const race = fs.readFileSync(path.resolve(APP, "bot/race.ts"), "utf8"), bx = fs.readFileSync(path.resolve(APP, "bot/games/blockx.ts"), "utf8");
   assert.match(race, /readVhp\(p, MAINNET_VHP, who, \{ effective: true \}\)/);
-  assert.match(race, /const vhp = await rawRead\(todo\)/);
+  assert.doesNotMatch(race, /rawRead/, "no plain-balance ranking rule left (owner, 2026-10-28: the Staked board)");
   assert.match(bx, /readVhp\(o\.p, VHP, sg\.signers, \{ effective: true \}\)/);
   const abi = fs.readFileSync(path.resolve(APP, "bot/token-abi.ts"), "utf8");
   assert.match(abi, /effective_balance_of: \{ entry_point: 0x629f31e6/);

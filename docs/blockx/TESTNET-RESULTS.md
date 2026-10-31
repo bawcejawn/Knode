@@ -34,3 +34,51 @@ Sizing (mainnet costs are expected to be similar): 25 picks a day ≈ 1.2 Mana p
 - The testnet wallet asked for a 3-Mana limit per pick; the network holds the limit aside until a pick settles, so the
   second pick failed with "insufficient pending account resources" (limit now 0.3).
 - Port 8090 is the owner's personal node; the local server now uses 8350 (or the next free port).
+
+## Sponsor v3 trial (Koinos Foundation testnet, 30 Oct 2026)
+
+Sponsor v3 candidate `b61ac238…` on the testnet sponsor wallet `1Dg8zKeHFRvEZeF1o4thSUs6eC2zHNg7qC` (1,000 test KOIN),
+caps 1 / 25 / 150 / 5,000 / 2,000, min 1 VHP staked, vault (v6) live: no; the Picks contract `12xNet…` allowlisted.
+Played from a brand-new Test wallet (`1B8C5TZf…`) holding **no test KOIN**: 4 Block X picks, all paid by the sponsor
+(read from the chain's receipts):
+
+| What | Blocks | Mana used | Mana limit asked |
+|---|---|---|---|
+| Upload of sponsor v3 | 9,654,319 | 2.99 | 22.1 |
+| Settings (set_config), 3 times | 9,654,388–9,654,511 | 0.070–0.087 | 2 |
+| Block X pick, sponsored (first, then 3 more) | 9,654,521–9,654,538 | 0.116, then 0.101 each | 0.3 |
+
+- A sponsored pick costs about **0.10 test Mana**, about twice the unsponsored 0.048: the sponsor's own check (reading
+  the game for the player's stake) runs in the same transaction. Testnet Mana prices differ from mainnet's, so the
+  mainnet figure comes from step 10's report after a day of real play.
+- Found and fixed during the trial: the testnet sponsor's `game` was a placeholder address with no contract, and a call
+  to a missing contract makes the whole sponsor refuse ("contract does not exist"). It now names the Vault v6 test copy.
+  On mainnet the game is the live question game, which exists.
+- From launch step 6 each pick counts its 0.2 Mana row (owner, 2026-10-30; audit SP-58), so a wallet gets about 125
+  sponsored picks a day within its 25 Mana (Block X allows 30 picks a day); other actions count 1 Mana until step 10.
+
+## Mainnet upload (2026-10-30)
+
+- **Sponsor v3** `b61ac238da27c4a71c01127f39a7b95f19fabf15e35df9f9715546d221e256e4` on `1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8`.
+  `status` shows it "as uploaded", the switches right, switched ON and Vault (v6) not live yet. The caps are still
+  v2's (3 / 10 / 65 / 1,000) until step 6's `config`.
+- **Picks** `700c296a1064b904299c156061d6caf8fcabd0b1765968903f29d89d2426c594` at `1LmgqBGctL9F2YkyjTXgieTXwnYHh8Y6Pm`.
+  Upload transaction `0x12207d672926d9feca7f08f44b19083c6ca9d7c3607788ac52f69b78bfba3e33d809`, 24.46 Mana, paid by
+  the bot wallet. `status --mainnet` on 2 nodes (both agree): Code ✔, all three overrides ✔, Owner
+  `1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717` ✔, no games yet. `PICKS_WIF` deleted from `.env` (audit BX-9).
+- **Note:** the Picks tool's first mainnet Mana limit (17, from testnet prices) was refused "insufficient rc" twice,
+  and nothing was charged. The tool now uses the mainnet estimate (1.2 Mana per KB + 10, about 49).
+- **Game 2 announced** (2026-10-30, owner `1635QUr…H717`, block 40,659,263, 0.35 Mana). Who Signs Block X: a target
+  every 2,400 blocks, locks 100 before, opens 28,900 ahead, 30 picks a day, **1 change per pick** (owner, 2026-10-30).
+  It can be applied from **2026-11-01 21:23:34 UTC** (Sunday 1:23 pm Pacific).
+
+## Sponsored Combo cards (2026-10-30, Repo Lens FC-13)
+
+The testnet sponsor `1Dg8zKeH…` was pointed at the Combo chat's Picks v2 contract `1PQZWWHb…` (card shape) and switched
+on (tx `0x12208e68…10c1d470`). The Combo chat then sent two sponsored cards on game 98:
+- 6 legs: 0.1313 Mana, 1.52× under the 0.2 row;
+- 10 legs: 0.1457 Mana, 1.37× under the 0.2 row, below the 1.5× rule.
+
+Plan: raise the mainnet `pick` row to 0.25 at Combo launch (runbook "Later: the Picks v2 upgrade", step 7).
+`mana-report --testnet` saw both card transactions (too few to suggest a limit; nothing saved). The sponsor was then
+switched off (tx `0x1220aec3…2486`).

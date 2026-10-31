@@ -147,12 +147,14 @@ test("a guest's answer: the sponsor pays, the guest is payee, mainnet, signed lo
   assert.equal(String(tx.header.rc_limit), "100000000");
   assert.equal(tx.signatures.length, 1);
   assert.equal(tx.operations.length, 1);
-  // would_pay was asked for this guest and this Mana limit (sponsor v3: no answer_only; an answer names no game)
+  // would_pay was asked for this guest and this Mana limit, marked free play (answer_only, kept for a v2 rollback:
+  // audit SP-40); an answer names no game
   const ask = w.net.find(([m, q]) => m === "readContract" && q.contract_id === SPONSOR)[1];
   const bytes = koilib.utils.decodeBase64url(ask.args);
   assert.equal(bytes[0], 0x0a);
   assert.equal(bytes[27], 0x10, "field 2: the Mana limit");
-  assert.equal(bytes.length, 32, "account and Mana limit only: no answer_only, no game for an answer");
+  assert.deepEqual([...bytes.slice(-2)], [0x18, 0x01], "answer_only = true");
+  assert.equal(bytes.length, 34, "no game for an answer");
   // the key is nowhere in what left the page
   const out = JSON.stringify(w.net);
   assert.ok(!out.includes(wif));

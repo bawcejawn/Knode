@@ -40,6 +40,8 @@
     const m = Math.round(ms / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
     return d ? `${d} d ${h} h` : h ? `${h} h ${m % 60} m` : `${m} m`;
   };
+  /** Each game's id in the Knode Games vault (claude/knodegames-plan.md, game id registry). */
+  const VAULT_IDS = { questions: 1, blockx: 2, survivor: 3, fantasy: 4, golf: 6, race: 7, combo: 8, bracket: 9, lastnode: 13 };
   async function fetchJson(url) { const r = await fetch(url, { cache: "no-cache" }); if (!r.ok) throw new Error(String(r.status)); return r.json(); }
 
   /** games.json, checked: only known kinds and statuses, plain text, and links to this site's own pages. */
@@ -82,6 +84,22 @@
     },
   };
   function refresh() { document.querySelectorAll("[data-status]").forEach((b) => { const f = status[b.dataset.status]; if (f) f(b); }); }
+  /** Each live game card: staked or free for the connected wallet (stake-panel.js). Nothing for guests or before the
+   *  vault opens a game's staking. */
+  async function stakeChips() {
+    const K = window.KStake, who = W && W.address;
+    for (const b of document.querySelectorAll("[data-stake]")) {
+      if (!K || !who || W.kind === "guest") { b.hidden = true; continue; }
+      try {
+        const st = await K.status(Number(b.dataset.stake), who);
+        if (!st.open && st.amount === 0n) { b.hidden = true; continue; }
+        const vhp = Number(st.amount) / 1e8;
+        b.className = `g-stake ${st.staked ? "on" : "off"}`;
+        b.textContent = st.staked ? `● Staked · ${vhp.toLocaleString("en-US", { maximumFractionDigits: 2 })} VHP` : st.amount > 0n ? `○ Staked from next week · ${vhp.toLocaleString("en-US", { maximumFractionDigits: 2 })} VHP` : "○ Playing free";
+        b.hidden = false;
+      } catch { b.hidden = true; }
+    }
+  }
 
   async function loadRace() {
     try { const b = await fetchJson(RACE_DATA + "board.json"); if (b && b.v === 1) raceBoard = b; } catch { /* no board yet */ }
@@ -106,7 +124,8 @@
     const body = el("span", { class: "g-bd" },
       el("span", { class: "g-t" }, el("span", { class: "g-name", text: g.name }), ...pills),
       el("span", { class: "g-line", text: g.line }),
-      live && status[g.id] ? el("span", { class: "g-st", "data-status": g.id }) : null);
+      live && status[g.id] ? el("span", { class: "g-st", "data-status": g.id }) : null,
+      live && VAULT_IDS[g.id] ? el("span", { class: "g-stake", "data-stake": String(VAULT_IDS[g.id]), hidden: "" }) : null);
     const ic = el("span", { class: "g-ic" }); ic.append(icon(g.id));
     return live
       ? el("a", { class: "g", href: g.href, "data-game": g.id }, ic, body, el("span", { class: "g-go", "aria-hidden": "true", text: "›" }))
@@ -138,11 +157,20 @@
       $("g-results").hidden = false;
     }
     $("g-soon").replaceChildren(...games.filter((g) => g.status === "soon").map(card));
+    // "Where to stake": every game's stake side by side (stake-panel.js; hidden until the Knode Games vault is live).
+    // Each live game links to its own page's stake panel (#stake); Daily Questions stakes on its play page.
+    const stakeBox = $("stake-list");
+    if (stakeBox && window.KStake) {
+      const links = {};
+      for (const g of games) if (g.status === "live" && VAULT_IDS[g.id]) links[VAULT_IDS[g.id]] = g.id === "questions" ? g.href : `${g.href.split("#")[0]}#stake`;
+      window.KStake.mountList(stakeBox, { links });
+    }
     $("soon-box").hidden = !games.some((g) => g.status === "soon");
     refresh();
     loadRace(); loadQuestions();
     setInterval(() => { week(); refresh(); }, 60000);
-    if (W && W.subscribe) W.subscribe(refresh);
+    if (W && W.subscribe) W.subscribe(() => { refresh(); stakeChips(); });
+    stakeChips();
   }
   main();
 })();

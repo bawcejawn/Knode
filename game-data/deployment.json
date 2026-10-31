@@ -4,7 +4,7 @@
   "contract": "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr",
   "owner": "1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717",
   "operator": "1HsM33pF8DbXPr8Vsd4vD7hQgvZ1SHY3Vv",
-  "seedOwner": "1635QUrBNDp7WqmFkRvrkGwjJXTtFvH717",
+  "seedOwner": "1K8VV1utXfomeXHeifrwgLpBjUG6Ldkw2Z",
   "koin": "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK",
   "vhp": "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq",
   "pob": "159myq5YUhhoVWu3wsHKHiJYKPKGUrGiyv",
@@ -28,18 +28,22 @@
     "address": "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8",
     "covers": [
       "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr",
-      "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR",
       "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq",
       "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK",
-      "1EN7xU8R9tQXjHvrX79qZvvvGkkKWVnB5K"
+      "1EN7xU8R9tQXjHvrX79qZvvvGkkKWVnB5K",
+      "1LmgqBGctL9F2YkyjTXgieTXwnYHh8Y6Pm"
     ],
     "race": "1EN7xU8R9tQXjHvrX79qZvvvGkkKWVnB5K",
+    "picks": "1LmgqBGctL9F2YkyjTXgieTXwnYHh8Y6Pm",
     "tokens": [
       "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq",
       "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK"
     ],
     "rcLimit": "100000000",
     "rcLimitOther": "100000000",
+    "rcLimits": {
+      "1LmgqBGctL9F2YkyjTXgieTXwnYHh8Y6Pm:8ce33c6c": "20000000"
+    },
     "guest": true
   }
 }

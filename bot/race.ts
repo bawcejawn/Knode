@@ -11,11 +11,15 @@
  *     Once the race picks contract is live (race-data/deployment.json on main), each final race also records every
  *     pick (read on both nodes; picks are locked by the chain when a race starts), who picked the winner, and whether
  *     each wallet could be ranked (holds 1 VHP or has a Knode stake) when the race was finalized.
- *  3. Leaderboards (board.json): Today (UTC day), This week (the Knode game's week) and All time, ranked by points:
- *     a pick on the winner is a win (3 points), a pick on the 2nd or 3rd horse a show (1 point). Ties: more wins, then
- *     more picks placed, then more Knode questions answered, then a higher Knode score.
+ *  3. Leaderboards (board.json): Today (UTC day), This week, Last week and All time, ranked by points: a pick on the
+ *     winner is a win (3 points), a pick on the 2nd or 3rd horse a show (1 point). Ties: more wins, then more picks
+ *     placed; wallets still tied share the place (owner, 2026-10-28: the question game no longer breaks Race ties).
+ *     Each row says whether the wallet is staked in the Race in the KnodeGames Vault that week (the Staked board) or
+ *     plays free (the Free play board).
  *  4. Writes race-data/index.json, race-data/W<week>.json and race-data/board.json, which the publish job puts on the
  *     race-data branch for the website.
+ *  5. The KnodeGames Vault's results file for last week, race-data/vault/W<week>.json (see vaultResults below): the
+ *     free prize's 1st and 2nd places, final once every race of the week is final. A final file is never rewritten.
  * The scoring is race-math.js, the same file the website runs.
  *
  *   RPC, RPC_CHECK ("off" to skip the second node), RACE_PREV (the race-data files from the last run), RACE_OUT.
@@ -40,7 +44,9 @@ const CARD_AHEAD = 60 * 60000;
 // Audit BX-54: how far an irreversible block may trail its head, how far the two nodes' irreversible blocks may differ,
 // and how far their head times may differ, before no card is made (Koinos makes a block about every 3 s; irreversible
 // trails the head by about 60 blocks).
-export const LIB_LAG_MAX = 200, LIB_GAP_MAX = 30, HEAD_GAP_MS = 60000;            // a card for the next leg is taken by the last hourly run before it starts
+// Round 4 (audit BX-75): an honest check node may lag (up to LAG_MS behind and LIB_GAP_MAX blocks), but may be at most
+// HEAD_GAP_MS AHEAD of the primary, so it can't date a card later than that.
+export const LIB_LAG_MAX = 200, LIB_GAP_MAX = 200, HEAD_GAP_MS = 15000, LAG_MS = 10 * 60000;            // a card for the next leg is taken by the last hourly run before it starts
 const LOOKBACK = 3 * M.DAY;               // races older than this that never got final are left as they are
 const isAddr = (a: unknown) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/.test(a);
 
@@ -55,7 +61,9 @@ const isAddr = (a: unknown) => typeof a === "string" && /^1[1-9A-HJ-NP-Za-km-z]{
 export const SAMPLE_WINDOW = 6 * 3600000;          // samples count for 6 hours
 export const SAMPLE_KEEP = 8 * 3600000;            // and are kept 8 hours
 export const SAMPLE_MAX = 120;            // 8 hours at one sample every ~5 minutes
-export type Sample = { at: number; height: number; vhp: Record<string, string> };
+/** One VHP sample. Audit BX-86 (round 5): `flagged` names the producers the two nodes still disagreed on after the
+ *  re-reads (their `vhp` is the LOWER read; `high` keeps the higher one), so a card that uses the sample flags them. */
+export type Sample = { at: number; height: number; vhp: Record<string, string>; flagged?: string[]; high?: Record<string, string> };
 export type SampleFile = { v: 1; updated: string; samples: Sample[] };
 const SAMPLES = "vhp-samples.json";
 /** The previous run's samples: only well-formed ones, never from the future (audit BX-38: a sample dated after `now`
@@ -65,25 +73,53 @@ export function loadSamples(now = Date.now()): Sample[] {
   const f = readPrev(SAMPLES);
   if (!f || f.v !== 1 || !Array.isArray(f.samples)) return [];
   return f.samples.filter((x: any) => x && Number.isFinite(x.at) && x.at <= now + FUTURE_MS && Number.isInteger(x.height) && x.vhp && typeof x.vhp === "object"
-    && Object.entries(x.vhp).every(([a, v]) => isAddr(a) && typeof v === "string" && /^\d{1,20}$/.test(v as string))).sort((a: Sample, b: Sample) => a.at - b.at);
+    && Object.entries(x.vhp).every(([a, v]) => isAddr(a) && typeof v === "string" && /^\d{1,20}$/.test(v as string)) && disputesOk(x)).sort((a: Sample, b: Sample) => a.at - b.at);
 }
-/** Audit BX-37 / BX-55: two nodes' reads of every producer's VHP, combined producer by producer (never all or
- *  nothing). Reads within 0.5% of each other count at the higher one. A producer whose reads differ by more counts at
- *  the LOWER read and is FLAGGED on the card: one node can then neither lift a producer to the top (turning ×3 into
- *  ×1 for the players who picked it) nor quietly make it small, because Block X holds any target whose signer is
- *  flagged (bot/games/blockx.ts) until a card without the flag exists. (Round 2 used the higher read, capped at the
- *  top both agree on; round 3 showed one node could still lift any producer to that top.)
+/** Audit BX-86: a sample's disputes are well formed: both or neither of `flagged` / `high`; every flagged producer is
+ *  in the sample, once, with a higher read at least its stored (lower) one. */
+export function disputesOk(x: any): boolean {
+  if (x.flagged === undefined && x.high === undefined) return true;
+  if (!Array.isArray(x.flagged) || !x.flagged.length || !x.high || typeof x.high !== "object" || Array.isArray(x.high)) return false;
+  const f: string[] = x.flagged;
+  if (new Set(f).size !== f.length || Object.keys(x.high).length !== f.length) return false;
+  return f.every((a) => typeof a === "string" && x.vhp[a] !== undefined && typeof x.high[a] === "string" && /^\d{1,20}$/.test(x.high[a]) && BigInt(x.high[a]) >= BigInt(x.vhp[a]));
+}
+/** Audit BX-37 / BX-55 / BX-73 / BX-74: two nodes' reads of every producer's VHP, combined producer by producer.
+ *  Reads within 0.5% of each other count at the higher one. A producer whose reads differ by more is FLAGGED on the
+ *  card (Block X holds a target it signs) and counts at the LOWER read when both nodes read at the same block (so one
+ *  node can't lift it), or at the HIGHER read when they didn't (a lagging node: VHP that moved between the two blocks
+ *  can't make it look small). Round 4 (BX-73): when a flagged producer is, or at its higher read would be, the card's
+ *  top, every multiplier on the card is in doubt: `topInDoubt` (not enumerable) is then true, and Block X holds every
+ *  target on that card. (BX-74: with same-block reads a producer can't flag itself by moving VHP out and back.)
  *  Returns the combined values and the producers that differed. */
-export function combineReads(a: Record<string, string>, b: Record<string, string> | null, who: string[]): { values: Record<string, string>; differ: string[] } {
-  if (!b) return { values: Object.fromEntries(who.map((x) => [x, String(a[x] || "0")])), differ: [] };
-  const differ: string[] = [];
-  const values: Record<string, string> = {};
+export function combineReads(a: Record<string, string>, b: Record<string, string> | null, who: string[], sameBlock = true): { values: Record<string, string>; differ: string[]; high: Record<string, string> } {
+  const values: Record<string, string> = {}, high: Record<string, string> = {};
+  if (!b) { for (const x of who) values[x] = String(a[x] || "0"); return { values, differ: [], high }; }
+  const differ: string[] = [], hiOf: Record<string, bigint> = {};
   for (const x of who) {
     const u = BigInt(a[x] || "0"), v = BigInt(b[x] || "0"), hi = u > v ? u : v, lo = u < v ? u : v;
-    if (hi - lo > hi / 200n) { differ.push(x); values[x] = String(lo); }
+    hiOf[x] = hi;
+    if (hi - lo > hi / 200n) { differ.push(x); values[x] = String(sameBlock ? lo : hi); high[x] = String(hi); }
     else values[x] = String(hi);
   }
-  return { values, differ };
+  const top = Object.values(values).reduce((m, v) => (BigInt(v) > m ? BigInt(v) : m), 0n);
+  const inDoubt = differ.some((x) => hiOf[x] >= top);
+  Object.defineProperty(values, "__topInDoubt", { value: inDoubt, enumerable: false });
+  return { values, differ, high };
+}
+/** Both nodes' VHP reads taken at the same head block (audit BX-74): read the heads, read both in parallel, read the
+ *  heads again; tried 3 times. sameBlock is false when the two never matched (a lagging node). */
+async function readBoth(p: any, check: any, read: (w: string[]) => Promise<Record<string, string>>, readCheck: (w: string[]) => Promise<Record<string, string>>, who: string[], wait: (ms: number) => Promise<unknown> = sleep) {
+  let mine: Record<string, string> = {}, theirs: Record<string, string> = {}, same = false;
+  const hOf = async (n: any) => Number((await withRetry("head", () => n.getHeadInfo())).head_topology.height);
+  for (let k = 0; k < 3 && !same; k++) {
+    if (k) await wait(1500);
+    const [a0, b0] = await Promise.all([hOf(p), hOf(check)]);
+    [mine, theirs] = await Promise.all([read(who), readCheck(who)]);
+    const [a1, b1] = await Promise.all([hOf(p), hOf(check)]);
+    same = a0 === b0 && a1 === b1 && a0 === a1;
+  }
+  return { mine, theirs, same };
 }
 /** Rule 2: each producer's VHP (1e-8 units) = the highest of `now` (read at card time) and its samples taken in
  *  (t - SAMPLE_WINDOW, t]. Samples after t never count (a card only uses what was known when it was taken). */
@@ -133,7 +169,7 @@ export function productionFloor(vhp: Record<string, bigint>, counts: Map<string,
   return { vhp: out, raised };
 }
 
-type Card = { at: number; blocksPerRace: number; c: number; fairness: number[] | null; field: { a: string; vhp: number; k: number; h: number }[]; paddock: { a: string; vhp: number; k: number }[]; samples?: number; flagged?: string[] };
+type Card = { at: number; blocksPerRace: number; c: number; fairness: number[] | null; field: { a: string; vhp: number; k: number; h: number }[]; paddock: { a: string; vhp: number; k: number }[]; samples?: number; flagged?: string[]; topInDoubt?: boolean; height?: number };
 type Race = { id: string; start: number; end: number; cards: (Card | null)[]; result: any | null };
 type WeekFile = { v: 1; week: number; start: number; end: number; races: Race[] };
 
@@ -209,15 +245,16 @@ async function heightAt(p: any, headId: string, t: number, lo: number, hi: numbe
 
 /** One pick as recorded: [player, horse, time of the pick (ms)]. */
 type Pick = [string, string, number];
-/** What the game knows about a wallet: stake, and the week's Knode answers and points. */
-type PlayerInfo = { stake: bigint; answers: number; points: number };
 type Opts = {
   p: any; check: any | null; prev?: string; out?: string; vhpOf?: (who: string[]) => Promise<Record<string, string>>;
   /** The second node's VHP read (tests). Default: the check node; with vhpOf given and this not, the same as vhpOf. */
   vhpCheckOf?: (who: string[]) => Promise<Record<string, string>>;
   raceContract?: string | null;                                       // the picks contract (default: race-data/deployment.json)
   picksOf?: (node: any, race: number) => Promise<Pick[]>;             // for the tests
-  playerOf?: (node: any, who: string, week: number) => Promise<PlayerInfo>;
+  /** Audit BX-89 (round 5): this computer's clock; a card is never dated more than FUTURE_MS after it. The command line
+   *  passes Date.now; the offline tests (fake chains in the future) leave it out. */
+  clock?: () => number;
+  stakedOf?: (node: any, who: string, week: number) => Promise<boolean>;   // staked in the Race in the vault (tests)
 };
 
 // ── the picks contract and the game (read only) ──
@@ -241,38 +278,56 @@ async function readPicks(node: any, contract: string, raceNo: number): Promise<P
   }
   return out;
 }
-async function readPlayer(node: any, who: string, week: number): Promise<PlayerInfo> {
-  if (!GAME) return { stake: 0n, answers: 0, points: 0 };
-  const c = new Contract({ id: GAME, abi: GAME_ABI(), provider: node });
-  const r: any = await withRetry(`Knode player ${who}`, () => (c.functions as any).get_player({ player: who, week: String(week) }));
-  const p = r?.result?.player ?? {}, e = r?.result?.entry ?? {};
-  return { stake: BigInt(p.stake || "0") + BigInt(p.pending || "0"), answers: Array.isArray(e.answers) ? e.answers.length : 0, points: Number(e.points || 0) };
+/** Staked in the Race (game 7) in the KnodeGames Vault for week w (owner, 2026-10-28), by the vault's own test, the one
+ *  its bot applies to free-prize winners: the week's peak stake in the game (entry.peak_stake, or active_stake when the
+ *  player has no entry that week) at least that week's minimum stake. A wallet staked at the start of a week stays
+ *  staked that week even if it withdraws. Before the vault (v6) is live nobody is staked; a failed read throws. */
+const vaultState = new WeakMap<object, Promise<any>>();
+export const NO_V6_ABI = "game/abi/kpred.koilib.json has no get_game_player (still v5): Race stakes can't be read";
+async function readStaked(node: any, who: string, week: number): Promise<Stand> {
+  const abi = GAME_ABI();
+  if (!GAME) throw Object.assign(new Error("game-data/deployment.json gives no contract: Race stakes can't be read"), { once: true });
+  // This repository's contract ABI is still v5: it can't tell whether the vault is live, so it can't say who is free.
+  // Throwing keeps the vault file from being final (the boards show everyone on Free play, with one warning a run).
+  if (!abi.methods?.get_game_player) throw Object.assign(new Error(NO_V6_ABI), { once: true });
+  const c = new Contract({ id: GAME, abi, provider: node });
+  if (!vaultState.has(node)) vaultState.set(node, withRetry("vault state", () => (c.functions as any).get_state({})));
+  const cfg = (await vaultState.get(node))?.result?.config;
+  if (!cfg) { vaultState.delete(node); throw Object.assign(new Error("the vault's get_state came back empty: Race stakes can't be read"), { once: true }); }
+  if (!(Number(cfg.v6_rule_week_plus_one || 0) > 0)) return { staked: false, earning: false };   // the contract on chain isn't v6 yet
+  const r: any = await withRetry(`Race stake of ${who}`, () => (c.functions as any).get_game_player({ player: who, game: VAULT_GAME, week: String(week) }));
+  return { staked: stakedFrom(cfg, r?.result ?? {}, week), earning: earningFrom(cfg, r?.result ?? {}, week) };
+}
+/** staked: on the Staked board (peak stake that week at least the minimum: can't win the free prize). earning: this
+ *  week's counted stake (week_stake, the lowest) at least the minimum, so the vault takes its points; a wallet staked
+ *  but withdrawn below the minimum mid-week is staked and not earning. */
+type Stand = { staked: boolean; earning: boolean };
+const minFor = (cfg: any, week: number) => {
+  const next = BigInt(cfg.min_stake_next || "0");
+  return next > 0n && week >= Number(cfg.min_stake_next_week || 0) ? next : BigInt(cfg.min_stake || "0");
+};
+/** Earning from the Race's bucket that week: the vault's post_results test (week_stake at least the minimum). Exported. */
+export function earningFrom(cfg: any, r: any, week: number): boolean {
+  if (!(Number(cfg?.v6_rule_week_plus_one || 0) > 0)) return false;
+  const min = minFor(cfg, week);
+  return min > 0n && BigInt(r?.week_stake || "0") >= min;
+}
+/** The vault's test, from its config (get_state) and a get_game_player result for the Race and that week. Exported. */
+export function stakedFrom(cfg: any, r: any, week: number): boolean {
+  if (!(Number(cfg?.v6_rule_week_plus_one || 0) > 0)) return false;
+  const min = minFor(cfg, week);
+  const peak = r?.entry ? BigInt(r.entry.peak_stake || "0") : BigInt(r?.active_stake || "0");
+  return min > 0n && peak >= min;
 }
 /** One run. Exported for the tests, which pass fake nodes. */
-export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract, picksOf, playerOf }: Opts) {
+export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract, picksOf, stakedOf, clock }: Opts) {
   if (prev !== undefined) PREV = prev;
   if (out !== undefined) OUT = out;
-  // Cards: effective VHP (audit BX-3 b). Who may be ranked (holds 1 VHP): the plain balance, as before.
+  // Cards: effective VHP (audit BX-3 b). Who is ranked is the vault stake (stakedOf), not a VHP balance.
   const vhpRead = vhpOf || (async (who: string[]) => (await readVhp(p, MAINNET_VHP, who, { effective: true })).values);
   const vhpCheck = !check ? null : vhpCheckOf || vhpOf || (async (who: string[]) => (await readVhp(check, MAINNET_VHP, who, { effective: true })).values);
-  const rawRead = vhpOf || (async (who: string[]) => (await readVhp(p, MAINNET_VHP, who)).values);
   const picksContract = raceContract === undefined ? defaultRaceContract() : raceContract;
   const picksRead = picksOf || (picksContract ? (node: any, r: number) => readPicks(node, picksContract, r) : null);
-  const playerRead = playerOf || readPlayer;
-  // Who may be ranked: at least 1 VHP, or a Knode stake (the Mana sponsor's "real player" rule). Read once per run.
-  const eligibleCache = new Map<string, boolean>();
-  async function eligible(who: string[]) {
-    const todo = who.filter((a) => !eligibleCache.has(a));
-    if (todo.length) {
-      const vhp = await rawRead(todo);
-      for (const a of todo) {
-        let ok = BigInt(vhp[a] || "0") >= 100000000n;
-        if (!ok) { try { ok = (await playerRead(p, a, M.weekOf(Date.now()))).stake > 0n; } catch { ok = false; } }
-        eligibleCache.set(a, ok);
-      }
-    }
-    return (a: string) => eligibleCache.get(a) === true;
-  }
   const head: any = await withRetry("head", () => p.getHeadInfo());
   const headH = Number(head.head_topology.height), headId = head.head_topology.id, now = Number(head.head_block_time);
   const libH = Number(head.last_irreversible_block), libT = await blockTime(p, headId, libH);
@@ -308,11 +363,13 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
       // recent (at most LIB_LAG_MAX behind their heads) and within LIB_GAP_MAX of each other, and the two head times
       // within HEAD_GAP_MS; the card is then dated by the later head (never back-dated, and at most HEAD_GAP_MS ahead).
       if (chHead - chLib > LIB_LAG_MAX || Math.abs(libH - chLib) > LIB_GAP_MAX) { nodesOk = false; problems.push(`the two nodes' irreversible blocks (${libH}, ${chLib}) are too far apart or behind (check node head ${chHead}); no handicap card this run`); }
-      if (Math.abs(chTime - now) > HEAD_GAP_MS) { nodesOk = false; problems.push(`the two nodes' head times differ by ${Math.round(Math.abs(chTime - now) / 1000)} s; no handicap card this run`); }
+      if (chTime - now > HEAD_GAP_MS || now - chTime > LAG_MS) { nodesOk = false; problems.push(`the check node's head time is ${Math.round((chTime - now) / 1000)} s from the primary's (at most ${HEAD_GAP_MS / 1000} s ahead or ${LAG_MS / 60000} min behind); no handicap card this run`); }
       winEnd = Math.min(libH, chLib);
       cardTime = Math.max(now, chTime);    // never back-dated by one node
       chId = ch.head_topology.id;
     }
+    // Audit BX-89 (round 5): nor dated late by a node whose head is ahead of this computer's clock.
+    if (clock && cardTime - clock() > FUTURE_MS) { nodesOk = false; problems.push(`a node's head time is ${Math.round((cardTime - clock()) / 1000)} s ahead of this computer's clock (at most ${FUTURE_MS / 1000} s); no handicap card this run`); }
     if (!nodesOk) want.length = 0;
   }
   if (want.length) {
@@ -327,14 +384,28 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
       const span = recent.ts[recent.ts.length - 1] - recent.ts[0];
       const blocksPerRace = span > 0 ? (recent.ts.length - 1) * M.RACE / span : 7200;
       const producers = recent.signers.filter(isAddr);
-      const mine = await vhpRead([...producers, "network"]);
-      const theirs = vhpCheck ? await vhpCheck([...producers, "network"]) : null;
-      // Audit BX-37: producer by producer, never the whole card for one address.
-      const { values, differ } = combineReads(mine, theirs, producers);
-      for (const a of differ) problems.push(`the two nodes disagree on ${a}'s VHP; it counts at the lower read and is flagged on the card (Block X holds a target it signs)`);
+      // Audit BX-74: both nodes read at the same block when they can (else the higher read of a disagreement counts).
+      const both = vhpCheck ? await readBoth(p, check, vhpRead, vhpCheck, [...producers, "network"]) : { mine: await vhpRead([...producers, "network"]), theirs: null, same: true };
+      const mine = both.mine, theirs = both.theirs;
+      if (vhpCheck && !both.same) problems.push("the two nodes were at different blocks while reading VHP (a lagging node): a producer they disagree on counts at the lower read, flagged");
+      // Audit BX-37: producer by producer, never the whole card for one address. Audit BX-99 (round 6): the card, like
+      // the samples, always takes the LOWER read of a disagreement ("different blocks" is only each node's own word);
+      // the higher read only decides whether the card is in doubt (below).
+      const { values, differ: readDiffer, high: readHigh } = combineReads(mine, theirs, producers, true);
+      for (const a of readDiffer) problems.push(`the two nodes disagree on ${a}'s VHP now; it is flagged on the card (Block X holds a target it signs)`);
+      // Audit BX-86 (round 5): every producer disputed in a sample this card uses is flagged too, with its higher read.
       const sup = (x: Record<string, string> | null) => { const v = x && x.network; return v && /^\d+$/.test(v) ? BigInt(v) : null; };
       // Audit BX-57: the HIGHER of the two nodes' totals (one node reporting "1" can't switch the samples off).
       const supply = [sup(mine), sup(theirs)].filter((x): x is bigint => x !== null).reduce<bigint | null>((m, x) => (m === null || x > m ? x : m), null);
+      const capped = (v: bigint) => (supply !== null && supply > 0n && v > supply ? supply : v);   // audit BX-102: never above all the VHP there is
+      const hiOf = new Map<string, bigint>();
+      for (const a of readDiffer) hiOf.set(a, capped(BigInt(readHigh[a])));
+      for (const smp of samples) {
+        if (!(smp.at <= cardTime && smp.at > cardTime - SAMPLE_WINDOW) || !smp.flagged) continue;
+        for (const a of smp.flagged) if (producers.includes(a)) { const h = capped(BigInt(smp.high![a])); if (!hiOf.has(a) || h > hiOf.get(a)!) hiOf.set(a, h); }
+      }
+      const differ = [...hiOf.keys()];
+      for (const a of differ) if (!readDiffer.includes(a)) problems.push(`the two nodes disagreed on ${a}'s VHP in a sample of the last 6 hours; it is flagged on the card (Block X holds a target it signs)`);
       // Blocks each producer signed in the window (recent.sig: each block's index into recent.signers).
       const counts = new Map<string, number>(); for (const i of recent.sig) { const a = recent.signers[i]; if (isAddr(a)) counts.set(a, (counts.get(a) || 0) + 1); }
       const high = windowHigh(values, samples, cardTime, supply);
@@ -342,13 +413,36 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
       for (const a of raised) console.log(`card: ${a} signed more blocks than its VHP allows; raised to ${Number(fair[a]) / 1e8} VHP for the card`);
       const used = samplesIn(samples, cardTime);
       const vhp: [string, number][] = producers.map((a) => [a, Number(fair[a] || 0n) / 1e8]);
-      const card: Card = { ...M.makeCard(vhp, blocksPerRace, cardTime), samples: used, ...(differ.length ? { flagged: [...differ].sort() } : {}) };
+      // Audit BX-73 / BX-86: the top is in doubt when a disputed producer, at its higher read, would reach the top of
+      // the card's FINAL values (after the 6-hour highs and the production floor): every multiplier then depends on it.
+      // Audit BX-99 (round 6): and on the production floor, which moves OTHER producers when a disputed one changes.
+      // The card is built again with every disputed producer at its higher read (now and in the samples); if the top
+      // or any undisputed producer's value differs, every multiplier on the card depends on the dispute: topInDoubt.
+      const top = producers.reduce((m, a) => ((fair[a] || 0n) > m ? fair[a] || 0n : m), 0n);
+      const valuesHi: Record<string, string> = { ...values };
+      for (const a of differ) if (hiOf.get(a)! > BigInt(valuesHi[a] || "0")) valuesHi[a] = String(hiOf.get(a)!);
+      const samplesHi = samples.map((smp) => (smp.flagged ? { ...smp, vhp: { ...smp.vhp, ...smp.high } } : smp));
+      const fairHi = productionFloor(windowHigh(valuesHi, samplesHi, cardTime, supply), counts, recent.sig.length).vhp;
+      const topHi = producers.reduce((m, a) => ((fairHi[a] || 0n) > m ? fairHi[a] || 0n : m), 0n);
+      // (Round-6 blind review: compared within 0.5%, the tolerance combineReads uses, so a tiny honest dispute that shifts
+      // a floored producer by a few satoshi doesn't hold a whole card.)
+      const apart = (u: bigint, v: bigint) => { const hi = u > v ? u : v, lo = u < v ? u : v; return hi - lo > hi / 200n; };
+      const moves = producers.filter((a) => !differ.includes(a) && apart(fair[a] || 0n, fairHi[a] || 0n));
+      const topInDoubt = differ.length > 0 && (apart(topHi, top) || moves.length > 0 || differ.some((a) => (fair[a] || 0n) >= top));
+      if (topInDoubt) problems.push(`a producer the two nodes disagree on decides other producers' multipliers on this card (the top${moves.length ? ", or " + moves.length + " other producer(s) through the production floor" : ""}): the whole card is flagged; Block X holds its targets`);
+      // Audit BX-77: the card also records the block its window ends at (Block X reads VHP moves from there).
+      const card: Card = { ...M.makeCard(vhp, blocksPerRace, cardTime), samples: used, height: winEnd, ...(differ.length ? { flagged: [...differ].sort() } : {}), ...(topInDoubt ? { topInDoubt: true } : {}) };
       // Audit BX-38: a card made from too few samples is published but flagged; Block X doesn't score with it.
       // Audit BX-58: the Producer Race still runs on such a card (its picks were made against it), and says so on the
       // card (`samples`, shown on the race page); Block X never scores with it.
       if (used < MIN_SAMPLES) problems.push(`handicap card from only ${used} VHP sample(s) in the last 6 hours (want ${MIN_SAMPLES}); the race uses it as is (its card shows the sample count); Block X waits for a card with enough samples`);
       console.log(`card VHP: effective, highest of ${used} sample(s) in the last 6 hours and the read now`);
-      for (const { race, leg } of want) { race.cards[leg] = card; console.log(`card for ${race.id} leg ${leg + 1}: ${card.field.length} horses, c = ${card.c}${check ? ", blocks and VHP checked on 2 nodes" : ""}`); }
+      for (const { race, leg } of want) {
+        // Audit BX-76: a card never carries a time at or after the end of its leg (a late run, a node a little ahead).
+        const legEnd = race.start + (leg + 1) * Math.round((race.end - race.start) / race.cards.length);
+        race.cards[leg] = card.at >= legEnd ? { ...card, at: legEnd - 1 } : card;
+        console.log(`card for ${race.id} leg ${leg + 1}: ${card.field.length} horses, c = ${card.c}${check ? ", blocks and VHP checked on 2 nodes" : ""}`);
+      }
     }
   }
 
@@ -386,9 +480,10 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
           const key = (x: Pick[]) => JSON.stringify([...x].sort((u, v) => (u[0] < v[0] ? -1 : 1)));
           if (key(mine) !== key(theirs)) { problems.push(`${race.id}: the two nodes disagree about the race's picks; not final this run`); continue; }
         }
-        const can = await eligible(mine.map((x) => x[0]));
-        // [player, horse, time, won (1/0), may be ranked (1/0), show: 2nd or 3rd (1/0)]
-        picks = mine.map(([who, horse, at]) => [who, horse, at, horse === winner ? 1 : 0, can(who) ? 1 : 0, horse !== winner && showSet.has(horse) ? 1 : 0]);
+        // [player, horse, time, won (1/0), 0, show: 2nd or 3rd (1/0)]. The 5th field was "may be ranked" (1 VHP or a
+        // question-game stake) until 2026-10-28; the Staked / Free play split now comes from the vault, so it is no longer
+        // read (a race's result depends only on its blocks and picks) and is always 0.
+        picks = mine.map(([who, horse, at]) => [who, horse, at, horse === winner ? 1 : 0, 0, horse !== winner && showSet.has(horse) ? 1 : 0]);
       }
       race.result = {
         final: true, checked, heights: [a, b], blocks: B.ts.length, line: M.finishLine(race.cards),
@@ -401,7 +496,9 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
   }
 
   // ── 3. leaderboards ──
-  const board = await leaderboards(weeks, now, (who, week) => playerRead(p, who, week), problems);
+  const stakedRead = stakedOf || readStaked;
+  const { board, vault } = await leaderboards(weeks, now, problems,
+    (who, week) => stakedRead(p, who, week), check ? (who, week) => stakedRead(check, who, week) : null);
 
   // ── 4. write ──
   fs.mkdirSync(OUT, { recursive: true });
@@ -413,68 +510,220 @@ export async function run({ p, check, prev, out, vhpOf, vhpCheckOf, raceContract
   }
   fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify({ v: 1, updated: new Date(now).toISOString(), weeks: [...known].sort((x, y) => x - y) }) + "\n");
   if (board) fs.writeFileSync(path.join(OUT, "board.json"), JSON.stringify(board) + "\n");
+  if (vault) {
+    fs.mkdirSync(path.join(OUT, "vault"), { recursive: true });
+    fs.writeFileSync(path.join(OUT, "vault", `W${vault.week}.json`), JSON.stringify(vault) + "\n");
+  }
   for (const pr of problems) console.log(`::warning::${pr}`);
   return { problems };
 }
 
 // ── leaderboards ──
 /** correct = wins (picks on the winner), shows = picks on the 2nd or 3rd horse, pts = 3 per win + 1 per show. */
-type Row = { a: string; pts: number; correct: number; shows: number; picks: number; answers: number; points: number; ranked: boolean };
-/** Sort: points, then more wins, then more picks placed, then more Knode answers, then a higher Knode score. Exported. */
+/** ranked: on the Staked board, i.e. staked in the Race in the vault that week (owner, 2026-10-28; before then it meant
+ *  "holds 1 VHP or a question-game stake"). boardPlace: the place on its own board (Staked or Free play), tied wallets
+ *  sharing it (1, 1, 3, …), which the site shows (board.js). */
+type Row = { a: string; pts: number; correct: number; shows: number; picks: number; ranked: boolean; boardPlace?: number; earns?: number; earning?: boolean };
+/** Sort: points, then more wins, then more picks placed; the address only orders wallets that share a place. Exported. */
 export function rank(rows: Row[]): Row[] {
-  return [...rows].sort((x, y) => y.pts - x.pts || y.correct - x.correct || y.picks - x.picks || y.answers - x.answers || y.points - x.points || (x.a < y.a ? -1 : 1));
+  return [...rows].sort((x, y) => y.pts - x.pts || y.correct - x.correct || y.picks - x.picks || (x.a < y.a ? -1 : 1));
 }
-/** The picks of final races in [from, to): per wallet, wins, shows and picks placed, and whether it may be ranked. */
+/** The picks of final races in [from, to): per wallet, wins, shows and picks placed. */
 function tally(weeks: Map<number, WeekFile>, from: number, to: number) {
-  const t = new Map<string, { correct: number; shows: number; picks: number; ranked: boolean }>();
+  const t = new Map<string, { correct: number; shows: number; picks: number }>();
   for (const wf of weeks.values()) for (const r of wf.races) {
     if (r.start < from || r.start >= to || !r.result?.final || !Array.isArray(r.result.picks)) continue;
-    for (const [who, , , right, can, show] of r.result.picks) {
-      const x = t.get(who) || { correct: 0, shows: 0, picks: 0, ranked: false };
-      x.picks++; x.correct += right ? 1 : 0; x.shows += !right && show ? 1 : 0; x.ranked = x.ranked || !!can;
+    for (const [who, , , right, , show] of r.result.picks) {
+      const x = t.get(who) || { correct: 0, shows: 0, picks: 0 };
+      x.picks++; x.correct += right ? 1 : 0; x.shows += !right && show ? 1 : 0;
       t.set(who, x);
     }
   }
   return t;
 }
-async function leaderboards(weeks: Map<number, WeekFile>, now: number, player: (who: string, week: number) => Promise<PlayerInfo>, problems: string[]) {
+type StakedOf = (who: string, week: number) => Promise<boolean | Stand>;
+const standOf = (v: boolean | Stand): Stand => (typeof v === "boolean" ? { staked: v, earning: v } : { staked: !!v?.staked, earning: !!v?.earning });
+async function leaderboards(weeks: Map<number, WeekFile>, now: number, problems: string[],
+  stakedOf: StakedOf = async () => false, stakedCheck: StakedOf | null = null) {
   // All time needs every week: load the ones this run didn't (read only).
   const all = new Map(weeks);
   const idx = readPrev("index.json");
   for (const w of Array.isArray(idx?.weeks) ? idx.weeks : []) if (Number.isInteger(w) && !all.has(w)) all.set(w, loadWeek(w));
-  const anyPicks = [...all.values()].some((wf) => wf.races.some((r) => Array.isArray(r.result?.picks)));
-  if (!anyPicks) return null;
   const wNow = M.weekOf(now), day0 = Math.floor(now / M.DAY) * M.DAY;
-  // Knode answers and points: this week's for Today and This week; summed over the weeks with picks for All time.
-  const knode = new Map<string, PlayerInfo>();   // key: who|week
-  const info = async (who: string, week: number) => {
+  const failed = new Set<string>();              // "stake:who|week": stake reads that failed (not staked on the boards)
+  const anyPicks = [...all.values()].some((wf) => wf.races.some((r) => Array.isArray(r.result?.picks)));
+  // Staked in the Race that week (the vault's test): read once per wallet and week; a failed read counts as not staked
+  // on the boards and keeps the vault file from being final.
+  const stakes = new Map<string, Stand>();
+  const staked = async (who: string, week: number) => {
     const k = `${who}|${week}`;
-    if (!knode.has(k)) { try { knode.set(k, await player(who, week)); } catch (e) { problems.push(`Knode record of ${who}: ${(e as Error).message}`); knode.set(k, { stake: 0n, answers: 0, points: 0 }); } }
-    return knode.get(k)!;
+    if (!stakes.has(k)) {
+      try { stakes.set(k, standOf(await stakedOf(who, week))); }
+      catch (e) {
+        // A problem with the whole read (not one wallet) is reported once a run.
+        const m = (e as Error).message, line = (e as any).once ? m : `Race stake of ${who}: ${m}`;
+        if (!problems.includes(line)) problems.push(line);
+        failed.add(`stake:${k}`); stakes.set(k, { staked: false, earning: false });
+      }
+    }
+    return stakes.get(k)!;
   };
-  const build = async (from: number, to: number, weeksFor: (who: string) => number[]) => {
+  if (!anyPicks) return { board: null, vault: await vaultResults(all, wNow - 1, now, [], failed, problems, stakedCheck) };
+  // stakeWeek: the week whose stake decides the board (Today and This week: this week; Last week: that week; All time:
+  // this week, the wallet's standing now).
+  // weekly: Last week and This week also say who earns (owner, 2026-10-29: only they get a medal); This week as if it
+  // ended now.
+  const build = async (from: number, to: number, stakeWeek: number, weekly = false) => {
     const rows: Row[] = [];
     for (const [a, x] of tally(all, from, to)) {
-      let answers = 0, points = 0;
-      for (const w of weeksFor(a)) { const i = await info(a, w); answers += i.answers; points += i.points; }
-      rows.push({ a, pts: x.correct * M.POINTS.win + x.shows * M.POINTS.show, correct: x.correct, shows: x.shows, picks: x.picks, answers, points, ranked: x.ranked });
+      const st = await staked(a, stakeWeek);
+      rows.push({ a, pts: x.correct * M.POINTS.win + x.shows * M.POINTS.show, correct: x.correct, shows: x.shows, picks: x.picks, ranked: st.staked, earning: st.earning });
     }
-    return rank(rows);
+    return withEarns(withPlaces(rank(rows)), weekly ? firstPicks(all, from, to) : null);
   };
-  const weeksOf = (who: string) => [...all.values()].filter((wf) => wf.races.some((r) => Array.isArray(r.result?.picks) && r.result.picks.some((p: any) => p[0] === who))).map((wf) => wf.week);
-  return {
+  const pub = (rows: Row[]) => rows.map(({ earning, ...r }) => r);   // board.json rows: the published fields only
+  const lastRows = wNow > 0 ? await build(M.weekStart(wNow - 1), M.weekStart(wNow), wNow - 1, true) : [];
+  const board = {
     v: 1, updated: new Date(now).toISOString(),
-    today: { day: M.dayOf(now), rows: await build(day0, day0 + M.DAY, () => [wNow]) },
-    week: { week: wNow, start: M.weekStart(wNow), rows: await build(M.weekStart(wNow), M.weekStart(wNow + 1), () => [wNow]) },
-    lastWeek: wNow > 0 ? { week: wNow - 1, start: M.weekStart(wNow - 1), rows: await build(M.weekStart(wNow - 1), M.weekStart(wNow), () => [wNow - 1]) } : null,
-    allTime: { rows: await build(0, Infinity, weeksOf) },
+    today: { day: M.dayOf(now), rows: pub(await build(day0, day0 + M.DAY, wNow)) },
+    week: { week: wNow, start: M.weekStart(wNow), rows: pub(await build(M.weekStart(wNow), M.weekStart(wNow + 1), wNow, true)) },
+    lastWeek: wNow > 0 ? { week: wNow - 1, start: M.weekStart(wNow - 1), rows: pub(lastRows) } : null,
+    allTime: { rows: pub(await build(0, Infinity, wNow)) },
   };
+  return { board, vault: await vaultResults(all, wNow - 1, now, lastRows, failed, problems, stakedCheck) };
+}
+
+// ── the KnodeGames Vault's results file (Vault v6 hand-offs, 2026-10-28) ──
+/** The Producer Race's game number in the KnodeGames Vault, the vault's limit of wallets per prize place, and its
+ *  points range for staked players' rows. */
+export const VAULT_GAME = 7;
+export const MAX_PRIZE_WINNERS = 10;
+export const MAX_ROW_POINTS = 255;
+type VaultRow = { player: string; points: number };
+type VaultFile = { game: number; week: number; final: boolean; rows: VaultRow[]; first: string[]; second: string[]; skipped: string[] };
+
+/** Two rows tie when every ranking measure is equal (rank() sorts by exactly these, so ties sit next to each other). */
+const tied = (x: Row, y: Row) => x.pts === y.pts && x.correct === y.correct && x.picks === y.picks;
+/** Each wallet's {earliest pick time} among the final races in [from, to). */
+function firstPicks(all: Map<number, WeekFile>, from: number, to: number): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const wf of all.values()) for (const r of wf.races) {
+    if (r.start < from || r.start >= to || !r.result?.final || !Array.isArray(r.result.picks)) continue;
+    for (const x of r.result.picks) { const t = Number(x[2]); if (!m.has(x[0]) || t < m.get(x[0])!) m.set(x[0], t); }
+  }
+  return m;
+}
+/** The staked players who share the bucket, by the vault's rule (finalizeGameStep): the top 30% by headcount of the
+ *  earning staked players with at least 1 point, rounded up, a tied group at the line taken whole. Exported. */
+export function stakedWinners(rows: Row[]): Set<string> {
+  const groups = groupsOf(rows.filter((r) => r.ranked && r.earning !== false && r.pts >= 1));
+  const n = groups.reduce((t, g) => t + g.length, 0), need = Math.ceil((n * 30) / 100), out = new Set<string>();
+  let cum = 0;
+  for (const g of groups) { if (cum >= need) break; for (const r of g) out.add(r.a); cum += g.length; }
+  return out;
+}
+/** earns, on the weekly boards (owner, 2026-10-29: only wallets that earn get a medal): 1 or 2 = the free prize's 1st
+ *  or 2nd (prizePlaces: ties, and the 10 earliest when more are tied), 3 = a share of the staked bucket, 0 = nothing.
+ *  Other boards: 0. Exported. */
+export function withEarns(rows: Row[], firstPick: Map<string, number> | null): Row[] {
+  if (!firstPick) return rows.map((r) => ({ ...r, earns: 0 }));
+  const free = prizePlaces(rows, firstPick), share = stakedWinners(rows);
+  const place = new Map<string, number>([...free.first.map((a): [string, number] => [a, 1]), ...free.second.map((a): [string, number] => [a, 2])]);
+  return rows.map((r) => ({ ...r, earns: r.ranked ? (share.has(r.a) ? 3 : 0) : place.get(r.a) || 0 }));
+}
+/** Each row's place on its own board (Staked or Free play), ties sharing it: 1, 1, 3, … Rows stay in rank() order. Exported. */
+export function withPlaces(rows: Row[]): Row[] {
+  const last: Record<string, { r: Row; place: number; n: number }> = {};
+  return rows.map((r) => {
+    const k = r.ranked ? "staked" : "free", prev = last[k], n = (prev ? prev.n : 0) + 1;
+    const place = prev && tied(prev.r, r) ? prev.place : n;
+    last[k] = { r, place, n };
+    return { ...r, boardPlace: place };
+  });
+}
+function groupsOf(rows: Row[]): Row[][] {
+  const groups: Row[][] = [];
+  for (const r of rows) { const g = groups[groups.length - 1]; if (g && tied(g[0], r)) g.push(r); else groups.push([r]); }
+  return groups;
+}
+
+/** The free prize's places from a week's rows in rank() order. Every free player (not staked in the Race that week)
+ *  with at least 1 point qualifies (owner, 2026-10-28). Wallets tied on every measure (points, wins, picks) share a
+ *  place: a tie for 1st takes both prizes, so 2nd stays empty. The vault takes at most 10 wallets a place: when more are
+ *  tied, the 10 that made their first pick of the week earliest (the time the chain recorded it; then the address)
+ *  take the place and the rest get nothing (owner, 2026-10-28). `firstPick`: each wallet's earliest pick time that
+ *  week. Exported. */
+export function prizePlaces(rows: Row[], firstPick: Map<string, number> = new Map()): { first: string[]; second: string[]; notes: string[] } {
+  const groups = groupsOf(rows.filter((r) => !r.ranked && r.pts >= 1));
+  const notes: string[] = [];
+  const at = (a: string) => firstPick.get(a) ?? Infinity;
+  const early = (g: Row[]) => [...g].sort((x, y) => at(x.a) - at(y.a) || (x.a < y.a ? -1 : 1)).map((r) => r.a).slice(0, MAX_PRIZE_WINNERS);
+  const [g1, g2] = groups;
+  if (!g1) return { first: [], second: [], notes };
+  if (g1.length > MAX_PRIZE_WINNERS) notes.push(`${g1.length} wallets are tied for 1st: the ${MAX_PRIZE_WINNERS} with the earliest first pick share it, ${g1.length - MAX_PRIZE_WINNERS} get nothing`);
+  if (g1.length > 1 || !g2) return { first: early(g1), second: [], notes };
+  if (g2.length > MAX_PRIZE_WINNERS) notes.push(`${g2.length} wallets are tied for 2nd: the ${MAX_PRIZE_WINNERS} with the earliest first pick share it, ${g2.length - MAX_PRIZE_WINNERS} get nothing`);
+  return { first: [g1[0].a], second: early(g2), notes };
+}
+
+/** The staked players' rows for the vault: every wallet staked in the Race that week with at least 1 point, in the
+ *  board's order, as points 255, 254, ... per tied group (only the order and the ties matter to the vault). Beyond 255
+ *  groups the rest all get 1 point and the run warns. Exported. */
+export function stakedRows(rows: Row[]): { rows: VaultRow[]; notes: string[] } {
+  const groups = groupsOf(rows.filter((r) => r.ranked && r.pts >= 1)), out: VaultRow[] = [], notes: string[] = [];
+  groups.forEach((g, i) => { for (const r of g) out.push({ player: r.a, points: Math.max(1, MAX_ROW_POINTS - i) }); });
+  if (groups.length > MAX_ROW_POINTS) notes.push(`${groups.length} different scores among staked players: the lowest ${groups.length - MAX_ROW_POINTS + 1} share 1 point`);
+  return { rows: out, notes };
+}
+
+/** A race that still isn't final this long after its week ends is skipped (owner, 2026-10-28): its picks don't count
+ *  (the leaderboard only ever counts final races) and the week's results become final without it. Normally every
+ *  race is final within an hour or two of its end. */
+export const VAULT_SKIP_AFTER = 12 * M.HOUR;
+
+/** The vault's file for week w. Final once:
+ *  - every race of the week is final (or was never run because the recorder hadn't started, or is skipped after
+ *    VAULT_SKIP_AFTER), and the week file shows the recorder did run that week;
+ *  - every Race stake was read, and the stakes read the same on the second node.
+ *  `skipped` lists the races left out. A file already published as final is kept exactly as it is, so the vault never
+ *  sees its results change (the publish job also refuses to change one). */
+async function vaultResults(all: Map<number, WeekFile>, w: number, now: number, rows: Row[], failed: Set<string>, problems: string[], stakedCheck: StakedOf | null = null): Promise<VaultFile | null> {
+  if (w < 0) return null;
+  const old = readPrev(`vault/W${w}.json`);
+  if (old && old.final === true && old.game === VAULT_GAME && old.week === w) return old;
+  const wf = all.get(w);
+  // No week file, or one with nothing recorded (e.g. the last run's files couldn't be read): write nothing.
+  if (!wf || !wf.races.some((r) => r.cards.some(Boolean) || r.result)) return null;
+  let firstCard = Infinity;
+  for (const x of all.values()) for (const r of x.races) if (r.cards.some(Boolean)) firstCard = Math.min(firstCard, r.start);
+  const open = wf.races.filter((r) => !r.result?.final && !(r.start < firstCard && !r.cards.some(Boolean)));
+  const late = now >= wf.end + VAULT_SKIP_AFTER;
+  const unread = rows.filter((r) => failed.has(`stake:${r.a}|${w}`));
+  const file: VaultFile = { game: VAULT_GAME, week: w, final: false, rows: [], first: [], second: [], skipped: [] };
+  const wait = (why: string) => { problems.push(`vault week ${w}: not final yet, ${why}`); return file; };
+  if (open.length && !late) return wait(`${open.length} race(s) still being checked (${open.map((r) => r.id).join(", ")}); skipped if still open at ${new Date(wf.end + VAULT_SKIP_AFTER).toISOString()}`);
+  if (unread.length) return wait(`${unread.length} Race stake(s) could not be read (tried again next run)`);
+  if (stakedCheck) {
+    for (const r of rows) {
+      let theirs: boolean;
+      try { theirs = standOf(await stakedCheck(r.a, w)).staked; } catch (e) { return wait(`the second node couldn't read ${r.a}'s Race stake (${(e as Error).message})`); }
+      if (theirs !== r.ranked) return wait(`the two nodes disagree about whether ${r.a} was staked in the Race`);
+    }
+  }
+  if (open.length) problems.push(`vault week ${w}: ${open.length} race(s) never became final and are skipped: ${open.map((r) => r.id).join(", ")}`);
+  const firstPick = new Map<string, number>();
+  for (const r of wf.races) if (r.result?.final && Array.isArray(r.result.picks)) for (const x of r.result.picks) {
+    const t = Number(x[2]); if (!firstPick.has(x[0]) || t < firstPick.get(x[0])!) firstPick.set(x[0], t);
+  }
+  const places = prizePlaces(rows, firstPick), staked = stakedRows(rows);
+  for (const n of [...places.notes, ...staked.notes]) problems.push(`vault week ${w}: ${n}`);
+  return { ...file, final: true, rows: staked.rows, first: places.first, second: places.second, skipped: open.map((r) => r.id) };
 }
 
 /** The producers (field and paddock) on the newest card in the published week files of the last day (audit BX-53). */
 function latestCardProducers(now: number): string[] {
   let best: Card | null = null;
-  for (const w of new Set([M.weekOf(now - M.DAY), M.weekOf(now)])) {
+  for (const w of new Set([M.weekOf(now - M.DAY), M.weekOf(now), M.weekOf(now + M.LEG)])) {   // audit BX-78: next week's first card too
     const wf = readPrev(`W${String(w).padStart(3, "0")}.json`);
     for (const r of (wf && Array.isArray(wf.races) ? wf.races : [])) for (const c of (Array.isArray(r?.cards) ? r.cards : [])) {
       if (c && Number.isFinite(c.at) && c.at <= now + FUTURE_MS && (!best || c.at > best.at)) best = c;
@@ -497,6 +746,9 @@ export async function sample({ p, check, prev, out, vhpOf, vhpCheckOf, spreadMs 
   const delay = spreadMs > 0 ? randomInt(0, spreadMs) : 0;
   await wait(delay);
   const head: any = await withRetry("head", () => p.getHeadInfo());
+  // Audit BX-114 (round 7): the check node's head is read right after the primary's, before the long block read, so a
+  // slow read can't make an in-sync check node look "ahead".
+  const chHead: any = check ? await withRetry("check head", () => check.getHeadInfo()) : null;
   const headH = Number(head.head_topology.height), now = Number(head.head_block_time);
   const problems: string[] = [];
   // Audit BX-56: a head time in the future is judged against this computer's clock only, so a check node a few minutes
@@ -511,12 +763,39 @@ export async function sample({ p, check, prev, out, vhpOf, vhpCheckOf, spreadMs 
   const read = vhpOf || (async (w: string[]) => (await readVhp(p, MAINNET_VHP, w, { effective: true })).values);
   const readCheck = !check ? null : vhpCheckOf || vhpOf || (async (w: string[]) => (await readVhp(check, MAINNET_VHP, w, { effective: true })).values);
   let keep = old.filter((x) => x.at > Math.min(now, clock()) - SAMPLE_KEEP);
+  // Audit BX-101 (round 6): the same lag bounds as a card: a check node more than LAG_MS behind (or HEAD_GAP_MS ahead,
+  // or LIB_GAP_MAX blocks away) gives no sample this time, rather than disputes that flag producers for 6 hours.
+  if (!problems.length && check && readCheck) {
+    const ch: any = chHead;
+    const chTime = Number(ch.head_block_time), chH = Number(ch.head_topology.height);
+    if (chTime - now > HEAD_GAP_MS || now - chTime > LAG_MS || Math.abs(chH - headH) > LIB_GAP_MAX)
+      problems.push(`the check node is ${Math.round((now - chTime) / 1000)} s / ${headH - chH} blocks from the primary (at most ${LAG_MS / 60000} min behind, ${HEAD_GAP_MS / 1000} s ahead, ${LIB_GAP_MAX} blocks); no sample this time`);
+  }
   if (!problems.length) {
-    const mine = await read(who);
-    const theirs = readCheck ? await readCheck(who) : null;
-    const { values, differ } = combineReads(mine, theirs, who);
-    for (const a of differ) problems.push(`the two nodes disagree on ${a}'s effective VHP; it is sampled at the higher read (capped at the top both agree on)`);
-    if (!keep.length || now > keep[keep.length - 1].at) keep = keep.concat([{ at: now, height: headH, vhp: values }]).slice(-SAMPLE_MAX);
+    // Audit BX-74: both nodes at the same block when they can.
+    const both = readCheck ? await readBoth(p, check, read, readCheck, who, wait) : { mine: await read(who), theirs: null, same: true };
+    const mine = both.mine;
+    const theirs = both.theirs;
+    // Audit BX-86 (round 5): a sample NEVER keeps one node's higher read ("different blocks" is only each node's own
+    // word). The disputed producers alone are read again on both nodes (twice, a second apart); one still disputed is
+    // sampled at the LOWER read and recorded in the sample (flagged, with its higher read), so every card that uses the
+    // sample flags it, and the top is in doubt when its higher read would reach the top.
+    const { values, differ: d0, high } = combineReads(mine, theirs, who, true);
+    let differ = d0;
+    for (let k = 0; k < 2 && differ.length && readCheck; k++) {
+      await wait(1000);
+      const again = await readBoth(p, check, read, readCheck, differ, wait);
+      const c = combineReads(again.mine, again.theirs, differ, true);
+      for (const a of differ) {
+        if (!c.differ.includes(a)) { values[a] = c.values[a]; delete high[a]; continue; }
+        if (BigInt(c.values[a]) < BigInt(values[a])) values[a] = c.values[a];
+        if (BigInt(c.high[a]) > BigInt(high[a])) high[a] = c.high[a];
+      }
+      differ = differ.filter((a) => c.differ.includes(a));
+    }
+    for (const a of differ) problems.push(`the two nodes disagree on ${a}'s effective VHP; it is sampled at the lower read and flagged in the sample (cards that use it flag ${a})`);
+    const disputes = differ.length ? { flagged: [...differ].sort(), high: Object.fromEntries([...differ].sort().map((a) => [a, high[a]])) } : {};
+    if (!keep.length || now > keep[keep.length - 1].at) keep = keep.concat([{ at: now, height: headH, vhp: values, ...disputes }]).slice(-SAMPLE_MAX);
   }
   fs.mkdirSync(OUT, { recursive: true });
   const file: SampleFile = { v: 1, updated: new Date(Math.min(now, clock())).toISOString(), samples: keep };
@@ -531,5 +810,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (!RPC_CHECK && E.ALLOW_ONE_NODE !== "yes") { console.error(`error: no second node (RPC_CHECK is off, missing or the same as RPC): the race needs two. Set RPC_CHECK, or ALLOW_ONE_NODE=yes to run on one node.`); process.exit(1); }
   if (!RPC_CHECK) console.log("::warning::running on ONE node (ALLOW_ONE_NODE=yes): cards and results are not cross-checked");
   const nodes = { p: new Provider([RPC]), check: RPC_CHECK ? new Provider([RPC_CHECK]) : null };
-  (process.argv.includes("--sample") ? sample(nodes) : run(nodes)).catch((e) => { console.error(`error: ${String((e && e.message) || e).replace(/[\r\n]+/g, " ").replace(/::/g, ": ").slice(0, 500)}`); process.exit(1); });
+  (process.argv.includes("--sample") ? sample(nodes) : run({ ...nodes, clock: Date.now })).catch((e) => { console.error(`error: ${String((e && e.message) || e).replace(/[\r\n]+/g, " ").replace(/::/g, ": ").slice(0, 500)}`); process.exit(1); });
 }

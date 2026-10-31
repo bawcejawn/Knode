@@ -40,7 +40,7 @@ function fakeNode({ live = true, players = {} } = {}) {
       asked.push(op.entry_point);
       if (op.contract_id !== VAULT) throw new Error("unexpected contract " + op.contract_id);
       if (op.entry_point === 1023583049) {                         // get_state → config (field 1)
-        const cfg = [...fU64(9, V), ...(live ? fU64(21, 4) : []), ...fU64(22, 3)];   // field 22 (game_count): not in STATE_ABI, skipped
+        const cfg = [...fMsg(1, [...utils.decodeBase58(VAULT)]), ...fU64(9, V), ...(live ? fU64(21, 4) : []), ...fU64(22, 3)];   // owner (field 1): audit BX-82   // field 22 (game_count): not in STATE_ABI, skipped
         return { result: b64(fMsg(1, cfg)) };
       }
       if (op.entry_point === 267077419) {                          // get_game_player(player 1, game 2, week 3)

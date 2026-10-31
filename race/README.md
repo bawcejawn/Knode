@@ -53,3 +53,38 @@ To pause picks: `npm run racepicks -- disable --send` (owner's key, `OWNER_WIF`)
 
 Release build sha256 (audited 2026-10-27, docs/history/AUDIT-2026-10-27-race-picks.md): `61e8f21230e8b4bdb165bacfe7281517a5adf78f6c6b1b8a0d84ce41537afac5` (17,066 bytes).
 Tests: 22 contract tests (`npm test`, in the Koinos mock VM), including the auditor's attack tests (`Race.audit.spec.ts`).
+
+## Weekly results for the KnodeGames Vault (game 7)
+
+The race recorder (`bot/race.ts`) writes `vault/W<week>.json` on the `race-data` branch for the week that just ended.
+Its source for the vault is `race-data:vault` (for `game-data/deployment.json` → `vaultGames."7".results`).
+
+```json
+{ "game": 7, "week": 2, "final": true, "skipped": [],
+  "rows":   [ { "player": "1Abc…", "points": 255 }, { "player": "1Ghi…", "points": 254 } ],
+  "first":  [ "1Def…" ], "second": [ "1Jkl…" ] }
+```
+
+**Two boards (owner, 2026-10-28).** A wallet is a *staked* player in a week if its peak stake in the Race (game 7)
+that week is at least the vault's minimum, by the vault's own test (`get_game_player` → `entry.peak_stake`, or
+`active_stake` with no entry). A wallet staked at the start of a week stays staked that week even if it withdraws.
+Everyone else is a *free* player, guests included. Before the vault (v6) is live, everyone is free.
+- `rows`: staked players with at least 1 point, in board order, as 255, 254, … per tied group (only the order and the
+  ties matter to the vault).
+- `first` / `second`: the free players' 1st and 2nd. A tie for 1st takes both prizes (2nd stays empty). When more than
+  10 wallets tie for a place, the 10 whose first pick that week came earliest (the time the chain recorded) share it
+  and the rest get nothing.
+- Ranking: points (win 3, show 1), then wins, then picks placed. Wallets still tied share the place. The question game
+  no longer breaks Race ties (owner, 2026-10-28).
+
+**When it's final:**
+- once every race of the week is final, or a race still open 12 hours after the week ends is skipped (listed in
+  `skipped`; its picks don't count);
+- and every Race stake was read and reads the same on the second node.
+
+Until then the file says `"final": false` with nothing in it.
+
+**Safety:**
+- A file published as final never changes: the recorder keeps it, and the publish job refuses any change.
+- The publish job also refuses a final file for a week that hasn't ended by the runner's own clock.
+- If the last run's files can't be read, the run stops instead of starting from nothing.
