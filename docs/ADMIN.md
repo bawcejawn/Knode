@@ -22,7 +22,7 @@ It opens a link with a one-time key (a new one every start). It works only on th
 | Platform | Mana sponsor; Knode Vault (v6): add games, weekly results, corrections, the VHP fee; Wallet names: claims sent to you, hide a name, refresh @nicknames |
 | Games | One area per game, by game id (Question game 1, Block X 2, Survivor 3, Fantasy 4, Block Golf 6, Race 7, Combo 8, Bracket 9, Last Node Standing 13) |
 | Knode Swap | The Desk |
-| Testnet | Trials with test KOIN only: Vault v6 trial, Sponsor v3 trial |
+| Testnet | Trials with test KOIN only: Vault v6 trial (your local testnet node; the public test copy is run by the Vault chat), Sponsor v3 trial |
 
 Vault controls run `npm run bot -- games / game-add / …` and names controls run `npm run names -- …`. Until the
 vault-v6 and producer-names pull requests are merged into this copy, those cards say the command isn't here yet.
