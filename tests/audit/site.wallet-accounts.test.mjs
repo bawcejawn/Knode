@@ -215,3 +215,60 @@ test("every page with a header loads the shared wallet button after wallet.js, a
     assert.deepEqual([...foot.matchAll(/>([^<]+)<\/a>/g)].map((m) => m[1]), ["Trust", "Terms &amp; risks", "Install app", "Source code"], `${p}: footer links`);
   }
 });
+
+// ── "＋ Add another account" with Kondor (bug: it closed and did nothing) ──
+const kondorWith = (getAccounts, extra = {}) => ({ getAccounts, getSigner: () => ({}), ...extra });
+const statusText = (h) => h.els.filter((e) => e.attrs.class === "kw-status").pop()?.textContent || "";
+
+test("Add another: Kondor sharing a new account adds it, switches to it and says so", async () => {
+  const h = harness({ local: { "kw-accounts": JSON.stringify([{ kind: "kondor", address: K1 }]), "kw-active": K1, "kw-kind": "kondor" },
+    kondor: kondorWith(async () => [{ address: K1 }, { address: K2 }]) });
+  chainInit(h); await h.advance(10);
+  const p = h.W.connect(); h.option("kondor").on.click();
+  assert.equal(await p, K2, "the new account becomes active");
+  assert.deepEqual(JSON.parse(JSON.stringify(h.W.accounts().map((a) => a.address))), [K1, K2]);
+  assert.match(h.log.toasts.join("\n"), /Added 1 Kondor account/);
+});
+
+test("Add another: Kondor sharing only the same account explains how to add one, instead of closing silently", async () => {
+  const h = harness({ local: { "kw-accounts": JSON.stringify([{ kind: "kondor", address: K1 }]), "kw-active": K1, "kw-kind": "kondor" },
+    kondor: kondorWith(async () => [{ address: K1 }]) });
+  chainInit(h); await h.advance(10);
+  const p = h.W.connect(); h.option("kondor").on.click();
+  assert.equal(await p, K1);
+  assert.equal(h.W.address, K1);
+  assert.match(statusText(h), /already here.*create or import the other account/s);
+  const box = h.els.filter((e) => e.attrs.class === "kw-back").pop();
+  assert.equal(box.isConnected, true, "the explanation stays on screen");
+});
+
+test("Kondor: a slow answer (unlocking, choosing) is waited for, not dropped after 15 seconds", async () => {
+  let answer; const slow = new Promise((r) => { answer = r; });
+  const h = harness({ kondor: kondorWith(() => slow) });
+  chainInit(h);
+  const p = h.W.connect(); h.option("kondor").on.click();
+  await h.advance(60000);
+  assert.match(statusText(h), /Kondor window opened/);
+  answer([{ address: K1 }]);
+  assert.equal(await p, K1);
+});
+
+test("Kondor: cancelled in Kondor or extension missing gives a clear message in the dialog", async () => {
+  const h = harness({ kondor: kondorWith(async () => { throw new Error("getAccounts cancelled"); }) });
+  chainInit(h);
+  const p = h.W.connect(); h.option("kondor").on.click();
+  assert.equal(await p, null);
+  assert.match(statusText(h), /Cancelled in Kondor/);
+
+  const h2 = harness({ kondor: kondorWith(async () => [{ address: K1 }], { provider: { getChainId: () => new Promise(() => {}) } }) });
+  chainInit(h2);
+  const p2 = h2.W.connect(); h2.option("kondor").on.click();
+  await h2.advance(5000);
+  assert.equal(await p2, null);
+  assert.match(statusText(h2), /Kondor isn't answering/);
+});
+
+test("swap page: the shared header menu owns the wallet button (no second handler that disconnects)", () => {
+  const swap = fs.readFileSync(`${APP}/swap.js`, "utf8");
+  assert.match(swap, /b.getAttribute\("aria-haspopup"\) === "menu"\) return;/);
+});

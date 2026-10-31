@@ -278,6 +278,9 @@
   async function start() {
     let armed = 0;
     $("#connect").addEventListener("click", () => {
+      // The shared header menu (header-wallet.js) owns this button when it is there: it connects, switches, adds and
+      // disconnects. A second handler here used to disconnect on a second tap (e.g. closing the menu). Demo only now.
+      const b = $("#connect"); if (b.getAttribute && b.getAttribute("aria-haspopup") === "menu") return;
       if (!S.account) return connect();
       if (S.demo || Date.now() - armed > 5000) { armed = Date.now(); return toast(`Connected with ${S.demo ? "the demo wallet" : window.KWallet.label()}: ${S.account}. Tap again to disconnect.`, 5000); }
       armed = 0; window.KWallet.disconnect();

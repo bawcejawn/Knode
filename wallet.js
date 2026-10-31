@@ -201,15 +201,58 @@
     }
   }
 
+  /** Is the Kondor extension really there? This page always loads the kondor-js library (so window.kondor exists even
+   *  without the extension); only the extension answers. A cheap read (chain id) opens no Kondor window. */
+  async function kondorAnswers() {
+    const p = window.kondor && window.kondor.provider;
+    if (!p || typeof p.getChainId !== "function") return !!window.kondor;   // can't tell: ask anyway
+    try { await withTimeout(p.getChainId(), 4000, "no-kondor"); return true; }
+    catch (e) { return String(e && e.message) !== "no-kondor"; }            // an error from Kondor still means it's there
+  }
+
+  /** Connect Kondor, or add more Kondor accounts. Kondor opens its own window where the player taps the account(s) to
+   *  share and Accept. That can take a while (unlocking, choosing), so this waits up to 5 minutes and keeps a dialog open
+   *  saying what to do, instead of closing silently. When nothing new comes back, it says how to add another account. */
   async function connectKondor() {
-    close();
-    if (!window.kondor) { W.toast && W.toast("Kondor isn't installed in this browser. On a phone, use KOIN Vault.", 7000); return null; }
-    const accounts = await withTimeout(window.kondor.getAccounts(), 15000, "No answer from Kondor. Is the extension installed and unlocked?");
-    if (!accounts || !accounts.length) { W.toast && W.toast("Kondor shared no account. Open Kondor and allow this site.", 7000); return null; }
-    const addrs = accounts.map((a) => a && a.address).filter((a) => typeof a === "string" && a.length > 0);   // only real addresses are remembered
-    if (!addrs.length) { W.toast && W.toast("Kondor shared no account. Open Kondor and allow this site.", 7000); return null; }
+    const before = new Set(remembered().filter((x) => x.kind === "kondor").map((x) => x.address));
+    const status = h("p", { class: "kw-status", role: "status" }, "Looking for Kondor…");
+    const box = open(h("h3", {}, "Connect Kondor"), status);
+    let cancelled = false; onClose = () => { cancelled = true; };
+    const say = (t) => { if (box.isConnected) status.textContent = t; };
+    if (!window.kondor || !(await kondorAnswers())) {
+      if (!cancelled) say(isPhone() ? "Kondor is a computer browser extension. On a phone, use KOIN Vault or play as a guest." : "Kondor isn't answering. Install or turn on the Kondor extension in this browser (or use KOIN Vault), then try again.");
+      return null;
+    }
+    if (cancelled) return null;
+    say(before.size
+      ? "A Kondor window opened. Unlock it if asked, tap every account you want here (the new one too; you can pick several), then Accept."
+      : "A Kondor window opened. Unlock it if asked, tap the account(s) you want to use here, then Accept.");
+    let accounts;
+    try { accounts = await withTimeout(window.kondor.getAccounts(), 5 * 60000, "No answer from Kondor after 5 minutes. Try again."); }
+    catch (e) {
+      if (cancelled) return null;
+      const m = String((e && e.message) || e);
+      say(/cancel/i.test(m) ? "Cancelled in Kondor. Nothing changed."
+        : /connection lost/i.test(m) ? "The Kondor window closed before Accept was tapped. Nothing changed. Try again."
+        : m);
+      return null;
+    }
+    if (cancelled) return null;
+    const addrs = (Array.isArray(accounts) ? accounts : []).map((a) => a && a.address).filter((a) => typeof a === "string" && a.length > 0);   // only real addresses are remembered
+    if (!addrs.length) { say("Kondor shared no account. Try again and tap an account in the Kondor window before Accept."); return null; }
     for (const a of addrs) remember("kondor", a);
-    setAddress("kondor", addrs.includes(W.address) ? W.address : addrs[0]);
+    const fresh = addrs.filter((a) => !before.has(a));
+    if (before.size && !fresh.length) {
+      say(`Kondor shared only ${addrs.length === 1 ? "an account that is" : "accounts that are"} already here, so nothing new was added. ` +
+        "To add another: open Kondor and create or import the other account there first (Kondor's account menu), " +
+        "then tap ＋ Add another account again and tap that account in the Kondor window.");
+      onClose = null;
+      return W.address;
+    }
+    close();
+    const keep = W.kind === "kondor" && addrs.includes(W.address);
+    setAddress("kondor", fresh.length ? fresh[0] : keep ? W.address : addrs[0]);
+    if (before.size && fresh.length && W.toast) W.toast(`Added ${fresh.length === 1 ? "1 Kondor account" : fresh.length + " Kondor accounts"}. Now using ${W.address.slice(0, 5)}…${W.address.slice(-4)}. Switch any time from the wallet menu.`, 7000);
     return W.address;
   }
 
@@ -219,7 +262,7 @@
       const phone = isPhone();
       const pick = (fn) => async () => { onClose = null; try { resolve(await fn()); } catch (e) { W.toast && W.toast(String(e.message || e), 7000); resolve(null); } };
       const kondor = h("button", { class: "kw-opt", type: "button", onclick: pick(connectKondor) }, h("span", { class: "kw-ic", "aria-hidden": "true" }, "🧩"),
-        h("div", {}, h("b", {}, "Kondor", !phone && window.kondor ? h("span", { class: "kw-tag" }, "found") : null), h("span", {}, "Browser extension, on a computer")));
+        h("div", {}, h("b", {}, "Kondor"), h("span", {}, "Browser extension, on a computer")));
       const vault = h("button", { class: "kw-opt", type: "button", onclick: pick(connectVault) }, h("span", { class: "kw-ic", "aria-hidden": "true" }, "📱"),
         h("div", {}, h("b", {}, "KOIN Vault", phone ? h("span", { class: "kw-tag" }, "for phones") : null), h("span", {}, "Fingerprint or face, no extension. Works on any phone")));
       const guest = guestOption(pick);
