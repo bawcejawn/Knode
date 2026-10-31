@@ -435,7 +435,11 @@ test("vault: a file published as final is never rewritten, even if the week's da
   assert.equal(fs.readFileSync(path.join(later, "vault", "W2.json"), "utf8"), before);
 });
 
-test("publish check: refuses vault files that are wrong in any way, and a final file for a week that hasn't ended", async () => {
+// Blind review V1 (round 10): a wrong vault file is held on its own (the check drops vault/ and passes the rest), so it
+// never stops the race cards. held(d): the check passed and took vault/ out; kept(d): it passed and left vault/ in.
+const held = (d, now) => shapeOk(d, now) && !fs.existsSync(path.join(d, "vault"));
+const kept = (d, now) => shapeOk(d, now) && fs.existsSync(path.join(d, "vault"));
+test("publish check: holds vault files that are wrong in any way, and a final file for a week that hasn't ended; the race files still publish", async () => {
   const { dir } = await weekTwoDone();
   const out = await picksRun(U("2026-11-09T05:37Z"), dir);
   const good = vaultOf(out);
@@ -443,7 +447,7 @@ test("publish check: refuses vault files that are wrong in any way, and a final 
   const A = Array.from({ length: 11 }, (_, i) => "1" + String.fromCharCode(65 + i).repeat(33));
   const row = (player, points) => ({ player, points });
   const okRows = { ...good, first: [], second: [], rows: [row(W1, 255), row(W2, 254), row(W3, 254)] };
-  assert.ok((() => { const d = tmp(); fs.mkdirSync(path.join(d, "vault")); fs.writeFileSync(path.join(d, "vault", "W2.json"), JSON.stringify(okRows)); return shapeOk(d); })(), "staked rows are fine");
+  assert.ok((() => { const d = tmp(); fs.mkdirSync(path.join(d, "vault")); fs.writeFileSync(path.join(d, "vault", "W2.json"), JSON.stringify(okRows)); return kept(d); })(), "staked rows are fine");
   const cases = [
     { ...good, game: 2 }, { ...good, first: A }, { ...good, second: [GUEST] }, { ...good, final: false },
     { ...good, first: [W1, W2], second: [W3] }, { ...good, first: ["<img src=x>"] }, { ...good, extra: 1 }, { ...good, final: 1 },
@@ -455,14 +459,16 @@ test("publish check: refuses vault files that are wrong in any way, and a final 
   ];
   for (const c of cases) {
     const d = tmp(); fs.mkdirSync(path.join(d, "vault")); fs.writeFileSync(path.join(d, "vault", "W2.json"), JSON.stringify(c));
-    assert.equal(shapeOk(d), false, JSON.stringify(c));
+    assert.ok(held(d), JSON.stringify(c));
   }
   const named = tmp(); fs.mkdirSync(path.join(named, "vault")); fs.writeFileSync(path.join(named, "vault", "W3.json"), JSON.stringify(good));
-  assert.equal(shapeOk(named), false, "the file name must match its week");
+  assert.ok(held(named), "the file name must match its week");
   // Week 2 ends Mon 9 Nov 00:00 UTC: by the runner's clock just before then, a final file is refused; a waiting one is fine.
-  assert.equal(shapeOk(out, String(Date.parse("2026-11-08T23:59Z") / 1000)), false);
+  const early = tmp(); fs.cpSync(out, early, { recursive: true });
+  assert.ok(held(early, String(Date.parse("2026-11-08T23:59Z") / 1000)));
+  assert.ok(fs.readdirSync(early).some((f) => /^W[0-9]{3}\.json$/.test(f)), "the week files stay and publish");
   const waiting = tmp(); fs.mkdirSync(path.join(waiting, "vault")); fs.writeFileSync(path.join(waiting, "vault", "W2.json"), JSON.stringify({ ...good, final: false, first: [], second: [] }));
-  assert.ok(shapeOk(waiting, String(Date.parse("2026-11-08T23:59Z") / 1000)));
+  assert.ok(kept(waiting, String(Date.parse("2026-11-08T23:59Z") / 1000)));
   assert.doesNotMatch(yml.replace(/RACE_CHECK_NOW"\) or time\.time\(\)/, ""), /RACE_CHECK_NOW/, "the workflow never sets the check's clock");
 });
 
@@ -699,4 +705,23 @@ test("earns: in the recorder's board, weekly boards only; >10 free tied: the 10 
     const d = tmp(), j = JSON.parse(JSON.stringify(board)); Object.assign(j.week.rows[0], bad);
     fs.writeFileSync(path.join(d, "board.json"), JSON.stringify(j)); assert.equal(shapeOk(d), false, JSON.stringify(bad));
   }
+});
+
+test("blind review V1 (round 10): the publish job holds a bad vault file and still pushes the race files; a final one never changes", async () => {
+  const bare = tmp(); execFileSync("git", ["init", "-q", "--bare", bare]);
+  const { dir } = await weekTwoDone();
+  const out = await picksRun(U("2026-11-09T05:37Z"), dir);
+  const v = vaultOf(out);
+  fs.writeFileSync(path.join(out, "vault", "W2.json"), JSON.stringify({ ...v, first: [W1], second: [W1] }) + "\n");   // a wallet twice
+  const r = publish(out, bare);
+  assert.ok(r.ok, r.out); assert.match(r.out, /vault results held, not published this run: vault\/W2\.json/);
+  const files = execFileSync("git", ["--git-dir", bare, "ls-tree", "-r", "--name-only", "race-data"]).toString().split("\n");
+  assert.ok(files.includes("W002.json") && files.includes("board.json"), "the race files are published");
+  assert.ok(!files.some((f) => f.startsWith("vault/")), "the bad vault file isn't");
+  // A good final file publishes; a later changed one is still refused outright (the lock holds).
+  const again = await picksRun(U("2026-11-09T05:37Z"), dir);
+  assert.ok(publish(again, bare).ok);
+  fs.writeFileSync(path.join(again, "vault", "W2.json"), JSON.stringify({ ...vaultOf(again), first: [W3], second: [] }) + "\n");
+  const ch = publish(again, bare);
+  assert.equal(ch.ok, false); assert.match(ch.out, /Refusing to change vault\/W2\.json/);
 });

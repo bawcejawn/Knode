@@ -459,3 +459,14 @@ docs only, the other is testnet only.
 Not part of Block X, recorded here because it's in the same runbook: Repo Lens FC2-13 (Combo Card). The Picks v2
 upgrade must write v2's `wasmSha256` into `picks-data/deployment.json`. It is step 5 of "Later: the Picks v2 upgrade"
 in `docs/blockx/MAINNET-LAUNCH.md`.
+
+**Blind review of the merge (BX-138, 2026-10-30).** Scope: `git diff a55390f b301bfa -- .github/workflows/race.yml
+bot/race.ts`. Verdict: nothing must be fixed before prize-free Block X goes live. No check was weakened. The vault
+files are written exactly as `JSON.stringify` + newline, and the fetch of `vault/` paths is anchored. Its findings:
+
+| ID | Finding | Status |
+|---|---|---|
+| V1 | Low: one bad vault file (a recorder bug) failed the whole publish, cards included, for up to a week | **Fixed**: a vault file that fails its check is held on its own with a warning (no file means no prize). The race files still publish, and a final file still never changes. Tests: the shape check and an end-to-end publish |
+| V2 | Info: the record job's `for f in $(git ls-tree …)` split names on spaces, and a failed `ls-tree` didn't fail the step | **Fixed**: `ls-tree -z` goes to a file first, then a `read -d ''` loop |
+| V3 | Info: `ls-remote --heads … race-data` also matched `x/race-data` | **Fixed**: `refs/heads/race-data` exactly |
+| V4 | Info: if the chain isn't Vault v6 yet, the stake read says "not staked" without an error, so a week could go final with everyone free | **Before prizes**: refuse (throw) unless the chain is v6. Today the repository ABI has no `get_game_player`, so the read throws and the file stays not final |

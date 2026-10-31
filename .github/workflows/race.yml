@@ -46,15 +46,16 @@ jobs:
           mkdir -p "$RUNNER_TEMP/prev"
           url="https://github.com/${GITHUB_REPOSITORY}.git"
           # A missing branch is fine (the first run). Any other failure stops the run, so it never starts from nothing.
-          rc=0; git ls-remote --exit-code --heads "$url" race-data >/dev/null 2>&1 || rc=$?
+          rc=0; git ls-remote --exit-code "$url" refs/heads/race-data >/dev/null 2>&1 || rc=$?   # exactly race-data (review V3)
           if [ "$rc" = 2 ]; then echo "No race-data branch yet."
           elif [ "$rc" != 0 ]; then echo "::error::Couldn't read the race-data branch (git ls-remote exit $rc)"; exit 1
           else
             git fetch -q --depth 1 "$url" race-data
-            for f in $(git ls-tree -r --name-only FETCH_HEAD); do
+            git ls-tree -r -z --name-only FETCH_HEAD > "$RUNNER_TEMP/prev-files"   # fails the step if it fails (review V2)
+            while IFS= read -r -d '' f; do
               if [[ "$f" =~ ^(index|board|W[0-9]{3})\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; fi
               if [[ "$f" =~ ^vault/W[0-9]{1,4}\.json$ ]]; then mkdir -p "$RUNNER_TEMP/prev/vault"; git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prev/$f"; fi
-            done
+            done < "$RUNNER_TEMP/prev-files"
           fi
           # The VHP samples (race-samples.yml): each producer's card VHP is the highest of the last 6 hours.
           if git fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" race-samples 2>/dev/null && git cat-file -e "FETCH_HEAD:vhp-samples.json" 2>/dev/null; then
@@ -145,6 +146,7 @@ jobs:
               if type(o) is dict: return all(type(k) is str and js_safe(v, depth + 1) for k, v in o.items())
               return False
           for _root, _dirs, _files in os.walk(d):
+              if os.path.relpath(_root, d).split(os.sep)[0] == "vault": continue   # checked below, on its own (blind review V1)
               for _f in _files:
                   if _f.endswith(".json"):
                       assert js_safe(json.load(open(os.path.join(_root, _f), encoding="utf-8"))), "a value the recorder (JavaScript) can't read back exactly: " + _f
@@ -214,8 +216,15 @@ jobs:
               return not (b and len(a) != 1)
           for f in os.listdir(d):
               if f == "vault":
-                  for g in os.listdir(os.path.join(d, f)):
-                      assert vault_ok(g, json.load(open(os.path.join(d, f, g), encoding="utf-8"))), "vault/" + g
+                  # Blind review V1 (round 10): a vault file that fails its check is held on its own (not published this
+                  # run: no file means no prize), so a bug there can't stop the race cards Block X needs. A file already
+                  # published as final still never changes (the push loop below).
+                  bad = [g for g in sorted(os.listdir(os.path.join(d, f)))
+                         if not (lambda j: js_safe(j) and vault_ok(g, j))(json.load(open(os.path.join(d, f, g), encoding="utf-8")))]
+                  if bad:
+                      import shutil
+                      print("::warning::vault results held, not published this run: " + ", ".join("vault/" + g for g in bad))
+                      shutil.rmtree(os.path.join(d, f))
                   continue
               j = json.load(open(os.path.join(d, f), encoding="utf-8"))
               if f == "board.json":
