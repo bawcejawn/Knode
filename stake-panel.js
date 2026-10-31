@@ -122,7 +122,9 @@
     if (!gw || !gw.finalized || !e || e.claimed) return 0n;
     const place = Number(e.prize_place || 0);
     if (place === 1) return big(gw.prize_first);
-    if (place === 2) return Number(gw.first_n || 0) === 1 ? big(gw.prize_second) : 0n;
+    // The vault pays 2nd place its prize also when nobody placed 1st (audit V6-9; found by the Vault chat, 30 Oct).
+    // A tie for 1st shares both prizes, so then nobody is 2nd.
+    if (place === 2) return Number(gw.first_n || 0) >= 2 ? 0n : big(gw.prize_second);
     const points = Number(e.points || 0), cutoff = Number(gw.cutoff || 0);
     if (gw.rolled_over || cutoff < 1 || points < cutoff) return 0n;
     const b = (buckets || [])[points];
