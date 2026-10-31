@@ -176,3 +176,6 @@ dependencies) so the recorder and the verify job run the same code. Tests: `test
 
 **Tests (fix-check 3 round, 118e621):** contract 71 (source unchanged, 92d555d0…); site and audit suite 737 passing
 (5 todo, 6 skipped, 0 failing); browser 7; workflow guard 8.
+
+**Tests (with the verify job, fbdd8eb):** contract 71 (source unchanged); site and audit suite 747 passing (5 todo,
+6 skipped, 0 failing); browser 7; workflow guard 8.
