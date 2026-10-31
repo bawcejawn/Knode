@@ -496,6 +496,8 @@
     if (TESTNET) return;
     // The site's shared stake panel (stake-panel.js, Hub chat): Stake / Withdraw / Move / Claim for game 2. It stays
     // hidden until the vault (v6) is live and Block X has a stake bucket.
+    // The Hub's staked / free status bar at the top of the page (links to stake.html#g2); the full panel stays lower.
+    if (window.KStake && typeof window.KStake.badge === "function" && $("stake-badge")) window.KStake.badge($("stake-badge"), { game: G.GAME_ID });
     if (window.KStake && typeof window.KStake.mount === "function" && $("blockx-stake")) window.KStake.mount($("blockx-stake"), { game: G.GAME_ID });
     try {
       const dep = await fetchJson(new URL("game-data/deployment.json", ROOT));
