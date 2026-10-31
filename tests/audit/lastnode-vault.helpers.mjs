@@ -6,9 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { PY, withBash } from "./lib/platform.mjs";
 export const APP = process.env.APP || fileURLToPath(new URL("../..", import.meta.url));
-await import(path.resolve(APP, "race-math.js")); await import(path.resolve(APP, "lastnode-math.js"));
+await import(pathToFileURL(path.resolve(APP, "race-math.js")).href); await import(pathToFileURL(path.resolve(APP, "lastnode-math.js")).href);
 const L = globalThis.KLastNode;
 export const A = (c) => "1" + c.repeat(33);
 export const P1 = A("P"), P2 = A("Q"), P3 = A("R"), P4 = A("S");
@@ -16,7 +17,7 @@ export const yml = fs.readFileSync(path.resolve(APP, ".github/workflows/lastnode
 export const AT = (w, h) => String(L.weekStart(w) + h * 3600000);
 
 // The publish step's real shell against a throwaway bare repository (bash, git): skipped on Windows.
-export const linux = process.platform === "win32" ? (name, fn) => test.skip(name, fn) : test;
+export const linux = withBash;   // the publish job's real shell: Linux (GitHub Actions); skipped on Windows
 export function publishScript() {
   const lines = yml.split("\n");
   const i = lines.findIndex((l) => /name:\s*Push games-data\/lastnode/.test(l));
@@ -36,7 +37,7 @@ process.on("exit", () => { for (const p of servers) try { p.kill(); } catch { /*
 const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 export function fakeNode(fixtureFile) {
   const portFile = fixtureFile + ".port";
-  const p = spawn("python3", ["-I", path.resolve(APP, "tests/audit/lib/fake-koinos-rpc.py"), fixtureFile, portFile], { stdio: "ignore" });
+  const p = spawn(PY, ["-I", path.resolve(APP, "tests/audit/lib/fake-koinos-rpc.py"), fixtureFile, portFile], { stdio: "ignore" });
   servers.push(p); p.unref();
   for (let k = 0; k < 500 && !fs.existsSync(portFile); k++) sleepMs(10);
   const port = fs.readFileSync(portFile, "utf8").trim();

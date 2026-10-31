@@ -5,9 +5,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const APP = process.env.APP || ".";
-const { run, readNetConfig, MAINNET_CHAIN_ID } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+const { run, readNetConfig, MAINNET_CHAIN_ID } = await import(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href);
 const M = globalThis.KRaceMath, L0 = globalThis.KLastNode;
 const F = L0.forGame(L0.FAST_GAME);
 
@@ -96,7 +97,7 @@ test("practice mode starts with the event running at the first run and never rea
 });
 
 test("the local test server serves the Last Node Standing page, settings and recorder files, and nothing else", async () => {
-  const { allowed } = await import(path.resolve(APP, "tools/testnet-site.mjs"));
+  const { allowed } = await import(pathToFileURL(path.resolve(APP, "tools/testnet-site.mjs")).href);
   for (const ok of ["/lastnode-testnet.html", "/lastnode.js", "/testnet/lastnode.json", "/testnet-data/lastnode-93/board.json",
     "/testnet-data/lastnode-93/D2026-10-29T04.json", "/testnet-data/lastnode-13/D2026-10-29.json", "/testnet-data/lastnode-13/index.json"]) assert.ok(allowed(ok), ok);
   for (const bad of ["/testnet-data/lastnode-93/../../.env.testnet", "/testnet-data/lastnode-93/keys.json", "/testnet-data/race-cards/W001.json",

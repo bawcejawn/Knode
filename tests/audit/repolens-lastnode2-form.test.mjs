@@ -2,16 +2,17 @@
 // real code paths (bot/games/lastnode.ts run/samplesIn/sharesFromSamples, lastnode-math.js formOf, the workflow shell).
 import test from "node:test"; import assert from "node:assert/strict";
 import fs from "node:fs"; import os from "node:os"; import path from "node:path"; import { execFileSync, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { withBash } from "./lib/platform.mjs";
 const APP = fileURLToPath(new URL("../..", import.meta.url));
-await import(path.resolve(APP, "race-math.js")); await import(path.resolve(APP, "lastnode-math.js"));
+await import(pathToFileURL(path.resolve(APP, "race-math.js")).href); await import(pathToFileURL(path.resolve(APP, "lastnode-math.js")).href);
 const L0 = globalThis.KLastNode;
 const H = 3600000, A = (c) => "1" + c.repeat(33), N1 = A("A"), N2 = A("B"), N3 = A("C"), N4 = A("D");
 const write = (d, name, samples) => fs.writeFileSync(path.join(d, name), JSON.stringify({ v: 1, updated: "x", samples }));
 const smp = (t, vhp, extra = {}) => ({ at: t, height: 1, vhp: Object.fromEntries(Object.entries(vhp).map(([a, v]) => [a, String(v * 1e8)])), ...extra });
 
 test("M-F-1: samples whose VHP the two nodes disputed (BX-86 flagged/high) can't move a node's form", async () => {
-  const { samplesIn, sharesFromSamples } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+  const { samplesIn, sharesFromSamples } = await import(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href);
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "mf1-")), t0 = 1_800_000_000_000 - (1_800_000_000_000 % H), real = { [N1]: 4000, [N2]: 2000, [N3]: 1000, [N4]: 1000 };
   const all = [];
   for (let t = t0; t < t0 + 48 * H; t += 5 * 60000) {
@@ -25,7 +26,7 @@ test("M-F-1: samples whose VHP the two nodes disputed (BX-86 flagged/high) can't
   assert.ok(Math.abs(f[N4] - 1) < 0.02, `N4 signed exactly its share; form ${f[N4]} (0.8 = the lying node bought it the floor)`);
 });
 
-test("M-F-2: a failed read of race-samples is not 'no branch yet' (the record step fails, so no field is set without form)", () => {
+withBash("M-F-2: a failed read of race-samples is not 'no branch yet' (the record step fails, so no field is set without form)", () => {
   const yml = fs.readFileSync(path.resolve(APP, ".github/workflows/lastnode.yml"), "utf8");
   // The whole samples block (from its mkdir to the if's closing fi), so a cut-off block can't fail on syntax alone.
   const lines = yml.split("\n"), i0 = lines.findIndex((l) => l.includes('mkdir -p "$RUNNER_TEMP/samples"'));
@@ -49,7 +50,7 @@ const out = () => fs.mkdtempSync(path.join(os.tmpdir(), "mf-"));
 const dayOf = (d) => { const f = path.join(d, `D${EV.day}.json`); return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : null; };
 
 test("M-F-2b: mainnet, samples present on the branch but too few this run: the field waits (with a warning), not set at once without form", async () => {
-  const { run } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+  const { run } = await import(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href);
   const t = EV.opens + 15 * 60000;
   // Only the last 10 of the 48 hours have samples (the history fetch fell short): even with the owner's no-form
   // override, the field waits (the samples may be late), and says why.
@@ -65,7 +66,7 @@ test("M-F-2b: mainnet, samples present on the branch but too few this run: the f
 test("M-F-3: mainnet doesn't open a game-13 event without form unless the owner allows it (launch state holds every week)", async () => {
   // The launch gate (fix-check N-10): no race-samples yet. Without LASTNODE_ALLOW_NO_FORM the field never comes and the
   // event is void at its lock; with it, the field is set without form (and says so).
-  const { run } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+  const { run } = await import(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href);
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), "mf-empty-")), o = out();
   const late = EV.opens + 3 * H + 60000;
   const r1 = await run(base({ raceDir: raceDir(), out: o, samplesDir: empty, allowNoForm: false, practice: false, hoursOf: hoursOf(false), now: { time: late, libTime: late } }));
@@ -87,8 +88,8 @@ test("M-F-3: mainnet doesn't open a game-13 event without form unless the owner 
 test("M-F-4 (LNF-6): after the 4-minute deadline the losing 48 h read stops, and the recorder process exits", () => {
   const helpers = path.resolve(APP, "tests/audit/lastnode-form.helpers.mjs");
   const script = `
-    const { run, finish } = await import(${JSON.stringify(path.resolve(APP, "bot/games/lastnode.ts"))});
-    const { raceDir, base, EV } = await import(${JSON.stringify(helpers)});
+    const { run, finish } = await import(${JSON.stringify(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href)});
+    const { raceDir, base, EV } = await import(${JSON.stringify(pathToFileURL(helpers).href)});
     // a slow read that keeps the event loop alive (timers, as withRetry/sockets do): 20 x 1 s
     const slow = async (_n, _a, n) => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 1000)); return Array.from({ length: n }, () => ({})); };
     const t = EV.opens + 15 * 60000;
@@ -102,7 +103,7 @@ test("M-F-4 (LNF-6): after the 4-minute deadline the losing 48 h read stops, and
 });
 
 test("N-5: one inserted sample per hour with a huge value (no flags) can't move a node's form either", async () => {
-  const { samplesIn, sharesFromSamples } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+  const { samplesIn, sharesFromSamples } = await import(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href);
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "mf5-")), t0 = 1_800_000_000_000 - (1_800_000_000_000 % H), real = { [N1]: 4000, [N2]: 2000, [N3]: 1000, [N4]: 1000 };
   const all = [];
   for (let t = t0; t < t0 + 48 * H; t += 5 * 60000) all.push(smp(t, real));

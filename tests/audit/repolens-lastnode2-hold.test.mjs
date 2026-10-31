@@ -7,9 +7,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 const APP = fileURLToPath(new URL("../..", import.meta.url));
-const { watchWeek } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+const { watchWeek } = await import(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href);
 const L = globalThis.KLastNode;
 const A = (c) => "1" + c.repeat(33);
 const NODES = ["A", "B", "C", "D", "E", "F", "G", "H", "J", "K"].map(A);

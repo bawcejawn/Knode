@@ -7,15 +7,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { withBash } from "./lib/platform.mjs";
 const APP = fileURLToPath(new URL("../..", import.meta.url));
-const { run } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+const { run } = await import(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href);
 const L = globalThis.KLastNode;
 const A = (c) => "1" + c.repeat(33);
 // import or paste: publisher, dayFile, boardOf, raceFiles, idx, PICKS, NODES (tests/audit/lastnode-vault.test.mjs)
 import { publisher, dayFile, boardOf, raceFiles, idx, PICKS, NODES, CUT_ORDER, WINNER, chainFor, gamed, dayG, vgood, history, REST_W3, voidDay } from "./lastnode-vault.helpers.mjs";
 
-const linux = process.platform === "linux" ? test : test.skip;
+const linux = withBash;   // the publish job's real shell: Linux (GitHub Actions); skipped with a reason elsewhere
 const card = (at) => ({ at, field: NODES.slice(0, 4).map((a, i) => ({ a, vhp: 4000 - i * 1000, k: 600 })), paddock: [] });
 
 // M-H-n1: the recorder's second run must publish (loadDay keeps field.vt and hours[i].card === null).

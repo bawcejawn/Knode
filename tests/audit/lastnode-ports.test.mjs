@@ -6,13 +6,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { PY, withPython } from "./lib/platform.mjs";
 const APP = process.env.APP || fileURLToPath(new URL("../..", import.meta.url));
-const { watchWeek } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+const { watchWeek } = await import(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href);
 const L = globalThis.KLastNode;
 const yml = fs.readFileSync(path.resolve(APP, ".github/workflows/lastnode.yml"), "utf8");
 const hist = yml.match(/<<'HIST'\n([\s\S]*?)\n\s*HIST\n/)[1].split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n");
-const py = (names, call, input) => execFileSync("python3", ["-I", "-c", `
+const py = (names, call, input) => execFileSync(PY, ["-I", "-c", `
 import ast, json, math, sys
 src = sys.argv[1]; names = set(json.loads(sys.argv[2]))
 tree = ast.parse(src)
@@ -40,7 +41,7 @@ function week(R) {
   return evs;
 }
 
-test("N-9: the publish job's watch_week flags exactly what the recorder's watchWeek flags (500 random weeks)", () => {
+withPython("N-9: the publish job's watch_week flags exactly what the recorder's watchWeek flags (500 random weeks)", () => {
   const R = L.rng(77), weeks = Array.from({ length: 500 }, () => week(R));
   const want = weeks.map((w) => watchWeek(w, 3600000));
   const got = JSON.parse(py(["js_round", "h_int", "watch_week", "WEEK_Z", "WEEK_WINS", "EVENT_Z"], "[watch_week(w) for w in json.load(sys.stdin)]", weeks));
@@ -48,13 +49,13 @@ test("N-9: the publish job's watch_week flags exactly what the recorder's watchW
   assert.ok(want.filter((x) => x.length).length >= 20, "the sample has flagged weeks too");
 });
 
-test("N-8: js_round and h_int are JavaScript's Math.round, including 0.49999999999999994 and halves", () => {
+withPython("N-8: js_round and h_int are JavaScript's Math.round, including 0.49999999999999994 and halves", () => {
   const xs = [0.49999999999999994, 0.5, 1.5, 2.5, -0.5, 1e4 * 4.9999999999999996e-5, 12345.5, 0.1 + 0.2, 4503599627370495.5];
   const got = JSON.parse(py(["js_round"], "[js_round(x) for x in json.load(sys.stdin)]", xs));
   assert.deepEqual(got, xs.map((x) => Math.round(x) + 0));   // + 0: JSON has no -0
 });
 
-test("N-1: the publish job's field check accepts every field makeField gives (random cards, with and without form)", () => {
+withPython("N-1: the publish job's field check accepts every field makeField gives (random cards, with and without form)", () => {
   const R = L.rng(5), cases = [];
   for (let k = 0; k < 60; k++) {
     const day = `2026-11-${String(10 + (k % 18)).padStart(2, "0")}`, ev = L.eventOf(day);

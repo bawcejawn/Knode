@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 
 const APP = process.env.APP || ".";
@@ -57,7 +58,7 @@ test("lastnode.js: text only (no HTML sinks), one kind of transaction, and never
 });
 
 test("the page and the recorder agree: the same field, cuts and points from the same inputs", async () => {
-  await import(path.resolve(APP, "lastnode-math.js"));
+  await import(pathToFileURL(path.resolve(APP, "lastnode-math.js")).href);
   const N = globalThis.KLastNode;
   const A = (c) => "1" + c.repeat(33);
   const card = { at: 1, field: [{ a: A("A"), vhp: 900, k: 1200 }, { a: A("B"), vhp: 500, k: 660 }, { a: A("C"), vhp: 300, k: 400 }, { a: A("D"), vhp: 200, k: 260 }] };

@@ -7,9 +7,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
+import { PY, withPython } from "./lib/platform.mjs";
 const APP = process.env.APP || ".";
-const { run } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+const { run } = await import(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href);
 const M = globalThis.KRaceMath, L = globalThis.KLastNode;
 
 const A = (c) => "1" + c.repeat(33);
@@ -193,9 +195,9 @@ test("an event never finished within 3 days is void, and last week is final only
 import { execFileSync } from "node:child_process";
 const yml = fs.readFileSync(path.resolve(APP, ".github/workflows/lastnode.yml"), "utf8");
 const checkPy = yml.match(/<<'PY'\n([\s\S]*?)\n\s*PY\n/)[1].split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n");
-const shapeOk = (dir) => { try { execFileSync("python3", ["-I", "-c", checkPy, dir], { stdio: "pipe", env: { ...process.env, RUNNER_TEMP: fs.mkdtempSync(path.join(os.tmpdir(), "lns-rt-")) } }); return true; } catch { return false; } };
+const shapeOk = (dir) => { try { execFileSync(PY, ["-I", "-c", checkPy, dir], { stdio: "pipe", env: { ...process.env, RUNNER_TEMP: fs.mkdtempSync(path.join(os.tmpdir(), "lns-rt-")) } }); return true; } catch { return false; } };
 
-test("the publish check accepts the recorder's files and refuses tampered ones", async () => {
+withPython("the publish check accepts the recorder's files and refuses tampered ones", async () => {
   const out = tmp();
   await go({ out, now: { time: EV.start + 4 * H, libTime: EV.start + 4 * H } });
   assert.ok(shapeOk(out), "recorder output passes");

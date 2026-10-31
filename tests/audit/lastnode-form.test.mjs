@@ -7,10 +7,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 
+import { PY, withPython } from "./lib/platform.mjs";
 const APP = process.env.APP || ".";
-const { run, sharesByHour } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+const { run, sharesByHour } = await import(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href);
 import { raceDir, hourOf, hoursOf, samplesDir, base } from "./lastnode-form.helpers.mjs";
 const M = globalThis.KRaceMath, L0 = globalThis.KLastNode;
 const F = L0.forGame(L0.FAST_GAME);
@@ -62,7 +64,7 @@ test("the real cards fix the bias: the two steady under-signers win again, the s
 });
 
 // ── the recorder ──
-test("the recorder sets the field with form from the 48 h before the card, on both nodes, and publishes it", async () => {
+withPython("the recorder sets the field with form from the 48 h before the card, on both nodes, and publishes it", async () => {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "lns-f-")), t = EV.opens + 15 * 60000;
   const r = await run(base({ raceDir: raceDir(), out, hoursOf: hoursOf(false), now: { time: t, libTime: t } }));
   assert.ok(fs.existsSync(path.join(out, "D2026-11-03T08.json")), `problems: ${r.problems.join("; ")} files: ${fs.readdirSync(out)}`);
@@ -78,7 +80,7 @@ test("the recorder sets the field with form from the 48 h before the card, on bo
   // (a real-game day file carrying this field: the mainnet check is written for the daily game's files)
   const pub = fs.mkdtempSync(path.join(os.tmpdir(), "lns-fp-"));
   fs.writeFileSync(path.join(pub, "D2026-11-03.json"), JSON.stringify({ v: 1, day: "2026-11-03", start: Date.UTC(2026, 10, 3, 14), week: L0.weekOf(Date.UTC(2026, 10, 3, 14)), field: d.field, hours: [], picks: {}, cuts: [], standing: [], winner: null, done: false, players: [] }));
-  execFileSync("python3", ["-I", "-c", checkPy, pub], { stdio: "pipe", env: { ...process.env, RUNNER_TEMP: fs.mkdtempSync(path.join(os.tmpdir(), "rt-")) } });
+  execFileSync(PY, ["-I", "-c", checkPy, pub], { stdio: "pipe", env: { ...process.env, RUNNER_TEMP: fs.mkdtempSync(path.join(os.tmpdir(), "rt-")) } });
 });
 
 test("the two nodes disagree on the form's blocks: no field this run; 3 hours after picks open, the field is set without form", async () => {
@@ -110,7 +112,7 @@ test("fix-check LNF-6: a 48-hour read that never answers is cut off, and the run
 });
 
 test("fix-check LNF-4: VHP swapped between two addresses counts once (hourly average), so the form isn't dragged down", async () => {
-  const { sharesFromSamples, samplesIn } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+  const { sharesFromSamples, samplesIn } = await import(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href);
   // N4 (1000) moves its VHP to a second address B and back every 3 hours; on hourly cards (6-hour highs) both show 1000.
   const B = A("F");
   const dir = samplesDir((t) => (Math.floor((t - EV.cardTime) / (3 * H)) % 2 ? { [N1]: 4000, [N2]: 2000, [N3]: 1000, [B]: 1000 } : { [N1]: 4000, [N2]: 2000, [N3]: 1000, [N4]: 1000 }));
@@ -159,7 +161,7 @@ test("fix-check LNF-3/N-4: the recorder checks each window against the first rac
 });
 
 test("watch-and-hold: a node far above its multiplier that won 2+ races holds the week's vault file", async () => {
-  const { watchWeek } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+  const { watchWeek } = await import(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href);
   const field = { at: 0, c: 0, fairness: null, vt: 8000, nodes: [{ a: N1, vhp: 4000, kh: 200, h: 1 }, { a: N2, vhp: 2000, kh: 100, h: 2 }, { a: N3, vhp: 1000, kh: 50, h: 4 }, { a: N4, vhp: 1000, kh: 50, h: 4 }] };
   const ev = (rate) => {
     const hours = Array.from({ length: 3 }, (_, i) => ({ i, from: 0, to: 0, checked: 2, blocks: { [N1]: 200 * (60 / 60), [N2]: 100, [N3]: 50 - 5 * i, [N4]: Math.round(50 * rate) } }));

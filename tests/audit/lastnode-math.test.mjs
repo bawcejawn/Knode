@@ -3,9 +3,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const APP = process.env.APP || ".";
-await import(path.resolve(APP, "lastnode-math.js"));
+await import(pathToFileURL(path.resolve(APP, "lastnode-math.js")).href);
 const L = globalThis.KLastNode;
 
 const A = (c) => "1" + c.repeat(33);

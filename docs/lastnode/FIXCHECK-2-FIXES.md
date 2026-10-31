@@ -75,4 +75,6 @@ Branch `lastnode`. The round-2 report (`FIXCHECK-LASTNODE-2.md`, at `7c301a8`) g
 ## For the owner before mainnet
 - **Launch gate:** race-samples must have run for at least 48 hours (form needs 24 of the 48 hours), or you set `LASTNODE_ALLOW_NO_FORM=true`.
 - **New variables:** `LASTNODE_PICKS` (defaults to the mainnet Picks contract `1LmgqBGctL9F2YkyjTXgieTXwnYHh8Y6Pm`) and `LASTNODE_ALLOW_NO_FORM`. The publish job also reads `RPC`, `RPC_CHECK` and `LASTNODE_RELEASE_WEEKS`.
+- **The VHP sampler isn't running yet.** `race-samples.yml` is on the `picks` branch, and GitHub runs scheduled jobs only from `main`. It starts by itself (with `RACE_ENABLED=true`, which the race already uses) once `picks` is merged into `main`. Last Node can launch with form 48 hours after that.
+- **Where the tests run:** the suite is built for Linux (GitHub Actions and the reviewer). The Last Node tests also run on Windows: they import files by URL, find Python as `python3`, `python` or `py`, and skip the publish job's bash steps with a reason. Other games' tests still need Linux. GitHub's "Resolver tests" workflow runs the whole suite on every push to `lastnode`.
 - **Not tested against the real chain:** the publish job's chain client (the sandbox has no mainnet access). The JSON-RPC calls are the ones the recorder makes through koilib. A first real run should be watched.

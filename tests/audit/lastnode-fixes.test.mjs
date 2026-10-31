@@ -5,10 +5,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const APP = process.env.APP || ".";
-await import(path.resolve(APP, "race-math.js"));
-await import(path.resolve(APP, "lastnode-math.js"));
+await import(pathToFileURL(path.resolve(APP, "race-math.js")).href);
+await import(pathToFileURL(path.resolve(APP, "lastnode-math.js")).href);
 const L = globalThis.KLastNode;
 const F = L.forGame(L.FAST_GAME);
 const page = fs.readFileSync(path.resolve(APP, "lastnode.js"), "utf8");
@@ -151,7 +152,7 @@ test("LN-19: week 0 is the vault's genesis in the rules, the publish check and d
 });
 
 test("fix-check: the two mainnet nodes are compared however they are spelled", async () => {
-  const { nodeKey } = await import(path.resolve(APP, "bot/games/lastnode.ts"));
+  const { nodeKey } = await import(pathToFileURL(path.resolve(APP, "bot/games/lastnode.ts")).href);
   assert.equal(nodeKey("https://koinos.armana.io/"), nodeKey("https://KOINOS.armana.io"));
   assert.equal(nodeKey("https://koinos.armana.io:443"), nodeKey("https://koinos.armana.io"));
   assert.notEqual(nodeKey("https://koinos.armana.io"), nodeKey("https://api.koinosblocks.com"));
