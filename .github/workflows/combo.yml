@@ -198,7 +198,7 @@ jobs:
           def leg_ok(l):
               return type(l) is list and len(l) == 5 and type(l[0]) is int and l[0] in (1, 2, 3, 4) and nat(l[1]) and l[1] > 0 and isaddr(l[2]) and type(l[3]) is int and 0 <= l[3] <= 300 and l[4] in RESULTS
           CARD = {"player", "round", "time", "changes", "priceAt", "legs", "state", "outcome", "pts", "settled"}
-          def card_ok(c, rnd, day):
+          def card_ok(c, rnd, day, fixed=True):
               if type(c) is not dict or set(c) != CARD: return False
               if not (isaddr(c["player"]) and same(c["round"], rnd) and nat(c["time"]) and day * DAY <= c["time"] < (day + 1) * DAY and c["time"] <= now): return False
               if not (type(c["changes"]) is int and 0 <= c["changes"] <= MAX_CHANGES): return False
@@ -208,7 +208,11 @@ jobs:
               keys = [("race", l[0], l[1]) if l[0] != 4 else ("block", l[1]) for l in legs]
               if len(set(keys)) != len(keys) or len({l[2] for l in legs}) != len(legs): return False   # one leg per slot, a producer once
               if c["state"] not in ("pending", "final") or c["outcome"] not in (None, "hit", "miss", "void") or not nat(c["pts"]) or not nat(c["settled"]): return False
+              # Fix-check 3 FC3-3: a hit leg is worth 0 (a horse not in the field when sent: it counts as a miss) or 0.25 to
+              # 3 (f100Of never gives less); a card is final only on a fixed slot (the recorder never makes one final earlier).
+              if any(l[4] == "hit" and not (l[3] == 0 or 25 <= l[3] <= 300) for l in legs): return False
               if c["state"] == "final":
+                  if fixed is not True: return False
                   # (A miss decides as soon as the slot is fixed: its other legs may still be pending. FC2-3.)
                   return (c["outcome"], c["pts"]) == recount(c) and (c["outcome"] == "miss" or all(l[4] != "pending" for l in legs))
               return c["pts"] == 0                                                         # not final: no points yet
@@ -219,8 +223,12 @@ jobs:
               # A day file or one of its parts (fix-check 2 FC2-5: at most 1,000 cards each; part 0 has no "part" key).
               pf = part_of(f)
               if pf is None or type(j) is not dict or not same(j.get("v"), 2) or not nat(j.get("day")) or j["day"] != pf[0]: return False
-              if set(j) != ({"v", "day", "start", "slots"} if pf[1] == 0 else {"v", "day", "start", "part", "slots"}) or (pf[1] and not same(j["part"], pf[1])): return False
-              if sum(len(s.get("cards") or []) for s in j["slots"] if type(s) is dict) > 1000 if type(j["slots"]) is list else True: return False
+              # (Fix-check 3 FC3-5: part 0 says how many parts the day has; every other part names its number.)
+              if set(j) != ({"v", "day", "start", "parts", "slots"} if pf[1] == 0 else {"v", "day", "start", "part", "slots"}) or (pf[1] and not same(j["part"], pf[1])): return False
+              if pf[1] == 0 and not (type(j["parts"]) is int and 1 <= j["parts"] <= 1000): return False
+              # (Fix-check 3 FC3-8: every type checked before it is measured.)
+              if type(j["slots"]) is not list or not all(type(x) is dict and type(x.get("cards")) is list for x in j["slots"]): return False
+              if sum(len(x["cards"]) for x in j["slots"]) > 1000: return False
               day = j["day"]
               if not same(j["start"], day * DAY) or day > today: return False
               sl = j["slots"]
@@ -231,7 +239,7 @@ jobs:
                   if set(s) != {"round", "fixed", "cards"} or not nat(s["round"]) or s["round"] // CARDS_PER_DAY != day or type(s["fixed"]) is not bool: return False
                   if s["fixed"] and now < (day + 1) * DAY: return False                  # a day not over can't be fixed
                   cs = s["cards"]
-                  if type(cs) is not list or len(cs) > 100000 or not all(card_ok(c, s["round"], day) for c in cs): return False
+                  if type(cs) is not list or len(cs) > 100000 or not all(card_ok(c, s["round"], day, s["fixed"]) for c in cs): return False
                   if len({c["player"] for c in cs}) != len(cs): return False
               return True
           ROW = {"a", "place", "pts", "hits", "cards", "best", "days", "lastHit", "staked", "ranked"}
@@ -247,17 +255,19 @@ jobs:
               return lw is None or (type(lw) is dict and set(lw) == {"week", "start", "final", "rows"} and nat(lw["week"]) and same(lw["start"], GENESIS + lw["week"] * WEEK) and type(lw["final"]) is bool and rows_ok(lw["rows"]))
           def day_parts(base, day):
               """Every part of a day in `base`, merged by slot; None if a part isn't the recorder's shape."""
-              merged = {}; k = 0
-              while True:
-                  f = "D%05d.json" % day if k == 0 else "D%05d-%d.json" % (day, k)
-                  if not os.path.isfile(os.path.join(base, f)): break
-                  j = load(os.path.join(base, f))
-                  if not day_ok(j, f): return None
+              # (Fix-check 3 FC3-5: exactly the parts part 0 names, 0 to parts - 1, every one present.)
+              f0 = "D%05d.json" % day
+              if not os.path.isfile(os.path.join(base, f0)): return []
+              j0 = load(os.path.join(base, f0))
+              if not day_ok(j0, f0): return None
+              merged = {}
+              for k in range(j0["parts"]):
+                  f = f0 if k == 0 else "D%05d-%d.json" % (day, k)
+                  j = j0 if k == 0 else (load(os.path.join(base, f)) if os.path.isfile(os.path.join(base, f)) else None)
+                  if j is None or not day_ok(j, f): return None
                   for s in j["slots"]:
                       m = merged.setdefault(s["round"], {"round": s["round"], "fixed": s["fixed"], "cards": []})
                       m["cards"] += s["cards"]; m["fixed"] = m["fixed"] and s["fixed"]
-                  k += 1
-              if k == 0: return []
               out = sorted(merged.values(), key=lambda s: s["round"])
               if any(len({c["player"] for c in s["cards"]}) != len(s["cards"]) for s in out): return None
               return out
@@ -329,20 +339,66 @@ jobs:
                   if not (type(st[i].get("steps")) in (int, float) and st[i]["steps"] > 0): return "miss"
                   need = 1 if l[0] == 1 else 3 if l[0] == 2 else len(st) // 2
                   return "hit" if i < need else "miss"
-              if not bxd or not os.path.isdir(bxd): return False
+              if not BX_TARGETS: return False                                  # (FC3-11: no Block X file read)
               t = target_of(l[1])
               if type(t) is not dict or t.get("final") is not True: return "pending"
               if t.get("checked") != 2 or not isaddr(t.get("signer")): return "unresolved"
               return "hit" if t["signer"] == l[2] else "miss"
-          def legs_supported(c):
+          # Fix-check 3 FC3-3: what a NEW final card shows is checked against what the published files give, as far as they
+          # can tell without the chain: the price card (the latest usable race card at most 3 hours before it was sent),
+          # each leg's result, a hit worth 0 only for a horse not in the field when sent, "unresolved" only with a reason
+          # the files show (or, for a Block X leg the files show as a hit, the chain's: a non-standard transfer or a held
+          # read), and a hit's settled time (when its last leg was decided).
+          def race_cards(t):
+              out = []
+              for w in ((t - GENESIS) // WEEK - 1, (t - GENESIS) // WEEK, (t - GENESIS) // WEEK + 1):
+                  if w not in RACE_FILES: RACE_FILES[w] = load(os.path.join(raced, "W%03d.json" % w)) if raced and os.path.isfile(os.path.join(raced, "W%03d.json" % w)) else None
+                  j = RACE_FILES[w]
+                  for r in (j.get("races") or [] if type(j) is dict else []):
+                      for c in (r.get("cards") or [] if type(r) is dict and type(r.get("cards")) is list else []):
+                          if type(c) is dict: out.append(c)
+              return out
+          def usable(c):
+              return type(c.get("at")) in (int, float) and type(c.get("field")) is list and len(c["field"]) > 0 and type(c.get("samples")) is int and c["samples"] >= 12
+          def flags(c, who):
+              return who is not None and (c.get("topInDoubt") is True or (type(c.get("flagged")) is list and who in c["flagged"]))
+          def price_card(t, who=None):
+              best = None
+              for c in race_cards(t):
+                  if usable(c) and not flags(c, who) and c["at"] <= t and t - c["at"] <= 3 * HOUR and (best is None or c["at"] > best["at"]): best = c
+              return best
+          in_field = lambda c, who: any(type(r) is dict and r.get("a") == who for r in c["field"])
+          def card_supported(c, day):
+              send = price_card(c["time"])
+              if (send["at"] if send else None) != c["priceAt"]: return "its price card isn't the latest usable race card before it was sent"
+              if c["priceAt"] is None: return None if all(l[4] == "void" for l in c["legs"]) else "an unpriced card with leg results"
+              deadline = GENESIS + ((day * DAY - GENESIS) // WEEK + 1) * WEEK + 2 * DAY
+              ends = []
               for l in c["legs"]:
                   e = expected(l)
                   if e is False: return "its sources (race-data, Block X) can't be read here"
-                  # "unresolved" may also come from the recorder's own checks (no price card, a held read, the deadline):
-                  # it can only void a card, never make one score. "pending" only on a miss, which decides anyway.
-                  if l[4] == e or l[4] == "unresolved" or (l[4] == "pending" and c["outcome"] == "miss"): continue
-                  return "leg %s (round %s) is %s but its source shows %s" % (l[2], l[1], l[4], e)
+                  sc = price_card(c["time"], l[2])
+                  if l[4] == "pending":
+                      if c["outcome"] == "miss": continue                      # a miss decides (FC2-3)
+                      return "a pending leg on a final card that didn't miss"
+                  if l[4] == "unresolved":
+                      race = l[0] != 4
+                      why = e == "unresolved" or sc is None or (e == "pending" and now >= deadline)
+                      if race and e == "hit" and price_card(l[1] * 6 * HOUR - 25 * 60000, l[2]) is None: why = True
+                      if not race and e == "hit": why = True                    # the chain's reasons (moved-VHP reads)
+                      if not why: return "leg %s (round %s) is unresolved, but its sources give it a result (%s)" % (l[2], l[1], e)
+                      continue
+                  if l[4] != e: return "leg %s (round %s) is %s but its source shows %s" % (l[2], l[1], l[4], e)
+                  if sc is None:
+                      if l[4] == "miss" and l[3] == 0: continue                # (the recorder keeps a miss, worth 0)
+                      return "leg %s has a result, but no race card priced it when the card was sent" % l[2]
+                  if l[4] == "hit" and l[3] == 0 and not (l[0] != 4 and not in_field(sc, l[2])): return "a hit leg worth 0 whose producer was in the field"
+                  if l[4] != "void": ends.append((l[1] + 1) * 6 * HOUR if l[0] != 4 else (target_of(l[1]) or {}).get("time"))
+              if c["outcome"] == "hit":
+                  if not all(type(x) is int for x in ends) or c["settled"] != max(ends): return "its settled time isn't the time its last leg was decided"
+                  if not (c["time"] <= c["settled"] <= now): return "its settled time is outside its card's life"
               return None
+          drops = []
           new_days = sorted({part_of(f)[0] for f in names if part_of(f)})
           for day in new_days:
               files = [f for f in names if part_of(f) and part_of(f)[0] == day]
@@ -351,7 +407,11 @@ jobs:
                   continue
               new = day_parts(d, day); old = day_parts(pub, day)
               why = ""
-              if new is None: why = "its parts don't fit together (a player twice in a slot)"
+              j0 = load(os.path.join(d, "D%05d.json" % day)) if "D%05d.json" % day in names else None
+              want_parts = {"D%05d.json" % day if k == 0 else "D%05d-%d.json" % (day, k) for k in range(j0["parts"])} if type(j0) is dict and type(j0.get("parts")) is int else None
+              if want_parts is None: why = "a day part without its part 0"
+              elif set(files) != want_parts: why = "its parts aren't exactly the %s its part 0 names" % len(want_parts)
+              elif new is None: why = "its parts don't fit together (a player twice in a slot)"
               elif old is None: why = "the published day can't be read"
               elif not old and day < first_day: why = "a new file for a day before last week"
               else:
@@ -369,11 +429,16 @@ jobs:
                       for s in new:
                           for c in s["cards"]:
                               if c["state"] != "final" or (s["round"], c["player"]) in was: continue
-                              w2 = legs_supported(c)
+                              w2 = card_supported(c, day)
                               if w2: why = "the new final card of %s in slot %s: %s" % (c["player"], s["round"], w2); break
                           if why: break
               if why:
                   for f in files: hold("combo/" + f, why, True)
+              else:
+                  # Published parts this day no longer has are removed with it (FC3-5).
+                  for f in sorted(os.listdir(pub)):
+                      pf = part_of(f)
+                      if pf and pf[0] == day and f not in want_parts: drops.append("combo/" + f)
           # Fix-check 2 FC2-4: a board for another week than this job's clock is an old (rewound) board.
           if "combo/board.json" not in held and os.path.isfile(os.path.join(d, "board.json")):
               bw = load(os.path.join(d, "board.json"))["week"]["week"]
@@ -414,9 +479,14 @@ jobs:
               want = [{"player": t["a"], "points": rank[t["place"]]} for t in ok]
               if not same(j["rows"], want): hold(name, "its rows aren't the published final board's staked players with 1+ point, by place", True); continue
           open(heldf, "w").write("".join(x + "\n" for x in held))
+          open(heldf + ".drop", "w").write("".join(x + "\n" for x in drops))
           print("combo files checked")
           PY
           shopt -s nullglob
+          # Day parts a day no longer has (fix-check 3 FC3-5): removed in the same commit as the day's part 0.
+          while IFS= read -r name; do
+            [[ "$name" =~ ^combo/D[0-9]{5}-[0-9]{1,3}\.json$ ]] && git update-index --force-remove "$name"
+          done < "$HELD.drop"
           for f in "$IN"/combo/*.json "$IN"/combo/vault/*.json; do
             name="${f#"$IN"/}"
             if grep -qxF "$name" "$HELD"; then continue; fi

@@ -141,7 +141,7 @@ test("C-R-5b: a fixed slot in the previous files is checked against the chain be
     legs: Array.from({ length: 10 }, (_, i) => [1, 99000 + i, H1, 300, "hit"]), state: "final", outcome: "hit", pts: 0 };
   // (Fix-check FC-25: the earlier file in the format the recorder reads now, a day file, so the test can fail.)
   fake.pts = 2 * 0 + C.pointsFor(fake.legs.map((l) => l[3]));
-  fs.writeFileSync(path.join(prev, `D${String(D3).padStart(5, "0")}.json`), JSON.stringify({ v: 2, day: D3, start: D3 * M.DAY, slots: [{ round, fixed: true, cards: [fake] }] }));
+  fs.writeFileSync(path.join(prev, `D${String(D3).padStart(5, "0")}.json`), JSON.stringify({ v: 2, day: D3, start: D3 * M.DAY, parts: 1, slots: [{ round, fixed: true, cards: [fake] }] }));
   fs.writeFileSync(path.join(prev, "index.json"), JSON.stringify({ v: 2, updated: "2026-11-09T00:00:00.000Z", days: [D3], contract: null }));
   const out = tmp();
   await quiet(() => run({ p: "p", check: "c", head: headAt(M.weekStart(4) + 13 * 3600000), prev, out, raceDir: raceDir(), blockxDir: blockxDir(), picksContract: "1P", cardsOf: async () => [], stakedOf: staked }));

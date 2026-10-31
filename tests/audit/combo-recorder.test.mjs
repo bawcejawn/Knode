@@ -219,7 +219,8 @@ test("a Vault that can't be read leaves stakes unknown (null): players stay list
 
 test("a previous file can't smuggle in cards: last week's and this week's slots come from the chain only (Repo Lens RL-7)", async () => {
   const prev = tmp();
-  const bad = { v: 2, day: D3, start: D3 * M.DAY, slots: [
+  // (Fix-check 3 FC3-5: part 0 names how many parts its day has.)
+  const bad = { v: 2, day: D3, start: D3 * M.DAY, parts: 1, slots: [
     { round: C.slotRound(D3, 1), fixed: true, cards: [{ player: ALICE, round: C.slotRound(D3, 1), time: T(D3, 1), changes: 0, priceAt: T(D3, 0), legs: legsOf(D3).alice.map((l) => [l.code, l.round, l.producer, 300, "hit"]), state: "final", outcome: "hit", pts: 999999, settled: T(D3, 1) }] },
   ] };
   fs.writeFileSync(path.join(prev, dName(D3)), JSON.stringify(bad));
@@ -344,7 +345,7 @@ test("combo.yml's publish check: real files pass; duplicates, bad outcomes, chan
   assert.ok(bad((d) => edit(d, D, (j) => { j.slots[0].cards[0].legs[1][2] = j.slots[0].cards[0].legs[0][2]; })), "a producer twice on a card");
   assert.ok(bad((d) => edit(d, D, (j) => { j.slots[0].cards.pop(); })), "a card dropped from a published fixed slot");
   assert.ok(bad((d) => edit(d, "vault/W3.json", (j) => { j.rows[0].player = CAROL; }), (p) => fs.rmSync(path.join(p, "vault"), { recursive: true })), "a Vault row that isn't on the published final board");
-  assert.ok(bad((d) => fs.writeFileSync(path.join(d, dName(D3 - 30)), JSON.stringify({ v: 2, day: D3 - 30, start: (D3 - 30) * M.DAY, slots: [] }))), "a new file for an old day");
+  assert.ok(bad((d) => fs.writeFileSync(path.join(d, dName(D3 - 30)), JSON.stringify({ v: 2, day: D3 - 30, start: (D3 - 30) * M.DAY, parts: 1, slots: [] }))), "a new file for an old day");
 });
 
 // ── fix-check 2026-10-28 ──
@@ -381,7 +382,7 @@ test("FC-2: the hourly cards' small drift doesn't lower a worth; a real change (
 });
 test("FC-3: a previous file can't mark a slot of a day that isn't over as fixed", async () => {
   const prev = tmp();
-  const df = { v: 2, day: D3 + 1, start: (D3 + 1) * M.DAY, slots: [{ round: C.slotRound(D3 + 1, 0), fixed: true, cards: [] }] };
+  const df = { v: 2, day: D3 + 1, start: (D3 + 1) * M.DAY, parts: 1, slots: [{ round: C.slotRound(D3 + 1, 0), fixed: true, cards: [] }] };
   fs.writeFileSync(path.join(prev, dName(D3 + 1)), JSON.stringify(df));
   const out = tmp();
   await quiet(() => run({ p: "main", check: "check", prev, out, raceDir: raceDir(), blockxDir: blockxDir(), picksContract: "1P", cardsOf: cardsOf(), stakedOf, head: headAt(T(D3 + 1, 13)) }));

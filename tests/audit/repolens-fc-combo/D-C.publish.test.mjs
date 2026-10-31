@@ -147,7 +147,7 @@ test("D-C-6: board.json stays publishable (≤ 2 MB) when many wallets have play
   for (let k = 0; k < 10; k++) {
     const day = C.utcDay(M.weekStart(1)) + k, round = C.slotRound(day, 0), cards = [];
     for (let i = 0; i < 2000; i++) cards.push({ player: "1" + String(k * 2000 + i).padStart(33, "1").replace(/0/g, "z"), round, time: day * M.DAY + 3600000, changes: 0, priceAt: day * M.DAY, legs: [[1, 1, H1, 100, "miss"], [2, 1, H2, 100, "miss"]], state: "final", outcome: "miss", pts: 0, settled: day * M.DAY + 3600000 });
-    fs.writeFileSync(path.join(prev, `D${String(day).padStart(5, "0")}.json`), JSON.stringify({ v: 2, day, start: day * M.DAY, slots: [{ round, fixed: true, cards }] }));
+    fs.writeFileSync(path.join(prev, `D${String(day).padStart(5, "0")}.json`), JSON.stringify({ v: 2, day, start: day * M.DAY, parts: 1, slots: [{ round, fixed: true, cards }] }));   // (fix-check 3: part 0 names its parts)
     days.push(day);
   }
   fs.writeFileSync(path.join(prev, "index.json"), JSON.stringify({ v: 2, updated: "2026-11-09T00:00:00.000Z", days, contract: null }));

@@ -134,3 +134,33 @@ clock again: a clock set past the lie now makes the honest node "days behind" an
 browser tests wait out the last minutes of a UTC day (the page refuses to send then; RL-26).
 
 **Tests:** contract 71; site and audit suite 716 passing (5 todo, 5 skipped); browser 7; workflow guard 8.
+
+## Fix-check 3 (Repo Lens, 2026-10-30, at 8f54c8c) and the fixes
+
+Verdict "fix first": most of fix-check 2 holds (FC2-2, -4, -5, -6, -8..-12, -16). The new kept-card re-check (FC2-1)
+was too strict on honest cards and too loose on forged ones, and the publish job checked only leg results.
+
+| ID | Sev | Finding | Done |
+|---|---|---|---|
+| FC3-1 | High | The re-check called honest cards forged: a miss with a leg still pending, a Block X leg left unresolved by the chain (non-standard transfer on both nodes, a read held to its edge). | `recheck()` accepts exactly what an honest run leaves: a miss is checked on a leg it shows as a miss; a Block X leg the chain left unresolved is accepted where the files show a hit; the deadline and hold edge are judged by chain time alone (FC3-10). Sources not there yet (an outage): "unchecked", an error and no Vault file this run, the card stays. Tests G-S-1a..d, G-R-1, G-R-1b, G-C-3. |
+| FC3-2 | High | A lowered Block X worth passed. | Block X worths both ways: the worth with moved VHP counted as 0, or, if lower, exactly the worth with this run's moved-VHP reads (read only for those cards). Tests G-S-2, G-R-2, G-C-1. |
+| FC3-3 | High | The publish job checked only leg results. | For every NEW final card, against the published race-data and Block X files: the price card (the latest usable race card before it was sent), each result, "unresolved" only with a reason the files show (or, for a Block X leg the files show as a hit, the chain's), a hit worth 0 only for a horse not in the field when sent, hit worths 0.25-3, a hit's settled time, and final only on a fixed slot. **Open:** the card's existence on chain and its exact race and Block X worths need the chain and the race simulation; see "Open" below. Tests G-C-1b, G-C-2, E-C-1a (corrected). |
+| FC3-4 | High | `settled` was never checked. | The re-check compares it on hits; the publish job recomputes it (the time the last leg was decided) for new final hits. Tests G-S-3, G-R-2. |
+| FC3-5 | Medium | Day parts could be added and never removed. | Part 0 names its count (`parts`); a day is read only as exactly those parts, and is published only with exactly those parts; published parts a day no longer has are removed in the same commit. Test G-C-4. |
+| FC3-6 | Low | board.json could pass 2 MB from last week's rows. | Last week capped at 6,000 rows; more players with a point than that is an error and no Vault file. |
+| FC3-7 | Low | Quadratic matching of kept cards. | A Map by chain key. |
+| FC3-8 | Low | A non-list `cards` crashed the publish check. | Types checked first. |
+| FC3-9 | Info | A lagging check node stops recording. | Accepted (safe). |
+| FC3-10 | Info | The re-check used this run's agreed/late. | Part of FC3-1. |
+| FC3-11 | Info | Dead branch for missing Block X files. | Checks that targets were read. |
+| FC3-12 | Info | One node could lower a rival's Block X worth. | Covered by the FC3-2 lower bound with two-node reads (the higher of the two counts). |
+| FC3-13 | Info | Stale comments. | Updated (combo-math.js VOID LEGS, combo.ts header items 5 and 7, loadDay). |
+
+Test changes of ours: the hand-written day files in four tests name their parts (`parts: 1`); G-C-2 now also checks
+that the day is held by the card check, not by the missing count.
+
+**Open (owner's call):** FC3-3's remaining part. The publish job (which holds the write token) can't read the chain
+or run the race simulation, so a compromised record run could still publish a card the chain doesn't have on a slot
+fixed for the first time, or a wrong race or Block X worth inside its bounds. Honest runs then raise an error and the
+week gets no Vault file (nothing is paid wrong; the week's payout is lost). Block X's publish job has the same limit.
+The full fix is a separate verify job with no write token and no npm dependencies.

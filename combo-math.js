@@ -49,10 +49,14 @@
  *   (Block X's BX-35), both with any VHP moved into the producer between its lock card and the block added (BX-53;
  *   Repo Lens RL-2). A producer whose VHP grows can't keep a long-shot price; the hourly drift changes nothing.
  *
- * VOID LEGS: a leg whose race is void (never recorded), or whose horse is not in the race at all (owner, 2026-10-30:
- * kept), or whose block has no signer checked on two nodes, is dropped. A Block X target that Block X voids for its
- * own scoring (a flagged or missing card) still decides the leg by its checked signer (Repo Lens RL-3). The card scores on the rest with the base for that many legs; with fewer than 2 legs left it is void.
- * A card is final only when every one of its legs is final.
+ * VOID LEGS: a leg whose horse is not in the race at all is dropped (owner, 2026-10-30: kept); the card scores on the
+ * rest with the base for that many legs, and with fewer than 2 legs left it is void.
+ * UNRESOLVED LEGS (fix-check FC-2, fix-check 2 FC2-2/FC2-9): a race nobody decided (missed, void, or not checked on
+ * two nodes), a block without a signer checked on two nodes, or a leg the recorder can't check (no usable price card,
+ * a moved-VHP read held to its edge, the deadline) is never dropped: a miss on another leg still decides the card,
+ * otherwise the whole card is void. A Block X target that Block X voids for its own scoring (a flagged or missing card)
+ * still decides the leg by its checked signer (Repo Lens RL-3).
+ * A card is final once its slot is fixed and every leg is decided, or as soon as one leg missed (a miss decides).
  *
  * WEEK: a card counts in the KnodeGames week of the UTC day it was made (its slot day). A player's week = the sum of
  * their best 10 cards. Ties: more cards that hit, then the earlier last hit, then address. */

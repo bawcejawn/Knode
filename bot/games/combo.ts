@@ -26,12 +26,15 @@
  *     stopped: the card waits and an error is raised, never a silent void (Repo Lens RL-9).
  *  5. Players. Only wallets with at least the vault's minimum (1 VHP) staked in the Combo Card that week count (the
  *     owner's player rule). Stakes are read from the Vault (v6) through its own ABI after its get_state check, on both
- *     nodes; the lower read wins (Repo Lens RL-4). Unknown stakes: no Vault file this run.
+ *     nodes, which must agree on staked or not (fix-check FC-3, FC2-12). Unknown stakes: no Vault file this run.
  *  6. Weeks. A card counts in the KnodeGames week of its slot day; a player's week = the sum of their best 10 cards.
  *     The week is final 12 hours after it ends, once every slot of it is fixed and every card final. Then the Vault
  *     file vault/W<week>.json is written ONCE (never again once published), within the Vault's 3 days.
- *  7. Writes games-data/combo/index.json, D<day>.json (one file per UTC day: Repo Lens RL-6, so no file nears the
- *     publish job's 2 MB limit), board.json and vault/W<week>.json; the workflow checks and publishes them.
+ *  7. Writes games-data/combo/index.json, D<day>.json with D<day>-<k>.json (each UTC day in parts of at most 1,000
+ *     cards; part 0 says how many parts there are: Repo Lens RL-6, FC2-5, FC3-5), board.json and vault/W<week>.json;
+ *     the workflow checks and publishes them. A published final card is kept, and re-checked against its sources
+ *     every run (FC2-1, FC3-1): one that can't be an honest run's is left out of the boards and stops its week's
+ *     Vault file.
  *
  *   RPC, RPC_CHECK, COMBO_PREV (last run's files), COMBO_OUT, RACE_DATA (race files), BLOCKX_DATA (Block X files).
  *   npm run combo. The run exits 1 after writing its files when it raised an error (Repo Lens RL-5).
@@ -103,13 +106,20 @@ function cardOk(c: any): boolean {
   return !!c && isAddr(c.player) && Number.isSafeInteger(c.round) && Number.isSafeInteger(c.time) && Array.isArray(c.legs) && c.legs.length >= C.MIN_LEGS &&
     c.legs.length <= C.HARD_MAX_LEGS && c.legs.every(legOk) && (c.state === "pending" || c.state === "final") && Number.isSafeInteger(c.pts);
 }
-/** An earlier run's day file: its well-formed slots of that day (one entry per slot, one card per player), each final
- *  card recounted from its legs. Used only for days before last week (the all-time board) and, for display only, for a
- *  slot whose chain read failed this run (never fixed then: Repo Lens RL-7). */
+/** An earlier run's (the published) day: its well-formed slots (one entry per slot, one card per player), each final
+ *  card recounted from its legs. Used for days before last week (the all-time board); for last week and this week, a
+ *  published fixed slot and its final cards are kept while the chain holds exactly those cards (each final card is
+ *  re-checked against its sources every run: fix-check 2 FC2-1, fix-check 3 FC3-1), and a slot whose chain read
+ *  failed keeps its published copy. */
 function loadDay(dir: string | undefined, day: number): Slot[] {
-  // Every part of the day, merged by slot (part 0 lists every slot; later parts only the slots their cards belong to).
-  const parts: any[] = [];
-  for (let k = 0; k < 1000; k++) { const f = readJson(dir, dName(day, k)); if (!f) break; parts.push(f); }
+  // Exactly the parts part 0 names (fix-check 3 FC3-5), merged by slot (part 0 lists every slot; later parts only the
+  // slots their cards belong to). A missing part: the day can't be read.
+  const p0 = readJson(dir, dName(day, 0));
+  if (!p0) return [];
+  const n = Number.isInteger(p0.parts) && p0.parts >= 1 && p0.parts <= 1000 ? p0.parts : 0;
+  const parts: any[] = [p0];
+  for (let k = 1; k < n; k++) { const f = readJson(dir, dName(day, k)); if (!f || f.part !== k) return []; parts.push(f); }
+  if (!n) return [];
   const merged = new Map<number, { fixed: boolean; cards: any[] }>();
   for (const old of parts) {
     if (!old || old.v !== 2 || old.day !== day || !Array.isArray(old.slots)) return [];
@@ -333,10 +343,12 @@ export async function run(o: Opts) {
           const legs: Leg[] = x.legs.map((l) => [l.code, l.round, l.producer, 0, "pending"]);
           cards.push({ player: x.player, round, time: x.time, changes: x.changes, priceAt: null, legs, state: "pending", outcome: null, pts: 0, settled: 0 });
         }
-        const same = !!old && old.cards.length === cards.length && old.cards.every((c) => cards.some((x) => chainKey(x) === chainKey(c)));
+        // (Fix-check 3 FC3-7: matched through a Map, not a scan per card.)
+        const oldBy = new Map((old?.cards ?? []).map((c) => [chainKey(c), c] as [string, Card]));
+        const same = !!old && old.cards.length === cards.length && oldBy.size === cards.length && cards.every((x) => oldBy.has(chainKey(x)));
         const fixed = fixedDay(day) || (!!old && old.fixed && same);
         if (old && old.fixed && !same) errors.push(`slot ${round}: the chain's cards differ from the published fixed slot; this day's file will be held by the publish job (check it)`);
-        const out = fixed && old && old.fixed && same ? cards.map((x) => { const p = old.cards.find((c) => chainKey(c) === chainKey(x))!; if (p.state === "final") { kept.add(p); return p; } return x; }) : cards;
+        const out = fixed && old && old.fixed && same ? cards.map((x) => { const p = oldBy.get(chainKey(x))!; if (p.state === "final") { kept.add(p); return p; } return x; }) : cards;
         days.get(day)!.push({ round, fixed, cards: out });
         if (cards.length) console.log(`slot ${round} (${M.dayOf(day * M.DAY)} #${s + 1}): ${cards.length} card(s)${fixed ? ", fixed" : ""}`);
       } catch (e) { keepOld((e as Error).message); }
@@ -373,12 +385,16 @@ export async function run(o: Opts) {
     return p;
   };
   const EDGE_MS = 3 * M.DAY;                                          // Block X's own 3-day window
-  /** Prices and scores one card in place. verify: a dry re-check of a kept card (no chain reads, VHP moved counted as
-   *  0, so its Block X worths are an upper bound; nothing logged). */
-  async function score(c: Card, fixed: boolean, day: number, verify = false): Promise<void> {
+  /** Prices and scores one card in place. mode "live": a normal run. "verify": a dry re-check of a kept card, nothing
+   *  logged, VHP moved counted as 0 (no chain reads), so its Block X worths are an upper bound. "moved": the same, with
+   *  this run's moved-VHP reads (the lower bound). A re-check judges the deadline and the hold edge by the chain's time
+   *  alone: the card was already made final by a run that saw both nodes (fix-check 3 FC3-10). */
+  type Mode = "live" | "verify" | "moved";
+  async function score(c: Card, fixed: boolean, day: number, mode: Mode = "live"): Promise<void> {
+    const verify = mode !== "live";
     const problems: string[] = verify ? [] : problemsAll, errors: string[] = verify ? [] : errorsAll;
     const deadline = M.weekStart(M.weekOf(day * M.DAY) + 1) + DEADLINE_MS;
-    const late = agreed && head.time >= deadline;
+    const late = (agreed || verify) && head.time >= deadline;
     const legs = c.legs.map((l) => ({ code: l[0], round: l[1], producer: l[2] }));
     // The price: the usable race card in force when the card was sent, once race-data is complete past that moment.
     if (!raceWeekKnown(RACE, c.time) || !raceDataPast(RACE, c.time)) {
@@ -433,14 +449,14 @@ export async function run(o: Opts) {
       if (!after && !raceDataPast(RACE, t.time + C.CARD_MAX_AGE_MS)) { ready = false; if (late) errors.push(`slot ${c.round}: race-data doesn't reach 3 hours after block ${t.height} yet; ${c.player}'s card waits`); continue; }
       if (!lock || !after) { unresolved(l, `no usable race card ${!lock ? "at the lock of" : "within 3 hours after"} block ${t.height} for ${l[2]}`); continue; }
       const cardH = Number.isInteger(lock.height) && lock.height > 0 && lock.height <= t.height ? lock.height : t.height - Math.ceil(Math.max(0, t.time - Number(lock.at)) / X.BLOCK_MS);
-      const mv: Moves = verify ? { moved: 0n } : await movedInto(l[2], Math.max(1, cardH - MOVE_MARGIN), t.height);
+      const mv: Moves = mode === "verify" ? { moved: 0n } : await movedInto(l[2], Math.max(1, cardH - MOVE_MARGIN), t.height);
       if (mv.nonCanonical) { unresolved(l, `${mv.nonCanonical} (both nodes)`); continue; }
       if (mv.hold) {
         // One node's word never decides (BX-100); a read that keeps failing ends unresolved at Block X's 3-day edge,
         // and is an error while it holds a week's Vault file (FC-7).
         // Fix-check 2 FC2-3: the hold also ends 6 hours before the card's week's Vault window closes.
         const edge = Math.min(t.time + EDGE_MS, M.weekStart(M.weekOf(day * M.DAY) + 1) + VAULT_WINDOW_MS - 6 * 3600000);
-        if (head.time > edge && agreed) { unresolved(l, `${mv.hold}, still at the edge of the hold`, true); continue; }
+        if (head.time > edge && (agreed || verify)) { unresolved(l, `${mv.hold}, still at the edge of the hold`, true); continue; }
         ready = false; problems.push(`slot ${c.round}: ${mv.hold} (held; tried again next run)`); continue;
       }
       const add = Number(mv.moved) / 1e8;
@@ -455,23 +471,66 @@ export async function run(o: Opts) {
     if (fixed && ((!pending && ready) || missed)) { c.state = "final"; c.outcome = missed ? "miss" : r.outcome; c.pts = missed ? 0 : r.pts; c.settled = decided || c.time; }
     else { c.state = "pending"; c.pts = 0; }
   }
-  // Fix-check 2 FC2-1: a kept (published final) card is re-checked every run against the race-data and Block X files
-  // (no chain reads): its leg results must be the same, a race leg's worth the same, and a Block X leg's worth at most
-  // the worth without moved VHP. One that doesn't match is an error: it stays as published (immutable), but it is kept
-  // out of the boards and no Vault file is written for its week.
-  const forged = new Set<Card>(), badWeeks = new Set<number>();
+  // Fix-check 2 FC2-1 / fix-check 3 FC3-1, FC3-2, FC3-4: a kept (published final) card is re-checked every run against
+  // the race-data and Block X files, accepting exactly what an honest run can leave behind:
+  //   a miss: a leg it shows as a miss must miss by its sources (a miss decides as soon as the slot is fixed, so its
+  //     other legs may still have been pending, and may since have been decided either way);
+  //   a hit or a void: every leg's result must be its sources'; except a Block X leg left "unresolved" by the chain
+  //     (both nodes reported a non-standard transfer, or a read held to its edge), which the files alone show as a hit;
+  //   a hit: its settled time, and every worth: a race leg's exactly; a Block X leg's at the worth with VHP moved
+  //     counted as 0 or, if lower, exactly the worth with this run's moved-VHP reads (both ways: FC3-2).
+  // "Forged" (it can't be an honest run's): an error, out of the boards, no Vault file for its week. "Unchecked" (its
+  // sources don't show a result yet, e.g. a race-data outage, or the moved-VHP read failed): an error and no Vault file
+  // for its week this run; it stays on the boards and is checked again next run.
+  const isMiss = (l: Leg) => l[4] === "miss" || (l[4] === "hit" && !(l[3] > 0));
+  async function recheck(c: Card, day: number): Promise<{ forged?: string; unchecked?: string } | null> {
+    const again = async (mode: Mode) => {
+      const f: Card = JSON.parse(JSON.stringify(c));
+      f.priceAt = null; f.state = "pending"; f.outcome = null; f.pts = 0; f.settled = 0;
+      f.legs.forEach((l) => { l[3] = 0; l[4] = "pending"; });
+      await score(f, true, day, mode);
+      return f;
+    };
+    const f0 = await again("verify");
+    if (f0.priceAt === null && f0.outcome !== "void") return { unchecked: "race-data doesn't reach the time it was sent" };
+    if (c.priceAt === null || f0.priceAt === null) return c.priceAt === f0.priceAt && f0.outcome === "void" ? null : { forged: "its price card isn't the one race-data gives" };
+    if (f0.priceAt !== c.priceAt) return { forged: "its price card isn't the one race-data gives" };
+    if (c.outcome === "miss") {
+      const ks = c.legs.map((_, k) => k).filter((k) => isMiss(c.legs[k]));
+      if (ks.some((k) => isMiss(f0.legs[k]))) return null;
+      if (ks.some((k) => f0.legs[k][4] === "pending")) return { unchecked: "the leg it shows as a miss isn't decided in its sources yet" };
+      return { forged: "no leg it shows as a miss misses by its sources" };
+    }
+    let open = false;
+    for (let k = 0; k < c.legs.length; k++) {
+      const l = c.legs[k], f = f0.legs[k];
+      if (l[4] === f[4]) continue;
+      if (l[4] === "unresolved" && C.FAMILY[l[0]] === "block" && f[4] === "hit") continue;
+      if (f[4] === "pending") { open = true; continue; }
+      return { forged: `leg ${k + 1} is ${l[4]} but its source shows ${f[4]}` };
+    }
+    if (open) return { unchecked: "a leg isn't decided in its sources yet" };
+    if (c.outcome !== "hit") return null;
+    if (c.settled !== f0.settled) return { forged: "its settled time isn't the time its last leg was decided" };
+    let fm: Card | null = null;
+    for (let k = 0; k < c.legs.length; k++) {
+      const l = c.legs[k], f = f0.legs[k];
+      if (l[3] === f[3]) continue;
+      if (C.FAMILY[l[0]] === "race" || l[3] > f[3]) return { forged: `leg ${k + 1}'s worth isn't its sources'` };
+      fm ??= await again("moved");
+      const m = fm.legs[k];
+      if (m[4] === "hit" && m[3] === l[3]) continue;
+      if (m[4] !== "hit") return { unchecked: `the VHP moved into ${l[2]} can't be read this run` };
+      return { forged: `leg ${k + 1}'s worth isn't its sources' (with the VHP moved in)` };
+    }
+    return null;
+  }
+  const forged = new Set<Card>(), badWeeks = new Set<number>(), uncheckedWeeks = new Set<number>();
   for (const [day, slots] of days) for (const sl of slots) for (const c of sl.cards) {
     if (!kept.has(c)) { await score(c, sl.fixed, day); continue; }
-    const fresh: Card = JSON.parse(JSON.stringify(c));
-    fresh.legs.forEach((l) => { l[3] = 0; l[4] = "pending"; });
-    await score(fresh, true, day, true);
-    const ok = fresh.state === "final" && fresh.outcome === c.outcome && c.legs.every((l, k) => {
-      const f = fresh.legs[k];
-      if (f[4] !== l[4]) return false;
-      if (l[4] !== "hit") return true;
-      return C.FAMILY[l[0]] === "race" ? f[3] === l[3] : l[3] <= f[3];
-    });
-    if (!ok) { forged.add(c); badWeeks.add(M.weekOf(day * M.DAY)); errorsAll.push(`slot ${c.round}: the published final card of ${c.player} doesn't match the race-data and Block X files; it is left out of the boards and week ${M.weekOf(day * M.DAY)} gets no Vault file (check it)`); }
+    const v = await recheck(c, day), w = M.weekOf(day * M.DAY);
+    if (v?.forged) { forged.add(c); badWeeks.add(w); errorsAll.push(`slot ${c.round}: the published final card of ${c.player} doesn't match the race-data and Block X files (${v.forged}); it is left out of the boards and week ${w} gets no Vault file (check it)`); }
+    else if (v?.unchecked) { uncheckedWeeks.add(w); errorsAll.push(`slot ${c.round}: the published final card of ${c.player} can't be checked this run (${v.unchecked}); week ${w} gets no Vault file this run (tried again next run)`); }
   }
   // FC-7: last week's cards still pending a day after it ended put its Vault file at risk.
   if (nowW >= 1 && head.time >= M.weekStart(nowW) + M.DAY) {
@@ -548,11 +607,15 @@ export async function run(o: Opts) {
     }
     return true;
   };
-  let lastWeek: any = null;
+  let lastWeek: any = null, tooMany = false;
+  const LAST_WEEK_ROWS = 6000;
   if (lw >= 0) {
     const final = head.time >= M.weekStart(nowW) + CORRECTION_MS && weekDone(lw);
-    // (FC2-5: everyone with 1+ point, up to 10,000 rows: about 1.6 MB.)
-    lastWeek = { week: lw, start: M.weekStart(lw), final, rows: (await view(cardRows(M.weekStart(lw), M.weekStart(nowW)), lw, 2000, (x) => x.pts >= C.MIN_WEEK_PTS)).slice(0, 10000) };
+    // (FC2-5, fix-check 3 FC3-6: everyone with 1+ point, up to 6,000 rows, so board.json stays well under 2 MB. More
+    // players with a point than that: an error, and no Vault file, since the Vault file is judged against these rows.)
+    const lwRows = await view(cardRows(M.weekStart(lw), M.weekStart(nowW)), lw, 2000, (x) => x.pts >= C.MIN_WEEK_PTS);
+    if (lwRows.filter((x: any) => x.pts >= C.MIN_WEEK_PTS).length > LAST_WEEK_ROWS) tooMany = true;
+    lastWeek = { week: lw, start: M.weekStart(lw), final, rows: lwRows.slice(0, LAST_WEEK_ROWS) };
   }
   const board = {
     v: 1, updated: new Date(head.time).toISOString(),
@@ -584,7 +647,7 @@ export async function run(o: Opts) {
     if (!sorted.every((sl) => parts[0].some((x) => x.round === sl.round))) for (const sl of sorted) if (!parts[0].some((x) => x.round === sl.round)) parts[0].push({ round: sl.round, fixed: sl.fixed, cards: [] });
     parts[0].sort((a, b) => a.round - b.round);
     parts.forEach((ps, k) => {
-      const f: any = k ? { v: 2, day: d, start: d * M.DAY, part: k, slots: ps } : { v: 2, day: d, start: d * M.DAY, slots: ps };
+      const f: any = k ? { v: 2, day: d, start: d * M.DAY, part: k, slots: ps } : { v: 2, day: d, start: d * M.DAY, parts: parts.length, slots: ps };
       fs.writeFileSync(path.join(OUT, dName(d, k)), JSON.stringify(f) + "\n");
     });
   }
@@ -593,7 +656,9 @@ export async function run(o: Opts) {
   const vaultEnd = M.weekStart(nowW) + VAULT_WINDOW_MS;
   const published = !!PREV && fs.existsSync(path.join(PREV, "vault", `W${lw}.json`));
   if (lastWeek && lastWeek.final && !published && head.time <= vaultEnd) {
-    if (badWeeks.has(lw)) errors.push(`vault week ${lw}: a published final card doesn't match its sources (see above); no Vault file`);
+    if (tooMany) errors.push(`vault week ${lw}: more than ${LAST_WEEK_ROWS} players have a point, more than board.json can hold; no Vault file (tell Claude)`);
+    else if (badWeeks.has(lw)) errors.push(`vault week ${lw}: a published final card doesn't match its sources (see above); no Vault file`);
+    else if (uncheckedWeeks.has(lw)) errors.push(`vault week ${lw}: a published final card can't be checked this run (see above); no Vault file this run`);
     else if (lastWeek.rows.some((r: any) => r.staked === null)) errors.push(`vault week ${lw}: stakes in the Combo Card couldn't be read on both nodes, or they disagree; no Vault file this run (tried again next run)`);
     else if (!vaultLive || !(await vaultLiveOnBoth(lw))) problems.push(`vault week ${lw}: the Vault v6 isn't live (or the nodes don't agree it is); no Vault file (fix-check FC-21, FC2-11)`);
     else {
