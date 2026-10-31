@@ -46,7 +46,7 @@ test("M-W-n1: mainnet without form (no race-samples yet): steady 78%-108% reliab
 // catches it in half the weeks while holding at most 2% of honest weeks (M-W-n1 above). The rule now in watchWeek
 // (z >= 3.4 over the week with 2 wins, or z >= 5 in one won event) catches it in about 13% of weeks, and a single gamed
 // event in 98%. Kept as the reviewer wrote it, as a TODO, until the owner picks a longer window or another trade-off.
-test("LNF-8 residual: a node whose form is 3% low (it skipped 3% in the form window) and signs fully is caught (OWNER: in at least half the weeks)", { todo: "owner decision: a 3% edge over one week is below what a week of blocks can show (caught ~13%; see FIXCHECK-2-FIXES.md)" }, () => {
+test("LNF-8 residual: a node whose form is 3% low (it skipped 3% in the form window) and signs fully is caught (OWNER: in at least half the weeks)", { todo: "owner accepted 2026-10-30: a 3% edge over one week is below what a week of blocks can show (caught ~13%; see FIXCHECK-2-FIXES.md)" }, () => {
   // The gamer's field multiplier expects 0.97 x its true rate: equivalent to signing 1/0.97 of kh in the race.
   const R = L.rng(3); let caught = 0; const N = 200, G = NODES[3];
   for (let k = 0; k < N; k++) if (watchWeek(honestWeek(R, 0, (a) => (a === G ? 1 / 0.97 : 1)), H).some((x) => x.a === G)) caught++;

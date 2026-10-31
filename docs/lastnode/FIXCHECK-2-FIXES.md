@@ -57,6 +57,8 @@ Branch `lastnode`. The round-2 report (`FIXCHECK-LASTNODE-2.md`, at `7c301a8`) g
 - (b) Add a 4-week rolling check (z ≈ 4.8 over 4 weeks catches it, but only from the gamer's 3rd or 4th week).
 - (c) Shorten the form window or weigh recent hours more.
 
+**Owner's decision (30 Oct):** (a), keep the rule as it is. The test stays as a TODO marked accepted.
+
 ## Finished skeleton tests
 
 | Test | Finding | What it checks |
