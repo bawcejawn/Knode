@@ -102,7 +102,11 @@
     }
   }
 
-  const emptyDb = () => ({ v: 1, updated: "", names: {}, hidden: {}, nicknames: {} });
+  const emptyDb = () => ({ v: 1, updated: "", names: {}, hidden: {}, nicknames: {}, pools: {} });
+  /** A block producer's pool name (the pool contract's own get_pool_params name), shown as it is: plain text, at most
+   *  48 characters, never one imitating Knode Games or Koinos or shaped like an address. */
+  const okPool = (n) => typeof n === "string" && n.length >= 1 && n.length <= 48 && n.trim() === n && !/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/.test(n)
+    && (n.match(/[\p{L}\p{N}]/gu) || []).length >= 2 && !reserved(n) && !addressLike(n);
   /** An on-chain Koinos nickname as the Nicknames contract allows it (shown with an @). Reserved ones are skipped. */
   const okNick = (n) => typeof n === "string" && /^[a-z0-9][a-z0-9.-]{0,31}$/.test(n) && !reserved(n) && !addressLike(n);
   /** A copy of names.json with only valid parts (the shape is checked again on every page and before publishing). */
@@ -117,6 +121,9 @@
     }
     for (const [a, n] of Object.entries(db.nicknames && typeof db.nicknames === "object" ? db.nicknames : {})) {
       if (ADDR.test(a) && !BUILTIN[a] && okNick(n)) out.nicknames[a] = n;
+    }
+    for (const [a, n] of Object.entries(db.pools && typeof db.pools === "object" ? db.pools : {})) {
+      if (ADDR.test(a) && !BUILTIN[a] && okPool(n)) out.pools[a] = n;
     }
     for (const [a, h] of Object.entries(db.hidden && typeof db.hidden === "object" ? db.hidden : {})) {
       if (!ADDR.test(a) || !h || typeof h !== "object" || !isDate(h.date)) continue;
@@ -202,6 +209,7 @@
   // ═══════════════ display ═══════════════
   const short = (a) => (typeof a === "string" && a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : String(a ?? ""));
   let shown = { ...BUILTIN };
+  const mine = {};             // @names created on this device this visit (names-page.js), until names.json has them
   let current = null;           // names.json as loaded (cleaned); the claim page reads it
   const listeners = new Set();
   /** The name alone ("" if none). Only for layouts that show the short address next to it themselves. */
@@ -226,8 +234,12 @@
   function use(db) {
     const c = cleanDb(db), next = { ...BUILTIN };
     current = c;
+    // A producer's pool name, then an older Knode Games name, then the wallet's Koinos @name, which wins (owner,
+    // 30 Oct: the Koinos @name is the one name a wallet has). Plus any @name this device just created.
+    for (const [a, n] of Object.entries(c.pools)) if (!c.hidden[a]) next[a] = n;
+    for (const [a, e] of Object.entries(c.names)) if (!c.hidden[a]) next[a] = e.name;
     for (const [a, n] of Object.entries(c.nicknames)) if (!c.hidden[a]) next[a] = `@${n}`;
-    for (const [a, e] of Object.entries(c.names)) if (!c.hidden[a]) next[a] = e.name;   // a Knode Games name wins
+    for (const [a, n] of Object.entries(mine)) if (!c.hidden[a] && okNick(n)) next[a] = `@${n}`;
     shown = next;
     for (const f of listeners) { try { f(); } catch { /* one page part never stops another */ } }
   }
@@ -244,12 +256,18 @@
   }
   /** Calls fn whenever the names change (once names.json arrives). */
   const onChange = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
+  /** Show an @name this device just created (checked on chain by the page) before the hourly names.json has it. */
+  function setLocal(address, n) {
+    if (!ADDR.test(address) || !okNick(n)) return;
+    mine[address] = n;
+    use(current || emptyDb());
+  }
 
   G.KNames = {
-    of, name, short, node, load, onChange, DATA,
+    of, name, short, node, load, onChange, setLocal, DATA,
     /** names.json as loaded and checked (an empty list before it arrives or when there's none yet). */
     db: () => current || emptyDb(),
-    rules: { PREFIX, BUILTIN, fold, reserved, checkName, isDate, message, claimText, parseClaim, verifySignature, precheck, applyClaim, cleanDb, emptyDb, okNick, addressLike, hide, unhide, remove, today },
+    rules: { PREFIX, BUILTIN, fold, reserved, checkName, isDate, message, claimText, parseClaim, verifySignature, precheck, applyClaim, cleanDb, emptyDb, okNick, okPool, addressLike, hide, unhide, remove, today },
     _test: { use },
   };
   if (G.document && G.fetch) load();

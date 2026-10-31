@@ -40,6 +40,7 @@ const UNIT = 100000000n;
 const ADDR = /^1[1-9A-HJ-NP-Za-km-z]{25,34}$/;
 const NICKNAMES = "1KD9Es7LBBjA1FY3ViCgQJ7e6WH1ipKbhz";   // the Koinos Nicknames contract (koilib's own docs)
 const VHP = "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq";
+const POOL_PARAMS = 2396056273;                             // get_pool_params on a Fogata pool contract
 const GAME = "1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr";       // the Knode Games game contract (the vault from v6)
 const log = (...a: unknown[]) => console.log(...a);
 /** Text from a node or a claim, made safe for the Actions log: no "::" workflow commands (audit PN-28). */
@@ -119,6 +120,8 @@ export type Chain = {
   nickname(a: string): Promise<string | null>;
   /** The wallet a nickname belongs to (null: nobody). Optional: fakes in the tests may leave it out. */
   nicknameOwner?(n: string): Promise<string | null>;
+  /** A pool contract's name (get_pool_params, field 1); null: not a pool. Optional for the tests' fakes. */
+  poolName?(a: string): Promise<string | null>;
 };
 /** One node, read-only. */
 export function chainAt(rpc: string): Chain {
@@ -155,6 +158,13 @@ export function chainAt(rpc: string): Chain {
       if (!t || !t.token_id) return null;
       const n = new TextDecoder().decode(utils.toUint8Array(String(t.token_id).replace(/^0x/, "")));
       return R.okNick(n) ? n : null;
+    },
+    async poolName(a) {
+      // A producer that runs a pool (Fogata) is the pool contract itself; its get_pool_params starts with the name.
+      let r: any;
+      try { r = await call(() => provider.readContract({ contract_id: a, entry_point: POOL_PARAMS, args: "" })); }
+      catch (e: any) { if (/contract does not exist|exit error|entry point|not found/i.test(String(e && e.message))) return null; throw e; }
+      return poolNameFrom(String(r && r.result || ""));
     },
     async nicknameOwner(n) {
       const r: any = (await call(() => nick.get_address({ value: n }))).result;
@@ -197,10 +207,49 @@ export async function nicknames(addresses: Set<string>, chains: Chain[], opts: {
   return out;
 }
 
+/** The name in a pool contract's get_pool_params reply (base64url protobuf, field 1 a string); null if there's none. */
+export function poolNameFrom(b64: string): string | null {
+  let b: Uint8Array;
+  try { b = utils.decodeBase64url(b64); } catch { return null; }
+  if (b.length < 2 || b[0] !== 0x0a) return null;
+  let len = 0, shift = 0, i = 1, done = false;
+  for (; i < b.length && i < 6; i++) { len += (b[i] & 0x7f) * 2 ** shift; shift += 7; if (!(b[i] & 0x80)) { i++; done = true; break; } }
+  if (!done || len < 1 || len > 512 || i + len > b.length) return null;
+  const name = new TextDecoder("utf-8", { fatal: true }).decode(b.slice(i, i + len));
+  return name.trim() || null;
+}
+/** Producers' pool names: address → name, or "" when every node says it isn't a pool (or the name can't be shown).
+ *  Like nicknames(): an address whose reads failed or disagreed is left out and keeps its old name. */
+export async function poolNames(addresses: Set<string>, chains: Chain[]): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const list = [...addresses].filter((a) => ADDR.test(a)).sort().slice(0, 500);
+  const one = async (a: string) => {
+    const got = await Promise.allSettled(chains.map((c) => (c.poolName ? within(c.poolName(a)) : Promise.reject(new Error("no pool read")))));
+    if (!got.length || got.some((g) => g.status !== "fulfilled")) return;
+    const v = got.map((g) => (g as PromiseFulfilledResult<string | null>).value ?? "");
+    if (v.every((n) => n === v[0])) out[a] = R.okPool(v[0]) ? v[0] : "";
+  };
+  for (let i = 0; i < list.length; i += 10) await Promise.all(list.slice(i, i + 10).map(one));
+  return out;
+}
+/** Update the pool names in names.json (same rules as withNicknames); null if nothing changed. */
+export function withPools(dbIn: any, pools: Record<string, string>, now: number, keep?: Set<string>) {
+  const db = R.cleanDb(dbIn);
+  const merged: Record<string, string> = {};
+  for (const [a, n] of Object.entries(db.pools as Record<string, string>)) if (!keep || keep.has(a)) merged[a] = n;
+  for (const [a, n] of Object.entries(pools)) { if (n) merged[a] = n; else delete merged[a]; }
+  const next = R.cleanDb({ ...db, pools: merged }).pools;
+  if (Buffer.byteLength(serialize({ ...db, pools: next })) > 1_000_000) return null;
+  if (JSON.stringify(Object.entries(next).sort()) === JSON.stringify(Object.entries(db.pools).sort())) return null;
+  db.pools = next;
+  db.updated = new Date(now).toISOString();
+  return db;
+}
+
 /** names.json as published: stable key order, so a change is a small, readable diff. */
 export function serialize(db: any): string {
   const sortObj = (o: Record<string, unknown>) => Object.fromEntries(Object.keys(o || {}).sort().map((k) => [k, o[k]]));
-  return JSON.stringify({ v: 1, updated: db.updated, names: sortObj(db.names), hidden: sortObj(db.hidden), nicknames: sortObj(db.nicknames) }, null, 1) + "\n";
+  return JSON.stringify({ v: 1, updated: db.updated, names: sortObj(db.names), hidden: sortObj(db.hidden), nicknames: sortObj(db.nicknames), pools: sortObj(db.pools) }, null, 1) + "\n";
 }
 
 /** Check one claim text against names.json. */
@@ -310,6 +359,10 @@ async function runCmd() {
     const next = withNicknames(db, nicks, now, who);
     if (next) { db = next; changed = true; }
     log(`Nicknames: read ${Object.keys(nicks).length} of ${who.size} wallets${next ? " (changed)" : ""}.`);
+    const pools = await poolNames(producers, chains);
+    const nextP = withPools(db, pools, now, producers);
+    if (nextP) { db = nextP; changed = true; }
+    log(`Pool names: ${Object.values(pools).filter(Boolean).length} of ${producers.size} producers${nextP ? " (changed)" : ""}.`);
   }
   const issues = readJson(E.ISSUES_FILE || "");
   // The whole run ends well inside the job's 10 minutes; claims not reached stay open (Repo Lens C1-1).
@@ -395,8 +448,13 @@ async function main(argv: string[]) {
     for (const x of await chains[0].players()) who.add(x);
     const nicks = await nicknames(who, chains, { first: new Set([...producersFrom(files, now), ...Object.keys(R.cleanDb(db).names)]) });
     for (const [x, n] of Object.entries(nicks)) if (n) log(`${x}  @${n}`);
-    const next = withNicknames(db, nicks, now, who);
-    log(`${Object.values(nicks).filter(Boolean).length} of ${who.size} wallets have a nickname (${Object.keys(nicks).length} read).${next ? "" : " Nothing changed."}`);
+    let next = withNicknames(db, nicks, now, who);
+    log(`${Object.values(nicks).filter(Boolean).length} of ${who.size} wallets have a nickname (${Object.keys(nicks).length} read).`);
+    const prods = producersFrom(files, now), pools = await poolNames(prods, chains);
+    for (const [x, n] of Object.entries(pools)) if (n) log(`${x}  pool: ${n}`);
+    const nextP = withPools(next || db, pools, now, prods);
+    if (nextP) next = nextP;
+    log(`${Object.values(pools).filter(Boolean).length} of ${prods.size} producers run a named pool.${next ? "" : " Nothing changed."}`);
     if (!next) return;
     if (!send) { log("Dry run only. Run again with --send to publish it."); return; }
     return publish(next, base, "nicknames");
