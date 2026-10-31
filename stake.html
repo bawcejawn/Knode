@@ -39,9 +39,54 @@
     .sk > section { margin-bottom: 16px; }
     .sk .soon { border: 1px dashed var(--line); background: var(--paper); }
     .sk .how li { margin: 6px 0; }
-    .sk .pick { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 12px; }
-    .sk .pick a { font-size: 14px; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--line); text-decoration: none; color: var(--ink); }
-    .sk .pick a[aria-current="page"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+    .sk .how summary { cursor: pointer; }
+    .hub-connect { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 16px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); margin-bottom: 14px; }
+    .hub-connect p { margin: 0; flex: 1 1 220px; }
+    .hub-sum { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+    .hub-sum > div { display: flex; flex-direction: column; gap: 2px; padding: 12px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); min-width: 0; }
+    .hub-sum > div.has { border-color: var(--sun); background: var(--sun-soft); }
+    .hub-sum b { font-size: 1.15rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    .hub-sum small { font-size: .78rem; }
+    .hub-sum .btn { margin-top: 4px; align-self: flex-start; }
+    .hub-note { margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: var(--violet-soft); font-weight: 700; }
+    .hub-note.good { background: var(--mint-soft); }
+    .hub-note.bad { background: var(--rose-soft); color: var(--rose); }
+    .hub-tabs { display: flex; gap: 6px; margin: 0 0 12px; padding: 4px; border-radius: 99px; background: var(--surface); border: 1px solid var(--line); width: max-content; max-width: 100%; }
+    .hub-tabs button { border: 0; background: none; font: inherit; font-weight: 700; padding: 8px 16px; border-radius: 99px; color: var(--muted); cursor: pointer; }
+    .hub-tabs button[aria-selected="true"] { background: var(--ink); color: var(--paper); }
+    .hub-list, .hub-claims { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 10px; }
+    .hub-card { padding: 14px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); scroll-margin-top: 90px; }
+    .hub-card.staked { border-color: var(--mint); }
+    .hub-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .hub-name { font-family: var(--display); font-weight: 800; font-size: 1.1rem; color: var(--ink); text-decoration: none; }
+    .hub-chip { font-size: 12px; font-weight: 800; padding: 3px 10px; border-radius: 99px; background: var(--paper); color: var(--muted); white-space: nowrap; }
+    .hub-chip.on { background: var(--mint-soft); color: var(--mint); }
+    .hub-chip.wait { background: var(--sun-soft); color: #8a5a00; }
+    .hub-chip.stopped { background: var(--rose-soft); color: var(--rose); }
+    .hub-nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 10px 0 8px; }
+    .hub-nums small { display: block; color: var(--muted); font-size: .76rem; }
+    .hub-nums b { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    .hub-bar { height: 6px; border-radius: 99px; background: var(--paper); overflow: hidden; margin-bottom: 10px; }
+    .hub-bar i { display: block; height: 100%; background: var(--mint); border-radius: 99px; }
+    .hub-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+    .hub-btns .btn-small, .hub-sum .btn-small { padding: 8px 16px; }
+    .hub-form { margin-top: 12px; padding: 12px; border-radius: 14px; background: var(--paper); display: grid; gap: 10px; }
+    .hub-form .seg { display: flex; gap: 6px; }
+    .hub-form .seg button, .chip { border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-weight: 700; font-size: 14px; padding: 7px 12px; border-radius: 99px; cursor: pointer; }
+    .hub-form .seg button.on, .chip.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+    .hub-to { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .hub-amt-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .hub-amt { flex: 1 1 100%; min-width: 0; box-sizing: border-box; font: inherit; font-size: 1.1rem; font-weight: 700; padding: 10px 12px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); }
+    .hub-hint { margin: 0; color: var(--muted); font-size: 14px; }
+    .hub-hint.bad { color: var(--rose); font-weight: 700; }
+    .hub-form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .hub-go { flex: 1 1 200px; }
+    .hub-claims li { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 12px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); }
+    .hub-claims .btn { padding: 8px 16px; }
+    .hub-claims small { display: block; }
+    .hub-claim-all { width: 100%; margin-bottom: 16px; }
+    .hub-empty { padding: 16px; border-radius: 16px; background: var(--surface); border: 1px dashed var(--line); }
+    @media (max-width: 520px) { .hub-sum b { font-size: 1rem; } .hub-sum > div { padding: 10px; } .hub-nums b { font-size: .95rem; } }
   </style>
 </head>
 <body>
@@ -91,37 +136,31 @@
 
   <main class="sk">
     <h1>Staking</h1>
-    <p class="lede">Stake VHP in any game you play. Each game's staked players share that game's part of the weekly rewards from the Knode Games node; free players play for the weekly free prize. You can withdraw any time.</p>
-
+    <p class="lede">Stake VHP in the games you play to share their weekly rewards. Withdraw any time.</p>
     <section class="card panel soon" id="soon" hidden>
       <h2>Staking per game opens soon</h2>
       <p class="muted">Staking in every game opens when the Knode Games vault goes live (announced; it can go live from Sunday 1 Nov). Until then you can already stake in Daily Questions.</p>
-    </section>
-
-    <section class="card panel" id="q-card">
-      <h2>Daily Questions</h2>
       <div id="q-badge" hidden></div>
-      <p class="muted" style="margin:10px 0 0">Daily Questions has its own Stake and Withdraw buttons on its page. <a href="index.html#play">Open Daily Questions →</a></p>
     </section>
-
-    <section id="game-box" hidden>
-      <div class="pick" id="pick" aria-label="Choose a game"></div>
-      <section class="card panel" id="game-panel" hidden></section>
+    <p class="muted" id="hub-loading">Loading your stakes…</p>
+    <p class="hub-note bad" id="hub-err" hidden>Couldn't reach the Koinos network just now. Reload the page in a minute.</p>
+    <section id="hub" hidden>
+      <div id="hub-top"></div>
+      <div class="hub-tabs" id="hub-tabs" role="tablist" aria-label="Staking" hidden></div>
+      <div id="hub-body"></div>
     </section>
-
-    <section class="card panel" id="list" hidden></section>
-
-    <section class="card panel how">
-      <h2>How staking works</h2>
+    <details class="card panel how">
+      <summary><b>How staking works</b></summary>
       <ul class="muted">
         <li><b>At least 1 VHP in a game</b> makes you a staked player there for the week. Stake in one game, several or all of them.</li>
-        <li><b>A new stake counts from next week</b> (Monday 00:00 UTC). A game's weekly rewards are split by how much VHP is staked in it.</li>
+        <li><b>A new stake counts from next week</b> (Monday 00:00 UTC). Each game's weekly rewards are split by how much VHP is staked in it.</li>
+        <li><b>Your share</b> is your stake divided by the game's total. Inside a game, the top 30% of staked players with at least 1 point share its rewards (more for a higher place and a bigger stake). Free players play for the 2 + 1 VHP free prize.</li>
         <li><b>Withdraw any time</b>, any amount, straight back to your wallet. Withdrawing part keeps you in this week at the lower stake.</li>
-        <li><b>Move</b> stake from one game to another without leaving the vault; it counts in the new game from next week.</li>
-        <li><b>Inside a game</b>, the top 30% of staked players with at least 1 point share its rewards (more for a higher place and a bigger stake). Free players play for the 2 + 1 VHP free prize.</li>
+        <li><b>Move</b> stake from one game to another without leaving the vault; it counts in the new game from next week. You pay the Mana for a move yourself; staking, withdrawing and claiming can be covered by the Mana sponsor.</li>
+        <li><b>Rewards</b> show after each week is finalized. Claim them one by one, or up to 10 at once.</li>
         <li>Staking is optional and rewards aren't guaranteed. <a href="terms.html">Terms &amp; risks</a></li>
       </ul>
-    </section>
+    </details>
   </main>
 
   <nav class="tabbar" aria-label="Main">
