@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "network": "koinos-foundation-testnet",
+  "note": "The Knode Games vault v6 TEST copy on the Koinos Foundation testnet (10-minute weeks), for the testnet staking page (stake-testnet.html). Test KOIN only; nothing here touches mainnet.",
+  "rpc": "https://testnet.koinosfoundation.org",
+  "chainId": "EiAIKVvm6-V2qmsmUvPJy09vCCLbtn9lHFpwrJbcTIEWRQ==",
+  "contract": "1MXay5pSvPNzc8sBcZAMWfqaY4T9DkBvLn",
+  "vhp": "17n12ktwN79sR6ia9DDgCfmw77EgpbTyBi",
+  "koin": "1FaSvLjQJsCJKq5ybmGsMMQs8RQYyVv8ju",
+  "faucet": "https://t.me/KoinosTestnetFaucetBot"
+}
