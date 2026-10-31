@@ -1,10 +1,17 @@
 {
  "v": 1,
- "updated": "2026-10-31T02:04:31.420Z",
- "names": {},
+ "updated": "2026-10-31T02:55:47.935Z",
+ "names": {
+  "1DAHmrQJMAbn4FmMMrew78wPUizjVdbBrd": {
+   "name": "Personal Producer",
+   "date": "2026-10-31",
+   "signature": "IDonAZcRmJz7SbkVqnUjvtZ8vg-QYu9VtUlE2XTncW9YHhN0CfGTO-lyJNnRaknJZAkmVfCtpqFn3OfPVd8EdOY="
+  }
+ },
  "hidden": {},
  "nicknames": {
   "122hrgzoXVmmxWxUs8TUrCFGcKG9czYgvf": "silverlake",
   "1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW": "jgapool"
- }
+ },
+ "pools": {}
 }
