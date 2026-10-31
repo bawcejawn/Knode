@@ -71,3 +71,14 @@ Played from a brand-new Test wallet (`1B8C5TZf…`) holding **no test KOIN**: 4 
 - **Game 2 announced** (2026-10-30, owner `1635QUr…H717`, block 40,659,263, 0.35 Mana). Who Signs Block X: a target
   every 2,400 blocks, locks 100 before, opens 28,900 ahead, 30 picks a day, **1 change per pick** (owner, 2026-10-30).
   It can be applied from **2026-11-01 21:23:34 UTC** (Sunday 1:23 pm Pacific).
+
+## Sponsored Combo cards (2026-10-30, Repo Lens FC-13)
+
+The testnet sponsor `1Dg8zKeH…` was pointed at the Combo chat's Picks v2 contract `1PQZWWHb…` (card shape) and switched
+on (tx `0x12208e68…10c1d470`). The Combo chat then sent two sponsored cards on game 98:
+- 6 legs: 0.1313 Mana, 1.52× under the 0.2 row;
+- 10 legs: 0.1457 Mana, 1.37× under the 0.2 row, below the 1.5× rule.
+
+Plan: raise the mainnet `pick` row to 0.25 at Combo launch (runbook "Later: the Picks v2 upgrade", step 7).
+`mana-report --testnet` saw both card transactions (too few to suggest a limit; nothing saved). The sponsor was then
+switched off (tx `0x1220aec3…2486`).
