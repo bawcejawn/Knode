@@ -41,6 +41,10 @@ removes unused names (`npm run names -- remove`).
   wallets and producers first, 20 at a time, within 4 minutes; at most 3,000); a nickname counts only when both
   nodes return the same one. A wallet whose read fails keeps its last nickname. A nickname that looks like another
   wallet's Knode Games name is not shown.
+- The live nickname check uses the name's exact spellings (lower case; spaces as nothing, - or .). First come wins:
+  if a wallet whose @nickname looks like an existing Knode Games name joins the list later, its @nickname isn't shown.
+- If no node answers, a claim stays open and is checked again on the next run. Every run ends within about 7
+  minutes; claims it didn't reach stay open.
 - A signed claim anyone has seen can be submitted again by anyone while it is at most 7 days old (it still only names
   the wallet that signed it).
 

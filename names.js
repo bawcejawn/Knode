@@ -31,7 +31,9 @@
     let s = String(name).toLowerCase().replace(/[ .\-_']/g, "");
     s = s.replace(/cl/g, "d").replace(/nn/g, "m").replace(/rn/g, "m").replace(/ri/g, "n").replace(/ii/g, "u").replace(/vv/g, "w");
     const LOOK = { 0: "o", 1: "l", i: "l", 2: "z", 3: "e", 4: "a", 5: "s", 6: "g", 7: "t", 8: "b", 9: "g" };
-    return s.replace(/[0-9i]/g, (c) => LOOK[c]);
+    s = s.replace(/[0-9i]/g, (c) => LOOK[c]);
+    // Once more after the digits: "KnocIe" / "Knoc1e" only become "cl" here (Repo Lens C1-3).
+    return s.replace(/cl/g, "d");
   }
   const RESERVED_EQUAL = ["Koinos", "admin", "support", "Knode", "Knode Games"].map(fold);
   // Anywhere in the folded name (audit PN-6: "Koinos Group", "K-node pool", "Knocle Games").
@@ -164,7 +166,9 @@
     if (why) return { ok: false, reason: why };
     // The signature first: junk claims never cause a chain read (audit PN-3).
     if (!(await verifySignature(claim, opts.lib))) return { ok: false, reason: "The signature doesn't match the address: sign the exact message with that wallet." };
-    if (!(await opts.isEligible(claim.address))) return { ok: false, reason: "That wallet can't take a name yet: it needs at least 1 VHP in the wallet or staked in Knode Games, or to be a block producer." };
+    const eligible = await opts.isEligible(claim.address);
+    if (eligible === null) return { ok: false, unknown: true, reason: "Couldn't check the wallet right now. The claim stays open and is checked again." };
+    if (!eligible) return { ok: false, reason: "That wallet can't take a name yet: it needs at least 1 VHP in the wallet or staked in Knode Games, or to be a block producer." };
     db.names[claim.address] = { name: claim.name, date: claim.date, signature: claim.signature };
     db.updated = new Date(now).toISOString();
     return { ok: true, db };

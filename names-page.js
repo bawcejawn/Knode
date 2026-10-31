@@ -219,7 +219,9 @@
       let landed = false;
       if (transaction && transaction.wait) { try { await transaction.wait("byBlock", 90000); landed = true; } catch { /* checked below */ } }
       // Only the chain says whether it worked (audit PN-18): who owns @name now?
-      const owner = (await read.get_address({ value: n }).catch(() => null))?.result?.value;
+      const got = await read.get_address({ value: n }).catch(() => null);
+      const owner = got?.result?.value;
+      if (!got) { say("nick-msg", landed ? `Sent, but the page couldn't check the result just now. Look in your wallet (or reload this page) before trying again.` : `Not confirmed yet. Wait a minute and check your wallet before trying again: the transaction may still land.`, "bad"); return; }
       const main = (await read.get_main_token({ value: who }).catch(() => null))?.result;
       if (owner !== who && !landed) { say("nick-msg", `Not confirmed yet. Wait a minute and check your wallet before trying again: the transaction may still land.`, "bad"); return; }
       if (owner !== who) { say("nick-msg", `The transaction landed, but @${n} isn't this wallet's. It may have been taken first. Nothing else changed.`, "bad"); return; }

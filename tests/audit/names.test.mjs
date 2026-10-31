@@ -320,7 +320,7 @@ test("eligibility: a producer, or 1 VHP in the wallet or staked; a failing node 
   assert.equal(await N.eligibility(new Set(), [chain(99999999n, 0n)])(A.getAddress()), false, "just under 1 VHP");
   assert.equal(await N.eligibility(new Set(), [chain(0n, 100000000n)])(A.getAddress()), true, "1 VHP staked (any game)");
   assert.equal(await N.eligibility(new Set(), [chain(0n, 0n, true), chain(5n * 100000000n, 0n)])(A.getAddress()), true, "first node down");
-  assert.equal(await N.eligibility(new Set(), [chain(0n, 0n, true)])(A.getAddress()), false, "no node answers: refused");
+  assert.equal(await N.eligibility(new Set(), [chain(0n, 0n, true)])(A.getAddress()), null, "no node answers: unknown, the claim stays open (Repo Lens C1-5)");
 });
 
 test("nicknames: only when both nodes agree; shown with @; a Knode Games name wins; hidden hides both", async () => {

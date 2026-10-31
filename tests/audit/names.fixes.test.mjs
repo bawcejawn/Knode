@@ -44,7 +44,7 @@ test("PN-12: eligibility needs every answering node to agree; a node that fails 
   const a = "1" + "A".repeat(33);
   assert.equal(await N.eligibility(new Set(), [mk(10n ** 8n), mk(10n ** 8n)])(a), true);
   assert.equal(await N.eligibility(new Set(), [mk(10n ** 8n), down])(a), true);
-  assert.equal(await N.eligibility(new Set(), [down, down])(a), false);
+  assert.equal(await N.eligibility(new Set(), [down, down])(a), null, "no node answered: unknown");
   assert.equal(await N.eligibility(new Set([a]), [down, down])(a), true, "producers need no read");
 });
 
@@ -83,4 +83,17 @@ test("PN-16/PN-15/PN-1: the workflow's shape check wants an integer v; the reply
   assert.match(y, /claims: \$\{\{ steps\.find\.outputs\.claims \}\}/);
   assert.match(y, /CLAIMS: \$\{\{ needs\.check\.outputs\.claims \}\}/);
   assert.match(y, /-f labels=knode-name/);
+});
+
+test("C1-5: when no node can answer, a signed claim stays open (no result, so the reply job leaves the issue alone)", async () => {
+  const s = Signer.fromSeed("c15"), text = await claim(s, "Blue Harbor");
+  const r = await N.verifyIssues(R.emptyDb(), [{ number: 9, body: text }], now, () => null);
+  assert.deepEqual(r.results, []);
+  assert.equal(r.db, null);
+});
+
+test("C1-1: past the run's deadline, the remaining claims are left for the next run", async () => {
+  const s = Signer.fromSeed("c11"), text = await claim(s, "Blue Harbor");
+  const r = await N.verifyIssues(R.emptyDb(), [{ number: 1, body: text }], now, () => true, undefined, Date.now() - 1);
+  assert.deepEqual(r.results, []);
 });

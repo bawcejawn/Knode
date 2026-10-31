@@ -62,6 +62,7 @@ jobs:
               items = json.loads(text)                      # one JSON list
           except ValueError:
               items = [json.loads(l) for l in text.splitlines() if l.strip()]   # one issue per line (--paginate --jq)
+          if type(items) is dict: items = [items]   # exactly one issue: gh wrote one object (Repo Lens C1-2)
           if type(items) is not list: items = []
           out = [{"number": i["number"], "body": i.get("body") or ""} for i in items
                  if type(i) is dict and "pull_request" not in i and type(i.get("number")) is int and i["number"] > 0

@@ -121,21 +121,28 @@ export type Chain = {
 };
 /** One node, read-only. */
 export function chainAt(rpc: string): Chain {
+  // A node that missed one deadline is skipped for the rest of the run (Repo Lens C1-1): its hung request can't be
+  // cancelled, so every further call would only wait out another 8 seconds.
+  let dead = false;
+  const call = async <T>(p: () => Promise<T>): Promise<T> => {
+    if (dead) throw new Error(`${rpc} didn't answer earlier in this run`);
+    try { return await within(p()); } catch (e: any) { if (/no answer in/.test(String(e && e.message))) dead = true; throw e; }
+  };
   const provider = new Provider([rpc]);
   const vhp = new Contract({ id: VHP, provider, abi: READ_ABI as any }).functions;
   const game = new Contract({ id: GAME, provider, abi: READ_ABI as any }).functions;
   const nick = new Contract({ id: NICKNAMES, provider, abi: utils.nicknamesAbi }).functions;
   return {
-    async vhp(a) { return BigInt((await within(vhp.balance_of({ owner: a }))).result?.value || 0); },
+    async vhp(a) { return BigInt((await call(() => vhp.balance_of({ owner: a }))).result?.value || 0); },
     async stake(a) {
-      const p: any = (await within(game.get_player({ player: a, week: "0" }))).result?.player || {};
+      const p: any = (await call(() => game.get_player({ player: a, week: "0" }))).result?.player || {};
       return BigInt(p.stake || 0) + BigInt(p.pending || 0) + BigInt(p.stake_other || 0);
     },
     async players() {
       const out: string[] = [];
       let start: string | undefined;
       for (let page = 0; page < 40; page++) {
-        const rows: any[] = (await within(game.list_players({ ...(start ? { start } : {}), limit: 50, week: "0" }))).result?.rows || [];
+        const rows: any[] = (await call(() => game.list_players({ ...(start ? { start } : {}), limit: 50, week: "0" }))).result?.rows || [];
         for (const r of rows) if (typeof r.address === "string") out.push(r.address);
         if (rows.length < 50) break;
         start = rows[rows.length - 1].address;
@@ -143,13 +150,13 @@ export function chainAt(rpc: string): Chain {
       return out;
     },
     async nickname(a) {
-      const t: any = (await within(nick.get_main_token({ value: a }))).result;
+      const t: any = (await call(() => nick.get_main_token({ value: a }))).result;
       if (!t || !t.token_id) return null;
       const n = new TextDecoder().decode(utils.toUint8Array(String(t.token_id).replace(/^0x/, "")));
       return R.okNick(n) ? n : null;
     },
     async nicknameOwner(n) {
-      const r: any = (await within(nick.get_address({ value: n }))).result;
+      const r: any = (await call(() => nick.get_address({ value: n }))).result;
       return r && typeof r.value === "string" && ADDR.test(r.value) ? r.value : null;
     },
   };
@@ -159,12 +166,13 @@ export function chainAt(rpc: string): Chain {
  *  once; every node that answers must agree (one lying node can't make a wallet eligible, audit PN-12), and a node
  *  that errors or hangs is left out (audit PN-3). No answer at all: not eligible this run (the claim stays open). */
 export function eligibility(producers: Set<string>, chains: Chain[]) {
-  return async (a: string) => {
+  return async (a: string): Promise<boolean | null> => {
     if (producers.has(a)) return true;
     const one = async (c: Chain) => (await within(c.vhp(a))) >= UNIT || (await within(c.stake(a))) >= UNIT;
     const got = await Promise.allSettled(chains.map(one));
     const yes = got.filter((g) => g.status === "fulfilled").map((g) => (g as PromiseFulfilledResult<boolean>).value);
-    return yes.length > 0 && yes.every(Boolean);
+    if (!yes.length) return null;            // no node answered: unknown, the claim stays open (Repo Lens C1-5)
+    return yes.every(Boolean);
   };
 }
 
@@ -203,25 +211,28 @@ export async function check(dbIn: any, text: string, now: number, isEligible: (a
 
 /** Check every claim issue in order (oldest first), each against names.json as the earlier ones left it. Returns the
  *  new names.json (null if none passed) and one outcome per issue. Issue text is only ever data here. */
-export async function verifyIssues(prev: any, issues: Array<{ number: number; body: string }>, now: number, isEligible: (a: string) => Promise<boolean> | boolean,
-  nicknameOwner?: (n: string) => Promise<string | null>) {
+export async function verifyIssues(prev: any, issues: Array<{ number: number; body: string }>, now: number, isEligible: (a: string) => Promise<boolean | null> | boolean | null,
+  nicknameOwner?: (n: string) => Promise<string | null>, deadline = Infinity) {
   let db = R.cleanDb(prev);
   let changed = false;
   const results: Array<Record<string, unknown>> = [];
   for (const it of issues.slice(0, 30)) {
     if (!it || !Number.isInteger(it.number) || it.number <= 0) continue;
+    if (Date.now() > deadline) break;        // out of time: the rest stay open for the next run (Repo Lens C1-1)
     const body = typeof it.body === "string" ? it.body : "";
     // Already published exactly as claimed (the reply failed last time): answer it as accepted (audit PN-17).
     const c = R.parseClaim(body), pub = c && db.names[c.address];
     if (c && pub && !db.hidden[c.address] && pub.name === c.name && pub.date === c.date && pub.signature === c.signature) {
       results.push({ issue: it.number, accepted: true, name: c.name, address: c.address }); continue;
     }
-    // A name that is another wallet's live Koinos nickname, also one Knode Games never looked up (audit PN-4).
-    if (c && nicknameOwner && !R.checkName(c.name)) {
-      const taken = await nickTaken(c.name, c.address, nicknameOwner);
-      if (taken) { results.push({ issue: it.number, accepted: false, reason: "That name is another wallet's Koinos nickname." }); continue; }
-    }
     const r = await check(db, body, now, isEligible);
+    // No node could say whether the wallet may take a name: leave the claim open for the next run (Repo Lens C1-5).
+    if (!r.ok && r.unknown) continue;
+    // A name that is another wallet's live Koinos nickname, also one Knode Games never looked up (audit PN-4). Only
+    // after the signature and the rules passed, so junk claims cause no chain read (Repo Lens C1-1).
+    if (r.ok && nicknameOwner && await nickTaken(r.claim.name, r.claim.address, nicknameOwner)) {
+      results.push({ issue: it.number, accepted: false, reason: "That name is another wallet's Koinos nickname." }); continue;
+    }
     if (r.ok && Buffer.byteLength(serialize(r.db)) > MAX_BYTES) {
       results.push({ issue: it.number, accepted: false, reason: "The names list is full for now. Try again later." }); continue;
     }
@@ -300,7 +311,8 @@ async function runCmd() {
     log(`Nicknames: read ${Object.keys(nicks).length} of ${who.size} wallets${next ? " (changed)" : ""}.`);
   }
   const issues = readJson(E.ISSUES_FILE || "");
-  const r = await verifyIssues(db, Array.isArray(issues) ? issues : [], now, eligibility(producers, chains), nicknameOwnerOf(chains));
+  // The whole run ends well inside the job's 10 minutes; claims not reached stay open (Repo Lens C1-1).
+  const r = await verifyIssues(db, Array.isArray(issues) ? issues : [], now, eligibility(producers, chains), nicknameOwnerOf(chains), now + 7 * 60_000);
   if (r.db) { db = r.db; changed = true; }
   fs.mkdirSync(out, { recursive: true });
   fs.mkdirSync(path.dirname(resultFile), { recursive: true });
@@ -413,4 +425,8 @@ async function main(argv: string[]) {
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
-if (isMain) main(process.argv.slice(2)).catch((e) => { console.error(`Error: ${e.message}`); process.exitCode = 1; });
+// Exit when done: a request to a node that never answered can't be cancelled and would keep the process (and the
+// workflow job) alive until GitHub cancels it (Repo Lens C1-1). Every file is already written synchronously.
+if (isMain) main(process.argv.slice(2)).then(
+  () => process.exit(process.exitCode ?? 0),
+  (e) => { console.error(`Error: ${plain(e && e.message)}`); process.exit(1); });

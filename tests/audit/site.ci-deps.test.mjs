@@ -46,8 +46,10 @@ test("(guard) no privileged triggers or script injection from event data", () =>
     assert.ok(!/(^|[\s\[,{"'])(issues|discussion|discussion_comment|pull_request_review|pull_request_review_comment)(["']?\s*[:,\]}]|\s*$)/m.test(triggers(y)), `${f}: triggered by issues or comments`);
     assert.ok(!/^\s*["']?(?:on|true)["']?\s*:\s*["']?(issues|discussion)/m.test(y), `${f}: triggered by issues`);
     // A blanket write token, or every secret handed on at once, is never used (audit PN-8).
-    assert.ok(!/permissions:\s*["']?write-all/.test(y), `${f}: permissions: write-all`);
-    assert.ok(!/secrets:\s*inherit|toJSON\(\s*secrets\s*\)|secrets\[/.test(y), `${f}: hands on all secrets`);
+    // Any YAML spelling: plain, quoted, or a block scalar (>-, |) with write-all on the next line (Repo Lens C1-4).
+    assert.ok(!/permissions:\s*(?:[>|][+-]?\s*)?["']?write-all/i.test(y), `${f}: permissions: write-all`);
+    // GitHub's expression functions ignore case (toJSON, toJson, tojson); "inherit" may be quoted.
+    assert.ok(!/secrets:\s*["']?inherit|tojson\(\s*secrets\s*\)|secrets\s*\[/i.test(y), `${f}: hands on all secrets`);
     assert.ok(!/\$\{\{\s*github\.(event\.(pull_request|issue|comment|review|head_commit|commits|pages|inputs)|head_ref)/.test(y), `${f}: event data expanded in the workflow`);
   }
   assert.match(triggers(bot), /schedule:/, "(the trigger parser finds bot.yml's schedule)");
