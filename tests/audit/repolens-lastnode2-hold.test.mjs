@@ -42,15 +42,32 @@ test("M-W-n1: mainnet without form (no race-samples yet): steady 78%-108% reliab
   assert.ok(held / N <= 0.02, `${held} of ${N} honest weeks held`);
 });
 
-// Owner decision (fix-check round 2, N-6): a week of blocks shows a steady 3% edge at only about z = 2.4, so no rule
-// catches it in half the weeks while holding at most 2% of honest weeks (M-W-n1 above). The rule now in watchWeek
-// (z >= 3.4 over the week with 2 wins, or z >= 5 in one won event) catches it in about 13% of weeks, and a single gamed
-// event in 98%. Kept as the reviewer wrote it, as a TODO, until the owner picks a longer window or another trade-off.
-test("LNF-8 residual: a node whose form is 3% low (it skipped 3% in the form window) and signs fully is caught (OWNER: in at least half the weeks)", { todo: "owner accepted 2026-10-30: a 3% edge over one week is below what a week of blocks can show (caught ~13%; see FIXCHECK-2-FIXES.md)" }, () => {
+// Owner decision (fix-check round 2, N-6; accepted 2026-10-30, docs/lastnode/FIXCHECK-2-FIXES.md): a week of blocks
+// shows a steady 3% edge at only about z = 2.4, so no rule catches it in half the weeks (the reviewer's target) while
+// holding at most 2% of honest weeks (M-W-n1 above). The owner kept the rule now in watchWeek. These tests pin what was
+// accepted, so a change to the rule shows up here: the 3% skimmer is caught in about 13% of weeks (not 0), and a single
+// gamed event (form 0.8 that day) in almost every week.
+test("LNF-8 residual (owner accepted the trade-off): a node 3% under its form is caught in some weeks, not most (about 13%)", () => {
   // The gamer's field multiplier expects 0.97 x its true rate: equivalent to signing 1/0.97 of kh in the race.
   const R = L.rng(3); let caught = 0; const N = 200, G = NODES[3];
   for (let k = 0; k < N; k++) if (watchWeek(honestWeek(R, 0, (a) => (a === G ? 1 / 0.97 : 1)), H).some((x) => x.a === G)) caught++;
-  assert.ok(caught / N >= 0.5, `caught in ${caught} of ${N} weeks`);
+  assert.ok(caught / N >= 0.08 && caught / N <= 0.25, `caught in ${caught} of ${N} weeks (accepted: about 13%)`);
+});
+
+test("N-6: a node that games a single event (signs 25% over its multiplier that day) is caught in at least 9 weeks out of 10", () => {
+  const R = L.rng(5); let caught = 0; const N = 200, G = NODES[3];
+  for (let k = 0; k < N; k++) {
+    const day = Math.floor(R.next() * 7);
+    const evs = honestWeek(R, 0);
+    // Re-draw the gamed day with the gamer at 1/0.8 of its multiplier.
+    const field = evs[0].field, kh = field.nodes.map((n) => n.kh);
+    const hours = Array.from({ length: NODES.length - 1 }, (_, i) => ({ i, from: 0, to: 0, checked: 2, blocks: Object.fromEntries(NODES.map((a, j) => [a, R.poisson(kh[j] * (a === G ? 1 / 0.8 : 1))])) }));
+    const res = L.cutsFrom(field, hours);
+    evs[day] = { field, hours, cuts: res.cuts, winner: res.winner, done: res.done };
+    if (res.winner !== G) { caught++; continue; }            // it didn't win: nothing to hold (counted as no gain)
+    if (watchWeek(evs, H).some((x) => x.a === G)) caught++;
+  }
+  assert.ok(caught / N >= 0.9, `caught (or no win) in ${caught} of ${N} weeks`);
 });
 
 // ── Part B: append to tests/audit/lastnode-vault.test.mjs (uses its publisher(), history(), vgood, linux) ──

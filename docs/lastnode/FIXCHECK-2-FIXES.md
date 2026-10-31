@@ -2,7 +2,7 @@
 
 Branch `lastnode`. The round-2 report (`FIXCHECK-LASTNODE-2.md`, at `7c301a8`) gave a "fix first" verdict: 1 Critical, 5 High, 6 Medium, 12 Low and 9 Info. Its failing tests are in `tests/audit/repolens-lastnode2-*.test.mjs`. The paste-in blocks went into `lastnode-form.test.mjs` (M-R-1) and `lastnode-vault.test.mjs` (M-R-2).
 
-**Tests:** `npm run test:audit` gives 717 tests: 706 pass, 0 fail, 5 skipped and 6 owner TODOs. One TODO is new: LNF-8 residual (see N-6).
+**Tests:** `npm run test:audit` gives 718 tests: 708 pass, 0 fail, 5 skipped and 5 TODOs (all other games' owner decisions; none are Last Node's). The Last Node tests alone: 109 pass, 0 fail.
 
 ## First: the current `picks` merged in (L-11)
 - `origin/picks` (`d3203f1`) is merged into `lastnode`. That brings in BX-86 sample disputes, `js_safe` and the Picks mainnet upload.
@@ -50,14 +50,14 @@ Branch `lastnode`. The round-2 report (`FIXCHECK-LASTNODE-2.md`, at `7c301a8`) g
 | One gamed event (form 0.8) | 16–20% caught | 98% caught | — |
 | Node 3% under its form, all week | 10–14% caught | 13% caught | ≥ 50% (not met) |
 
-**Why the last row can't be met:** over one week, a steady 3% edge averages only z ≈ 2.4. Holding at most 2% of honest weeks across 10 nodes needs a cut-off near z ≈ 3. The two targets conflict, so the test is kept unchanged as an owner TODO.
+**Why the last row can't be met:** over one week, a steady 3% edge averages only z ≈ 2.4. Holding at most 2% of honest weeks across 10 nodes needs a cut-off near z ≈ 3. The two targets conflict, so the owner chose between the targets (below).
 
 **Options:**
 - (a) Accept it as is.
 - (b) Add a 4-week rolling check (z ≈ 4.8 over 4 weeks catches it, but only from the gamer's 3rd or 4th week).
 - (c) Shorten the form window or weigh recent hours more.
 
-**Owner's decision (30 Oct):** (a), keep the rule as it is. The test stays as a TODO marked accepted.
+**Owner's decision (30 Oct):** (a), keep the rule as it is. The reviewer's 50% test now pins the accepted behaviour instead (the skimmer caught in 8–25% of weeks, about 13%), and a new test checks that a single gamed event is caught in at least 9 weeks out of 10.
 
 ## Finished skeleton tests
 

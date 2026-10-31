@@ -2,6 +2,7 @@
 // NOT RUN HERE (static review). Drop into tests/audit/ next to lastnode-vault.test.mjs; they drive the REAL recorder
 // (bot/games/lastnode.ts run(), real makeField/loadDay) and the REAL publish shell extracted from lastnode.yml, exactly as
 // that file's publisher() does (copy publishScript()/publisher()/dayFile()/boardOf()/raceFiles() from it).
+import "./lib/quiet.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

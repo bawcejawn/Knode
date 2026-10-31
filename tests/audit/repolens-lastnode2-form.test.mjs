@@ -1,5 +1,6 @@
 // M-F failing tests — NOT RUN HERE (static review). Place in tests/audit/ of bawcejawn/Knode at 7c301a8; they drive the
 // real code paths (bot/games/lastnode.ts run/samplesIn/sharesFromSamples, lastnode-math.js formOf, the workflow shell).
+import "./lib/quiet.mjs";
 import test from "node:test"; import assert from "node:assert/strict";
 import fs from "node:fs"; import os from "node:os"; import path from "node:path"; import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";

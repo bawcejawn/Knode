@@ -2,6 +2,7 @@
 // in the 48 hours before the card ÷ the blocks that share gave it (hour by hour, from that hour's race card), kept
 // within 0.80–1.20. Real blocks: nodes signed a steady 78%–108% of their VHP share, and with VHP alone the steady
 // over-signers won most events (one won 35–40%) and two nodes never won.
+import "./lib/quiet.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

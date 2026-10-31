@@ -96,12 +96,12 @@ export function publisher() {
     seed(files) {
       const w = path.join(root, `seed${++n}`);
       execFileSync("git", ["init", "-q", w], { env });
-      const g = (...a) => execFileSync("git", a, { cwd: w, env, encoding: "utf8" });
+      const g = (...a) => execFileSync("git", a, { cwd: w, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
       try { g("fetch", "-q", remote, "games-data"); g("checkout", "-q", "FETCH_HEAD"); } catch { /* first */ }
       for (const [k, v] of Object.entries(files)) { const f = path.join(w, "lastnode", k); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v)); }
       g("add", "-A"); g("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "seed"); g("push", "-q", remote, "HEAD:refs/heads/games-data");
     },
-    show: (name) => { try { return execFileSync("git", ["--git-dir", remote, "show", `games-data:lastnode/${name}`], { env, encoding: "utf8" }); } catch { return null; } },
+    show: (name) => { try { return execFileSync("git", ["--git-dir", remote, "show", `games-data:lastnode/${name}`], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch { return null; } },
   };
 }
 export const idx = { v: 1, updated: "x", days: [], contract: null, game: 13 };

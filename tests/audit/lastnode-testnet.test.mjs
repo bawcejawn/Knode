@@ -1,5 +1,6 @@
 // Last Node Standing on the testnet: the fast test game (94) recorded with picks from the TESTNET node only and the
 // race from two MAINNET nodes; the testnet settings file; and the local test server's allowlist for its files.
+import "./lib/quiet.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

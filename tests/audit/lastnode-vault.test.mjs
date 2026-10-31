@@ -1,6 +1,7 @@
 // Last Node Standing → Vault v6 (hand-off 2026-10-28): the weekly vault file. Only wallets staked in game 13 for that
 // week with at least 1 point, scores keeping the board's order and ties on 1–255, no prize places (a staked game),
 // written once the week is final and within the Vault's 3-day window, never on the testnet, never before v6.
+import "./lib/quiet.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

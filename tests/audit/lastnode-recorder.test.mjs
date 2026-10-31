@@ -2,6 +2,7 @@
 // hours recorded only once irreversible and matching on two nodes, each wallet's one pick (start and backup) agreeing on
 // both nodes, cuts and players' points, a run that continues the last one, void events, and last-run files that don't
 // have the recorder's shape. Offline: fake nodes and fake race files.
+import "./lib/quiet.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
