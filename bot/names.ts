@@ -114,7 +114,8 @@ const READ_ABI = {
 export type Chain = {
   vhp(a: string): Promise<bigint>;
   stake(a: string): Promise<bigint>;
-  players(): Promise<string[]>;
+  /** `until` (ms): stop paging then and keep what was read (Repo Lens C2-1). */
+  players(until?: number): Promise<string[]>;
   nickname(a: string): Promise<string | null>;
   /** The wallet a nickname belongs to (null: nobody). Optional: fakes in the tests may leave it out. */
   nicknameOwner?(n: string): Promise<string | null>;
@@ -138,10 +139,10 @@ export function chainAt(rpc: string): Chain {
       const p: any = (await call(() => game.get_player({ player: a, week: "0" }))).result?.player || {};
       return BigInt(p.stake || 0) + BigInt(p.pending || 0) + BigInt(p.stake_other || 0);
     },
-    async players() {
+    async players(until = Infinity) {
       const out: string[] = [];
       let start: string | undefined;
-      for (let page = 0; page < 40; page++) {
+      for (let page = 0; page < 40 && Date.now() < until; page++) {
         const rows: any[] = (await call(() => game.list_players({ ...(start ? { start } : {}), limit: 50, week: "0" }))).result?.rows || [];
         for (const r of rows) if (typeof r.address === "string") out.push(r.address);
         if (rows.length < 50) break;
@@ -227,7 +228,7 @@ export async function verifyIssues(prev: any, issues: Array<{ number: number; bo
     }
     const r = await check(db, body, now, isEligible);
     // No node could say whether the wallet may take a name: leave the claim open for the next run (Repo Lens C1-5).
-    if (!r.ok && r.unknown) continue;
+    if (!r.ok && r.unknown) { log(`::warning::Claim #${it.number}: no node answered the eligibility check; it stays open for the next run.`); continue; }
     // A name that is another wallet's live Koinos nickname, also one Knode Games never looked up (audit PN-4). Only
     // after the signature and the rules passed, so junk claims cause no chain read (Repo Lens C1-1).
     if (r.ok && nicknameOwner && await nickTaken(r.claim.name, r.claim.address, nicknameOwner)) {
@@ -304,7 +305,7 @@ async function runCmd() {
   let changed = false;
   if (E.NAMES_REFRESH === "true") {
     const who = new Set<string>([...producers, ...boardPlayers(files), ...Object.keys(db.names)]);
-    try { for (const a of await chains[0].players()) who.add(a); } catch (e: any) { log(`Couldn't list the question-game players: ${plain(e.message)}`); }
+    try { for (const a of await chains[0].players(now + 90_000)) who.add(a); } catch (e: any) { log(`Couldn't list the question-game players: ${plain(e.message)}`); }
     const nicks = await nicknames(who, chains, { first: new Set([...producers, ...Object.keys(db.names)]) });
     const next = withNicknames(db, nicks, now, who);
     if (next) { db = next; changed = true; }
