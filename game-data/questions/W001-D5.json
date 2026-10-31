@@ -158,7 +158,9 @@
             }
           }
         }
-      }
+      },
+      "chainOutcome": 2,
+      "chainDataHash": "0xc954b24ba9d2ded19e93936b9718d867b3ad9a292cb3346661b592251a25cb56"
     },
     {
       "id": "W001-D5-2",
@@ -308,9 +310,17 @@
             "1GGxRhLN7Ek54xycG5XaZBE4bCgwV2xtvk": "126931552115548"
           },
           "seal": "e8e31ff5a32f380eab144492a2c083202c2e24cbb28ef51776afb56e66148640"
+        },
+        {
+          "height": 40670135,
+          "readAt": "2026-10-31T06:44:36.561Z",
+          "values": {
+            "1GGxRhLN7Ek54xycG5XaZBE4bCgwV2xtvk": "126875193337695"
+          },
+          "seal": "6a06634a048d62f960472c420e79fc4a39a58d3da2d0ea5d7c3c588c1de47911"
         }
       ],
-      "vhpSeal": "4889d814c41bae2df7b760348584b1d41c4b7efc5151ff0ccb011f22bd9ec79f"
+      "vhpSeal": "d28da3aaa3815243ebe4f32148596dfdcbce45f281bec79d6cda111376d6161d"
     },
     {
       "id": "W001-D5-3",
@@ -465,7 +475,9 @@
             }
           }
         }
-      }
+      },
+      "chainOutcome": 4,
+      "chainDataHash": "0xc954b24ba9d2ded19e93936b9718d867b3ad9a292cb3346661b592251a25cb56"
     },
     {
       "id": "W001-D5-4",
@@ -615,9 +627,17 @@
             "1G2QjRtNwEfqGwX7SMD8LNjWgJdWA7XtSU": "86506522278636"
           },
           "seal": "1c88b17ff9a4edef73735b9fc9dead192fc00fe7bbec34fc254b5fd9fcc3a53a"
+        },
+        {
+          "height": 40670135,
+          "readAt": "2026-10-31T06:44:36.561Z",
+          "values": {
+            "1G2QjRtNwEfqGwX7SMD8LNjWgJdWA7XtSU": "86468132962416"
+          },
+          "seal": "1c345fd64c87bd23156a154572bfa4c93abbfe9b222e3f838886cdfb01f04e2a"
         }
       ],
-      "vhpSeal": "c2c6a1e12bd73b72cbbb755865375c422b9886e99f0e879947d41b3c69b140cb"
+      "vhpSeal": "7a9e0c1c4f00aa04d608ff9cace9cf27a15cc575a92ed97704fb919c242691cf"
     },
     {
       "id": "W001-D5-5",
@@ -772,7 +792,9 @@
             }
           }
         }
-      }
+      },
+      "chainOutcome": 1,
+      "chainDataHash": "0xc954b24ba9d2ded19e93936b9718d867b3ad9a292cb3346661b592251a25cb56"
     }
   ],
   "daySeal": "759dfe0671d2ad39b76bc2f8d56a736bd7f66c1ffd72a29932bc27acab1a3976"
