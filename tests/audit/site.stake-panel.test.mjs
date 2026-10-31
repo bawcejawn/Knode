@@ -132,6 +132,7 @@ test("claim math: prizes, cutoff and the two baskets, as the vault computes them
   assert.equal(T.claimable(w, { prize_place: 1 }, buckets), 2n * UNIT);
   assert.equal(T.claimable(w, { prize_place: 2 }, buckets), UNIT);
   assert.equal(T.claimable({ ...w, first_n: 2 }, { prize_place: 2 }, buckets), 0n);  // 1st tied: they share all 3 VHP
+  assert.equal(T.claimable({ ...w, first_n: 0 }, { prize_place: 2 }, buckets), UNIT);   // nobody 1st: 2nd is still paid (V6-9)
   assert.equal(T.claimable(w, null, buckets), 0n);
 });
 
