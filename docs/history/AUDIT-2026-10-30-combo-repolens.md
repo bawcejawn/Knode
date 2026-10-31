@@ -164,3 +164,6 @@ or run the race simulation, so a compromised record run could still publish a ca
 fixed for the first time, or a wrong race or Block X worth inside its bounds. Honest runs then raise an error and the
 week gets no Vault file (nothing is paid wrong; the week's payout is lost). Block X's publish job has the same limit.
 The full fix is a separate verify job with no write token and no npm dependencies.
+
+**Tests (fix-check 3 round, 118e621):** contract 71 (source unchanged, 92d555d0…); site and audit suite 737 passing
+(5 todo, 6 skipped, 0 failing); browser 7; workflow guard 8.
