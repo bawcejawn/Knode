@@ -197,6 +197,83 @@
   }
   const read = async (fn, args) => (await shared.vault.functions[fn](args)).result || {};
 
+  /** What `who` can claim in one game: [{ week, reward }] over the last CLAIM_WEEKS finished weeks. Not from the game's
+   *  from_week: a game restarted after a gap moves it forward, and the weeks it earned before stay claimable. The
+   *  player's own entries first (8 at a time); a week's results only where there's an entry with something in it. */
+  async function findClaims(game, who, week) {
+    const out = [], weeks = [];
+    for (let w = big(week) - 1n; w >= 0n && w >= big(week) - BigInt(CLAIM_WEEKS); w--) weeks.push(w);
+    for (let i = 0; i < weeks.length; i += 8) {
+      const part = weeks.slice(i, i + 8);
+      const mine = await Promise.all(part.map((w) => read("get_game_player", { player: who, game, week: w.toString() })));
+      for (let j = 0; j < part.length; j++) {
+        const e = mine[j] && mine[j].entry;
+        if (!e || e.claimed || !(Number(e.points || 0) > 0 || Number(e.prize_place || 0) > 0)) continue;
+        const gx = await read("get_game", { game, week: part[j].toString() });
+        const r = claimable(gx.week, e, gx.buckets);
+        if (r > 0n) out.push({ week: part[j], reward: r });
+      }
+    }
+    return out;
+  }
+
+  // ═══════════════ the staking hub (stake.html): everything about one wallet in one read ═══════════════
+  /** Every game that takes (or still holds) stakes, with this wallet's part in it.
+   *  { live, week, config, min, wallet: { vhp, koin } | null, games: [{ id, name, active, season, total, counted,
+   *    mine, pending, pendingFrom, share, staked, claims, last }] }. Units are BigInt. share = mine ÷ total (0..1). */
+  async function overview(who) {
+    await setup();
+    const state = await read("get_state", {});
+    if (!live(state)) return { live: false };
+    const week = big(state.week), cfg = state.config || {}, min = minStakeFor(cfg, week);
+    const list = ((await read("list_games", {})).games || []).filter((g) => g.staked && (g.active || big(g.stake) > 0n));
+    const games = await Promise.all(list.map(async (g) => {
+      const id = Number(g.id), total = big(g.stake);
+      let mine = 0n, pending = 0n, pendingWeek = 0n, counted = 0n, claims = [], last = null;
+      if (who) {
+        const r = id === Q_GAME ? await read("get_player", { player: who, week: week.toString() }) : await read("get_game_player", { player: who, game: id, week: week.toString() });
+        const p = r.player || {};
+        mine = big(p.stake) + big(p.pending);
+        pending = big(p.pending) > 0n && big(p.pending_week) > week ? big(p.pending) : 0n;
+        pendingWeek = big(p.pending_week);
+        counted = id === Q_GAME ? big(r.active_stake) : big(r.week_stake);
+        if (id !== Q_GAME) claims = await findClaims(id, who, week);
+      }
+      if (id !== Q_GAME && week > 0n) last = per100((await read("get_game", { game: id, week: (week - 1n).toString() })).week);
+      return { id, name: g.name || `Game ${id}`, active: !!g.active, season: Number(g.season_weeks || 1), total, mine, counted, pending,
+        pendingFrom: pending ? weekDate(cfg, pendingWeek) : "", share: total > 0n ? Number((mine * 1000000n) / total) / 1000000 : 0,
+        staked: counted >= min && min > 0n, claims, last };
+    }));
+    let wallet = null;
+    if (who) {
+      const tok = (id) => new lib.Contract({ id, abi: TOKEN_ABI, provider: shared.provider }).functions;
+      const [v, k] = await Promise.all([tok(shared.dep.vhp).balance_of({ owner: who }), tok(shared.dep.koin).balance_of({ owner: who })]);
+      wallet = { vhp: big(v.result && v.result.value), koin: big(k.result && k.result.value) };
+    }
+    return { live: true, week, config: cfg, paused: !!cfg.paused, min, wallet, games };
+  }
+  /** Sign and send one action from the hub in the player's own wallet. a: { game, units, koin, to } or, for "claim",
+   *  { claims: [{ game, week }] } (up to 10 in one transaction). Resolves to the transaction id (or null). */
+  async function send(action, a) {
+    await setup();
+    const W = Wallet();
+    if (!W) throw new Error("No wallet on this page.");
+    if (!W.address) { await W.connect(); if (!W.address) throw new Error("Not connected."); }
+    const k = { lib, dep: shared.dep, provider: shared.provider };
+    let ops, label;
+    if (action === "claim") {
+      const list = (a.claims || []).slice(0, 10);
+      if (!list.length) throw new Error("Nothing to claim.");
+      ops = [];
+      for (const c of list) ops.push(...(await buildOps(k, "claim", { player: W.address, game: c.game, week: c.week })));
+      label = list.length === 1 ? "claim your reward" : `claim ${list.length} rewards`;
+    } else {
+      ops = await buildOps(k, action, { ...a, player: W.address });
+      label = action === "stake" ? `stake ${exact(a.units)} ${a.koin ? "KOIN" : "VHP"}` : action === "withdraw" ? `withdraw ${exact(a.units)} VHP` : `move ${exact(a.units)} VHP`;
+    }
+    return W.send(label, ops);
+  }
+
   function mount(root, opts = {}) {
     const game = Number(opts.game);
     if (!root || !Number.isInteger(game) || game <= Q_GAME) return null;
@@ -221,19 +298,7 @@
           // Not from the game's from_week: a game restarted after a gap moves it forward, and the weeks it earned before
           // stay claimable. The player's own entries first (8 at a time); a week's results only where there's an entry
           // with something in it.
-          const weeks = [];
-          for (let w = week - 1n; w >= 0n && w >= week - BigInt(CLAIM_WEEKS); w--) weeks.push(w);
-          for (let i = 0; i < weeks.length; i += 8) {
-            const part = weeks.slice(i, i + 8);
-            const mine = await Promise.all(part.map((w) => read("get_game_player", { player: who, game, week: w.toString() })));
-            for (let j = 0; j < part.length; j++) {
-              const e = mine[j] && mine[j].entry;
-              if (!e || e.claimed || !(Number(e.points || 0) > 0 || Number(e.prize_place || 0) > 0)) continue;
-              const gx = await read("get_game", { game, week: part[j].toString() });
-              const r = claimable(gx.week, e, gx.buckets);
-              if (r > 0n) P.claims.push({ week: part[j], reward: r });
-            }
-          }
+          P.claims = await findClaims(game, who, week);
         }
         render();
       } catch {
@@ -463,5 +528,6 @@
     return { refresh };
   }
 
-  window.KStake = { mount, mountList, badge, status, live: async () => { await setup(); return live(await read("get_state", {})); }, _test: { badgeText, VAULT_ABI, TOKEN_ABI, toUnits, minStakeFor, live, claimable, explain, buildOps, exact, weekDate, per100 } };
+  window.KStake = { mount, mountList, badge, status, overview, send, fmt: { amount, exact, toUnits, weekDate, explain },
+    wallet: () => Wallet(), live: async () => { await setup(); return live(await read("get_state", {})); }, _test: { badgeText, VAULT_ABI, TOKEN_ABI, toUnits, minStakeFor, live, claimable, explain, buildOps, exact, weekDate, per100 } };
 })();

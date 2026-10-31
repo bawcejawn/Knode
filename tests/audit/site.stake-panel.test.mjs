@@ -259,8 +259,9 @@ test("a guest can't stake: the wallet's guest explanation shows instead", async 
 
 test("the panel sends only through the wallet, and only vault and token operations it builds itself", () => {
   const sends = [...src.matchAll(/\.send\(/g)];
-  assert.equal(sends.length, 1, "one send");
+  assert.equal(sends.length, 2, "two sends: the game-page panel and the staking hub, both the wallet's own");
   assert.match(src, /const id = await W\.send\(label, ops\);/);
+  assert.match(src, /return W\.send\(label, ops\);/);
   assert.doesNotMatch(src, /signTransaction|sendTransaction|privateKey|wif|innerHTML|outerHTML|insertAdjacentHTML|eval\(|new Function|localStorage|sessionStorage/i);
   assert.match(src, /new k\.lib\.Contract\(\{ id: k\.dep\.contract, abi: VAULT_ABI/, "the vault address comes from game-data/deployment.json");
 });
@@ -372,7 +373,45 @@ test("pages: Daily Questions shows the status bar; the staking page loads the pa
   const sk = read("stake.html");
   assert.ok(sk.indexOf('src="wallet.js"') < sk.indexOf('src="stake-panel.js"') && sk.indexOf('src="stake-panel.js"') < sk.indexOf('src="stake-page.js"'));
   const page = read("stake-page.js");
-  assert.doesNotMatch(page, /\.send\(|innerHTML|localStorage/);
-  assert.match(page, /K\.mount\(box, \{ game: id \}\)/);
+  // The hub signs only through the panel (KStake.send → the player's own wallet), and builds nothing itself.
+  assert.deepEqual([...page.matchAll(/\.send\(/g)].length, 1);
+  assert.match(page, /await K\.send\(action, a\)/);
+  assert.doesNotMatch(page, /innerHTML|localStorage|kondor|buildOps|Transaction|Contract\(/);
+  assert.match(page, /S\.data = await K\.overview\(me\(\)\)/);
   assert.match(read("games.js"), /K\.status\(Number\(b\.dataset\.stake\), who\)/);
+});
+
+// ── the staking hub (stake.html): overview and send ──
+test("hub overview: each game's stake, total and share; wallet balances; nothing for a missing wallet", async () => {
+  const games = [GAME({ id: 7, stake: String(200n * UNIT) }), GAME({ id: 2, name: "Who Signs Block X", stake: String(0n) }), GAME({ id: 9, name: "Old", active: false, stake: "0" })];
+  const e = env({ state: LIVE(), game: GAME(), games, player: { player: { stake: String(50n * UNIT), pending: "0", pending_week: "0" }, week_stake: String(50n * UNIT) } });
+  const o = await e.K.overview(ME);
+  assert.equal(o.live, true);
+  assert.deepEqual(o.games.map((g) => g.id), [7, 2], "a stopped game with nothing staked is left out");
+  const r = o.games[0];
+  assert.equal(r.mine, 50n * UNIT); assert.equal(r.total, 200n * UNIT); assert.equal(r.share, 0.25); assert.equal(r.staked, true);
+  assert.equal(o.games[1].share, 0, "an empty game: share 0, not NaN");
+  assert.ok(o.wallet && typeof o.wallet.vhp === "bigint");
+  const none = await e.K.overview(null);
+  assert.equal(none.wallet, null); assert.equal(none.games[0].mine, 0n);
+  const off = await env({ state: LIVE({ v6_rule_week_plus_one: "0" }) }).K.overview(ME);
+  assert.equal(off.live, false);
+});
+
+test("hub send: one wallet transaction per action; up to 10 claims batched in one", async () => {
+  const e = env({ state: LIVE(), game: GAME() });
+  await e.K.send("stake", { game: 7, units: 5n * UNIT, koin: false });
+  assert.deepEqual(J(e.sent[0].ops.map((o) => o._m)), ["approve", "deposit_to"]);
+  await e.K.send("move", { game: 7, to: 2, units: UNIT });
+  assert.deepEqual(J(e.sent[1].ops.map((o) => o._a)), [{ player: ME, from_game: 7, to_game: 2, amount: String(UNIT) }]);
+  await e.K.send("claim", { claims: Array.from({ length: 12 }, (_, i) => ({ game: 7, week: BigInt(i) })) });
+  assert.equal(e.sent[2].ops.length, 10, "at most 10 claims in one transaction");
+  assert.ok(e.sent[2].ops.every((o) => o._m === "claim_game" && o._a.player === ME));
+  await assert.rejects(e.K.send("claim", { claims: [] }), /Nothing to claim/);
+});
+
+test("the Mana sponsor never pays for moving stake (owner, 2026-10-30); stake, withdraw and claim it may", () => {
+  const w = fs.readFileSync(`${APP}/wallet.js`, "utf8");
+  assert.match(w, /MOVE_STAKE = 0x7c268e69/);
+  assert.match(w, /if \(c\.contract_id === sp\.covers\[0\] && Number\(c\.entry_point\) === MOVE_STAKE\) return null;/);
 });
