@@ -442,3 +442,20 @@ make an honest run be refused, except this one:
 | BX-131 | Publish jobs used the runner's own Node | **Fixed**: `setup-node` 22 (pinned) in all four publish jobs |
 | BX-132 | Old samples between +60 s and +10 min | One-time transition; none needed |
 | BX-133 | Two commits after the package (announce record, testnet sponsor option) | In the next fix-check's scope |
+
+## Round 10 (Repo Lens go/no-go @ a55390f, 2026-10-30): GO at a55390f, with one launch condition
+
+Report: "Block X Prize-Free: Round-10 Go/No-Go (Knode picks @ a55390f)". BX-128 and BX-130 are fixed for the whole
+family. The `\d` guard catches a planted regression, and BX-131 is fixed. Both BX-133 commits were checked: one is
+docs only, the other is testnet only.
+
+| ID | Finding | Status |
+|---|---|---|
+| BX-138 | Launch condition: `picks` has since merged `main` (c52a649, b301bfa), which changes `race.yml` and `bot/race.ts` (the Race Vault results file, the stricter race-data fetch). The round 8–9 fixes survive, but the new code wasn't reviewed | Blind review of `git diff a55390f HEAD -- .github/workflows bot/race.ts`, then a Repo Lens fix-check (round 11) of that diff before launch |
+| BX-136 | The `\d` guard didn't look inside `python3 -c` one-liners | **Fixed**: the guard checks them too (`python3 -c` and `python3 -I -c`) |
+| BX-137 | `CHECK_NOW_MS` / `RACE_CHECK_NOW` let tests set the publish clock | Accepted: the workflows never set them, and CI runs the tests inside GitHub Actions, so refusing them there would break CI |
+| BX-129, BX-123 / BX-127 | Runbook steps | As recorded |
+
+Not part of Block X, recorded here because it's in the same runbook: Repo Lens FC2-13 (Combo Card). The Picks v2
+upgrade must write v2's `wasmSha256` into `picks-data/deployment.json`. It is step 5 of "Later: the Picks v2 upgrade"
+in `docs/blockx/MAINNET-LAUNCH.md`.

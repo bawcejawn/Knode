@@ -48,6 +48,8 @@ test("the publish steps' Python never uses \\d (ASCII [0-9] only), and every pub
   for (const wf of ["games.yml", "games-testnet.yml", "race.yml", "race-samples.yml"]) {
     const y = fs.readFileSync(path.join(APP, ".github/workflows", wf), "utf8");
     for (const m of y.matchAll(/<<'PY'\n([\s\S]*?)\n\s*PY\n/g)) assert.ok(!m[1].includes("\\d"), `${wf}: \\d in the publish Python`);
+    // Round 10 (BX-136): the python3 -c one-liners too, not only the heredocs.
+    for (const m of y.matchAll(/python3 (?:-I )?-c (['"])([\s\S]*?)\1/g)) assert.ok(!m[2].includes("\\d"), `${wf}: \\d in a python3 -c one-liner`);
     const pub = y.slice(y.indexOf("\n  publish:"));
     assert.match(pub, /actions\/setup-node@[0-9a-f]{40}[^\n]*\n\s*with:\n\s*node-version: 22/, `${wf}: publish job pins Node 22`);
   }
