@@ -196,3 +196,10 @@ test("race page: medals only for wallets that earn (the recorder's earns), on bo
   assert.match(js, /earned: \(r, weekly\) => weekly && r\.earns === 3/);
   assert.match(b, /const medalOk = \(r, p\) => \(o\.earned \? !!o\.earned\(r, weekly\) && p <= 3 : p <= 3 && o\.scored\(r\)\)/);
 });
+
+test("race page: the staked / free status bar sits at the top of the page, for game 7", () => {
+  const h = read("race.html"), js = read("race.js");
+  assert.match(h, /<main class="pr">\s*<div id="stake-badge" hidden><\/div>\s*<h1>Producer Race<\/h1>/);
+  assert.match(js, /window\.KStake\.badge\(document\.getElementById\("stake-badge"\), \{ game: 7 \}\)/);
+  assert.ok(h.indexOf('id="stake-badge"') < h.indexOf('id="stake"'), "the bar above the full stake panel");
+});
