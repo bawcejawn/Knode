@@ -1,0 +1,21 @@
+name: Knode Games name
+description: Show a name instead of your wallet address on every Knode Games page (players and producers). Make the claim on knodegames.com/names.html first.
+title: "Knode Games name"
+labels: ["knode-name"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Make your claim on **https://knodegames.com/names.html**: connect your wallet, type the name and sign a message (free, no Mana). That page fills in this form for you.
+        It is checked automatically within about 15 minutes, and this issue gets a reply. If it passes, the name shows on every page, always next to your short address.
+  - type: textarea
+    id: claim
+    attributes:
+      label: Claim
+      description: The two lines from the claim page, unchanged.
+      placeholder: |
+        Knode Games name: My Name | 1YourWalletAddress… | 2026-10-30
+        Signature: …
+      render: text
+    validations:
+      required: true

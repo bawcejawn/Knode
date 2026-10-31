@@ -35,7 +35,8 @@
 
   const $ = (id) => document.getElementById(id);
   const fmt = (n, d = 0) => (Number.isFinite(n) ? Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }) : "–");
-  const nameOf = (a) => NAMES[a] || a.slice(0, 6) + "…" + a.slice(-4);
+  // Producer names (names.js): "Name · 1Abc12…wxyz", or the short address.
+  const nameOf = (a) => (window.KNames ? window.KNames.of(a) : NAMES[a] || a.slice(0, 6) + "…" + a.slice(-4));
   const hourLabel = (t) => new Date(t).toLocaleTimeString(undefined, { hour: "numeric" });
   const say = (t) => { $("status").textContent = t; };
   let B = null, now = 0;
@@ -107,5 +108,6 @@
     setInterval(() => { if (!document.hidden) refresh().catch(() => {}); }, 20000);
     setInterval(() => { if (now) $("p-ago").textContent = `${Math.max(0, Math.round((Date.now() - now) / 1000))} s ago`; }, 1000);
     setInterval(() => { if (!document.hidden) supplies(); }, 300000);
+    if (window.KNames) window.KNames.onChange(() => { if (B) refresh().catch(() => {}); });
   })();
 })();

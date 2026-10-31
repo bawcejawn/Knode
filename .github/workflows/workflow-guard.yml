@@ -4,9 +4,9 @@ name: Workflow guard
 
 on:
   push:
-    paths: [".github/workflows/**", "bot/workflow.test.ts", "tests/audit/*publish*", "tests/audit/published-files.test.ts"]
+    paths: [".github/workflows/**", "bot/workflow.test.ts", "tests/audit/*publish*", "tests/audit/published-files.test.ts", "tests/audit/site.ci-deps.test.mjs"]
   pull_request:
-    paths: [".github/workflows/**", "bot/workflow.test.ts", "tests/audit/*publish*", "tests/audit/published-files.test.ts"]
+    paths: [".github/workflows/**", "bot/workflow.test.ts", "tests/audit/*publish*", "tests/audit/published-files.test.ts", "tests/audit/site.ci-deps.test.mjs"]
   workflow_dispatch: {}
 
 permissions:
@@ -18,10 +18,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - run: node --experimental-strip-types --test bot/workflow.test.ts
       - run: npm ci --no-audit --no-fund --ignore-scripts
+      # The trigger, permission and secrets guard (issue triggers, write tokens, secrets), also for workflow-only changes
+      # (audit PN-9).
+      - run: node --test tests/audit/site.ci-deps.test.mjs
       # The publish job's own tests (they run its shell and merge code against a scratch repository).
       - run: node --import tsx --test --test-concurrency=1 tests/audit/*publish*.test.ts tests/audit/*publish*.test.mjs tests/audit/published-files.test.ts

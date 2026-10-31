@@ -77,7 +77,7 @@
       b = {
         box, note, data: null,
         lb: window.KBoard.create(box, {
-          label: `${g.name} leaderboard`, columns: cfg.columns, name: short, link: (a) => EXPLORER + a,
+          label: `${g.name} leaderboard`, columns: cfg.columns, name: (a) => (window.KNames ? window.KNames.of(a) : short(a)), link: (a) => EXPLORER + a,
           scored: (r) => (r[cfg.main] ?? 0) > 0,
           summary: (r) => `${fmt(r[cfg.main] ?? 0)} ${cfg.columns[0].label.toLowerCase()}`,
           me: (r, place) => `${place ? `You: #${place} with` : "Your score (only you see this):"} ${fmt(r[cfg.main] ?? 0)} ${cfg.columns[0].label.toLowerCase()}.`,

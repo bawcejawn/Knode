@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <!-- Only these sources may run scripts, load data or be framed. 'unsafe-eval' is needed by koilib (its protobuf
        encoder builds functions at run time); CDN scripts are pinned by their integrity hash. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://raw.githubusercontent.com/bawcejawn/Knode/blocks-data/ https://koinvault.app; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net/npm/koilib@9.4.1/dist/koinos.min.js https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://koinos.armana.io https://api.koinos.io https://raw.githubusercontent.com/bawcejawn/Knode/blocks-data/ https://koinvault.app https://raw.githubusercontent.com/bawcejawn/Knode/names-data/; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Koinos producer lookup · Knode Games</title>
   <!-- seo:start (written by tools/site-seo.mjs; edit there) -->
@@ -161,7 +161,7 @@
 
       <div class="card">
         <h2>All active producers</h2>
-        <p class="sub">Click one to look it up. "Per 10,000" is how many of the next 10,000 blocks it should sign. "Luck" compares its blocks with its VHP share (100% = exactly as expected).</p>
+        <p class="sub">Click one to look it up. "Per 10,000" is how many of the next 10,000 blocks it should sign. "Luck" compares its blocks with its VHP share (100% = exactly as expected). Run one of these? <a href="names.html">Give it a name</a>.</p>
         <div class="scroll"><table><thead><tr><th>#</th><th>Producer</th><th class="r">Blocks</th><th class="r">VHP share</th><th class="r">Per 10,000</th><th class="r">Luck</th></tr></thead><tbody id="top"></tbody></table></div>
       </div>
 
@@ -217,6 +217,7 @@
   <script src="https://cdn.jsdelivr.net/npm/kondor-js@1.3.0/dist/kondor.min.js" integrity="sha384-WOeNFfSdOron0s4x9jdzLtA7Ic7RSqZCXZAaeQd6HRL6WezQp0KAtIF2XSa+11TL" crossorigin="anonymous"></script>
   <script src="guest.js"></script>
   <script src="wallet.js"></script>
+  <script src="names.js"></script>
   <script src="header-wallet.js"></script>
   <script src="nav.js"></script>
   <script src="node-page.js"></script>

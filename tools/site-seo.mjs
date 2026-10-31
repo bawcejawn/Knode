@@ -31,6 +31,8 @@ export const PAGES = [
     desc: "Enter any Koinos wallet address to see its Mana tank: how much is left, when it's full again, and how much comes back every hour and day.", image: "og-knode.png", priority: "0.6" },
   { file: "burn.html", path: "burn.html", title: "Burn KOIN into VHP · Knode Games", short: "Burn KOIN into VHP",
     desc: "Turn KOIN into VHP, 1 for 1, with your own wallet, so you can stake it in Knode Games or produce blocks.", image: "og-knode.png", priority: "0.5" },
+  { file: "names.html", path: "names.html", title: "Name your wallet · Knode Games", short: "Name your Koinos wallet",
+    desc: "Players and producers: swap your long Koinos address for a name on Knode Games pages. Sign a short message with your wallet: free, no Mana. Or create a Koinos @name on chain.", image: "og-knode.png", priority: "0.4" },
   { file: "stake.html", path: "stake.html", title: "Staking · Knode Games", short: "Stake VHP in Knode Games",
     desc: "Stake VHP in any Knode Games game: see your stake in every game, move it between games, claim rewards, and withdraw any time.", image: "og-knode.png", priority: "0.6" },
   { file: "trust.html", path: "trust.html", title: "Trust and safety · Knode Games", short: "Trust and safety",

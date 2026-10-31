@@ -1,0 +1,254 @@
+# Knode Games names: players and producers open a "Knode Games name" issue with a signed claim (made on names.html).
+# Every 15 minutes this reads the open ones, checks them and, for those that pass the rules, publishes the new
+# names.json to the names-data branch. Once an hour (minute 4) it also refreshes the wallets' on-chain Koinos
+# nicknames (read from two nodes; both must agree). See docs/NAMES.md.
+#
+# It is not triggered by issues (the guard bans issue triggers): it runs on a schedule and reads the open issues
+# through the API, as data, so issue text is never pasted into the workflow and never runs as code. Three jobs:
+#   check    a read-only token (contents, issues: read) and no secrets. Lists the open claim issues; if there are
+#            any (or it's the hourly refresh), runs bot/names.ts, which reads them from a file and reads the chain.
+#            Hands on results.json and, if names.json changed, names.json.
+#   publish  runs no repository code: checks names.json's shape and pushes it, alone, to names-data. Refused if
+#            names-data changed since the check read it; those claims are simply checked again on the next run.
+#   reply    runs no repository code: comments each outcome on its issue and closes it (an accepted claim only once
+#            published).
+# It never touches main, holds no key, and does not run on pull requests.
+#
+# Turn it on: Settings → Secrets and variables → Actions → Variables: NAMES_ENABLED = true
+name: Knode Games names
+
+on:
+  schedule:
+    - cron: "4 * * * *"          # claims + the hourly nickname refresh
+    - cron: "19,34,49 * * * *"   # claims
+  workflow_dispatch: {}
+
+concurrency:
+  group: knode-names
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: ${{ vars.NAMES_ENABLED == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      found: ${{ steps.find.outputs.found }}
+      go: ${{ steps.find.outputs.go }}
+      claims: ${{ steps.find.outputs.claims }}
+    steps:
+      # The open issues with the claim template's label (every page of them, oldest first) that contain a claim; at most
+      # 30 are kept, only their number and text. Their numbers are this job's output, made before any repository code
+      # runs: the reply job answers only those issues (audit PN-1, PN-15, PN-23).
+      - name: Find open claims
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REFRESH: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '4 * * * *' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/claims"
+          gh api -X GET --paginate "repos/$GITHUB_REPOSITORY/issues" -f state=open -f labels=knode-name -f sort=created -f direction=asc -f per_page=100 --jq '.[]' > "$RUNNER_TEMP/all.json"
+          /usr/bin/python3 - "$RUNNER_TEMP/all.json" "$RUNNER_TEMP/claims/issues.json" <<'PY'
+          import json, sys
+          text = open(sys.argv[1], encoding="utf-8").read()
+          try:
+              items = json.loads(text)                      # one JSON list
+          except ValueError:
+              items = [json.loads(l) for l in text.splitlines() if l.strip()]   # one issue per line (--paginate --jq)
+          if type(items) is dict: items = [items]   # exactly one issue: gh wrote one object (Repo Lens C1-2)
+          if type(items) is not list: items = []
+          out = [{"number": i["number"], "body": i.get("body") or ""} for i in items
+                 if type(i) is dict and "pull_request" not in i and type(i.get("number")) is int and i["number"] > 0
+                 and type(i.get("body") or "") is str and "Knode Games name:" in (i.get("body") or "")][:30]
+          json.dump(out, open(sys.argv[2], "w", encoding="utf-8"))
+          print(len(out), "claim issue(s)")
+          PY
+          if [ "$(/usr/bin/python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$RUNNER_TEMP/claims/issues.json")" = 0 ]; then
+            found=false; else found=true; fi
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+          echo "claims=$(/usr/bin/python3 -c 'import json,sys; print(",".join(str(i["number"]) for i in json.load(open(sys.argv[1]))))' "$RUNNER_TEMP/claims/issues.json")" >> "$GITHUB_OUTPUT"
+          if [ "$found" = true ] || [ "$REFRESH" = true ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
+          echo "refresh=$REFRESH" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: ${{ steps.find.outputs.go == 'true' }}
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: ${{ steps.find.outputs.go == 'true' }}
+        with:
+          node-version: 22
+      - if: ${{ steps.find.outputs.go == 'true' }}
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      # The current names.json and the producer evidence (public branches, read without a token). Plain JSON files only.
+      - name: Take names.json, the race cards and the recent blocks
+        if: ${{ steps.find.outputs.go == 'true' }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/${GITHUB_REPOSITORY}.git"
+          mkdir -p "$RUNNER_TEMP/prod" "$RUNNER_TEMP/out" "$RUNNER_TEMP/result"
+          : > "$RUNNER_TEMP/base"
+          for b in names-data race-data blocks-data; do
+            rc=0; git ls-remote --exit-code --heads "$url" "$b" >/dev/null 2>&1 || rc=$?
+            if [ "$rc" = 2 ]; then echo "No $b branch yet."; continue; fi
+            if [ "$rc" != 0 ]; then echo "::error::Couldn't read the $b branch (git ls-remote exit $rc)"; exit 1; fi
+            git fetch -q --depth 1 "$url" "$b"
+            if [ "$b" = names-data ]; then git rev-parse FETCH_HEAD > "$RUNNER_TEMP/base"; fi
+            for f in $(git ls-tree -r --name-only FETCH_HEAD); do
+              if [ "$b" = names-data ] && [ "$f" = names.json ]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/names.json"; fi
+              if [ "$b" = race-data ] && [[ "$f" =~ ^(W[0-9]{3}|board)\.json$ ]]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prod/$f"; fi
+              if [ "$b" = blocks-data ] && [ "$f" = recent-blocks.json ]; then git show "FETCH_HEAD:$f" > "$RUNNER_TEMP/prod/$f"; fi
+            done
+          done
+      - name: Check the claims (and refresh the nicknames)
+        if: ${{ steps.find.outputs.go == 'true' }}
+        env:
+          RPC: ${{ vars.RPC || 'https://koinos.armana.io' }}
+          RPC_CHECK: ${{ vars.RPC_CHECK || 'https://api.koinosblocks.com' }}
+          NAMES_REFRESH: ${{ steps.find.outputs.refresh }}
+          ISSUES_FILE: ${{ runner.temp }}/claims/issues.json
+          NAMES_PREV: ${{ runner.temp }}/names.json
+          NAMES_BASE_FILE: ${{ runner.temp }}/base
+          PRODUCERS_DIR: ${{ runner.temp }}/prod
+          NAMES_OUT: ${{ runner.temp }}/out
+          NAMES_RESULT: ${{ runner.temp }}/result/results.json
+        run: npm run names -- run
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ steps.find.outputs.go == 'true' }}
+        with:
+          name: names-out
+          path: ${{ runner.temp }}/out/
+          retention-days: 1
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ steps.find.outputs.go == 'true' }}
+        with:
+          name: names-result
+          path: ${{ runner.temp }}/result/
+          retention-days: 1
+
+  publish:
+    needs: check
+    if: ${{ needs.check.outputs.go == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write         # push the names-data branch (never main)
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: names-out
+          path: ${{ runner.temp }}/incoming
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: names-result
+          path: ${{ runner.temp }}/result
+      - name: Push names.json (and nothing else)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IN: ${{ runner.temp }}/incoming
+          RESULT: ${{ runner.temp }}/result/results.json
+        run: |
+          set -euo pipefail
+          if [ ! -f "$IN/names.json" ]; then echo "Nothing to publish (nothing changed)."; exit 0; fi
+          bad=$(find "$IN" -mindepth 1 ! -path "$IN/names.json" -print)
+          if [ -n "$bad" ] || [ -L "$IN/names.json" ]; then echo "::error::Refusing to publish unexpected files: $bad"; exit 1; fi
+          if [ "$(stat -c %s "$IN/names.json")" -gt 1048576 ]; then echo "::error::names.json is over 1 MB"; exit 1; fi
+          # names.json's own shape (the same rules as names.js), not only valid JSON; prints the base it was built on.
+          base=$(/usr/bin/python3 - "$IN/names.json" "$RESULT" <<'PY'
+          import json, re, sys
+          db = json.load(open(sys.argv[1], encoding="utf-8")); res = json.load(open(sys.argv[2], encoding="utf-8"))
+          addr = re.compile(r"1[1-9A-HJ-NP-Za-km-z]{25,34}")
+          date = re.compile(r"\d{4}-\d{2}-\d{2}")
+          sig = re.compile(r"[A-Za-z0-9_-]{80,96}={0,2}")
+          name = re.compile(r"[A-Za-z0-9 .\-_']{3,24}")
+          builtin = {"1Mpmf2ERhjYpX7CCiM11WERuM4j17uT1sr", "1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR"}
+          assert type(res) is dict and type(res.get("results")) is list and res.get("changed") is True, "results: nothing changed"
+          b = res.get("base")
+          assert type(b) is str and (b == "" or re.fullmatch(r"[0-9a-f]{40}", b)), "results: base"
+          assert type(db) is dict and set(db) == {"v", "updated", "names", "hidden", "nicknames"} and type(db["v"]) is int and db["v"] == 1 and type(db["updated"]) is str and len(db["updated"]) <= 40, "names.json: top level"
+          assert type(db["names"]) is dict and type(db["hidden"]) is dict and type(db["nicknames"]) is dict and len(db["names"]) <= 5000 and len(db["hidden"]) <= 5000 and len(db["nicknames"]) <= 5000, "names.json: sizes"
+          nick = re.compile(r"[a-z0-9][a-z0-9.\-]{0,31}")
+          for a, n in db["nicknames"].items():
+              assert addr.fullmatch(a) and a not in builtin and type(n) is str and nick.fullmatch(n), "names.json: nickname " + a
+          for a, e in db["names"].items():
+              assert addr.fullmatch(a) and a not in builtin, "names.json: address " + a
+              assert type(e) is dict and set(e) == {"name", "date", "signature"}, "names.json: entry " + a
+              n = e["name"]
+              assert type(n) is str and name.fullmatch(n) and not n.startswith(" ") and not n.endswith(" ") and "  " not in n, "names.json: name for " + a
+              assert type(e["date"]) is str and date.fullmatch(e["date"]) and type(e["signature"]) is str and sig.fullmatch(e["signature"]), "names.json: entry " + a
+          for a, h in db["hidden"].items():
+              assert addr.fullmatch(a) and type(h) is dict and set(h) == {"reason", "date"} and type(h["reason"]) is str and len(h["reason"]) <= 200 and type(h["date"]) is str and date.fullmatch(h["date"]), "names.json: hidden " + a
+          print(b)
+          PY
+          )
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git init -q work && cd work
+          head=""
+          if git fetch -q --depth 1 "$remote" names-data 2>/dev/null; then head=$(git rev-parse FETCH_HEAD); fi
+          if [ "$head" != "$base" ]; then echo "::error::names-data changed since the check read it; these claims are checked again on the next run."; exit 1; fi
+          blob=$(git hash-object -w "$IN/names.json")
+          tree=$(printf '100644 blob %s\tnames.json\n' "$blob" | git mktree)
+          export GIT_AUTHOR_NAME=knode-names GIT_AUTHOR_EMAIL=knode-names@users.noreply.github.com GIT_COMMITTER_NAME=knode-names GIT_COMMITTER_EMAIL=knode-names@users.noreply.github.com
+          commit=$(git commit-tree "$tree" ${head:+-p "$head"} -m "names: claims and nicknames")
+          git push -q "$remote" "$commit:refs/heads/names-data"
+          echo "names.json published."
+
+  reply:
+    needs: [check, publish]
+    if: ${{ always() && needs.check.result == 'success' && needs.check.outputs.found == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write           # comment on and close the claim issues
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: names-result
+          path: ${{ runner.temp }}/result
+      - name: Comment each outcome
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISHED: ${{ needs.publish.result }}
+          CLAIMS: ${{ needs.check.outputs.claims }}
+          RESULT: ${{ runner.temp }}/result/results.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/c"
+          # One comment file per issue and a list of "number close-reason". Only our own fixed texts, plus a name and an
+          # address that passed the rules (checked again here). An accepted claim that wasn't published stays open:
+          # the next run checks it again.
+          /usr/bin/python3 - "$RESULT" "$PUBLISHED" "$RUNNER_TEMP/c" "$CLAIMS" > "$RUNNER_TEMP/todo" <<'PY'
+          import json, os, re, sys
+          res = json.load(open(sys.argv[1], encoding="utf-8")); published = sys.argv[2] == "success"; d = sys.argv[3]
+          # Only the claim issues the find step listed (before any repository code ran) are ever answered.
+          listed = {int(x) for x in sys.argv[4].split(",") if re.fullmatch(r"[1-9][0-9]{0,9}", x)}
+          ok_name = lambda n: type(n) is str and re.fullmatch(r"[A-Za-z0-9 .\-_']{3,24}", n)
+          ok_addr = lambda a: type(a) is str and re.fullmatch(r"1[1-9A-HJ-NP-Za-km-z]{25,34}", a)
+          for r in res.get("results", [])[:30]:
+              n = r.get("issue")
+              if type(n) is not int or n <= 0 or n not in listed: continue
+              if r.get("accepted") is True:
+                  if not (published and ok_name(r.get("name")) and ok_addr(r.get("address"))): continue
+                  text = "Accepted: `%s` is now the name for `%s`. It shows on every Knode Games page within a few minutes." % (r["name"], r["address"])
+                  reason = "completed"
+              else:
+                  why = r.get("reason")
+                  why = why if type(why) is str and len(why) <= 300 and re.fullmatch(r"[A-Za-z0-9 .,:;'\"()?/+_\-–…“”]+", why) else "The claim didn't pass the checks."
+                  text = "Not accepted: " + why + "\n\nMake a new claim on https://knodegames.com/names.html and open a new issue with it."
+                  reason = "not planned"
+              open(os.path.join(d, "%d.md" % n), "w", encoding="utf-8").write(text + "\n")
+              print(n, reason)
+          PY
+          while read -r n reason; do
+            gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/c/$n.md"
+            gh issue close "$n" --repo "$GITHUB_REPOSITORY" --reason "$reason"
+          done < "$RUNNER_TEMP/todo"
