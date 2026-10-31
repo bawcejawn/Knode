@@ -365,7 +365,8 @@ export function vaultFiles(sf: { startDay: number; days: any[]; result: any; sta
     // is held for the owner to check, not published (Repo Lense S3-11).
     if (st.day >= sf.startDay + math.WEEK_DAYS * (k + 2)) { problems.push(`Survivor: vault week ${w}'s file is held: its stakes were read late (after an outage). Check them, then publish it by hand (docs/SURVIVOR-RUNBOOK.md)`); continue; }
     if (k === 1 && !(sf.result && sf.result.final)) continue;
-    const rows = math.weekRows(sf.days, k, new Set(st.staked));
+    const board = new Set<string>(sf.stakes.flatMap((x) => x.staked));
+    const rows = math.weekRows(sf.days, k, new Set(st.staked), board);
     if (rows === null) continue;
     let first: string[] = [], second: string[] = [];
     if (k === 1) {
@@ -605,11 +606,13 @@ export async function run(o: Opts) {
   // Then, with what is left of this run's budget, older days an unfinished season still needs after an outage, but
   // never more than CATCHUP_DAYS back: a season stuck longer than that is reported for the owner to handle, not
   // chased for ever (fix-check FC-2).
+  // The staked board of a season: wallets staked in Survivor in either of its weeks, as read so far (owner, 30 Oct).
+  const boardOf = (sf: SeasonFile) => (stakesOn ? new Set<string>(sf.stakes.flatMap((x) => x.staked)) : null);
   const want: number[] = [];
   for (let d = today - BACK_DAYS; d <= lastDone; d++) want.push(d);
   const floor = today - CATCHUP_DAYS;
   if (seasonsOn) for (const sf of active) {
-    if (sf.days.length >= S.SEASON_DAYS || S.playSeason(sf.days).over) continue;
+    if (sf.days.length >= S.SEASON_DAYS || S.playSeason(sf.days, boardOf(sf)).over) continue;
     const next = sf.startDay + sf.days.length;
     if (next > lastDone) continue;
     const need = next - (S.FORM_DAYS + S.FORM_GAP - 1);
@@ -656,7 +659,7 @@ export async function run(o: Opts) {
   };
   for (const sf of active) {
     const s = sf.season, start = sf.startDay;
-    let played = S.playSeason(sf.days);
+    let played = S.playSeason(sf.days, boardOf(sf));
     // Record the next days of the season that are done.
     while (seasonsOn && !played.over && sf.days.length < S.SEASON_DAYS && timeLeft()) {
       const nDay = sf.days.length + 1, d = start + nDay - 1, rec = days.get(d);
@@ -677,10 +680,12 @@ export async function run(o: Opts) {
           if (key(raw) !== key(other)) { problems.push(`season ${s} day ${nDay}: the two nodes disagree about the picks; not recorded this run`); break; }
         }
       } catch (e) { problems.push(`season ${s} day ${nDay}: picks: ${(e as Error).message} (tried again next run)`); break; }
-      // Who is still in before this day: day 1's pickers, or the season so far. Only their picks are kept (audit SV-2).
+      // The season's players are day 1's pickers. Their picks are all kept, in or out, so the season can be played again
+      // whatever board a later stake reading puts them on; a wallet that never joined keeps nothing (audit SV-2).
+      const inSeason = nDay === 1 ? null : new Set<string>(played.players.map((x: any) => x.a));
       const alive = nDay === 1 ? null : new Set<string>(played.players.filter((x: any) => x.outN === null).map((x: any) => x.a));
       // Only picks made before the lock count (the chain refuses later ones; checked again here).
-      const picks: [string, string][] = raw.filter((x) => x.time < S.lockTime(d) && (!alive || alive.has(x.player)))
+      const picks: [string, string][] = raw.filter((x) => x.time < S.lockTime(d) && (!inSeason || inSeason.has(x.player)))
         .map((x) => [x.player, x.producer] as [string, string]).sort((u, v) => (u[0] < v[0] ? -1 : 1));
       // A player who already missed a check can't win this season, so is not read again or listed again (Repo Lense SV-A5).
       const already = new Set<string>(played.players.filter((x: any) => !x.eligible).map((x: any) => x.a));
@@ -689,7 +694,7 @@ export async function run(o: Opts) {
       try { const h = await heldOf(inNow); noVhp = inNow.filter((a) => !h.has(a)).sort(); }
       catch (e) { problems.push(`season ${s} day ${nDay}: VHP check: ${(e as Error).message} (tried again next run)`); break; }
       sf.days.push({ n: nDay, day: d, field, counts: rec.counts, picks, noVhp });
-      played = S.playSeason(sf.days);
+      played = S.playSeason(sf.days, boardOf(sf));
       console.log(`season ${s} day ${nDay} (${S.dayLabel(d)}): ${picks.length} picks, ${played.players.filter((x: any) => x.outN === null).length} still in`);
     }
     // Who is staked in Survivor, for each of the season's two vault weeks: read once a day while the week runs (for the
@@ -713,6 +718,7 @@ export async function run(o: Opts) {
       } catch (e) { problems.push(`season ${s}: stakes in vault week ${w}: ${(e as Error).message} (tried again next run)`); }
     }
     const stakedAny = new Set<string>(sf.stakes.flatMap((x) => x.staked));
+    played = S.playSeason(sf.days, boardOf(sf));             // with this run's stake readings: the boards
     const stakesFinal = !stakesOn || [w1, w1 + 1].every((w) => sf.stakes.some((x) => x.week === w && x.final));
     const players = played.players.map((x: any) => ({ ...x, staked: stakedAny.has(x.a) }));
     const endDay = start + played.endN;                       // the day after the last played day

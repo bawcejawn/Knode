@@ -110,26 +110,28 @@ test("a season: day-1 pickers only, late picks ignored, lives, the end with 2 le
   assert.deepEqual(r.r.problems, []);
   const sf = r.read("S001.json");
   assert.equal(sf.startDay, FIRST);
-  assert.deepEqual(sf.days.map((x) => x.n), [1, 2, 3]);
+  // Owner, 30 Oct: Eve holds no VHP, so she doesn't count for the free board's end: Alice, Bob and Carol started; Bob
+  // goes out on day 2, which leaves 2 who can win, so the free board (and the season) ends after day 2.
+  assert.deepEqual(sf.days.map((x) => x.n), [1, 2]);
   assert.equal(sf.v, 2, "Repo Lense SV-A5: wallets and producers written once, the days refer to them by position");
   const W = (i) => sf.who[i];
   assert.ok(!sf.days[0].picks.some((p) => W(p[0]) === DAVE), "a pick at the lock time doesn't count");
   const by = Object.fromEntries(sf.result.players.map((x) => [x.a, x]));
   assert.deepEqual(Object.keys(by).sort(), [ALICE, BOB, CAROL, EVE].sort());
-  assert.equal(by[BOB].outN, 2); assert.equal(by[CAROL].outN, 3);
+  assert.equal(by[BOB].outN, 2); assert.equal(by[CAROL].outN, null); assert.equal(by[CAROL].lives, 1);
   assert.equal(by[ALICE].outN, null); assert.equal(by[ALICE].lives, 2); assert.equal(by[EVE].lives, 2);
   assert.equal(by[EVE].eligible, false, "held no VHP at the checks");
   assert.ok(sf.days.slice(1).every((x) => x.picks.every((p) => p.length === 2)), "picks are [player, producer]");
-  assert.ok(!sf.days[2].picks.some((p) => W(p[0]) === BOB), "audit SV-2: a player who is out keeps no picks in the file");
-  assert.deepEqual(sf.days.map((x) => x.noVhp.map(W)), [[EVE], [], []], "Repo Lense SV-A5: a missed check is listed once");
-  assert.equal(sf.result.over, true); assert.equal(sf.result.endN, 3);
+  assert.ok(!sf.days[0].picks.some((p) => W(p[0]) === DAVE) && !sf.who.includes(DAVE), "audit SV-2: a wallet that never joined keeps nothing in the file");
+  assert.deepEqual(sf.days.map((x) => x.noVhp.map(W)), [[EVE], []], "Repo Lense SV-A5: a missed check is listed once");
+  assert.equal(sf.result.over, true); assert.equal(sf.result.endN, 2);
   assert.equal(sf.result.final, false, "inside the 12-hour correction window");
   assert.deepEqual(sf.result.prizes, []);
   // Final once the correction window and both vault weeks are over (the free prize needs both weeks' stake readings).
   const fin = await runs([S.dayStart(FIRST + 14) + 3600000], {}, r.out);
   const sf2 = fin.read("S001.json");
   assert.equal(sf2.result.final, true);
-  assert.deepEqual(sf2.result.prizes.map((p) => [p.player, p.vhp]), [[ALICE, 4], [CAROL, 2]], "Eve can't win: no 1 VHP; Carol lasted longer than Bob");
+  assert.deepEqual(sf2.result.prizes.map((p) => [p.player, p.vhp]), [[ALICE, 4], [CAROL, 2]], "Eve can't win: no 1 VHP; Carol is still in, Bob isn't");
   assert.deepEqual(fin.read("index.json").seasons, [1]);
   // A final season is never played again.
   const later = await runs([S.dayStart(FIRST + 16) + 3600000], { picksOf: async () => { throw new Error("must not read picks for a final season"); } }, fin.out);
@@ -205,7 +207,7 @@ test("audit SV-4: after an outage longer than a week, the season still gets the 
   const back = S.dayStart(FIRST + 15) + 3600000, after = Array.from({ length: 10 }, (_, i) => back + i * 3600000);
   const r2 = await runs(after, {}, r.out);
   const sf = r2.read("S001.json");
-  assert.deepEqual(sf.days.map((x) => x.n), [1, 2, 3], "days 2 and 3 recorded after the outage; it ended on day 3");
+  assert.deepEqual(sf.days.map((x) => x.n), [1, 2], "day 2 recorded after the outage; it ended on day 2 (2 left who can win)");
   assert.equal(sf.result.over, true); assert.equal(sf.result.final, true);
   assert.deepEqual(sf.result.prizes.map((p) => p[0] ?? p.player), [ALICE, CAROL]);
 });

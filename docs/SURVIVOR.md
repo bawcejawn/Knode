@@ -66,19 +66,22 @@ score at the out-zone line. A tie at the line is safe.
 
 At 0 lives you are out of the season.
 
-**The safety net.** If nobody still in has a safe pick on a day (each player's pick landed in the out-zone, or they
-made no valid pick), nobody loses a life for the out-zone that day. That producer still counts as used. A missing pick,
+**Two boards play side by side (owner, 30 October).** Staked players (staked in Survivor in either week of the season)
+and free players pick the same days, but each board has its own safety net and its own end, so free players never change
+a staked player's lives or season, and the other way round. On the free board, wallets without 1 VHP play along but
+don't count for the net or the end.
+
+**The safety net (per board).** If nobody counted on a board has a safe pick on a day (each pick landed in the out-zone,
+or there was no valid pick), nobody on that board loses a life for the out-zone that day. That producer still counts as used. A missing pick,
 a producer not in the field and a producer used before always cost a life, even on such a day.
 
 **Picking ahead.** You can pick up to 7 days ahead, but a day's field (who has enough recent blocks) is set the day
 before. If your producer isn't in that day's field, the pick costs a life, and the safety net doesn't cover it. The page
 reminds you to check early picks once the field is out.
 
-**Who counts.** Wallets that missed the 1-VHP check still play: they count as "still in" for the safety net and for the
-end of the season, but can't win a prize. (Owner's decision pending; see the Repo Lense audit, SV-A10.)
-
-**The end.** The season ends after the day on which 2 or fewer players are left (if more than 2 started), or after
-day 14. Results are final 12 hours later.
+**The end (per board).** A board ends after the day on which 2 or fewer of its counted players are left (if more than
+2 started), when none is left, or after day 14; its players then stop. The season ends when both boards have. Results
+are final 12 hours later, once both of the season's weeks are over.
 
 **The ranking.**
 1. Who lasted longest (still in beats out; out later beats out earlier).
@@ -100,7 +103,8 @@ Equal on all three: the same place.
 **Prizes (free players).** 4 VHP for 1st and 2 VHP for 2nd. Tied players split the prizes of the places they cover. You can win only
 if all of these hold:
 - you held at least 1 VHP (or a Knode Games stake) at every daily check while you were in the season;
-- you weren't knocked out by a missed pick;
+- you weren't knocked out by a pick that couldn't count (a missed pick, a producer not in the field, or one already
+  used): only an out-zone knockout keeps you eligible (owner, 30 October);
 - the season had at least 3 players who could win (the two rules above) and who each made at least 2 valid picks.
 
 A stake counts only from 1 VHP, the same as a wallet balance.

@@ -197,6 +197,8 @@
     // A season that already ended (2 or fewer left) has no more days to pick (Repo Lense S3-28).
     if (season && season.season === sd.season && season.result && season.result.over) return false;
     const rec = mySeason(sd.season);
+    // Your board ended (owner, 30 Oct: each board ends on its own) when your log stops short of the season's last day.
+    if (rec && season && season.result && rec.outN === null && rec.log.length < season.result.endN) return false;
     if (rec) return rec.outN === null;
     // The recorder hasn't recorded day 1 yet: you're in if you picked for it.
     return !(season && season.season === sd.season && season.days.length) && myPicks.has(sd.start);

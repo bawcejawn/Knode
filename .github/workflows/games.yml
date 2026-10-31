@@ -430,12 +430,17 @@ jobs:
                   if i == 0 or key(ps[i - 1]) != key(x): place = i + 1
                   out.append(dict(x, place=place))
               return out
-          def play(days):
-              if not days or days[0]["n"] != 1: return [], False, 0
+          def play(days, staked=frozenset()):
+              # survivor-math.js playSeason: two boards (staked, free), each with its own safety net and early end; on
+              # the free board only wallets that can win count (owner, 30 Oct).
+              if not days or days[0]["n"] != 1: return [], False, 0, {"staked": None, "free": None}
               ps = {}
               for p, _ in days[0]["picks"]:
                   if p not in ps: ps[p] = {"a": p, "lives": 2, "outN": None, "t4": 0, "used": [], "log": "", "eligible": True}
-              started, over, endN = len(ps), False, 0
+              board = lambda x: "staked" if x["a"] in staked else "free"
+              counts = lambda x: board(x) == "staked" or x["eligible"]
+              B = {"staked": {"started": 0, "end": None}, "free": {"started": 0, "end": None}}
+              over, endN = False, 0
               for i, day in enumerate(days):
                   if day["n"] != i + 1 or over: break
                   rows, out = score_day(day["field"], day["counts"], day["n"])
@@ -443,26 +448,36 @@ jobs:
                   pick = {}
                   for p, a in day["picks"]: pick[p] = a
                   novhp = set(day["noVhp"])
+                  alive = [x for x in ps.values() if x["outN"] is None and B[board(x)]["end"] is None]
+                  for x in alive:
+                      if x["a"] in novhp: x["eligible"] = False
+                  if day["n"] == 1:
+                      for g in B: B[g]["started"] = sum(1 for x in alive if board(x) == g and counts(x))
                   fate = []
-                  for x in [x for x in ps.values() if x["outN"] is None]:
+                  for x in alive:
                       a = pick.get(x["a"])
                       code = "n" if not a else "f" if a not in score else "u" if a in x["used"] else "o" if a in out else "s"
                       fate.append((x, a, code))
-                  all_lose = len(fate) > 0 and all(c != "s" for _, _, c in fate)
+                  all_lose = {}
+                  for g in B:
+                      mine = [c for x, _, c in fate if board(x) == g and counts(x)]
+                      all_lose[g] = len(mine) > 0 and all(c != "s" for c in mine)
                   for x, a, code in fate:
-                      if x["a"] in novhp: x["eligible"] = False
                       if code in ("s", "o"): x["used"].append(a); x["t4"] += jsround(score[a] * 1e4)
                       if code == "s": x["log"] += "s"; continue
-                      if all_lose and code == "o": x["log"] += "v"; continue
+                      if all_lose[board(x)] and code == "o": x["log"] += "v"; continue
                       x["log"] += code; x["lives"] -= 1
                       if x["lives"] <= 0: x["outN"] = day["n"]
                   endN = day["n"]
-                  left = sum(1 for x in ps.values() if x["outN"] is None)
-                  if (started > 2 and left <= 2) or day["n"] >= 14: over = True
+                  for g in B:
+                      if B[g]["end"] is not None: continue
+                      left = sum(1 for x in ps.values() if x["outN"] is None and board(x) == g and counts(x))
+                      if left == 0 or (B[g]["started"] > 2 and left <= 2) or day["n"] >= 14: B[g]["end"] = day["n"]
+                  over = B["staked"]["end"] is not None and B["free"]["end"] is not None
               players = rank([{"a": x["a"], "lives": max(0, x["lives"]), "outN": x["outN"], "total": x["t4"] / 1e4, "used": x["used"], "log": x["log"], "eligible": x["eligible"]} for x in ps.values()])
-              return players, over, endN
+              return players, over, endN, {g: B[g]["end"] for g in B}
           def prizes(players):
-              missed = lambda x: x["outN"] is not None and x["log"][x["outN"] - 1] == "n"
+              missed = lambda x: x["outN"] is not None and x["log"][x["outN"] - 1] in "nfu"     # an invalid-pick knockout (owner, 30 Oct)
               can = [x for x in players if x["eligible"] and not x["staked"] and not missed(x)]
               if sum(1 for x in can if sum(x["log"].count(c) for c in "sov") >= 2) < 3: return []
               ranked, amounts, out, i = rank(can), [4, 2], [], 0
@@ -477,21 +492,21 @@ jobs:
           def decoded(j):
               who, prods = j["who"], j["prods"]
               return [{"n": x["n"], "field": x["field"], "counts": x["counts"], "picks": [(who[p], prods[q]) for p, q in x["picks"]], "noVhp": [who[a] for a in x["noVhp"]]} for x in j["days"]]
-          def week_rows(days, k, staked):
+          def week_rows(days, k, staked, board):
               # KSurvivor.weekRows: staked players still in when the week began, by the standings when it ends.
-              end, over, endN = play([x for x in days if x["n"] <= 7 * (k + 1)])
+              end, over, endN, _ = play([x for x in days if x["n"] <= 7 * (k + 1)], board)
               if not over and endN < 7 * (k + 1): return None
               still = None
               if k > 0:
-                  start, over0, _ = play([x for x in days if x["n"] <= 7 * k])
-                  if over0: return []
+                  start, over0, _, ends0 = play([x for x in days if x["n"] <= 7 * k], board)
+                  if over0 or ends0["staked"] is not None: return []
                   still = {x["a"] for x in start if x["outN"] is None}
               sel = [x for x in end if x["a"] in staked and (still is None or x["a"] in still)]
               return [{"player": x["a"], "points": max(1, 256 - x["place"])} for x in rank(sel)]
           def replay_ok(j, r, f):
               who = j["who"]
-              players, over, endN = play(decoded(j))
-              staked = {who[a] for x in j["stakes"] for a in x["staked"]}
+              staked = frozenset(who[a] for x in j["stakes"] for a in x["staked"])
+              players, over, endN, _ = play(decoded(j), staked)
               players = [dict(p, staked=p["a"] in staked) for p in players]
               assert r["players"] == players and r["over"] == over and r["endN"] == endN, f + ": the result isn't what its days give"
               w1 = week_of(j["startDay"])
@@ -540,7 +555,7 @@ jobs:
               assert sum(round(p["vhp"] * 1e8) for p in pz) <= 6 * 10**8, f    # in whole units of 1e-8 VHP (no float drift)
               assert not pz or r["final"], f
               assert len({p["player"] for p in pz}) == len(pz), f
-              can = lambda p: p["eligible"] and not (p["outN"] is not None and p["log"][p["outN"] - 1] == "n")
+              can = lambda p: p["eligible"] and not p["staked"] and not (p["outN"] is not None and p["log"][p["outN"] - 1] in "nfu")
               assert all(p["player"] in byA and can(byA[p["player"]]) for p in pz), f
               assert not pz or sum(1 for p in ps if can(p) and sum(p["log"].count(c) for c in "sov") >= 2) >= 3, f
           seasons, dropped = {}, []
@@ -612,7 +627,7 @@ jobs:
               st = [x for x in s["stakes"] if x["week"] == w]
               assert st and st[0]["final"], f + ": its week's stakes aren't final"
               assert st[0]["day"] < s["startDay"] + 7 * (k + 2), f + ": its stakes were read late; the owner publishes it by hand (S3-11)"
-              rows = week_rows(decoded(s), k, {s["who"][a] for a in st[0]["staked"]})
+              rows = week_rows(decoded(s), k, {s["who"][a] for a in st[0]["staked"]}, frozenset(s["who"][a] for x in s["stakes"] for a in x["staked"]))
               assert rows is not None and j["rows"] == rows, f + ": not the season's staked players' points"
               if k == 0:
                   assert j["first"] == [] and j["second"] == [], f + ": winners only in a season's last week"

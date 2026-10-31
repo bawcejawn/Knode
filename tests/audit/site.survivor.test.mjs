@@ -287,3 +287,42 @@ test("Repo Lense S2-5, S2-6, S2-16, S2-17: page clock only forward; own pick lis
   assert.match(js, /if \(me\(\) !== who \|\| seq !== mineSeq\) return;/, "only the newest read writes the list");
   assert.match(js, /const ROOT = new URL\("\.\/", location\.href\);/, "the page sits at the site root");
 });
+
+test("two boards (owner, 30 Oct): free players never change a staked player's lives or season, and empty wallets don't count", () => {
+  const out = [P7, P8], U6 = "1" + "S".repeat(33);
+  // Day 1: staked U1, U2 both land in the out-zone; free U3 is safe. The staked board's net still saves U1 and U2.
+  const staked = new Set([U1, U2]);
+  let r = S.playSeason([seasonDay(1, out, { [U1]: P7, [U2]: P8, [U3]: P1 })], staked);
+  let by = Object.fromEntries(r.players.map((x) => [x.a, x]));
+  assert.equal(by[U1].log, "v"); assert.equal(by[U2].log, "v"); assert.equal(by[U3].log, "s");
+  // Without boards (everyone free), U3's safe pick switches the net off and both lose a life.
+  r = S.playSeason([seasonDay(1, out, { [U1]: P7, [U2]: P8, [U3]: P1 })]);
+  by = Object.fromEntries(r.players.map((x) => [x.a, x]));
+  assert.equal(by[U1].log, "o"); assert.equal(by[U2].log, "o");
+  // An empty wallet (no 1 VHP) on the free board: its safe pick doesn't switch the net off for the others.
+  r = S.playSeason([seasonDay(1, out, { [U1]: P7, [U2]: P8, [U3]: P1 }, [U1, U2])]);
+  by = Object.fromEntries(r.players.map((x) => [x.a, x]));
+  assert.equal(by[U3].eligible, false); assert.equal(by[U1].log, "v"); assert.equal(by[U2].log, "v");
+  // Each board ends on its own: 3 staked start; one goes out on day 2, leaving 2, so the staked board ends after day 2
+  // while the free board (3 players, all safe) plays on.
+  const st = new Set([U1, U2, U3]);
+  const days = [
+    seasonDay(1, out, { [U1]: P1, [U2]: P2, [U3]: P7, [U4]: P1, [U5]: P2, [U6]: P3 }),
+    seasonDay(2, out, { [U1]: P2, [U2]: P3, [U3]: P8, [U4]: P2, [U5]: P3, [U6]: P4 }),
+    seasonDay(3, out, { [U4]: P3, [U5]: P4, [U6]: P5 }),
+  ];
+  r = S.playSeason(days, st);
+  by = Object.fromEntries(r.players.map((x) => [x.a, x]));
+  assert.equal(r.ends.staked, 2); assert.equal(r.ends.free, null); assert.equal(r.over, false);
+  assert.equal(by[U3].outN, 2); assert.equal(by[U1].log, "ss", "the staked board's players stop when it ends");
+  assert.equal(by[U4].log, "sss", "the free board plays on");
+});
+
+test("owner, 30 Oct: a knockout by a pick that couldn't count (not in the field, or reused) can't win the prize", () => {
+  const P = (a, log, outN, lives) => ({ a, lives, outN, total: 10, eligible: true, log, staked: false });
+  const U7 = "1" + "R".repeat(33);
+  const players = [P(U1, "sss", null, 2), P(U2, "ssff", 4, 0), P(U3, "sssuu", 5, 0), P(U4, "oso", 3, 0), P(U5, "so", null, 1), P(U7, "sn", null, 1)];
+  const won = plain(S.prizes(players)).map((x) => x.player);
+  assert.ok(!won.includes(U2) && !won.includes(U3), "out by 'f' or 'u': no prize");
+  assert.ok(S.outByMissing({ outN: 4, log: "ssff" }) && S.outByMissing({ outN: 2, log: "sn" }) && !S.outByMissing({ outN: 3, log: "oso" }));
+});

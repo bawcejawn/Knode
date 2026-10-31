@@ -25,19 +25,21 @@
  * LIVES AND PICKS
  * - 2 lives. You lose one when your producer lands in the out-zone, or when you have no valid pick: no pick, a
  *   producer not in the day's field, or a producer you already used this season (each producer once a season).
- * - Safety net: if nobody still in has a safe pick that day (each landed in the out-zone or made no valid pick),
- *   nobody loses a life for the out-zone. A missing
+ * - Safety net, per board (staked / free, owner 30 Oct): if nobody counted on a board has a safe pick that day (each
+ *   landed in the out-zone or made no valid pick), nobody on that board loses a life for the out-zone. A missing
  *   pick, a producer not in the field or a reused producer still costs the life (audit SV-1: otherwise wallets that
  *   pick on day 1 and never again would all be saved every day). A producer picked on a saved day still counts as used.
- * - The season ends after the day on which 2 or fewer players are left (if it started with more than 2), or after
- *   day 14. Simulated on the live 17-producer field: ends about day 11 with 10 players, day 13 with 50; with 200
+ * - Each board ends after the day on which 2 or fewer of its counted players are left (if it started with more than 2),
+ *   when none is left, or after day 14; the season ends when both have. On the free board only wallets that can still
+ *   win (1 VHP at every check) count. Simulated on the live 17-producer field: ends about day 11 with 10 players, day 13 with 50; with 200
  *   about 4 are left on day 14 and the ranking decides.
  *
  * RANKING: still in (or out later) first, then more lives left, then the higher total score of your picks.
  *   Equal on all three: the same place.
  * PRIZES at season end: 4 VHP for 1st and 2 VHP for 2nd (two weeks of the free-game 2 + 1), ties split the places
  *   they cover. Only for wallets that held at least 1 VHP (or at least 1 VHP staked in Knode) at every daily check
- *   while they were in the season, and that weren't knocked out by a missed pick; and only in a season with at least
+ *   while they were in the season, and that weren't knocked out by a pick that couldn't count (missed, not in the field,
+ *   or reused: owner, 30 Oct); and only in a season with at least
  *   3 such players who each made 2+ valid picks (owner, 28 Oct; Repo Lense SV-A2, SV-A3). Wallets that hold nothing,
  *   or pick on day 1 and never again, win nothing and don't count toward the 3. The vault pays (Build 1).
  * TWO BOARDS (owner, 28 Oct): Survivor also takes stakes in the vault (game 3). A wallet staked in Survivor (at least
@@ -146,12 +148,20 @@
      *  Returns { players: [...ranked, with place], over, endN }. Each player: { a, lives, outN (the day they went out,
      *  or null), total (sum of their picks' scores, 4 decimals), used: [producers], log (one letter per day played, see
      *  CODE), eligible }. */
-    function playSeason(days) {
+    function playSeason(days, staked = null) {
+      // Two boards play the same days side by side (owner, 30 Oct): wallets staked in Survivor this season (`staked`, a
+      // Set) and free players. Each board has its own safety net and its own early end, so free players never change
+      // a staked player's lives or season, and the other way round. On the free board only wallets that can win (held
+      // 1 VHP at every check so far) count for the net and the end: empty wallets play along but can't switch the net
+      // off for others or keep the board running (Repo Lense SV-A10). A board ends when 2 or fewer of its counted
+      // players are left (if more than 2 started), when none is left, or after day 14; its players then stop.
       const ps = new Map();
       const first = days.find((x) => x.n === 1);
-      if (!first) return { players: [], over: false, endN: 0 };
+      if (!first) return { players: [], over: false, endN: 0, ends: { staked: null, free: null } };
       for (const [p] of first.picks || []) if (isAddr(p) && !ps.has(p)) ps.set(p, { a: p, lives: LIVES, outN: null, total4: 0, used: [], log: "", eligible: true });
-      const started = ps.size;
+      const boardOf = (x) => (staked && staked.has(x.a) ? "staked" : "free");
+      const counts = (x) => boardOf(x) === "staked" || x.eligible;
+      const B = { staked: { started: 0, end: null }, free: { started: 0, end: null } };
       let over = false, endN = 0;
       for (let i = 0; i < days.length; i++) {
         const day = days[i];
@@ -161,30 +171,39 @@
         const pick = new Map();
         for (const [p, a] of day.picks || []) if (isAddr(p) && isAddr(a)) pick.set(p, a);
         const noVhp = new Set(day.noVhp || []);
-        const alive = [...ps.values()].filter((x) => x.outN === null);
+        const alive = [...ps.values()].filter((x) => x.outN === null && B[boardOf(x)].end === null);
+        for (const x of alive) if (noVhp.has(x.a)) x.eligible = false;
+        if (day.n === 1) for (const g of ["staked", "free"]) B[g].started = alive.filter((x) => boardOf(x) === g && counts(x)).length;
         const fate = alive.map((x) => {
           const a = pick.get(x.a) || null;
           const code = !a ? "none" : !score.has(a) ? "field" : x.used.includes(a) ? "used" : out.has(a) ? "out" : "safe";
           return { x, a, code };
         });
-        // The safety net: everyone still in would lose a life today. It saves only out-zone losses (audit SV-1).
-        const allLose = fate.length > 0 && fate.every((f) => f.code !== "safe");
+        // The safety net, per board: nobody counted on that board is safe today. It saves only out-zone losses (SV-1).
+        const allLose = {};
+        for (const g of ["staked", "free"]) {
+          const mine = fate.filter((f) => boardOf(f.x) === g && counts(f.x));
+          allLose[g] = mine.length > 0 && mine.every((f) => f.code !== "safe");
+        }
         for (const { x, a, code } of fate) {
-          if (noVhp.has(x.a)) x.eligible = false;
           const valid = code === "safe" || code === "out";
           if (valid) { x.used.push(a); x.total4 += Math.round(score.get(a) * 1e4); }
           if (code === "safe") { x.log += CODE.safe; continue; }
-          if (allLose && code === "out") { x.log += CODE.saved; continue; }
+          if (allLose[boardOf(x)] && code === "out") { x.log += CODE.saved; continue; }
           x.log += CODE[code];
           x.lives--;
           if (x.lives <= 0) x.outN = day.n;
         }
         endN = day.n;
-        const left = [...ps.values()].filter((x) => x.outN === null).length;
-        if ((started > 2 && left <= 2) || day.n >= SEASON_DAYS) over = true;
+        for (const g of ["staked", "free"]) {
+          if (B[g].end !== null) continue;
+          const left = [...ps.values()].filter((x) => x.outN === null && boardOf(x) === g && counts(x)).length;
+          if (left === 0 || (B[g].started > 2 && left <= 2) || day.n >= SEASON_DAYS) B[g].end = day.n;
+        }
+        over = B.staked.end !== null && B.free.end !== null;
       }
       const players = rank([...ps.values()].map((x) => ({ a: x.a, lives: Math.max(0, x.lives), outN: x.outN, total: x.total4 / 1e4, used: x.used, log: x.log, eligible: x.eligible })));
-      return { players, over, endN };
+      return { players, over, endN, ends: { staked: B.staked.end, free: B.free.end } };
     }
     /** Ranking: in longest (still in first), then lives, then total score; equal on all three share a place. */
     function rank(players) {
@@ -201,7 +220,9 @@
      *  split the prizes of the places they cover. Places are re-counted among the eligible. Returns [{ player, place, vhp }]. */
     const validPicks = (x) => (String(x.log || "").match(/[sov]/g) || []).length;
     /** Went out on a day with no pick (not by the out-zone or a wrong pick). */
-    const outByMissing = (x) => x.outN !== null && x.outN !== undefined && String(x.log || "")[x.outN - 1] === CODE.none;
+    /** Knocked out by a pick that couldn't count: none, a producer not in the field, or one already used (owner,
+     *  30 Oct: like a missed pick, these can't win the prize; only an out-zone knockout keeps a player eligible). */
+    const outByMissing = (x) => x.outN !== null && x.outN !== undefined && [CODE.none, CODE.field, CODE.used].includes(String(x.log || "")[x.outN - 1]);
     function prizes(players, amounts = PRIZES) {
       // Only players who can win count toward the 3-player minimum: they held 1 VHP at every check, weren't knocked
       // out by a missed pick, and made 2+ valid picks (Repo Lense SV-A2: empty wallets used to count).
@@ -229,14 +250,15 @@
      *  began, ranked by the season standings when the week ends (owner, 28 Oct). Points 1–255 keep that order and its
      *  ties (only the order matters to the vault): 255 for 1st, one less per place, never below 1. Returns
      *  [{ player, points }] best first, or null while the week's days aren't all recorded. */
-    function weekRows(days, k, staked) {
+    function weekRows(days, k, staked, board = staked) {
+      // `staked`: who is staked that week (listed); `board`: who plays on the staked board this season (the boards).
       const upTo = (n) => days.filter((x) => x.n <= n);
-      const end = playSeason(upTo(WEEK_DAYS * (k + 1)));
+      const end = playSeason(upTo(WEEK_DAYS * (k + 1)), board);
       if (!end.over && end.endN < WEEK_DAYS * (k + 1)) return null;
       let still = null;
       if (k > 0) {
-        const atStart = playSeason(upTo(WEEK_DAYS * k));
-        if (atStart.over) return [];
+        const atStart = playSeason(upTo(WEEK_DAYS * k), board);
+        if (atStart.over || atStart.ends.staked !== null) return [];
         still = new Set(atStart.players.filter((x) => x.outN === null).map((x) => x.a));
       }
       return rank(end.players.filter((x) => staked.has(x.a) && (!still || still.has(x.a))))
