@@ -15,6 +15,14 @@
  *   npm run picks -- lock-test <id> --testnet --send      send one pick per block across a target's lock, report each
  *   npm run picks -- mana-test <id> --testnet --send      send 1, 3 and 7 picks in one transaction each, report the Mana
  *
+ * The Picks v2 upgrade (Combo Card; docs/blockx/MAINNET-LAUNCH.md "Later: the Picks v2 upgrade", steps 2-4). Each one is
+ * a dry run without --send; a mainnet send also needs --mainnet and --code 92d555d0 (the first 8 characters of v2's
+ * sha256, typed by you), and every check runs on two nodes:
+ *   npm run picks -- upgrade-schedule [--send]   owner announces v2's sha256; it can be uploaded 48 hours later, for 7 days
+ *   npm run picks -- upgrade-upload [--send]     owner uploads v2 (PAYER_WIF, if set, pays the Mana); checks the code, the
+ *                                                overrides, the owner and every game on both nodes afterwards
+ *   npm run picks -- upgrade-clear [--send]      owner clears the announced hash, so the same code can't be uploaded again
+ *
  * Keys come from the root .env / .env.testnet (never GitHub, never printed):
  *   PICKS_WIF   a brand-new wallet that becomes the Picks contract. Needed for the upload only; once uploaded, the
  *               contract decides for its own account (it refuses to move anything or pay Mana; new code needs the
@@ -400,6 +408,179 @@ async function pause(id: number, send: boolean) {
   if (!r.ok) process.exitCode = 1;
 }
 
+// ═══════════════════════════════ the Picks v2 upgrade ═══════════════════════════════
+/** The testnet v2 build (tools/combo-testnet.mjs build): the audited v2 source with the test owner and 10-minute waits. */
+const TESTNET_V2_DIR = path.join("picks", "build", "testnet-v2");
+/** Does compiled AssemblyScript hold this address as a string literal (UTF-16)? (Repo Lens RL-23.) */
+export const wasmHasAddress = (wasm: Uint8Array, a: string) => !!a && Buffer.from(wasm).indexOf(Buffer.from(a, "utf16le")) >= 0;
+/** What the upgrade replaces (`from`, the code on chain now) and uploads (`to`). Mainnet: v1 → the audited v2, by hash.
+ *  Testnet: the testnet v1 build → the testnet v2 build, which must come from the audited v2 source, hold its manifest's
+ *  owner and not the mainnet owner. Exported for the tests. */
+export function upgradeBuilds(testnet: boolean, files = { mainnet: MAINNET_WASM, v2dir: TESTNET_V2_DIR, v1manifest: TESTNET_MANIFEST }, cfg: any = null) {
+  if (!testnet) {
+    if (!fs.existsSync(files.mainnet)) throw new Error(`${files.mainnet} not found: in the picks folder run npm ci --ignore-scripts, npm test`);
+    const wasm = fs.readFileSync(files.mainnet), h = sha256hex(wasm);
+    if (h !== PICKS_V2_SHA256) throw new Error(`${files.mainnet} is not the audited Picks v2 build (sha256 ${h}, expected ${PICKS_V2_SHA256}). Build it on the combo branch: cd picks, npm ci --ignore-scripts, npm test.`);
+    return { from: PICKS_SHA256, to: { wasm, sha256: h, what: "the audited Picks v2 build" } };
+  }
+  const m = path.join(files.v2dir, "manifest.json"), w = path.join(files.v2dir, "contract.wasm");
+  if (!fs.existsSync(m) || !fs.existsSync(w)) throw new Error(`No testnet v2 build yet (${files.v2dir}): node tools/combo-testnet.mjs build --home <dir>`);
+  const man = readJson(m), wasm = fs.readFileSync(w), h = sha256hex(wasm);
+  if (man?.version !== 2 || man.network !== "koinos-foundation-testnet" || man.sha256 !== h) throw new Error(`${files.v2dir} doesn't match its manifest: build it again.`);
+  if (man.auditedSha256 !== PICKS_V2_SHA256) throw new Error(`The testnet v2 build was made from ${man.auditedSha256}, not the audited v2 ${PICKS_V2_SHA256}. Build it again.`);
+  if (h === PICKS_V2_SHA256 || wasmHasAddress(wasm, MAINNET_OWNER)) throw new Error("The testnet v2 build holds the MAINNET owner. Build it again with the test owner.");
+  if (!wasmHasAddress(wasm, man.owner)) throw new Error(`The testnet v2 build doesn't hold the owner ${man.owner} its manifest names. Build it again.`);
+  const from = readJson(files.v1manifest)?.sha256 ?? cfg?.picksSha256;
+  if (!from) throw new Error("No testnet v1 build is known (picks/build/testnet/manifest.json or testnet/blockx.json picksSha256).");
+  return { from, to: { wasm, sha256: h, what: `the testnet v2 build (audited v2 source, owner ${man.owner})` } };
+}
+/** A mainnet upgrade send needs --code with the first 8 characters of the code's sha256, typed on the command line, so
+ *  nobody sends it by running a command from history or a copied line by mistake. Exported for the tests. */
+export function codeGuard(net: { testnet: boolean }, send: boolean, sha: string, argv = process.argv) {
+  if (!send || net.testnet) return;
+  const i = argv.indexOf("--code"), typed = i >= 0 ? argv[i + 1] : undefined;
+  if (typed !== sha.slice(0, 8)) throw new Error(`To send this to MAINNET, add --code ${sha.slice(0, 8)} (the first 8 characters of the new code's sha256). Nothing was sent.`);
+}
+/** Where an announced upgrade stands at chain time `now`. Exported for the tests. */
+export function upgradeWindow(cfg: any, want: string, now: number, lockMs = 2 * 86400000, expiryMs = 7 * 86400000) {
+  const hash = String(cfg?.upgrade_hash ?? "").replace(/^0x/, "").toLowerCase(), eta = Number(cfg?.upgrade_eta ?? 0);
+  if (!hash || !eta) return { state: "none" as const, eta: 0, hash: "" };
+  if (now >= eta + expiryMs) return { state: "expired" as const, eta, hash };
+  if (hash !== want) return { state: "other" as const, eta, hash };
+  return { state: now < eta ? ("waiting" as const) : ("open" as const), eta, hash, closes: eta + expiryMs, announcedAt: eta - lockMs };
+}
+/** The Picks contract's config, its games and the chain's head time, on every node (mainnet: two). They must agree.
+ *  Returns the agreed values and the earliest head time (the chain decides the upgrade window, not this PC's clock). */
+async function readEverywhere(net: Net, p: Provider) {
+  const nodes = [p];
+  if (!net.testnet) nodes.push(new Provider([MAINNET_CHECK_RPC()]));
+  const got = [];
+  for (const n of nodes) {
+    const head: any = await n.getHeadInfo();
+    got.push({ cfg: await read(n, net.picks!, "get_config"), games: (await read(n, net.picks!, "list_games")).games ?? [], time: Number(head.head_block_time) });
+  }
+  const key = (x: any) => JSON.stringify([x.cfg.owner, x.cfg.upgrade_hash ?? "", String(x.cfg.upgrade_eta ?? "0"), x.games]);
+  if (got.some((x) => key(x) !== key(got[0]))) throw new Error("The two nodes disagree about the Picks contract's settings or games. Nothing was signed; try again in a few minutes.");
+  return { cfg: got[0].cfg, games: got[0].games, now: Math.min(...got.map((x) => x.time)) };
+}
+const when = (t: number) => new Date(t).toISOString().replace("T", " ").replace(/:\d\d\.\d+Z$/, " UTC");
+
+/** upgrade-schedule: the owner announces v2's sha256 (runbook step 2). */
+async function upgradeSchedule(send: boolean) {
+  const net = network();
+  mainnetGuard(net, send);
+  if (!net.picks) throw new Error("No Picks contract yet.");
+  const { p, chainId } = await connect(net);
+  const b = upgradeBuilds(net.testnet, undefined, net.cfg);
+  codeGuard(net, send, b.to.sha256);
+  const n = await assertAuditedContract(net, p, contractMetadata, b.from);            // still the code it replaces
+  const s = ownerKey(net, p);
+  const { cfg, games, now } = await readEverywhere(net, p);
+  if (cfg.owner !== s.getAddress()) throw new Error(`The contract's owner is ${cfg.owner}, not OWNER_WIF's ${s.getAddress()}.`);
+  const w = upgradeWindow(cfg, b.to.sha256, now);
+  if (w.state === "waiting" || w.state === "open") throw new Error(`v2 is already announced: it can be uploaded from ${when(w.eta)} until ${when(w.closes!)}. Next: npm run picks -- upgrade-upload`);
+  if (w.state === "other") throw new Error(`Other code (${w.hash}) is announced. Clear it first (npm run picks -- upgrade-clear) and check why it was announced.`);
+  const wait = net.testnet ? "10 minutes" : "48 hours";
+  log(`Announce new code for the Picks contract ${net.picks} on ${net.testnet ? "the testnet" : "MAINNET"} (checked on ${n} node${n > 1 ? "s" : ""}):`);
+  log(`  now on chain   ${b.from} (v1)`);
+  log(`  new code       ${b.to.sha256} (${b.to.what}, ${b.to.wasm.length.toLocaleString("en-US")} bytes)`);
+  log(`  owner          ${s.getAddress()} signs and pays (about 0.1 Mana)`);
+  log(`  then           it can be uploaded ${wait} after this lands, for 7 days. Games now: ${games.map((g: any) => `${g.id} ${g.name}`).join(", ") || "none"}.`);
+  log(`  public         everyone sees the announcement (the upgrade event). Publish the v2 source and its build first (runbook step 1).`);
+  if (!send) { log(`\nDry run only. Nothing was sent. To send: add --send${net.testnet ? "" : ` --mainnet --code ${b.to.sha256.slice(0, 8)}`}`); return; }
+  const r = await sendCall(net, p, chainId, s, "schedule_upgrade", { hash: "0x" + b.to.sha256 });
+  if (!r.ok) { log(`✖ ${r.error}`); process.exitCode = 1; return; }
+  const after = await readEverywhere(net, p), w2 = upgradeWindow(after.cfg, b.to.sha256, after.now);
+  log(w2.state === "waiting" || w2.state === "open" ? `✔ announced (Mana used ${showKoin(r.rcUsed)}, block ${r.block}). Upload from ${when(w2.eta)} until ${when(w2.closes!)}: npm run picks -- upgrade-upload${net.testnet ? " --testnet" : ""}`
+    : `⚠ sent, but the nodes don't show the announcement yet (${w2.state}). Run npm run picks -- status in a minute.`);
+}
+
+/** The upgrade's upload transaction: the owner signs (the contract allows its own upload only with the owner's signature,
+ *  the announced sha256, after the wait, with all three overrides kept on); the payer signs to pay the Mana (the owner,
+ *  unless another wallet is given). Exported for the tests (with a nonce given, it needs no node until it is sent). */
+export async function upgradeTx(p: Provider, picks: string, owner: Signer, payer: Signer, wasm: Uint8Array, abi: any, chainId: string, rc: bigint, nonce?: string) {
+  const c = new Contract({ id: picks, abi, provider: p, signer: owner, bytecode: new Uint8Array(wasm) });
+  const { operation } = await c.deploy({ abi: JSON.stringify(abi), authorizesCallContract: true, authorizesTransactionApplication: true, authorizesUploadContract: true, onlyOperation: true } as any);
+  const tx = new Transaction({ signer: owner, provider: p, options: { payer: payer.getAddress(), chainId, rcLimit: rc.toString(), ...(nonce ? { nonce } : {}) } });
+  await tx.pushOperation(operation);
+  await tx.prepare();
+  await tx.sign();                                                   // the owner authorizes the upload
+  if (payer.getAddress() !== owner.getAddress()) await payer.signTransaction(tx.transaction as any);   // the payer, its Mana
+  return tx;
+}
+
+/** upgrade-upload: the owner uploads v2 inside the window and checks everything on both nodes (runbook step 3). */
+async function upgradeUpload(send: boolean) {
+  const net = network();
+  mainnetGuard(net, send);
+  if (!net.picks) throw new Error("No Picks contract yet.");
+  const { p, chainId } = await connect(net);
+  const b = upgradeBuilds(net.testnet, undefined, net.cfg);
+  codeGuard(net, send, b.to.sha256);
+  await assertAuditedContract(net, p, contractMetadata, b.from);
+  const s = ownerKey(net, p);
+  const before = await readEverywhere(net, p);
+  if (before.cfg.owner !== s.getAddress()) throw new Error(`The contract's owner is ${before.cfg.owner}, not OWNER_WIF's ${s.getAddress()}.`);
+  const w = upgradeWindow(before.cfg, b.to.sha256, before.now);
+  if (w.state === "none") throw new Error("Nothing is announced. Run npm run picks -- upgrade-schedule first.");
+  if (w.state === "other") throw new Error(`The announced code is ${w.hash}, not this build's ${b.to.sha256}. Nothing was sent.`);
+  if (w.state === "expired") throw new Error(`The announcement expired at ${when(w.eta + 7 * 86400000)}. Announce again (upgrade-schedule).`);
+  if (w.state === "waiting") throw new Error(`Too early: the chain allows the upload from ${when(w.eta)} (${Math.ceil((w.eta - before.now) / 60000)} min from now).`);
+  if (w.closes! - before.now < 10 * 60000) throw new Error(`The window closes at ${when(w.closes!)}, in under 10 minutes: too close to send safely. Announce again.`);
+  const abi = loadAbi();
+  const payerKey = E.PAYER_WIF ? "PAYER_WIF" : "OWNER_WIF";
+  const payer = payerKey === "PAYER_WIF" ? signerOf("PAYER_WIF", p) : s, PA = payer.getAddress();
+  if (PA === net.picks) throw new Error("PAYER_WIF is the Picks contract itself (it never pays Mana).");
+  const have = BigInt(await p.getAccountRc(PA));
+  const needRc = toSat(Math.ceil(b.to.wasm.length / 1024 * (net.testnet ? 0.35 : 1.2) + (net.testnet ? 5 : 10)));
+  log(`Upload the new code to the Picks contract ${net.picks} on ${net.testnet ? "the testnet" : "MAINNET"}:`);
+  log(`  now on chain   ${b.from} (v1)  →  new code ${b.to.sha256} (${b.to.what})`);
+  log(`  window         open since ${when(w.eta)}, closes ${when(w.closes!)} (chain time)`);
+  log(`  signed by      the owner ${s.getAddress()}; Mana paid by ${PA} (${payerKey}): has ${showKoin(have)}, may use up to ${showKoin(needRc)}`);
+  log(`  overrides      all three stay ON (the contract refuses the upload otherwise)`);
+  log(`  games          ${before.games.length} (${before.games.map((g: any) => `${g.id} ${g.name}`).join(", ") || "none"}): each must read back the same under v2`);
+  if (have < needRc) throw new Error(`${PA} needs at least ${showKoin(needRc)} Mana; it has ${showKoin(have)}.`);
+  if (!send) { log(`\nDry run only. Nothing was sent. To send: add --send${net.testnet ? "" : ` --mainnet --code ${b.to.sha256.slice(0, 8)}`}`); return; }
+  const tx = await upgradeTx(p, net.picks, s, payer, b.to.wasm, abi, chainId, needRc);
+  const receipt: any = await tx.send();
+  if (receipt?.reverted) throw new Error(`the upload reverted: ${JSON.stringify(receipt.logs)}. Nothing changed.`);
+  await tx.wait("byBlock", 300_000).catch(() => { throw new Error("Sent but not confirmed within 5 minutes. Run npm run picks -- status in a few minutes; don't send it again."); });
+  const problems: string[] = [];
+  try { await assertAuditedContract(net, p, contractMetadata, b.to.sha256); } catch (e) { problems.push((e as Error).message); }
+  const after = await readEverywhere(net, p).catch((e) => { problems.push((e as Error).message); return null; });
+  if (after && after.cfg.owner !== before.cfg.owner) problems.push(`the owner reads ${after.cfg.owner} under v2, was ${before.cfg.owner}`);
+  if (after && JSON.stringify(after.games) !== JSON.stringify(before.games)) problems.push(`the games read differently under v2:\n    before ${JSON.stringify(before.games)}\n    after  ${JSON.stringify(after.games)}`);
+  if (problems.length) { log(`⚠ uploaded (tx ${tx.transaction?.id}), but: ${problems.join("; ")}. Stop here and tell Claude; don't announce game 8.`); process.exitCode = 1; return; }
+  log(`✔ v2 is live (Mana used ${showKoin(receipt?.rc_used)}): code ${b.to.sha256}, all three overrides ON, the owner and all ${after!.games.length} game(s) unchanged, on ${net.testnet ? "the node" : "both nodes"}.`);
+  log(`Next: npm run picks -- upgrade-clear${net.testnet ? " --testnet" : ""} (runbook step 4).`);
+  if (!net.testnet) {
+    log(`Then runbook step 5, by a pull request to main (Claude opens it): in picks-data/deployment.json set`);
+    log(`  "wasmSha256": "${b.to.sha256}",\n  "uploadTx": "${tx.transaction?.id}",\n  "uploadedAt": "${new Date().toISOString()}"`);
+  }
+}
+
+/** upgrade-clear: once v2 runs, the owner clears the announced hash, so the same code can't be uploaded again (step 4). */
+async function upgradeClear(send: boolean) {
+  const net = network();
+  mainnetGuard(net, send);
+  if (!net.picks) throw new Error("No Picks contract yet.");
+  const { p, chainId } = await connect(net);
+  const b = upgradeBuilds(net.testnet, undefined, net.cfg);
+  await assertAuditedContract(net, p, contractMetadata, b.to.sha256);                // v2 must already run
+  const s = ownerKey(net, p);
+  const { cfg, now } = await readEverywhere(net, p);
+  const w = upgradeWindow(cfg, b.to.sha256, now);
+  if (w.state === "none") { log("✔ Nothing is announced: there is nothing to clear."); return; }
+  log(`Clear the announced code ${w.hash} on the Picks contract ${net.picks} (${net.testnet ? "testnet" : "MAINNET"}), signed by the owner ${s.getAddress()} (about 0.1 Mana).`);
+  log("  After this, no code can be uploaded until a new announcement and its 48-hour wait.");
+  if (!send) { log(`\nDry run only. Nothing was sent. To send: add --send${net.testnet ? "" : " --mainnet"}`); return; }
+  const r = await sendCall(net, p, chainId, s, "schedule_upgrade", { hash: "0x" });
+  if (!r.ok) { log(`✖ ${r.error}`); process.exitCode = 1; return; }
+  const after = await readEverywhere(net, p);
+  if (upgradeWindow(after.cfg, b.to.sha256, after.now).state !== "none") { log("⚠ sent, but the nodes still show an announced code. Run npm run picks -- status in a minute."); process.exitCode = 1; return; }
+  log(`✔ cleared (Mana used ${showKoin(r.rcUsed)}). Next: runbook step 5 (the deployment file), then npm run picks -- status${net.testnet ? " --testnet" : " --mainnet"}.`);
+}
+
 // ═══════════════════════════════ testnet checks ═══════════════════════════════
 function testnetOnly(net: Net, what: string) { if (!net.testnet) throw new Error(`${what} is for the testnet only (add --testnet).`); }
 const pickOp = async (p: Provider, picks: string, player: string, game: number, round: number, producer: string) =>
@@ -533,7 +714,10 @@ async function main() {
     case "pause": return pause(num(), send);
     case "lock-test": return lockTest(num(), send);
     case "mana-test": return manaTest(num(), send);
-    default: throw new Error(`Unknown command "${cmd}". Commands: keys, build-testnet, status, upload, announce <id>, apply <id>, pause <id>, lock-test <id>, mana-test <id>`);
+    case "upgrade-schedule": return upgradeSchedule(send);
+    case "upgrade-upload": return upgradeUpload(send);
+    case "upgrade-clear": return upgradeClear(send);
+    default: throw new Error(`Unknown command "${cmd}". Commands: keys, build-testnet, status, upload, announce <id>, apply <id>, pause <id>, lock-test <id>, mana-test <id>, upgrade-schedule, upgrade-upload, upgrade-clear`);
   }
 }
 if (process.argv[1] && /picks\.ts$/.test(process.argv[1])) {

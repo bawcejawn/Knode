@@ -77,9 +77,18 @@ v1 release (Block X launch): `700c296a1064b904299c156061d6caf8fcabd0b1765968903f
 
 **v2 (CARD type, Combo Card) release candidate:** `92d555d0680157854452e35162c1b1c5c100904996194b8c1c848df50e5e1c3d`
 (37,689 bytes; 71 tests). Formal audit 2026-10-28 and Repo Lens final audit 2026-10-30: contract "ready for mainnet" (`docs/history/AUDIT-2026-10-28-combo.md`, `docs/history/AUDIT-2026-10-30-combo-repolens.md`).
-Upgrade steps (after Block X launches): `schedule_upgrade` with this sha256 → wait 48 hours → upload (signed by the
-owner) → `schedule_upgrade` with an empty hash, so the same bytes can't be uploaded again (audit CC-A3) → announce
-game 8 (Combo Card) → 48 hours → `apply_game`.
+Upgrade steps (after Block X launches; `docs/blockx/MAINNET-LAUNCH.md` "Later: the Picks v2 upgrade"), each a dry run
+without `--send`; a mainnet send also needs `--mainnet` and, for the first two, `--code 92d555d0`; every check runs on
+two nodes and on the chain's own time:
+1. `npm run picks -- upgrade-schedule`: the owner announces this sha256 (the chain must still hold v1).
+2. 48 hours later, within 7 days: `npm run picks -- upgrade-upload`: the owner uploads v2 (`PAYER_WIF`, if set, pays
+   the Mana); afterwards the code, the three overrides, the owner and every game are checked on both nodes.
+3. `npm run picks -- upgrade-clear`: the owner clears the announced hash, so the same bytes can't be uploaded again
+   (audit CC-A3).
+4. Record v2's `wasmSha256` in `picks-data/deployment.json` (Repo Lens FC2-13; the upload prints the three lines);
+   from then on the tool refuses v1 on chain.
+5. Announce game 8 (Combo Card) → 48 hours → `apply_game`.
+On the testnet the same commands take `--testnet` and the testnet v2 build (`node tools/combo-testnet.mjs build`).
 Tests: 71 contract tests (`npm test`, in the Koinos mock VM), including the auditor's attack tests (`Picks.audit.spec.ts`) and the card tests (`Picks.card.spec.ts`).
 
 Before announcing anything on mainnet (audit P-5, P-6): check on chain that all three overrides are on and the code's
