@@ -242,14 +242,17 @@ test("names.yml reply: fixed texts only; accepted claims are closed only once pu
     { issue: 7, accepted: true, name: "<script>", address: A.getAddress() },
   ] };
   fs.writeFileSync(path.join(d, "r.json"), JSON.stringify(results));
-  let p = runPy(reply, [path.join(d, "r.json"), "success", out]);
+  let p = runPy(reply, [path.join(d, "r.json"), "success", out, "3,4,5,6,7"]);
   assert.equal(p.status, 0, p.stderr);
   assert.deepEqual(p.stdout.trim().split("\n"), ["3 completed", "4 not planned", "5 not planned"]);
-  assert.match(fs.readFileSync(path.join(out, "3.md"), "utf8"), /^Accepted: \*\*Blue Harbor\*\* is now the name for `1/);
+  assert.match(fs.readFileSync(path.join(out, "3.md"), "utf8"), /^Accepted: `Blue Harbor` is now the name for `1/);
+  // Only the issues the find step listed are answered (audit PN-15).
+  assert.deepEqual(runPy(reply, [path.join(d, "r.json"), "success", out, "4"]).stdout.trim().split("\n"), ["4 not planned"]);
+  assert.equal(runPy(reply, [path.join(d, "r.json"), "success", out, ""]).stdout.trim(), "");
   assert.match(fs.readFileSync(path.join(out, "4.md"), "utf8"), /^Not accepted: That name is reserved\./);
   const five = fs.readFileSync(path.join(out, "5.md"), "utf8");
   assert.doesNotMatch(five, /@everyone|evil|`/); assert.match(five, /didn't pass the checks/);
-  p = runPy(reply, [path.join(d, "r.json"), "failure", out]);
+  p = runPy(reply, [path.join(d, "r.json"), "failure", out, "3,4,5,6,7"]);
   assert.deepEqual(p.stdout.trim().split("\n"), ["4 not planned", "5 not planned"], "not published: accepted claims stay open for the next run");
   // Every real reason the rules can give passes the reply's own filter (so producers see why, not a generic text).
   const allowed = /^[A-Za-z0-9 .,:;'"()?/+_\-–…“”]+$/;

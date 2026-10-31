@@ -5,7 +5,8 @@
      with an on-chain Koinos nickname (the Nicknames contract), else the short address. The short address is always
      part of it, so a name can never pass for another wallet. KNames.node(address) is the same as a DOM element.
    - names.json is read once per page from the names-data branch (published by .github/workflows/names.yml); every
-     entry is checked again here, and anything that fails the rules is ignored. Names are only ever set as textContent.
+     entry's shape and rules are checked again here (not its signature: the checker verified it before publishing),
+     and anything that fails is ignored. Names are only ever set as textContent.
    See docs/NAMES.md. */
 (() => {
   "use strict";
@@ -25,20 +26,26 @@
 
   // ═══════════════ rules (pure) ═══════════════
   /** The form used to compare names: no case, no spaces or . - _ ', and lookalikes made the same (0/O, 1/l/I, 5/S…). */
+  // Letter pairs that read as one letter (audit PN-13: "Arnnana" beside "Armana") are folded first, then digits.
   function fold(name) {
     let s = String(name).toLowerCase().replace(/[ .\-_']/g, "");
+    s = s.replace(/cl/g, "d").replace(/nn/g, "m").replace(/rn/g, "m").replace(/ri/g, "n").replace(/ii/g, "u").replace(/vv/g, "w");
     const LOOK = { 0: "o", 1: "l", i: "l", 2: "z", 3: "e", 4: "a", 5: "s", 6: "g", 7: "t", 8: "b", 9: "g" };
-    s = s.replace(/[0-9i]/g, (c) => LOOK[c]);
-    return s.replace(/rn/g, "m").replace(/vv/g, "w");
+    return s.replace(/[0-9i]/g, (c) => LOOK[c]);
   }
   const RESERVED_EQUAL = ["Koinos", "admin", "support", "Knode", "Knode Games"].map(fold);
-  const RESERVED_CONTAINS = ["Knode Games", "official", "Koinos Foundation"].map(fold);
-  const RESERVED_WORD_START = fold("Knode");   // "Knode", "KnodeX", "My Knode" (a word starting with it), not "Blocknode"
+  // Anywhere in the folded name (audit PN-6: "Koinos Group", "K-node pool", "Knocle Games").
+  const RESERVED_CONTAINS = ["Knode Games", "Knode pool", "Knode Swap", "Knode node", "official", "Koinos Foundation", "Koinos Group",
+    "Koinos Team", "Koinos Support", "Koinos Admin", "Koinos Official", "Koinos Network", "Koinos Labs"].map(fold);
+  const KNODE = fold("Knode");
+  // The whole folded name, or any word, starting with "knode" ("K.node Swap", "Kno de", "My Knode"); not "Blocknode".
   function reserved(name) {
     const f = fold(name);
-    if (RESERVED_EQUAL.includes(f) || RESERVED_CONTAINS.some((r) => f.includes(r))) return true;
-    return String(name).split(/[ .\-_']+/).some((w) => fold(w).startsWith(RESERVED_WORD_START));
+    if (RESERVED_EQUAL.includes(f) || RESERVED_CONTAINS.some((r) => f.includes(r)) || f.startsWith(KNODE)) return true;
+    return String(name).split(/[ .\-_']+/).some((w) => fold(w).startsWith(KNODE));
   }
+  /** Shaped like a Koinos address or a short address (audit PN-7): "1Mpmf2…", "1Mpmf2...T1sr", "1Mpmf2 T1sr". */
+  const addressLike = (n) => /(^|[^A-Za-z0-9])1[1-9A-HJ-NP-Za-km-z]{5,}/.test(String(n)) || /\.\.\.|…/.test(String(n));
   /** null if the name is allowed, else the reason (plain words, shown to the player or producer). */
   function checkName(name) {
     if (typeof name !== "string") return "Enter a name.";
@@ -48,6 +55,7 @@
     if (/ {2}/.test(name)) return "No double spaces.";
     if ((name.match(/[A-Za-z0-9]/g) || []).length < 2) return "Use at least 2 letters or digits.";
     if (reserved(name)) return "That name is reserved.";
+    if (addressLike(name)) return "A name can't look like a wallet address.";
     return null;
   }
   const isDate = (d) => {
@@ -94,7 +102,7 @@
 
   const emptyDb = () => ({ v: 1, updated: "", names: {}, hidden: {}, nicknames: {} });
   /** An on-chain Koinos nickname as the Nicknames contract allows it (shown with an @). Reserved ones are skipped. */
-  const okNick = (n) => typeof n === "string" && /^[a-z0-9][a-z0-9.-]{0,31}$/.test(n) && !reserved(n);
+  const okNick = (n) => typeof n === "string" && /^[a-z0-9][a-z0-9.-]{0,31}$/.test(n) && !reserved(n) && !addressLike(n);
   /** A copy of names.json with only valid parts (the shape is checked again on every page and before publishing). */
   function cleanDb(db) {
     const out = emptyDb();
@@ -129,7 +137,7 @@
     if (db.hidden[claim.address]) return "The owner has hidden the name for this address. Contact the owner.";
     if (!isDate(claim.date)) return "The date must be YYYY-MM-DD.";
     const t = dayOf(claim.date);
-    if (t > now + DAY) return "The date is in the future.";
+    if (t > now + 14 * 3600000) return "The date is in the future.";   // today in any time zone (UTC+14 at most)
     if (t < dayOf(today(now)) - MAX_AGE_DAYS * DAY) return `The claim is more than ${MAX_AGE_DAYS} days old. Sign a new one.`;
     const prev = db.names[claim.address];
     if (prev && t <= dayOf(prev.date)) return "This address already has a claim with this date or a later one. Sign a new one tomorrow.";
@@ -154,8 +162,9 @@
     const now = opts.now;
     const why = precheck(db, claim, now);
     if (why) return { ok: false, reason: why };
-    if (!(await opts.isEligible(claim.address))) return { ok: false, reason: "That wallet can't take a name yet: it needs at least 1 VHP in the wallet or staked in Knode Games, or to be a block producer." };
+    // The signature first: junk claims never cause a chain read (audit PN-3).
     if (!(await verifySignature(claim, opts.lib))) return { ok: false, reason: "The signature doesn't match the address: sign the exact message with that wallet." };
+    if (!(await opts.isEligible(claim.address))) return { ok: false, reason: "That wallet can't take a name yet: it needs at least 1 VHP in the wallet or staked in Knode Games, or to be a block producer." };
     db.names[claim.address] = { name: claim.name, date: claim.date, signature: claim.signature };
     db.updated = new Date(now).toISOString();
     return { ok: true, db };
@@ -166,6 +175,14 @@
     if (!ADDR.test(address)) throw new Error("That is not a Koinos address.");
     const db = cleanDb(dbIn);
     db.hidden[address] = { reason: String(reason || "").slice(0, 200), date: today(now) };
+    db.updated = new Date(now).toISOString();
+    return db;
+  }
+  /** Owner: remove an address's name for good (it may claim again later). */
+  function remove(dbIn, address, now) {
+    const db = cleanDb(dbIn);
+    if (!db.names[address]) throw new Error("That address has no name.");
+    delete db.names[address];
     db.updated = new Date(now).toISOString();
     return db;
   }
@@ -215,7 +232,9 @@
   function load() {
     if (!loading) {
       loading = (typeof G.fetch === "function" ? G.fetch(DATA, { cache: "no-cache" }) : Promise.reject(new Error("no fetch")))
-        .then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) use(j); return true; }).catch(() => false);
+        .then((r) => (r.ok ? r.text() : null))
+        .then((t) => { if (t && t.length <= 2000000) use(JSON.parse(t)); return true; })   // never a huge file (audit PN-20)
+        .catch(() => false);
     }
     return loading;
   }
@@ -226,7 +245,7 @@
     of, name, short, node, load, onChange, DATA,
     /** names.json as loaded and checked (an empty list before it arrives or when there's none yet). */
     db: () => current || emptyDb(),
-    rules: { PREFIX, BUILTIN, fold, reserved, checkName, isDate, message, claimText, parseClaim, verifySignature, precheck, applyClaim, cleanDb, emptyDb, okNick, hide, unhide, today },
+    rules: { PREFIX, BUILTIN, fold, reserved, checkName, isDate, message, claimText, parseClaim, verifySignature, precheck, applyClaim, cleanDb, emptyDb, okNick, addressLike, hide, unhide, remove, today },
     _test: { use },
   };
   if (G.document && G.fetch) load();

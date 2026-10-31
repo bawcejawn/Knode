@@ -204,7 +204,8 @@ test("every page with a header loads the shared wallet button after wallet.js, a
   for (const p of fs.readdirSync(`${APP}`).filter((f) => f.endsWith(".html"))) {
     const h = fs.readFileSync(`${APP}/${p}`, "utf8");
     if (!/top-row/.test(h)) continue;
-    assert.match(h, /<script src="wallet\.js"><\/script>\s*<script src="header-wallet\.js"><\/script>/, `${p}: header wallet`);
+    // names.js may sit between them, so the button shows the wallet's name at once (names audit PN-21).
+    assert.match(h, /<script src="wallet\.js"><\/script>\s*(?:<script src="names\.js"><\/script>\s*)?<script src="header-wallet\.js"><\/script>/, `${p}: header wallet`);
     const nav = h.match(/<nav class="tabs"[\s\S]*?<\/nav>/)[0];
     const top = [...nav.matchAll(/^        (?:<a [^>]*>([^<]+)<\/a>|<details[^>]*>)$|^          <summary>([^<]+)<\/summary>$/gm)].map((m) => m[1] || m[2]).filter(Boolean);
     assert.deepEqual(top, ["Games", "Leaderboards", "Results", "Tools", "Rules", "New to Koinos?", "Info"], `${p}: top menu`);

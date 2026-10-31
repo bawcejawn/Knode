@@ -172,7 +172,7 @@
   const NICK_MANA = "1000000000";   // at most 10 KOIN of Mana held for the mint (the Nicknames team's own advice)
   const nickOf = () => $("nick").value.trim().toLowerCase().replace(/^@/, "");
   const nickHex = (n) => "0x" + Array.from(new TextEncoder().encode(n), (b) => b.toString(16).padStart(2, "0")).join("");
-  let nickProvider = null;
+  let nickProvider = null, minting = false;   // one mint at a time (audit PN-18)
   async function nickContract(signer) {
     if (!nickProvider) {
       const dep = await fetch("./game-data/deployment.json", { cache: "no-cache" }).then((r) => r.json()).catch(() => ({}));
@@ -184,19 +184,20 @@
     const n = nickOf(), viaKondor = !!(S.address && $("acct").options.length && !$("addr").value.trim());
     let why = "";
     if (!n) why = "";
-    else if (!/^[a-z0-9][a-z0-9.-]{1,31}$/.test(n)) why = "2 to 32 characters: lowercase letters, digits, dots and dashes (starting with a letter or digit).";
-    else if (R.reserved(n)) why = "That one is reserved on Knode Games (it would never show here). Choose another.";
+    else if (!/^[a-z0-9][a-z0-9.-]{0,31}$/.test(n)) why = "Up to 32 characters: lowercase letters, digits, dots and dashes (starting with a letter or digit).";
+    else if (!R.okNick(n)) why = "That one is reserved or looks like an address on Knode Games (it would never show here). Choose another.";
     else if (!viaKondor) why = "Connect Kondor in step 1 first: the @name is minted from that wallet.";
     say("nick-msg", why, why ? "bad" : "");
-    $("nick-mint").disabled = !n || !!why || !window.kondor;
+    $("nick-mint").disabled = minting || !n || !!why || !window.kondor;
     return !why && !!n;
   }
   $("nick").addEventListener("input", nickCheck);
   $("acct").addEventListener("change", nickCheck);
   $("connect").addEventListener("click", () => setTimeout(nickCheck, 0));
   $("nick-mint").addEventListener("click", async () => {
-    if (!nickCheck()) return;
+    if (minting || !nickCheck()) return;
     const n = nickOf(), who = S.address;
+    minting = true;
     $("nick-mint").disabled = true;
     try {
       say("nick-msg", "Checking the name on chain…");
@@ -215,15 +216,20 @@
       const { transaction, receipt } = await nick.functions.mint({ to: who, token_id: nickHex(n) }, { payer: who, rcLimit: limit });
       if (receipt && receipt.reverted) throw new Error("the Nicknames contract refused it");
       say("nick-msg", "Sent. Waiting for the next block…");
-      if (transaction && transaction.wait) { try { await transaction.wait("byBlock", 90000); } catch { /* checked below */ } }
-      const main = (await read.get_main_token({ value: who })).result;
-      const ok = main && String(main.token_id || "").toLowerCase() === nickHex(n);
-      say("nick-msg", ok ? `Done: this wallet is @${n} on Koinos. Knode Games pages show it within the hour (until you take a Knode Games name).`
-        : `Created @${n}. If another @name was already your main one, set @${n} as main in a Koinos nickname app. Knode Games shows your main @name within the hour.`, "good");
+      let landed = false;
+      if (transaction && transaction.wait) { try { await transaction.wait("byBlock", 90000); landed = true; } catch { /* checked below */ } }
+      // Only the chain says whether it worked (audit PN-18): who owns @name now?
+      const owner = (await read.get_address({ value: n }).catch(() => null))?.result?.value;
+      const main = (await read.get_main_token({ value: who }).catch(() => null))?.result;
+      if (owner !== who && !landed) { say("nick-msg", `Not confirmed yet. Wait a minute and check your wallet before trying again: the transaction may still land.`, "bad"); return; }
+      if (owner !== who) { say("nick-msg", `The transaction landed, but @${n} isn't this wallet's. It may have been taken first. Nothing else changed.`, "bad"); return; }
+      const isMain = main && String(main.token_id || "").toLowerCase() === nickHex(n);
+      say("nick-msg", isMain ? `Done: this wallet is @${n} on Koinos. Knode Games pages show it within the hour (until you take a Knode Games name).`
+        : `Created @${n}. Another @name is still this wallet's main one: set @${n} as main in a Koinos nickname app. Knode Games shows your main @name within the hour.`, "good");
     } catch (e) {
       const m = String((e && e.message) || e);
       say("nick-msg", /reject|denied|cancel/i.test(m) ? "Cancelled in Kondor." : `Couldn't create it: ${m.slice(0, 160)}`, "bad");
-    } finally { nickCheck(); }
+    } finally { minting = false; nickCheck(); }
   });
 
   function renderList() {

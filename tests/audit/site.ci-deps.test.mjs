@@ -31,14 +31,23 @@ test("(guard) every action is pinned to a full commit SHA", () => {
   assert.deepEqual(bad, []);
 });
 
-/** The workflow's on: block (its triggers). */
-const triggers = (y) => { const m = y.replace(/\r/g, "").match(/^on:\s*\n([\s\S]*?)(?=^[A-Za-z_-]+:)/m); return m ? m[1] : ""; };
+/** The workflow's triggers: the on: value, inline (on: [issues], on: issues) or as a block, its key quoted or not,
+ *  comments removed (audit PN-8: an equivalent spelling must not slip past the guard). */
+const triggers = (y) => {
+  const t = y.replace(/\r/g, "").split("\n").map((l) => l.replace(/\s+#.*$/, "")).join("\n") + "\nzz_end:\n";
+  const m = t.match(/^["']?(?:on|true)["']?\s*:([^\n]*)\n([\s\S]*?)(?=^["']?[A-Za-z_-]+["']?\s*:)/m);
+  return m ? `${m[1]}\n${m[2]}` : "";
+};
 
 test("(guard) no privileged triggers or script injection from event data", () => {
   for (const { f, y } of workflows) {
     assert.ok(!/pull_request_target|workflow_run|issue_comment/.test(y), `${f}: privileged trigger`);
     // No workflow starts from an issue (anyone can open one). names.yml reads issues on a schedule, as data.
-    assert.ok(!/^\s*(issues|discussion|discussion_comment|pull_request_review|pull_request_review_comment)\s*:/m.test(triggers(y)), `${f}: triggered by issues or comments`);
+    assert.ok(!/(^|[\s\[,{"'])(issues|discussion|discussion_comment|pull_request_review|pull_request_review_comment)(["']?\s*[:,\]}]|\s*$)/m.test(triggers(y)), `${f}: triggered by issues or comments`);
+    assert.ok(!/^\s*["']?(?:on|true)["']?\s*:\s*["']?(issues|discussion)/m.test(y), `${f}: triggered by issues`);
+    // A blanket write token, or every secret handed on at once, is never used (audit PN-8).
+    assert.ok(!/permissions:\s*["']?write-all/.test(y), `${f}: permissions: write-all`);
+    assert.ok(!/secrets:\s*inherit|toJSON\(\s*secrets\s*\)|secrets\[/.test(y), `${f}: hands on all secrets`);
     assert.ok(!/\$\{\{\s*github\.(event\.(pull_request|issue|comment|review|head_commit|commits|pages|inputs)|head_ref)/.test(y), `${f}: event data expanded in the workflow`);
   }
   assert.match(triggers(bot), /schedule:/, "(the trigger parser finds bot.yml's schedule)");
@@ -63,7 +72,7 @@ test("(guard) issue permissions only in names.yml: read in its check job, write 
 
 test("(guard) secrets live only in bot.yml's tick job, never in a workflow that runs on pull requests", () => {
   for (const { f, y } of workflows) {
-    const uses = [...y.matchAll(/secrets\.([A-Z_]+)/g)].map((m) => m[1]);
+    const uses = [...y.matchAll(/secrets\.([A-Za-z_][A-Za-z0-9_-]*)/g)].map((m) => m[1]);   // any case (audit PN-8)
     if (f !== "bot.yml") assert.deepEqual(uses, [], `${f} uses secrets`);
     if (/\n\s*pull_request:/.test(y)) { assert.deepEqual(uses, [], `${f}: secrets on PRs`); assert.match(y, /contents:\s*read/, `${f}: PR token must be read-only`); }
   }
