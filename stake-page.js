@@ -194,6 +194,14 @@
   }
   window.addEventListener("hashchange", fromHash);
   if (W() && W().subscribe) W().subscribe(() => { S.open = null; S.note = ""; load(); });
+  // The wallet needs the game's settings (network, chain id, Mana sponsor) to send from this page, as the game pages do.
+  (async () => {
+    const lib = window.koilib || window.koinos || window, w = W();
+    try {
+      const dep = await fetch("./game-data/deployment.json", { cache: "no-cache" }).then((r) => r.json());
+      if (w && w.init && lib.Provider) w.init({ provider: new lib.Provider([dep.rpc || "https://koinos.armana.io"]), chainId: dep.chainId, payer: dep.payer, sponsor: dep.sponsor });
+    } catch { /* the header's defaults (own Mana) */ }
+  })();
   K.badge($("q-badge"), { game: 1, href: "index.html#play" });
   load().then(fromHash);
   setInterval(() => { if (!document.hidden && !S.open && !S.busy) load(); }, 60000);

@@ -8,7 +8,8 @@
   "use strict";
   const W = window.KWallet;
   if (!W || typeof document === "undefined") return;
-  const lib = window.koilib || window.koinos || null;
+  // The koilib browser bundle puts Provider, Signer and utils on window itself (not on window.koinos).
+  const lib = window.koilib || window.koinos || (window.Provider ? window : null);
   const short = (a) => (a ? a.slice(0, 5) + "…" + a.slice(-4) : "");
   const KIND = { kondor: "Kondor", vault: "KOIN Vault", guest: "Guest" };
 
