@@ -1,28 +1,30 @@
-# Fix-check prompt, round 10 (very short): Block X prize-free go / no-go
+# Fix-check prompt, round 11 (very short): Block X prize-free go / no-go after the main merge
 
-Copy everything below the line into Repo Lens. Give it the package `knode-fixcheck-11.zip` (the repository
+Copy everything below the line into Repo Lens. Give it the package `knode-fixcheck-12.zip` (the repository
 `bawcejawn/Knode` at the commit in `00-COMMIT.txt`, branch `picks`, with this prompt as `00-FIXCHECK-PROMPT.md`).
 
 ---
 
-You are an independent security auditor. Your report "Block X Prize-Free: Round-9 Go/No-Go (Knode picks @ 6990323)"
-said **NO-GO, one fix in one file, then GO**. It named BX-128: Python's `\d` accepted non-ASCII digits that
-`loadSamples` drops.
+You are an independent security auditor. Your report "Block X Prize-Free: Round-10 Go/No-Go (Knode picks @ a55390f)"
+said **GO at a55390f**, with one condition (BX-138): `picks` has since merged `main` (c52a649, b301bfa), which changes
+`race.yml` and `bot/race.ts` (the Race Vault results file `vault/W<week>.json`, game 7, and a stricter race-data
+fetch). Get that diff fix-checked before launching from it.
 
-**Fixed, for every regex in the family:**
-- Every `\d` in the Python of the four publish steps (`games.yml`, `games-testnet.yml`, `race.yml`,
-  `race-samples.yml`) is now `[0-9]`. That covers the two sample regexes (BX-128) and the iso, ymd and race-id ones
-  (BX-130).
-- A guard test fails if `\d` ever comes back there.
-- The four publish jobs pin Node 22 with `setup-node` (BX-131).
-- BX-129 is a runbook step: the page is published only after step 8's `status` shows 1 change per pick.
+**Since a55390f:**
+- The merge itself. Conflicts were resolved by keeping both sides. Every round 8–9 publish check now also covers
+  `vault/`, `vault_ok` uses `[0-9]`, and the old "holds 1 VHP" plain-balance read is gone (ranking is the vault stake).
+- A blind review of the merged race code (record: "Blind review of the merge (BX-138)" in
+  `docs/history/AUDIT-2026-10-28-repolens-blockx.md`) found nothing must-fix. Fixed anyway:
+  - **V1:** a vault file that fails its check is held on its own, with a warning; the race files still publish, and a
+    final vault file still never changes;
+  - **V2:** the record job lists race-data with `ls-tree -z` into a file;
+  - **V3:** `ls-remote` uses `refs/heads/race-data` exactly.
+  - V4 (a pre-v6 chain read as "not staked") is marked before prizes.
+- **BX-136:** the `\d` guard also checks `python3 -c` / `python3 -I -c` one-liners.
+- Docs only: the round-10 record, and a runbook section for the later Picks v2 upgrade (Combo Card, FC2-13).
 
-Your round-9 test (`tests/audit/repolens-r9-sample-digits.test.mjs`) is in the repository and passes. The owner's
-record is the "Round 9" section of `docs/history/AUDIT-2026-10-28-repolens-blockx.md`.
-
-**Scope: `git diff 6990323 HEAD` only.** That includes the two commits you flagged in BX-133: the game 2 announcement
-record, and the testnet-only `TESTNET_PICKS` / `TESTNET_PICKS_CARDS` option in `bot/sponsor.ts`. Send no transaction
-to mainnet.
+**Scope: `git diff a55390f HEAD -- .github/workflows bot/race.ts tests/audit` only.** Block X scores with the cards
+`race.ts` writes. Send no transaction to any chain.
 
 ```
 npm ci --ignore-scripts
@@ -31,5 +33,5 @@ npm run test:audit:serial
 
 ## The one question
 
-**Block X live prize-free: go / no-go.** If no-go, name only what must be fixed for that verdict. Put everything else
-in one Low/Info table, marked "before prizes" where it belongs.
+**Block X live prize-free from this commit: go / no-go.** If no-go, name only what must be fixed for that verdict.
+Put everything else in one Low/Info table, marked "before prizes" where it belongs.
