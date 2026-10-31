@@ -1,6 +1,6 @@
 {
  "v": 1,
- "updated": "2026-10-31T04:40:08.922Z",
+ "updated": "2026-10-31T05:36:28.248Z",
  "names": {
   "1DAHmrQJMAbn4FmMMrew78wPUizjVdbBrd": {
    "name": "Personal Producer",
@@ -16,10 +16,14 @@
  },
  "pools": {
   "13iFaqgdnsoqUTCwZC9GtRXwh8ZvdiiPwm": "Engrave development sponsorship pool",
+  "15NZhQoewzsbVUcSVsZ8BEBEKgaBNPLLgZ": "Armana",
   "15jueaBcMieDCMGw6wAmEK6cNSUVicknG1": "Koinnoisseur's max VAPOR pool",
+  "18UYKhWVCbTpFs8oYC54xoiCQQthhEkX7m": "Koinnoisseur's max VHP pool",
   "1932QKYoPzaGmwBxTnnYhNqV9LQi2sYLHT": "Suspicious Mainnet Pool",
+  "1GGxRhLN7Ek54xycG5XaZBE4bCgwV2xtvk": "JGA#3",
   "1GJxaZw2BPU7NhB7fuVGKfQxaQ3tkhVKb8": "Koinnoisseur's quick KOIN restore pool",
   "1KfD7n93LnnihyygopWUVTkbtWVe5aXXGW": "Koinos en español",
+  "1Lk4D5bYDzMeh4CFXLWTpLEeJFqKmqbkEt": "Koinos en español",
   "1MbsVfNw6yzQqA8499d8KQj8qdLyRs8CzW": "JGA Pool #2"
  }
 }
