@@ -159,11 +159,20 @@ was too strict on honest cards and too loose on forged ones, and the publish job
 Test changes of ours: the hand-written day files in four tests name their parts (`parts: 1`); G-C-2 now also checks
 that the day is held by the card check, not by the missing count.
 
-**Open (owner's call):** FC3-3's remaining part. The publish job (which holds the write token) can't read the chain
-or run the race simulation, so a compromised record run could still publish a card the chain doesn't have on a slot
-fixed for the first time, or a wrong race or Block X worth inside its bounds. Honest runs then raise an error and the
-week gets no Vault file (nothing is paid wrong; the week's payout is lost). Block X's publish job has the same limit.
-The full fix is a separate verify job with no write token and no npm dependencies.
+**FC3-3, the rest: the verify job (owner, 2026-10-30: "build the checking step").** `combo.yml` now has three jobs:
+record → **verify** → publish. The verify job has a read-only token and installs nothing: it runs plain `node` on this
+repository's own files (`tools/combo-verify.mjs`, the shared scoring `bot/games/combo-score.mjs`, and
+`bot/games/vhp-inflows.mjs`, a copy of Block X's moved-VHP decoder that a test keeps identical to blockx.ts's). For
+each day file it confirms, on two nodes and from the published race-data and Block X files:
+- a slot fixed for the first time holds exactly the Picks contract's cards for it (who, legs, time, changes), once the
+  day is irreversibly over on both nodes, and the nodes agree;
+- every card that turns final is what the recorder's own scoring gives (`recheck(card, day, chain = true)`): price
+  card, results, worths (Block X with the moved VHP read on both nodes), settled; a Block X leg left unresolved for the
+  chain's reasons must still read so.
+It hands on the names and sha256 of the confirmed day files as a job output (only that job can set it). The publish
+job (`COMBO_VERIFY: required`) publishes no other day file. Not confirmable this run (a node down or behind, a read
+failing): held without blame, retried next run. The recorder's scoring moved into `bot/games/combo-score.mjs` (no
+dependencies) so the recorder and the verify job run the same code. Tests: `tests/audit/combo-verify.test.mjs` (10).
 
 **Tests (fix-check 3 round, 118e621):** contract 71 (source unchanged, 92d555d0…); site and audit suite 737 passing
 (5 todo, 6 skipped, 0 failing); browser 7; workflow guard 8.
