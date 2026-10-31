@@ -19,8 +19,12 @@ const ME = "1HsM33pF8DbXPr8Vsd4vD7hQgvZ1SHY3Vv";
 const PRODS = ["1FKTpXBhhHEbu5vVchM8UsVbAvPArJsRmR", "12Y5vW6gk8GceH53YfRkRre2Rrcsgw7Naq", "19GYjDBVXU7keLbYvMLazsGQn3GTWHjHkK", "1ByDDSBUzy5zkRceELc54Jh8i41yNRoKt8"];
 const RACE = 6 * 3600000, DAY = 86400000;
 
+/** The page refuses to send in the last 2 minutes of a UTC day (RL-26): a test that starts then waits for the new day.
+ *  Tests call it before they work out today's slots. */
+async function awayFromMidnight() { const left = DAY - (Date.now() % DAY); if (left < 4 * 60000) await new Promise((r) => setTimeout(r, left + 5000)); }
 /** opts.slots(round, day) → pick_object or null; opts.delay(method, entryName, callNo) → ms; opts.files: { relPath: string }. */
 async function open(opts = {}) {
+  await awayFromMidnight();
   const now = Date.now(), height = 30000000;
   const browser = await chromium.launch();
   const page = await browser.newPage();
@@ -87,4 +91,4 @@ async function open(opts = {}) {
 }
 /** Two open legs on the race that starts 6–12 hours from now. */
 const openLegs = (now = Date.now()) => { const r = Math.floor(now / RACE) + 2; return [{ code: 1, round: r, producer: PRODS[0] }, { code: 2, round: r, producer: PRODS[1] }]; };
-module.exports = { open, openLegs, ser, PICKS, ME, PRODS, DAY };
+module.exports = { awayFromMidnight, open, openLegs, ser, PICKS, ME, PRODS, DAY };

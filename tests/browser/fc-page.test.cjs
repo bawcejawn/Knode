@@ -9,6 +9,7 @@ async function trySend(t, before) {
   return { sent: await page.evaluate(() => window.__sent[0] || null), toast: await page.textContent("#toast") };
 }
 for (const changes of [0, 2]) test(`editing card 1 (changes ${changes}) reaches the wallet`, { timeout: 60000 }, async () => {
+  await H.awayFromMidnight();
   const now = Date.now(), day = Math.floor(now / H.DAY), r = Math.floor(now / 21600000) + 3;
   const card1 = { legs: [{ code: 1, round: String(r), producer: H.PRODS[2] }, { code: 2, round: String(r), producer: H.PRODS[3] }], changes };
   const t = await H.open({ vault: "staked", legs: H.openLegs(now), slots: (round) => (round === day * 3 ? card1 : null) });
@@ -22,6 +23,7 @@ for (const changes of [0, 2]) test(`editing card 1 (changes ${changes}) reaches 
   } finally { await t.browser.close(); }
 });
 test("a new card after a card landed (page not refreshed yet) goes to a free slot or is refused, never over the new card", { timeout: 60000 }, async () => {
+  await H.awayFromMidnight();
   const now = Date.now(), day = Math.floor(now / H.DAY), r = Math.floor(now / 21600000) + 3;
   const card1 = { legs: [{ code: 1, round: String(r), producer: H.PRODS[2] }, { code: 2, round: String(r), producer: H.PRODS[3] }], changes: 0 };
   let landed = false;

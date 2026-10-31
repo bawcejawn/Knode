@@ -3,6 +3,7 @@ const test = require("node:test"), assert = require("node:assert");
 const H = require("./harness.cjs");
 
 test("CC-C1: Send during a refresh must not overwrite card 1", { timeout: 60000 }, async () => {
+  await H.awayFromMidnight();
   const now = Date.now(), day = Math.floor(now / H.DAY), r = Math.floor(now / 21600000) + 3;
   const card1 = { legs: [{ code: 1, round: String(r), producer: H.PRODS[2] }, { code: 2, round: String(r), producer: H.PRODS[3] }], changes: 0 };
   let slow = false;
@@ -23,6 +24,7 @@ test("CC-C1: Send during a refresh must not overwrite card 1", { timeout: 60000 
 });
 
 test("CC-C1 (b): a failed read of today's cards must not show card 1 as free and send over it", { timeout: 60000 }, async () => {
+  await H.awayFromMidnight();
   const now = Date.now(), day = Math.floor(now / H.DAY), r = Math.floor(now / 21600000) + 3;
   const card1 = { legs: [{ code: 1, round: String(r), producer: H.PRODS[2] }, { code: 2, round: String(r), producer: H.PRODS[3] }], changes: 0 };
   let fail = false;

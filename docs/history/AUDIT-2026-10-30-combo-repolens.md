@@ -130,4 +130,7 @@ JavaScript in 63,602 cases), but keeping published final cards opened a silent p
 | FC2-16 | Info | Behind picks round 8. | Merged; Block X's exact-JSON (byte-form) check ported to combo.yml, with Node pinned in the publish job. |
 
 The reviewer's stricter tests (D-S-1 strict, E-S-2b, E-R-T3, E-R-T4, D-C-1 corrected) pass. C-R-1 runs with the true
-clock again: a clock set past the lie now makes the honest node "days behind" and the run is refused (FC2-4).
+clock again: a clock set past the lie now makes the honest node "days behind" and the run is refused (FC2-4). The
+browser tests wait out the last minutes of a UTC day (the page refuses to send then; RL-26).
+
+**Tests:** contract 71; site and audit suite 716 passing (5 todo, 5 skipped); browser 7; workflow guard 8.
